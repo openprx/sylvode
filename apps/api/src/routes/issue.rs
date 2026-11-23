@@ -22,11 +22,13 @@ use crate::{
         ai_task_service::{CreateAiTaskInput, DispatchOrigin, DispatchOutcome, dispatch_ai_task, runner_bot_block},
         bot_identity::is_bot_user,
         issue_view::{IssueResponse, identifier, issue_labels, load_issue},
-        issues::{IssueRef, insert_activity},
+        issues::{IssueRef, NotifyAssignment, insert_activity, notify_assignment},
         work_item_service::{NewWorkItem, insert_work_item},
         workflow_service::{allowed_state_values, default_project_state, resolve_effective_workflow_for_project},
     },
-    webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks, trigger_webhooks_after_ai_tasks},
+    webhook_trigger::{
+        TriggerContext, WebhookEvent, issue_snapshot, trigger_webhooks, trigger_webhooks_after_ai_tasks,
+    },
 };
 
 #[derive(Debug, Deserialize)]
@@ -149,11 +151,10 @@ pub(crate) struct AssignmentTaskInput {
     pub(crate) idempotency_key: String,
 }
 
-/// What an assignment produced: whether the assignee is a bot, and the bots that received their
-/// task for it as a worker AI task (to pass to `trigger_webhooks_after_ai_tasks`).
+/// What an assignment produced: the bots that received their task for it as a worker AI task (to
+/// pass to `trigger_webhooks_after_ai_tasks`).
 #[derive(Debug, Default)]
 pub(crate) struct AssignmentOutcome {
-    pub(crate) assignee_is_bot: bool,
     pub(crate) ai_task_bots: Vec<Uuid>,
 }
 
@@ -174,7 +175,6 @@ pub(crate) async fn queue_assignment_ai_task(
     let assignee_is_bot = is_bot_user(db, input.assignee_id).await?;
     if !assignment_queues_ai_task(input.actor_id, input.assignee_id, assignee_is_bot) {
         return Ok(AssignmentOutcome {
-            assignee_is_bot,
             ai_task_bots: Vec::new(),
         });
     }
@@ -188,7 +188,6 @@ pub(crate) async fn queue_assignment_ai_task(
             "assignment queued no task"
         );
         return Ok(AssignmentOutcome {
-            assignee_is_bot,
             ai_task_bots: Vec::new(),
         });
     }
@@ -232,7 +231,6 @@ pub(crate) async fn queue_assignment_ai_task(
         }
     }
     Ok(AssignmentOutcome {
-        assignee_is_bot,
         ai_task_bots: vec![input.assignee_id],
     })
 }
@@ -343,8 +341,9 @@ pub async fn create_issue(
         None
     };
 
+    let tx = state.db.begin().await?;
     insert_work_item(
-        &state.db,
+        &tx,
         &NewWorkItem {
             id: issue_id,
             project_id,
@@ -360,6 +359,22 @@ pub async fn create_issue(
         },
     )
     .await?;
+    if let Some(assignee_id) = req.assignee_id {
+        notify_assignment(
+            &tx,
+            NotifyAssignment {
+                workspace_id: project.workspace_id,
+                project_id,
+                issue_id,
+                title: &req.title,
+                assignee_id,
+                actor_id: user_id,
+                now,
+            },
+        )
+        .await?;
+    }
+    tx.commit().await?;
 
     // The assignment is queued as an AI task before any delivery is triggered, so every delivery
     // of this request knows that the bot already has its one task for it.
@@ -399,7 +414,7 @@ pub async fn create_issue(
         assignment.ai_task_bots.clone(),
     );
 
-    if assignment.assignee_is_bot {
+    if req.assignee_id.is_some() {
         let created_assignee_ids: Vec<String> = req.assignee_id.iter().map(Uuid::to_string).collect();
         trigger_webhooks_after_ai_tasks(
             state.clone(),
@@ -709,12 +724,13 @@ pub async fn update_issue(
         priority: String,
         assignee_id: Option<Uuid>,
         sprint_id: Option<Uuid>,
+        due_at: Option<platform::timestamp::Timestamp>,
     }
 
     let current_issue = CurrentIssue::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
-            SELECT wi.project_id, p.workspace_id, wi.title, wi.description, wi.state, wi.priority, wi.assignee_id, wi.sprint_id
+            SELECT wi.project_id, p.workspace_id, wi.title, wi.description, wi.state, wi.priority, wi.assignee_id, wi.sprint_id, wi.due_at
             FROM work_items wi
             INNER JOIN projects p ON wi.project_id = p.id
             WHERE wi.id = $1
@@ -762,6 +778,16 @@ pub async fn update_issue(
         ensure_sprint_in_project(&state.db, sprint_id, current_issue.project_id).await?;
     }
 
+    let requested_due_at = requested_due_at
+        .map(|due| {
+            due.map(|due_str| {
+                platform::timestamp::Timestamp::parse_rfc3339(&due_str)
+                    .map_err(|_| ApiError::BadRequest("invalid due_at format".to_string()))
+            })
+            .transpose()
+        })
+        .transpose()?;
+
     // Build update query
     let mut updates = Vec::new();
     let mut values: Vec<sea_orm::Value> = Vec::new();
@@ -800,13 +826,7 @@ pub async fn update_issue(
         param_idx += 1;
     }
 
-    if let Some(due) = requested_due_at {
-        let due_at = due
-            .map(|due_str| {
-                platform::timestamp::Timestamp::parse_rfc3339(&due_str)
-                    .map_err(|_| ApiError::BadRequest("invalid due_at format".to_string()))
-            })
-            .transpose()?;
+    if let Some(due_at) = requested_due_at {
         updates.push(format!("due_at = ${param_idx}"));
         values.push(due_at.into());
         param_idx += 1;
@@ -884,6 +904,29 @@ pub async fn update_issue(
         );
     }
 
+    if let Some(new_sprint_id) = requested_sprint
+        && new_sprint_id != current_issue.sprint_id
+    {
+        updated_fields.insert(
+            "sprint_id".to_string(),
+            json!({
+                "old": current_issue.sprint_id.map(|id| id.to_string()),
+                "new": new_sprint_id.map(|id| id.to_string()),
+            }),
+        );
+    }
+    if let Some(new_due_at) = requested_due_at
+        && new_due_at != current_issue.due_at
+    {
+        updated_fields.insert(
+            "due_at".to_string(),
+            json!({
+                "old": current_issue.due_at.map(platform::timestamp::Timestamp::to_rfc3339),
+                "new": new_due_at.map(platform::timestamp::Timestamp::to_rfc3339),
+            }),
+        );
+    }
+
     let mut changes: Vec<ActivityChange> = Vec::new();
 
     if let Some(new_assignee) = requested_assignee
@@ -946,33 +989,18 @@ pub async fn update_issue(
     if let Some(Some(new_assignee)) = requested_assignee
         && assignee_changed
     {
-        let link = format!(
-            "/workspace/{}/projects/{}/issues/{}",
-            current_issue.workspace_id, current_issue.project_id, issue_id
-        );
-
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            r"
-                    INSERT INTO notifications (
-                        id, user_id, workspace_id, type, kind, payload, title, content, link, related_issue_id, is_read, created_at
-                    )
-                    VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, false, $11)
-                ",
-            vec![
-                Uuid::new_v4().into(),
-                new_assignee.into(),
-                current_issue.workspace_id.into(),
-                "assignment".into(),
-                "assignment".into(),
-                json!({}).into(),
-                "notification.issueAssignedTitle".into(),
-                format!("issue_assigned:{}", updated.title).into(),
-                link.into(),
-                issue_id.into(),
-                now.into(),
-            ],
-        ))
+        notify_assignment(
+            &tx,
+            NotifyAssignment {
+                workspace_id: current_issue.workspace_id,
+                project_id: current_issue.project_id,
+                issue_id,
+                title: &updated.title,
+                assignee_id: new_assignee,
+                actor_id: user_id,
+                now,
+            },
+        )
         .await?;
     }
 
@@ -1094,23 +1122,12 @@ pub async fn delete_issue(
     struct IssueWorkspace {
         project_id: Uuid,
         workspace_id: Uuid,
-        project_key: String,
-        title: String,
-        description: String,
-        state: String,
-        priority: String,
-        assignee_id: Option<Uuid>,
-        sprint_id: Option<Uuid>,
-        created_at: platform::timestamp::Timestamp,
-        updated_at: platform::timestamp::Timestamp,
     }
 
     let issue_ws = IssueWorkspace::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
-            SELECT wi.project_id, p.workspace_id, p.key AS project_key,
-                   wi.title, wi.description, wi.state, wi.priority, wi.assignee_id, wi.sprint_id,
-                   wi.created_at, wi.updated_at
+            SELECT wi.project_id, p.workspace_id
             FROM work_items wi
             INNER JOIN projects p ON wi.project_id = p.id
             WHERE wi.id = $1
@@ -1128,6 +1145,11 @@ pub async fn delete_issue(
         ));
     }
 
+    // The event carries the issue as it was, labels included, so it is read before the delete.
+    let (deleted_issue_payload, _) = issue_snapshot(&state.db, issue_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("issue not found".to_string()))?;
+
     state
         .db
         .execute(Statement::from_sql_and_values(
@@ -1136,25 +1158,6 @@ pub async fn delete_issue(
             vec![issue_id.into()],
         ))
         .await?;
-
-    let deleted_issue_payload = json!({
-        "id": issue_id.to_string(),
-        "key": format!(
-            "{}-{}",
-            issue_ws.project_key,
-            issue_id.simple().to_string().to_uppercase()[..8].to_string()
-        ),
-        "title": issue_ws.title,
-        "description": issue_ws.description,
-        "state": issue_ws.state,
-        "priority": issue_ws.priority,
-        "assignee_ids": issue_ws
-            .assignee_id.map_or_else(Vec::new, |id| vec![id.to_string()]),
-        "label_ids": Vec::<String>::new(),
-        "sprint_id": issue_ws.sprint_id.map(|id| id.to_string()),
-        "created_at": issue_ws.created_at.to_rfc3339(),
-        "updated_at": issue_ws.updated_at.to_rfc3339(),
-    });
 
     trigger_webhooks(
         state.clone(),

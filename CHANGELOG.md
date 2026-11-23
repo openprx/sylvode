@@ -51,6 +51,16 @@ name.
   error. The web app shows the identifier from the API, and unassigning an issue on its page sends
   `assignee_id: null`, which used to do nothing.
 
+- **Assignment notifications and issue webhook payloads.** Creating a work item with a human assignee
+  now notifies them, as assigning later does; assigning a work item to yourself or to a bot no longer
+  writes a notification. In `issue.*`, `label.*` and `comment.*` webhook payloads `key` is the work
+  item's identifier (`WEB-12`) instead of the project key and eight characters of its UUID, and the
+  issue object carries `due_at`. `issue.updated` also reports `sprint_id` and `due_at` changes.
+  `issue.assigned` is sent when a work item is created with any kind of assignee and when an
+  assignee is removed (`changes.assignee_ids.new` is empty). `issue.deleted` carries the issue with
+  the labels it had before the delete (it carried an empty `label_ids` and a key built from the
+  UUID).
+
 ### Removed
 
 - **Universal forms delivery and sign-off tooling.** The scripts and schemas that produced and

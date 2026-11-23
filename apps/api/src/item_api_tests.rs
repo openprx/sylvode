@@ -575,3 +575,390 @@ async fn list_with_an_unknown_filter_or_a_bad_sprint_id_is_refused() {
     assert_eq!(bogus.body["message"], json!("sprint_id must be a UUID or none"));
     api.finish().await;
 }
+
+const ALL_ISSUE_EVENTS: &str = r#"["issue.created","issue.updated","issue.assigned","issue.state_changed","issue.deleted","label.added","label.removed","comment.created"]"#;
+
+impl Api {
+    /// A member of the main workspace of its own.
+    async fn add_member(&self, name: &str, entity_type: &str) -> Uuid {
+        let id = Uuid::new_v4();
+        exec(
+            &self.db,
+            "INSERT INTO users (id, email, password_hash, name, role, is_active, entity_type) \
+             VALUES ($1, $2, '!', $3, 'user', true, $4)",
+            vec![
+                id.into(),
+                format!("{name}-{id}@items.test").into(),
+                name.to_string().into(),
+                entity_type.to_string().into(),
+            ],
+        )
+        .await;
+        exec(
+            &self.db,
+            "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'member')",
+            vec![self.ws.into(), id.into()],
+        )
+        .await;
+        id
+    }
+
+    /// Subscribes a receiver to the issue, label and comment events of the main workspace. The
+    /// address is never reached (loopback is refused by the outbound policy); the delivery log
+    /// keeps the payload that would have been sent.
+    async fn add_webhook(&self) {
+        exec(
+            &self.db,
+            "INSERT INTO webhooks (id, workspace_id, name, url, secret, events, active, created_by) \
+             VALUES ($1, $2, 'receiver', 'http://127.0.0.1:9/hook', 'test-secret', $3::jsonb, true, $4)",
+            vec![
+                Uuid::new_v4().into(),
+                self.ws.into(),
+                ALL_ISSUE_EVENTS.into(),
+                self.alice.into(),
+            ],
+        )
+        .await;
+    }
+
+    /// The payloads logged for `event`, once at least `expected` are there (deliveries are sent
+    /// from spawned tasks) and a moment longer so an extra one would be counted.
+    async fn payloads(&self, event: &str, expected: usize) -> Vec<Value> {
+        let read = || async {
+            let rows = self
+                .db
+                .query_all(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT d.payload::text AS payload FROM webhook_deliveries d \
+                     JOIN webhooks w ON w.id = d.webhook_id \
+                     WHERE w.workspace_id = $1 AND d.event_type = $2 ORDER BY d.created_at, d.id",
+                    vec![self.ws.into(), event.to_string().into()],
+                ))
+                .await
+                .expect("deliveries are readable");
+            rows.iter()
+                .map(|row| {
+                    let text: String = row.try_get("", "payload").expect("payload column");
+                    serde_json::from_str::<Value>(&text).expect("payload is json")
+                })
+                .collect::<Vec<_>>()
+        };
+        for _ in 0..200 {
+            if read().await.len() >= expected {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let found = read().await;
+        assert_eq!(found.len(), expected, "{event} deliveries: {found:?}");
+        found
+    }
+
+    async fn notifications_of(&self, user: Uuid) -> i64 {
+        self.db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT COUNT(*)::bigint AS n FROM notifications WHERE user_id = $1 AND kind = 'assignment'",
+                vec![user.into()],
+            ))
+            .await
+            .expect("count")
+            .expect("row")
+            .try_get("", "n")
+            .expect("n")
+    }
+}
+
+#[tokio::test]
+async fn create_with_human_assignee_notifies_once() {
+    let Some(api) = Api::new("item_notify_create").await else {
+        return;
+    };
+    let item = api
+        .create_item("assigned at creation", json!({"assignee_id": api.bob}))
+        .await;
+    assert_eq!(api.notifications_of(api.bob).await, 1);
+    assert_eq!(api.notifications_of(api.alice).await, 0);
+    let related: Uuid = api
+        .db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT related_issue_id FROM notifications WHERE user_id = $1",
+            vec![api.bob.into()],
+        ))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get("", "related_issue_id")
+        .expect("related");
+    assert_eq!(related, item);
+    api.finish().await;
+}
+
+#[tokio::test]
+async fn create_assigned_to_self_notifies_nobody() {
+    let Some(api) = Api::new("item_notify_self_create").await else {
+        return;
+    };
+    api.create_item("mine", json!({"assignee_id": api.alice})).await;
+    assert_eq!(api.notifications_of(api.alice).await, 0);
+    assert_eq!(api.notifications_of(api.bob).await, 0);
+    api.finish().await;
+}
+
+#[tokio::test]
+async fn update_self_assignment_notifies_nobody() {
+    let Some(api) = Api::new("item_notify_self_update").await else {
+        return;
+    };
+    let item = api.create_item("mine later", json!({})).await;
+    let answer = api
+        .put(
+            &format!("/api/v1/issues/{item}"),
+            api.alice,
+            json!({"assignee_id": api.alice}),
+        )
+        .await;
+    assert_eq!(answer.code(), Some(0), "{}", answer.body);
+    assert_eq!(api.notifications_of(api.alice).await, 0);
+    api.finish().await;
+}
+
+#[tokio::test]
+async fn assigning_a_bot_writes_no_notification() {
+    let Some(api) = Api::new("item_notify_bot").await else {
+        return;
+    };
+    let bot = api.add_member("helper", "bot").await;
+    api.create_item("for the bot at creation", json!({"assignee_id": bot}))
+        .await;
+    let item = api.create_item("for the bot later", json!({})).await;
+    let answer = api
+        .put(
+            &format!("/api/v1/issues/{item}"),
+            api.alice,
+            json!({"assignee_id": bot}),
+        )
+        .await;
+    assert_eq!(answer.code(), Some(0), "{}", answer.body);
+    assert_eq!(api.notifications_of(bot).await, 0);
+    api.finish().await;
+}
+
+#[tokio::test]
+async fn reassignment_notifies_the_new_assignee_only() {
+    let Some(api) = Api::new("item_notify_reassign").await else {
+        return;
+    };
+    let dana = api.add_member("dana", "human").await;
+    let item = api.create_item("passed on", json!({"assignee_id": api.bob})).await;
+    assert_eq!(
+        (api.notifications_of(api.bob).await, api.notifications_of(dana).await),
+        (1, 0)
+    );
+    let answer = api
+        .put(
+            &format!("/api/v1/issues/{item}"),
+            api.alice,
+            json!({"assignee_id": dana}),
+        )
+        .await;
+    assert_eq!(answer.code(), Some(0), "{}", answer.body);
+    assert_eq!(
+        (api.notifications_of(api.bob).await, api.notifications_of(dana).await),
+        (1, 1)
+    );
+    // The same assignee again changes nothing and notifies nobody.
+    api.put(
+        &format!("/api/v1/issues/{item}"),
+        api.alice,
+        json!({"assignee_id": dana}),
+    )
+    .await;
+    assert_eq!(api.notifications_of(dana).await, 1);
+    api.finish().await;
+}
+
+#[tokio::test]
+async fn issue_events_carry_the_identifier_key() {
+    let Some(api) = Api::new("item_event_key").await else {
+        return;
+    };
+    api.add_webhook().await;
+    let item = api.create_item("keyed", json!({})).await;
+    let label = api.create_label("tag").await;
+    let added = api
+        .post(&format!("/api/v1/issues/{item}/labels/{label}"), api.alice, json!({}))
+        .await;
+    assert_eq!(added.code(), Some(0), "{}", added.body);
+    let commented = api
+        .post(
+            &format!("/api/v1/issues/{item}/comments"),
+            api.alice,
+            json!({"body": "hello"}),
+        )
+        .await;
+    assert_eq!(commented.code(), Some(0), "{}", commented.body);
+    let state = api
+        .put(
+            &format!("/api/v1/issues/{item}"),
+            api.alice,
+            json!({"priority": "high"}),
+        )
+        .await;
+    assert_eq!(state.code(), Some(0), "{}", state.body);
+
+    let created = api.payloads("issue.created", 1).await;
+    assert_eq!(created[0]["data"]["issue"]["key"], json!("QLB-1"), "{}", created[0]);
+    let updated = api.payloads("issue.updated", 1).await;
+    assert_eq!(updated[0]["data"]["issue"]["key"], json!("QLB-1"), "{}", updated[0]);
+    let label_added = api.payloads("label.added", 1).await;
+    assert_eq!(
+        label_added[0]["data"]["issue"]["key"],
+        json!("QLB-1"),
+        "{}",
+        label_added[0]
+    );
+    let comment_created = api.payloads("comment.created", 1).await;
+    assert_eq!(
+        comment_created[0]["data"]["issue"]["key"],
+        json!("QLB-1"),
+        "{}",
+        comment_created[0]
+    );
+    api.finish().await;
+}
+
+#[tokio::test]
+async fn sprint_and_due_date_changes_emit_issue_updated() {
+    let Some(api) = Api::new("item_event_sprint_due").await else {
+        return;
+    };
+    api.add_webhook().await;
+    let sprint = api.create_sprint("s1").await;
+    let item = api.create_item("moving", json!({})).await;
+    api.payloads("issue.created", 1).await;
+    let moved = api
+        .put(
+            &format!("/api/v1/issues/{item}"),
+            api.alice,
+            json!({"sprint_id": sprint}),
+        )
+        .await;
+    assert_eq!(moved.code(), Some(0), "{}", moved.body);
+    // Deliveries are sent from spawned tasks: each is awaited before the next change, so the log
+    // order is the order of the changes.
+    api.payloads("issue.updated", 1).await;
+    let dated = api
+        .put(&format!("/api/v1/issues/{item}"), api.alice, json!({"due_at": DUE}))
+        .await;
+    assert_eq!(dated.code(), Some(0), "{}", dated.body);
+    api.payloads("issue.updated", 2).await;
+    let cleared = api
+        .put(
+            &format!("/api/v1/issues/{item}"),
+            api.alice,
+            json!({"sprint_id": null, "due_at": null}),
+        )
+        .await;
+    assert_eq!(cleared.code(), Some(0), "{}", cleared.body);
+
+    let updated = api.payloads("issue.updated", 3).await;
+    let changes = |index: usize| &updated[index]["data"]["changes"];
+    assert_eq!(
+        changes(0)["sprint_id"],
+        json!({"old": null, "new": sprint}),
+        "{}",
+        updated[0]
+    );
+    assert!(changes(0).get("due_at").is_none());
+    assert_eq!(changes(1)["due_at"]["old"], Value::Null, "{}", updated[1]);
+    assert!(
+        changes(1)["due_at"]["new"]
+            .as_str()
+            .is_some_and(|text| text.starts_with("2030-01-02T03:04:05")),
+        "{}",
+        updated[1]
+    );
+    assert_eq!(
+        changes(2)["sprint_id"],
+        json!({"old": sprint, "new": null}),
+        "{}",
+        updated[2]
+    );
+    assert_eq!(changes(2)["due_at"]["new"], Value::Null, "{}", updated[2]);
+    // The issue object carries the due date too.
+    assert!(updated[1]["data"]["issue"]["due_at"].is_string(), "{}", updated[1]);
+    api.finish().await;
+}
+
+#[tokio::test]
+async fn create_with_human_assignee_emits_issue_assigned() {
+    let Some(api) = Api::new("item_event_assigned_create").await else {
+        return;
+    };
+    api.add_webhook().await;
+    api.create_item("assigned at creation", json!({"assignee_id": api.bob}))
+        .await;
+    let assigned = api.payloads("issue.assigned", 1).await;
+    let assignee = json!([api.bob.to_string()]);
+    assert_eq!(
+        assigned[0]["data"]["changes"]["assignee_ids"]["new"], assignee,
+        "{}",
+        assigned[0]
+    );
+    assert_eq!(assigned[0]["data"]["changes"]["assignee_ids"]["added"], assignee);
+    assert_eq!(assigned[0]["data"]["issue"]["assignee_ids"], assignee);
+    api.finish().await;
+}
+
+#[tokio::test]
+async fn unassign_emits_issue_assigned_with_empty_new() {
+    let Some(api) = Api::new("item_event_unassign").await else {
+        return;
+    };
+    api.add_webhook().await;
+    let item = api.create_item("to unassign", json!({"assignee_id": api.bob})).await;
+    api.payloads("issue.assigned", 1).await;
+    let answer = api
+        .put(
+            &format!("/api/v1/issues/{item}"),
+            api.alice,
+            json!({"assignee_id": null}),
+        )
+        .await;
+    assert_eq!(answer.code(), Some(0), "{}", answer.body);
+    let assigned = api.payloads("issue.assigned", 2).await;
+    let changes = &assigned[1]["data"]["changes"]["assignee_ids"];
+    assert_eq!(changes["new"], json!([]), "{}", assigned[1]);
+    assert_eq!(changes["removed"], json!([api.bob.to_string()]), "{}", assigned[1]);
+    assert_eq!(assigned[1]["data"]["issue"]["assignee_ids"], json!([]));
+    // Nobody is told, and no notification is written, for an unassignment.
+    assert_eq!(api.notifications_of(api.bob).await, 1);
+    api.finish().await;
+}
+
+#[tokio::test]
+async fn issue_deleted_payload_lists_labels_and_identifier() {
+    let Some(api) = Api::new("item_event_deleted").await else {
+        return;
+    };
+    api.add_webhook().await;
+    let item = api.create_item("short lived", json!({})).await;
+    let label = api.create_label("tag").await;
+    let added = api
+        .post(&format!("/api/v1/issues/{item}/labels/{label}"), api.alice, json!({}))
+        .await;
+    assert_eq!(added.code(), Some(0), "{}", added.body);
+    let deleted = api
+        .call(Method::DELETE, &format!("/api/v1/issues/{item}"), api.alice, None)
+        .await;
+    assert_eq!(deleted.code(), Some(0), "{}", deleted.body);
+    let payloads = api.payloads("issue.deleted", 1).await;
+    let issue = &payloads[0]["data"]["issue"];
+    assert_eq!(issue["key"], json!("QLB-1"), "{}", payloads[0]);
+    assert_eq!(issue["label_ids"], json!([label.to_string()]), "{}", payloads[0]);
+    assert_eq!(issue["title"], json!("short lived"));
+    api.finish().await;
+}

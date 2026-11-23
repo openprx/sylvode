@@ -59,10 +59,10 @@ A webhook can subscribe to these events:
 | Event | Sent when | `data` |
 |---|---|---|
 | `issue.created` | A work item is created. | `issue` |
-| `issue.updated` | A work item's fields change. | `issue`, `changes` |
-| `issue.assigned` | A work item's assignees change. | `issue`, `changes.assignee_ids` (`old`, `new`) |
+| `issue.updated` | A work item's title, description, priority, sprint or due date change. | `issue`, `changes` (each changed field as `old` and `new`; `sprint_id` and `due_at` included) |
+| `issue.assigned` | A work item is created with an assignee, or its assignee changes, including to nobody. | `issue`, `changes.assignee_ids` (`old`, `new`, `added`, `removed`; `new` is empty after an unassignment) |
 | `issue.state_changed` | A work item moves to another state. | `issue`, `changes.state` (`old`, `new`) |
-| `issue.deleted` | A work item is deleted. | `issue` |
+| `issue.deleted` | A work item is deleted. | `issue` as it was before the delete, labels included |
 | `comment.created` | A comment is added to a work item. | `comment`, `issue`, `mentions` (user ids) |
 | `comment.updated` | A comment is edited. | `comment`, `issue` |
 | `comment.deleted` | A comment is deleted. | `comment`, `issue` |
@@ -74,11 +74,10 @@ A webhook can subscribe to these events:
 | `ai.task_failed` | A bot task fails for good. | `task_id`, `task_type`, `status`, `reference_type`, `reference_id`, `error_message` |
 
 An `issue` object has `id`, `key`, `title`, `description`, `state`, `priority`, `assignee_ids`,
-`label_ids`, `sprint_id`, `created_at` and `updated_at`. A `comment` object has `id`, `issue_id`,
+`label_ids`, `sprint_id`, `due_at`, `created_at` and `updated_at`. A `comment` object has `id`, `issue_id`,
 `content`, `author_id`, `author_name`, `created_at` and `updated_at`; the `issue` next to it has
-`id`, `key` and `title`. In these payloads `key` is the project key followed by the first eight
-characters of the work item id (for example `WEB-5B0C4F0E`), not the work item's sequential
-identifier.
+`id`, `key` and `title`. In these payloads `key` is the work item's identifier: the project key and the
+work item's number, for example `WEB-12`.
 
 An alert rule that opens a work item also sends `issue.created` for it (see [Alerts](alerts.md)).
 
@@ -96,7 +95,7 @@ Each event is sent once to every active webhook of the workspace that subscribes
   "project": { "id": "...", "name": "Website", "key": "WEB" },
   "actor": { "id": "...", "name": "Alex", "email": "alex@example.com", "entity_type": "human" },
   "data": {
-    "issue": { "id": "...", "key": "WEB-5B0C4F0E", "title": "Fix login", "state": "in_progress" },
+    "issue": { "id": "...", "key": "WEB-12", "title": "Fix login", "state": "in_progress" },
     "changes": { "state": { "old": "todo", "new": "in_progress" } }
   },
   "bot_context": null

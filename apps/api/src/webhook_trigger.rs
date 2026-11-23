@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 use crate::outbound::{delivery_client, resolve_outbound_target, truncate_string};
 use crate::services::bot_identity::is_bot_entity_type;
+use crate::services::issue_view::identifier;
 
 /// Hard cap on the response body pulled from a webhook receiver.
 ///
@@ -400,7 +401,9 @@ async fn build_event_data(
                 let issue_id = ctx
                     .issue_id
                     .ok_or_else(|| sea_orm::DbErr::Custom("missing issue_id".to_string()))?;
-                fetch_issue_payload(state, issue_id, project_key).await?
+                issue_snapshot(&state.db, issue_id)
+                    .await?
+                    .ok_or_else(|| sea_orm::DbErr::Custom("issue not found".to_string()))?
             };
 
             let data = if matches!(ctx.event, WebhookEvent::IssueUpdated) {
@@ -490,6 +493,7 @@ async fn build_event_data(
             #[derive(Debug, FromQueryResult)]
             struct IssueBrief {
                 id: Uuid,
+                sequence_number: i32,
                 title: String,
             }
 
@@ -502,7 +506,7 @@ async fn build_event_data(
 
             let issue = IssueBrief::find_by_statement(Statement::from_sql_and_values(
                 DbBackend::Postgres,
-                "SELECT id, title FROM work_items WHERE id = $1",
+                "SELECT id, sequence_number, title FROM work_items WHERE id = $1",
                 vec![issue_id.into()],
             ))
             .one(&state.db)
@@ -522,7 +526,7 @@ async fn build_event_data(
                 data: json!({
                     "issue": {
                         "id": issue.id.to_string(),
-                        "key": format_issue_key(project_key, issue.id),
+                        "key": identifier(project_key, issue.sequence_number),
                         "title": issue.title,
                     },
                     "label": {
@@ -601,20 +605,26 @@ async fn build_event_data(
     }
 }
 
-async fn fetch_issue_payload(
-    state: &AppState,
+/// The JSON of an issue as every issue event carries it, and the issue's assignee ids.
+///
+/// `key` is the issue's identifier (`WEB-12`). Read before a delete, it is the object as it was,
+/// labels included; `None` when the issue does not exist.
+pub(crate) async fn issue_snapshot(
+    db: &impl ConnectionTrait,
     issue_id: Uuid,
-    project_key: &str,
-) -> Result<(Value, Vec<Uuid>), sea_orm::DbErr> {
+) -> Result<Option<(Value, Vec<Uuid>)>, sea_orm::DbErr> {
     #[derive(Debug, FromQueryResult)]
     struct IssueRow {
         id: Uuid,
+        project_key: String,
+        sequence_number: i32,
         title: String,
         description: String,
         state: String,
         priority: String,
         assignee_id: Option<Uuid>,
         sprint_id: Option<Uuid>,
+        due_at: Option<Timestamp>,
         created_at: Timestamp,
         updated_at: Timestamp,
     }
@@ -624,25 +634,29 @@ async fn fetch_issue_payload(
         label_id: Uuid,
     }
 
-    let issue = IssueRow::find_by_statement(Statement::from_sql_and_values(
+    let Some(issue) = IssueRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
-            SELECT id, title, description, state, priority, assignee_id, sprint_id, created_at, updated_at
-            FROM work_items
-            WHERE id = $1
+            SELECT wi.id, p.key AS project_key, wi.sequence_number, wi.title, wi.description, wi.state,
+                   wi.priority, wi.assignee_id, wi.sprint_id, wi.due_at, wi.created_at, wi.updated_at
+            FROM work_items wi
+            INNER JOIN projects p ON p.id = wi.project_id
+            WHERE wi.id = $1
         ",
         vec![issue_id.into()],
     ))
-    .one(&state.db)
+    .one(db)
     .await?
-    .ok_or_else(|| sea_orm::DbErr::Custom("issue not found".to_string()))?;
+    else {
+        return Ok(None);
+    };
 
     let label_rows = LabelIdRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "SELECT label_id FROM work_item_labels WHERE work_item_id = $1 ORDER BY label_id",
         vec![issue_id.into()],
     ))
-    .all(&state.db)
+    .all(db)
     .await?;
 
     let label_ids = label_rows
@@ -654,10 +668,10 @@ async fn fetch_issue_payload(
 
     let assignee_id_values = assignee_ids.iter().map(Uuid::to_string).collect::<Vec<_>>();
 
-    Ok((
+    Ok(Some((
         json!({
             "id": issue.id.to_string(),
-            "key": format_issue_key(project_key, issue.id),
+            "key": identifier(&issue.project_key, issue.sequence_number),
             "title": issue.title,
             "description": issue.description,
             "state": issue.state,
@@ -665,11 +679,12 @@ async fn fetch_issue_payload(
             "assignee_ids": assignee_id_values,
             "label_ids": label_ids,
             "sprint_id": issue.sprint_id.map(|v| v.to_string()),
+            "due_at": issue.due_at.map(Timestamp::to_rfc3339),
             "created_at": issue.created_at.to_rfc3339(),
             "updated_at": issue.updated_at.to_rfc3339(),
         }),
         assignee_ids,
-    ))
+    )))
 }
 
 async fn fetch_comment_payload(
@@ -691,6 +706,7 @@ async fn fetch_comment_payload(
     #[derive(Debug, FromQueryResult)]
     struct IssueRow {
         id: Uuid,
+        sequence_number: i32,
         title: String,
     }
 
@@ -716,7 +732,7 @@ async fn fetch_comment_payload(
 
     let issue = IssueRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT id, title FROM work_items WHERE id = $1",
+        "SELECT id, sequence_number, title FROM work_items WHERE id = $1",
         vec![comment.issue_id.into()],
     ))
     .one(&state.db)
@@ -735,7 +751,7 @@ async fn fetch_comment_payload(
         }),
         json!({
             "id": issue.id.to_string(),
-            "key": format_issue_key(project_key, issue.id),
+            "key": identifier(project_key, issue.sequence_number),
             "title": issue.title,
         }),
     ))
@@ -1122,12 +1138,6 @@ pub fn sign_payload(secret: &str, raw_body: &str) -> Result<String, String> {
     mac.update(raw_body.as_bytes());
     let bytes = mac.finalize().into_bytes();
     Ok(hex::encode(bytes))
-}
-
-fn format_issue_key(project_key: &str, issue_id: Uuid) -> String {
-    let id = issue_id.simple().to_string().to_uppercase();
-    let short = &id[..8];
-    format!("{project_key}-{short}")
 }
 
 fn extract_assignee_ids(issue_payload: &Value) -> Vec<Uuid> {

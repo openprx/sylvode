@@ -194,10 +194,7 @@ async fn assigning_a_bot_that_is_not_connected_here_creates_no_task_and_no_error
     let never = queue_assignment_ai_task(db, input(c.p3, "a-never"))
         .await
         .expect("not an error");
-    assert!(
-        never.assignee_is_bot && never.ai_task_bots.is_empty(),
-        "no task, no trigger"
-    );
+    assert!(never.ai_task_bots.is_empty(), "no task, no trigger");
     set_enabled(&c.w, c.p1, c.v1, false).await.expect("disable");
     let disabled = queue_assignment_ai_task(db, input(c.p1, "a-disabled"))
         .await

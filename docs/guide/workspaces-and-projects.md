@@ -170,7 +170,8 @@ Every issue has an identifier made of the project key and a running number, such
 lists, the board and the issue page show it. An issue has a title, a Markdown description, a state,
 a priority (**Urgent**, **High**, **Medium**, **Low**), an assignee, labels, a sprint, attachments
 and comments. The issue page also shows its
-activity. Assigning someone or mentioning them in a comment sends them a notification.
+activity. Assigning someone else, or mentioning them in a comment, sends them a notification; your
+own actions never notify you.
 
 Assigning an issue to a bot, or mentioning a bot, can start agent work; see [Agents](agents.md).
 

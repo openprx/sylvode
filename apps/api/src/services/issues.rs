@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use crate::{
     error::ApiError,
+    services::bot_identity::is_bot_user,
     webhook_trigger::{TriggerContext, WebhookEvent},
 };
 
@@ -24,6 +25,59 @@ pub struct StateChange {
     pub from: String,
     pub to: String,
     pub trigger: TriggerContext,
+}
+
+/// What [`notify_assignment`] needs to know about an assignment.
+#[derive(Debug, Clone, Copy)]
+pub struct NotifyAssignment<'a> {
+    pub workspace_id: Uuid,
+    pub project_id: Uuid,
+    pub issue_id: Uuid,
+    pub title: &'a str,
+    pub assignee_id: Uuid,
+    pub actor_id: Uuid,
+    pub now: Timestamp,
+}
+
+/// Tells a human assignee that an issue was assigned to them.
+///
+/// Nothing is written when the assignee is the actor (your own actions never notify you) or a bot
+/// (a bot is told through its task, not a notification).
+///
+/// # Errors
+/// A database failure.
+pub async fn notify_assignment<C: ConnectionTrait>(db: &C, input: NotifyAssignment<'_>) -> Result<(), ApiError> {
+    if input.assignee_id == input.actor_id || is_bot_user(db, input.assignee_id).await? {
+        return Ok(());
+    }
+    let link = format!(
+        "/workspace/{}/projects/{}/issues/{}",
+        input.workspace_id, input.project_id, input.issue_id
+    );
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r"
+            INSERT INTO notifications (
+                id, user_id, workspace_id, type, kind, payload, title, content, link, related_issue_id, is_read, created_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, false, $11)
+        ",
+        vec![
+            Uuid::new_v4().into(),
+            input.assignee_id.into(),
+            input.workspace_id.into(),
+            "assignment".into(),
+            "assignment".into(),
+            json!({}).into(),
+            "notification.issueAssignedTitle".into(),
+            format!("issue_assigned:{}", input.title).into(),
+            link.into(),
+            input.issue_id.into(),
+            input.now.into(),
+        ],
+    ))
+    .await?;
+    Ok(())
 }
 
 /// Writes one row of the issue activity log.
