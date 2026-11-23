@@ -349,7 +349,7 @@ async function main() {
     seat_no: '1',
     status: 'sent_to_kitchen',
   });
-  assert(orderLine.values.line_total?.decimal === '19.98', 'restaurant_calc should calculate order_line.line_total = 19.98');
+  assert(orderLine.values.line_total?.decimal === '19.98', 'order_line.line_total should be calculated from quantity and unit price (2 x 9.99 = 19.98)');
 
   await request('POST', `/api/v1/form-records/${order.id}/links`, {
     target_type: 'form_record',
