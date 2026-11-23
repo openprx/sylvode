@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { copyText } from '#lib/clipboard.js';
 	// Conversion job page body. Polling, the terminal and retryable status tables, the retry
 	// confirmation gate, the per-job retry key and the source/target resolution live in
 	// `ConversionJobController`; this component renders its snapshot and holds only focus,
@@ -88,12 +89,7 @@
 	}
 
 	async function copyId(id: string) {
-		try {
-			await navigator.clipboard.writeText(id);
-			copyState = { id, ok: true };
-		} catch {
-			copyState = { id, ok: false };
-		}
+		copyState = { id, ok: await copyText(id) };
 	}
 
 	const statusClass: Record<string, string> = {

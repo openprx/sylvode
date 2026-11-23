@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { copyText } from '#lib/clipboard.js';
+	import { toast } from '#lib/stores/toast.js';
 	import { t } from 'svelte-i18n';
 	import { flowApi, type FlowShareLink } from '#lib/api/flow.js';
 	import { flowErrorFromResult } from '#lib/flow/command-service.js';
@@ -84,9 +86,9 @@
 	}
 
 	async function copyToken(): Promise<void> {
-		if (!freshToken || typeof navigator === 'undefined' || !navigator.clipboard) return;
-		await navigator.clipboard.writeText(`${location.origin}/s/${freshToken}`);
-		copied = true;
+		if (!freshToken) return;
+		copied = await copyText(`${location.origin}/s/${freshToken}`);
+		if (!copied) toast.error($t('flow.share.public.copyFailed'));
 	}
 
 	const active = $derived(links.filter((link) => !link.revoked_at));

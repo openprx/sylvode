@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { copyText } from '#lib/clipboard.js';
 	import { randomUuid } from '#lib/utils/uuid.js';
 	// The Flow object route. Opens exactly one `FlowObjectRepository` entry for this `objectId`
 	// (ref-counted; closed on navigation away) and hands its `doc`/`projection`/`session.state`
@@ -593,15 +594,17 @@
 
 	async function copyRecoveryDraft(): Promise<void> {
 		if (!entry) return;
+		let copied = false;
 		try {
 			const text = repository.recoveryDraftText(entry.handle.objectId, (key, values) =>
 				$t(key, values ? { values } : undefined)
 			);
-			await navigator.clipboard.writeText(text);
-			toast.success($t('flow.recovery.copied'));
+			copied = await copyText(text);
 		} catch {
-			toast.error($t('flow.recovery.copyFailed'));
+			// The draft text could not be built; the failure toast below covers it.
 		}
+		if (copied) toast.success($t('flow.recovery.copied'));
+		else toast.error($t('flow.recovery.copyFailed'));
 	}
 
 	async function discardRecoveryDraft(): Promise<void> {

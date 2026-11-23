@@ -1,3 +1,4 @@
+import { copyText } from '#lib/clipboard.js';
 import type { BusinessEvent, FormField, FormRecord } from '#lib/api/forms.js';
 import { csvDownloadBlob } from '#lib/utils/csv.js';
 import * as precedence from '#lib/forms/view-precedence.js';
@@ -25,14 +26,9 @@ export class ViewTimelineController extends FormsController {
 		value: string,
 		action: 'event-id' | 'aggregate' | 'details'
 	) => {
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(value);
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep timeline operations non-blocking.
+		if (!(await copyText(value))) {
+			toast.error(translate('forms.copyFailed'));
+			return;
 		}
 
 		this.s.copiedTimelineEventAction = `${event.id}:${action}`;
@@ -99,14 +95,9 @@ export class ViewTimelineController extends FormsController {
 	copyTimelineEventIds = async (events: BusinessEvent[]) => {
 		if (events.length === 0) return;
 
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(events.map((event) => event.id).join('\n'));
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep event-set operations non-blocking.
+		if (!(await copyText(events.map((event) => event.id).join('\n')))) {
+			toast.error(translate('forms.copyFailed'));
+			return;
 		}
 
 		this.s.copiedTimelineEventIdsCount = events.length;
@@ -118,14 +109,9 @@ export class ViewTimelineController extends FormsController {
 
 		if (aggregateKeys.length === 0) return;
 
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(aggregateKeys.join('\n'));
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep event-set operations non-blocking.
+		if (!(await copyText(aggregateKeys.join('\n')))) {
+			toast.error(translate('forms.copyFailed'));
+			return;
 		}
 
 		this.s.copiedTimelineAggregateIdsCount = aggregateKeys.length;

@@ -1,4 +1,5 @@
 <script lang="ts" module>
+	import { copyText as copyToClipboard } from '#lib/clipboard.js';
 	export type PanelStatus = 'loading' | 'ready' | 'error' | 'forbidden' | 'missing';
 	export type PanelMode = 'docked' | 'overlay' | 'sheet';
 	export const PANEL_DEFAULT_WIDTH = 480;
@@ -400,16 +401,15 @@
 
 	async function copyValue(key: string, text: string | null) {
 		if (!text) return;
-		try {
-			await navigator.clipboard.writeText(text);
-			copiedKey = key;
-			onannounce($t('forms.recordPanel.copied'));
-			window.setTimeout(() => {
-				if (copiedKey === key) copiedKey = null;
-			}, 1500);
-		} catch {
+		if (!(await copyToClipboard(text))) {
 			toast.error($t('forms.recordPanel.copyFailed'));
+			return;
 		}
+		copiedKey = key;
+		onannounce($t('forms.recordPanel.copied'));
+		window.setTimeout(() => {
+			if (copiedKey === key) copiedKey = null;
+		}, 1500);
 	}
 
 	function fieldLabel(field: FormField): string {

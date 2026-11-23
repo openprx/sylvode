@@ -1,3 +1,4 @@
+import { copyText } from '#lib/clipboard.js';
 import type { FormRecord } from '#lib/api/forms.js';
 import { toast } from '#lib/stores/toast.js';
 import type {
@@ -175,14 +176,9 @@ export class FilterExpressionExportController extends FormsController {
 
 		if (!recordIds) return;
 
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(recordIds);
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep filter preview operations non-blocking.
+		if (!(await copyText(recordIds))) {
+			toast.error(translate('forms.copyFailed'));
+			return;
 		}
 
 		this.s.copiedFilterExpressionRecordIds = recordIds;
@@ -192,14 +188,9 @@ export class FilterExpressionExportController extends FormsController {
 	copyViewDraftFilterExpressionJson = async (expressionJson: string) => {
 		if (!expressionJson) return;
 
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(expressionJson);
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep filter preview operations non-blocking.
+		if (!(await copyText(expressionJson))) {
+			toast.error(translate('forms.copyFailed'));
+			return;
 		}
 
 		this.s.copiedFilterExpressionJson = expressionJson;
@@ -209,14 +200,9 @@ export class FilterExpressionExportController extends FormsController {
 	copyViewDraftFilterExpressionSummary = async (expressionSummary: string) => {
 		if (!expressionSummary) return;
 
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(expressionSummary);
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep filter preview operations non-blocking.
+		if (!(await copyText(expressionSummary))) {
+			toast.error(translate('forms.copyFailed'));
+			return;
 		}
 
 		this.s.copiedFilterExpressionSummary = expressionSummary;
@@ -227,14 +213,9 @@ export class FilterExpressionExportController extends FormsController {
 		if (!records || records.length === 0) return;
 
 		const json = this.viewDraftFilterExpressionJson(records);
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(json);
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep filter preview operations non-blocking.
+		if (!(await copyText(json))) {
+			toast.error(translate('forms.copyFailed'));
+			return;
 		}
 
 		this.s.copiedFilterExpressionJsonRecordIds = viewDraftFilterExpressionRecordIdsText(records);
@@ -245,14 +226,9 @@ export class FilterExpressionExportController extends FormsController {
 		if (!records || records.length === 0) return;
 
 		const csv = this.viewDraftFilterExpressionCsv(records);
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(csv);
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep filter preview operations non-blocking.
+		if (!(await copyText(csv))) {
+			toast.error(translate('forms.copyFailed'));
+			return;
 		}
 
 		this.s.copiedFilterExpressionCsvRecordIds = viewDraftFilterExpressionRecordIdsText(records);

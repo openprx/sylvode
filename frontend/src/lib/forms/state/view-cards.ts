@@ -1,3 +1,4 @@
+import { copyText } from '#lib/clipboard.js';
 import type { FormField, FormRecord, FormView } from '#lib/api/forms.js';
 import * as precedence from '#lib/forms/view-precedence.js';
 import { toast } from '#lib/stores/toast.js';
@@ -16,14 +17,9 @@ import { safeExportSlug } from '#lib/forms/zip.js';
 
 export class ViewCardsController extends FormsController {
 	copyRecordId = async (record: FormRecord) => {
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(record.id);
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep the record action non-blocking.
+		if (!(await copyText(record.id))) {
+			toast.error(translate('forms.copyFailed'));
+			return;
 		}
 
 		this.s.copiedCardRecordId = record.id;
@@ -157,14 +153,9 @@ export class ViewCardsController extends FormsController {
 	copyCardGroupRecordIds = async (group: { key: string; label: string; records: FormRecord[] }) => {
 		if (group.records.length === 0) return;
 
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(group.records.map((record) => record.id).join('\n'));
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep group operations non-blocking.
+		if (!(await copyText(group.records.map((record) => record.id).join('\n')))) {
+			toast.error(translate('forms.copyFailed'));
+			return;
 		}
 
 		this.s.copiedCardGroupRecordIdsKey = this.cardGroupFilterKey(group);

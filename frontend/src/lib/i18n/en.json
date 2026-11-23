@@ -1716,6 +1716,7 @@
 		"cardActions": "Card actions",
 		"copyRecordId": "Copy record ID",
 		"recordIdCopied": "Record ID copied",
+		"copyFailed": "Copying is not available here. Open the app over HTTPS, or select the text and copy it manually.",
 		"exportRecord": "Export record",
 		"recordExported": "Record exported",
 		"copyPivotDrilldownRecordIds": "Copy record IDs",
@@ -2856,6 +2857,7 @@
 			"created": "Created",
 			"updated": "Updated",
 			"copyReference": "Copy reference",
+			"copyFailed": "The reference could not be copied. Select it and copy it manually.",
 			"copied": "Copied",
 			"tabs": {
 				"label": "Page panel sections",
@@ -3251,6 +3253,7 @@
 			"confirm": {
 				"copy": "Copy hash",
 				"copied": "Hash copied",
+				"copyFailed": "The hash could not be copied. Select it and copy it manually.",
 				"summary": "{objects} objects will be created in this workspace (conflict policy: {policy}).",
 				"acknowledge": "I have checked that this package hash matches the package I intend to import",
 				"expired": "The preview has expired. Go back and run the preview again.",
@@ -3847,6 +3850,7 @@
 				"tokenOnce": "Copy this link now. It will not be shown again.",
 				"copy": "Copy link",
 				"copied": "Copied",
+				"copyFailed": "The link could not be copied. Select it and copy it manually.",
 				"loading": "Loading links…"
 			},
 			"yourAccess": "Your access",

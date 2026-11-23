@@ -1,3 +1,4 @@
+import { copyText } from '#lib/clipboard.js';
 import type { FormField, FormRecord, FormView } from '#lib/api/forms.js';
 import { toast } from '#lib/stores/toast.js';
 import type {
@@ -47,14 +48,9 @@ export class ViewCalendarController extends FormsController {
 			2
 		);
 
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(value);
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep calendar operations non-blocking.
+		if (!(await copyText(value))) {
+			toast.error(translate('forms.copyFailed'));
+			return;
 		}
 
 		this.s.copiedCalendarScheduleKey = calendarScheduleKey(occurrence);

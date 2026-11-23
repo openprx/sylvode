@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { copyText } from '#lib/clipboard.js';
 	import { randomUuid } from '#lib/utils/uuid.js';
 	// The object page's right panel: Info (metadata, copy reference, convert, export), Share,
 	// Relations and History, as keyboard-operable tabs (`role="tablist"`, arrow keys, Home/End).
@@ -339,12 +340,8 @@
 	// ---- info -------------------------------------------------------------------------------
 
 	async function copyReference() {
-		try {
-			await navigator.clipboard.writeText(object.id);
-			toast.success($t('flow.panel.copied'));
-		} catch {
-			toast.error($t('flow.panel.copyReference'));
-		}
+		if (await copyText(object.id)) toast.success($t('flow.panel.copied'));
+		else toast.error($t('flow.panel.copyFailed'));
 	}
 
 	function formatTime(value: string): string {

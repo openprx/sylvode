@@ -1,3 +1,4 @@
+import { copyText } from '#lib/clipboard.js';
 import type { FormField, FormRecord } from '#lib/api/forms.js';
 import { csvDownloadBlob } from '#lib/utils/csv.js';
 import * as precedence from '#lib/forms/view-precedence.js';
@@ -358,14 +359,9 @@ export class ViewPivotController extends FormsController {
 		value: number
 	) => {
 		const text = formatPivotDisplayValue(value, row.total, column.total, this.s.pivotTable);
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(text);
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep pivot operations non-blocking.
+		if (!(await copyText(text))) {
+			toast.error(translate('forms.copyFailed'));
+			return;
 		}
 
 		this.s.copiedPivotCellKey = `${row.label}:${column.label}`;
@@ -376,14 +372,9 @@ export class ViewPivotController extends FormsController {
 		if (!this.s.pivotDrilldown || this.s.pivotDrilldownRecords.length === 0) return;
 
 		const recordIds = this.s.pivotDrilldownRecords.map((record) => record.id);
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(recordIds.join('\n'));
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep pivot operations non-blocking.
+		if (!(await copyText(recordIds.join('\n')))) {
+			toast.error(translate('forms.copyFailed'));
+			return;
 		}
 
 		this.s.copiedPivotDrilldownKey = this.pivotDrilldownKey();
@@ -414,14 +405,9 @@ export class ViewPivotController extends FormsController {
 
 		if (!text) return;
 
-		const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : null;
-
-		try {
-			if (clipboard?.writeText) {
-				await clipboard.writeText(text);
-			}
-		} catch {
-			// Clipboard permissions are browser-dependent; keep pivot operations non-blocking.
+		if (!(await copyText(text))) {
+			toast.error(translate('forms.copyFailed'));
+			return;
 		}
 
 		this.s.copiedPivotTableMatrix = true;

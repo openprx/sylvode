@@ -1716,6 +1716,7 @@
 		"cardActions": "卡片操作",
 		"copyRecordId": "复制记录 ID",
 		"recordIdCopied": "记录 ID 已复制",
+		"copyFailed": "此处无法复制。请通过 HTTPS 打开应用，或选中文本后手动复制。",
 		"exportRecord": "导出记录",
 		"recordExported": "记录已导出",
 		"copyPivotDrilldownRecordIds": "复制记录 ID",
@@ -2856,6 +2857,7 @@
 			"created": "创建于",
 			"updated": "更新于",
 			"copyReference": "复制引用",
+			"copyFailed": "无法复制引用，请选中后手动复制。",
 			"copied": "已复制",
 			"tabs": {
 				"label": "页面面板分区",
@@ -3251,6 +3253,7 @@
 			"confirm": {
 				"copy": "复制哈希",
 				"copied": "哈希已复制",
+				"copyFailed": "无法复制哈希，请选中后手动复制。",
 				"summary": "将在本工作区创建 {objects} 个对象（冲突策略：{policy}）。",
 				"acknowledge": "我已核对该包哈希与我要导入的包一致",
 				"expired": "预览已过期，请返回并重新预览。",
@@ -3847,6 +3850,7 @@
 				"tokenOnce": "请现在复制这个链接。它不会再次显示。",
 				"copy": "复制链接",
 				"copied": "已复制",
+				"copyFailed": "无法复制链接，请选中后手动复制。",
 				"loading": "正在加载链接…"
 			},
 			"yourAccess": "你的权限",

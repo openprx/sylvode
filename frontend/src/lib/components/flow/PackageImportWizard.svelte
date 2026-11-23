@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { copyText } from '#lib/clipboard.js';
+	import { toast } from '#lib/stores/toast.js';
 	// Package import wizard. Step gating, idempotency keys, error blocking, expiry and the exact
 	// hash sent on commit live in `PackageImportWizard`; this component renders its snapshot and
 	// holds only focus/announcement state. Package bytes go straight from the file input to the
@@ -190,13 +192,9 @@
 	}
 
 	async function copyHash(hash: string) {
-		try {
-			await navigator.clipboard.writeText(hash);
-			copied = true;
-			announce('flow.import.confirm.copied');
-		} catch {
-			copied = false;
-		}
+		copied = await copyText(hash);
+		if (copied) announce('flow.import.confirm.copied');
+		else toast.error($t('flow.import.confirm.copyFailed'));
 	}
 
 	async function commit() {
