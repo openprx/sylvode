@@ -32,10 +32,10 @@ Each destination remembers the last page you opened in it, per scope, and takes 
 ### Scope: personal or a workspace
 
 The secondary column next to the rail has a scope switcher at the top. The scope is either
-**Personal** or one workspace. The scope decides what **Projects**, **Flow** and **Agents** show:
+**Personal** or one workspace. The scope decides what **Projects** and **Flow** show:
 
 - In the **Personal** scope, **Flow** opens your personal Flow, where you keep your own drafts.
-  Projects and agents always belong to a workspace, so **Projects** lists your workspaces instead.
+  Projects always belong to a workspace, so **Projects** lists your workspaces instead.
 - In a workspace scope, every destination shows that workspace.
 
 If Flow is turned off for a workspace, the **Flow** destination shows "Flow is off in this

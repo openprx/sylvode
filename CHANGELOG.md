@@ -163,6 +163,14 @@ name.
   `VITE_API_BASE_URL` of `.env.example` is removed, and the voting rule descriptions of the proposal
   form say what the server applies (the Absolute Majority and Consensus texts did not).
 
+- **Chinese labels, hard-coded texts and the Agents destination.** The Agents entry of the left rail,
+  its `/agents` page, its column, the `G` then `A` shortcut and its translation keys are removed
+  (`/agents` is the application's not-found page); manage bots under **Members and bots** and connect
+  them in a project's **Execution** settings. In the Chinese interface the roles, proposal statuses and
+  progress steps, trust levels, the Search headings, several form labels and the impact review texts
+  that were still English are translated, and the view type names of the view setup, the Flow editor's
+  link controls and a few other labels now come from the locale files in both languages.
+
 ### Removed
 
 - **Universal forms delivery and sign-off tooling.** The scripts and schemas that produced and
