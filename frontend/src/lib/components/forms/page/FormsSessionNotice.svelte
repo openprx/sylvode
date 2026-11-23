@@ -59,9 +59,9 @@
 							></thead
 						><tbody>
 							<tr
-								><th>{$t('forms.session.title')}</th><td class="whitespace-pre-wrap">{s.recordTitle}</td><td
-									class="whitespace-pre-wrap">{s.formsSessionRemoteRecord.title}</td
-								></tr
+								><th>{$t('forms.session.title')}</th><td class="whitespace-pre-wrap"
+									>{s.recordTitle}</td
+								><td class="whitespace-pre-wrap">{s.formsSessionRemoteRecord.title}</td></tr
 							>
 							{#each Object.entries(s.recordDraft) as [key, value] (key)}<tr
 									><th>{key}</th><td class="whitespace-pre-wrap">{formsReviewText(value)}</td><td
