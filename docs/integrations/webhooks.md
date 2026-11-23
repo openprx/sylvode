@@ -155,7 +155,8 @@ before.
 A webhook URL must be an absolute `http` or `https` URL with a host and without user name or
 password. Unless the host is allowed explicitly, it must not point at a loopback, private,
 link-local, shared (`100.64.0.0/10`), documentation, multicast, broadcast or otherwise reserved
-address; a host name is resolved and every address it resolves to is checked.
+address; a host name is resolved and every address it resolves to is checked. A delivery connects
+to exactly the addresses that were checked; the name is not resolved a second time.
 
 The policy is set in the `[outbound]` section of the [configuration](../configuration.md):
 

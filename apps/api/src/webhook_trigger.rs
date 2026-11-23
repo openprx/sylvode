@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use sha2::Sha256;
 use uuid::Uuid;
 
-use crate::outbound::{truncate_string, validate_outbound_url};
+use crate::outbound::{delivery_client, resolve_outbound_target, truncate_string};
 use crate::services::bot_identity::is_bot_entity_type;
 
 /// Hard cap on the response body pulled from a webhook receiver.
@@ -899,8 +899,8 @@ async fn deliver_webhook(
     // The stored URL is re-validated on every delivery, not only when the webhook was saved: the
     // row may predate the checks, may have been edited by another path, and DNS for a host that
     // passed yesterday can point at an internal address today.
-    let target = match validate_outbound_url(&webhook.url).await {
-        Ok(url) => url,
+    let target = match resolve_outbound_target(&webhook.url).await {
+        Ok(target) => target,
         Err(err) => {
             tracing::warn!(webhook_id = %webhook.id, error = %err, "webhook target refused, delivery not attempted");
             let record = DeliveryRecord {
@@ -925,11 +925,18 @@ async fn deliver_webhook(
         }
     };
 
-    let client =
-        build_delivery_client().map_err(|e| sea_orm::DbErr::Custom(format!("build reqwest client failed: {e}")))?;
+    // The checked addresses are the ones connected to: the name is not resolved a second time.
+    // Redirects are disabled so a target that passed the check cannot bounce the signed request
+    // into the internal network afterwards.
+    let client = delivery_client(
+        target.pin.as_ref(),
+        std::time::Duration::from_secs(10),
+        std::time::Duration::from_secs(5),
+    )
+    .map_err(|e| sea_orm::DbErr::Custom(format!("build reqwest client failed: {e}")))?;
 
     let started = Instant::now();
-    let sent = client.post(target).headers(headers).body(body).send().await;
+    let sent = client.post(target.url).headers(headers).body(body).send().await;
 
     let (response_status, response_body, error, success) = match sent {
         Ok(resp) => {
@@ -980,19 +987,6 @@ async fn deliver_webhook(
     }
 
     Ok(())
-}
-
-/// Client used for legacy webhook deliveries.
-///
-/// Redirects are disabled so a target that passed [`validate_outbound_url`] cannot bounce the
-/// signed request into the internal network afterwards: the checks run against the host that was
-/// validated, and a 302 would move the request to a host that never was.
-fn build_delivery_client() -> Result<reqwest::Client, reqwest::Error> {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .connect_timeout(std::time::Duration::from_secs(5))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
 }
 
 /// Reads at most `limit` bytes of the response.
@@ -1163,11 +1157,20 @@ const fn default_trigger_reason(event: WebhookEvent) -> &'static str {
 #[cfg(test)]
 mod delivery_tests {
     use super::{
-        WEBHOOK_DIAGNOSTIC_CHARS, WEBHOOK_RESPONSE_BYTE_LIMIT, build_delivery_client, delivery_request_headers,
-        read_capped_body, validate_outbound_url,
+        WEBHOOK_DIAGNOSTIC_CHARS, WEBHOOK_RESPONSE_BYTE_LIMIT, delivery_client, delivery_request_headers,
+        read_capped_body,
     };
+    use crate::outbound::validate_outbound_url;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+
+    fn build_delivery_client() -> Result<reqwest::Client, reqwest::Error> {
+        delivery_client(
+            None,
+            std::time::Duration::from_secs(10),
+            std::time::Duration::from_secs(5),
+        )
+    }
 
     /// Serves one request with a fixed raw HTTP response and returns the URL to hit.
     async fn serve_once(response: Vec<u8>) -> String {

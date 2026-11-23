@@ -35,7 +35,7 @@ use uuid::Uuid;
 
 use crate::error::ApiError;
 use crate::flow::collab::limits::SUBSCRIBERS_PER_WORKSPACE_MAX;
-use crate::outbound::validate_outbound_url;
+use crate::outbound::{OutboundTarget, delivery_client, resolve_outbound_target};
 use crate::webhook_trigger::{WEBHOOK_SIGNATURE_HEADER, WEBHOOK_USER_AGENT, sign_payload};
 
 // ---------------------------------------------------------------------------------------------
@@ -1082,15 +1082,17 @@ tokio::task_local! {
     static TEST_REPLAY_CANDIDATE_BARRIER: std::sync::Arc<tokio::sync::Barrier>;
 }
 
-async fn validate_delivery_target(raw: &str) -> Result<reqwest::Url, String> {
+async fn validate_delivery_target(raw: &str) -> Result<OutboundTarget, String> {
     #[cfg(test)]
     if TEST_ALLOW_PRIVATE_DELIVERY_TARGET
         .try_with(|allow| *allow)
         .unwrap_or(false)
     {
-        return reqwest::Url::parse(raw).map_err(|error| error.to_string());
+        return reqwest::Url::parse(raw)
+            .map(|url| OutboundTarget { url, pin: None })
+            .map_err(|error| error.to_string());
     }
-    validate_outbound_url(raw).await
+    resolve_outbound_target(raw).await
 }
 
 async fn attempt_delivery(
@@ -1173,8 +1175,28 @@ async fn attempt_delivery(
         }
     };
 
+    // A name that was resolved and checked is connected to at exactly those addresses, so the
+    // shared client is used only when there is nothing to pin.
+    let pinned_client;
+    let client = if target.pin.is_some() {
+        let timeout = std::time::Duration::from_millis(u64::try_from(WEBHOOK_REQUEST_TIMEOUT_MS).unwrap_or(10_000));
+        match delivery_client(target.pin.as_ref(), timeout, std::time::Duration::from_secs(5)) {
+            Ok(built) => {
+                pinned_client = built;
+                &pinned_client
+            }
+            Err(err) => {
+                tracing::warn!(delivery_id = %delivery.id, error = %err, "dispatcher: delivery client build failed");
+                retry_or_fail_delivery(&state.db, delivery, lease_token, "request_failed").await;
+                return false;
+            }
+        }
+    } else {
+        client
+    };
+
     let response = client
-        .post(target)
+        .post(target.url)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
         .header(reqwest::header::USER_AGENT, WEBHOOK_USER_AGENT)
         .header(WEBHOOK_SIGNATURE_HEADER, format!("sha256={signature}"))
@@ -2820,7 +2842,7 @@ mod dispatcher_database_tests {
     async fn send_one_leases_a_delivery_and_retries_it_when_the_endpoint_is_rejected() {
         let scratch = scratch_or_skip!("send-retry");
         let workspace_id = seed_workspace(&scratch.db).await;
-        // Loopback is refused by `validate_outbound_url`'s SSRF guard under the fallback (no
+        // Loopback is refused by `resolve_outbound_target`'s SSRF guard under the fallback (no
         // `[outbound] allow_private`) runtime configuration every unit test in this binary shares,
         // exactly like `webhook_trigger.rs`'s own `internal_targets_are_refused_before_the_request_is_built`
         // test asserts. This proves the full lease -> build body -> validate -> retry path, short of

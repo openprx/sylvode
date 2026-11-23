@@ -24,7 +24,7 @@ than one worker may run against the same database.
 | Endpoint | Process | Answer |
 |---|---|---|
 | `GET /health` | `api` | `{"code":0,"message":"success","data":{"status":"ok","service":"<app_name>"}}` while the process serves requests. It does not touch the database. |
-| `GET /ready` | `api` | `data.status` is `ready` when the database answers a ping. Otherwise the body carries `"code":500` and the message `database not ready`; the HTTP status is 200 in both cases, so check the body. |
+| `GET /ready` | `api` | `data.status` is `ready` when the database answers a ping. Otherwise the answer is HTTP 503 with `"code":503` and the message `database not ready`. |
 | `GET /health` | `mcp-server` (`http`, `sse`) | Answers without authentication. |
 | `GET /health` | web UI nginx | Returns `healthy` from nginx itself, without contacting the API. |
 | `GET /health` | `sylvode-runner` | See the runner README. |

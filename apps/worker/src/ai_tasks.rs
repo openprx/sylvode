@@ -20,7 +20,7 @@
 //! and `acknowledged`) and the attempt number (`api::services::ai_task_service`), so an end
 //! that commits first wins and several workers never end the same attempt twice.
 
-use api::outbound::resolve_outbound_target;
+use api::outbound::{delivery_client, resolve_outbound_target};
 use api::services::ai_task_reply::announce_start_refusal;
 use api::services::ai_task_service::{
     AttemptEnd, TASK_PROTOCOL, WorkerEndReason, end_processing_attempt, end_stalled_attempts,
@@ -196,19 +196,6 @@ async fn read_capped(mut response: reqwest::Response) -> String {
         }
     }
     String::from_utf8_lossy(&buffer).into_owned()
-}
-
-/// The client for one delivery: no redirects, the delivery timeouts, and, for a host name that was
-/// resolved and checked, connecting only to the addresses the check saw.
-fn pinned_client(pin: Option<&(String, Vec<std::net::SocketAddr>)>) -> anyhow::Result<reqwest::Client> {
-    let mut builder = reqwest::Client::builder()
-        .timeout(DELIVERY_TIMEOUT)
-        .connect_timeout(DELIVERY_CONNECT_TIMEOUT)
-        .redirect(reqwest::redirect::Policy::none());
-    if let Some((host, addresses)) = pin {
-        builder = builder.resolve_to_addrs(host, addresses);
-    }
-    Ok(builder.build()?)
 }
 
 /// Picks up due tasks and delivers each to its bot's webhook.
@@ -559,7 +546,7 @@ async fn dispatch_task(db: &sea_orm::DatabaseConnection, task: &AiTaskDispatchRo
         .await
         .map_err(|err| anyhow::anyhow!("webhook {} url rejected: {err}", webhook.webhook_id))?;
     // The checked addresses are the ones connected to: the name is not resolved a second time.
-    let client = pinned_client(target.pin.as_ref())?;
+    let client = delivery_client(target.pin.as_ref(), DELIVERY_TIMEOUT, DELIVERY_CONNECT_TIMEOUT)?;
 
     // Signed over the exact bytes that are sent, the same way the API's own webhook deliveries
     // are, so a runner can refuse unsigned traffic instead of having to trust this path.
@@ -687,8 +674,8 @@ async fn insert_task_event(
 #[allow(clippy::expect_used)]
 mod tests {
     use super::{
-        AiTaskDispatchRow, DeliveryVerdict, MAX_ANSWER_BYTES, MAX_REASON_CHARS, classify_delivery_answer,
-        delivery_body, dispatch_request, pinned_client, read_capped,
+        AiTaskDispatchRow, DELIVERY_CONNECT_TIMEOUT, DELIVERY_TIMEOUT, DeliveryVerdict, MAX_ANSWER_BYTES,
+        MAX_REASON_CHARS, classify_delivery_answer, delivery_body, delivery_client, dispatch_request, read_capped,
     };
     use serde_json::json;
     use uuid::Uuid;
@@ -911,7 +898,8 @@ mod tests {
     #[tokio::test]
     async fn a_pinned_client_connects_to_the_validated_address() {
         let (addr, server) = serve_once("pinned".to_string()).await;
-        let client = pinned_client(Some(&("pin.sylvode-test.invalid".to_string(), vec![addr]))).expect("client");
+        let pin = ("pin.sylvode-test.invalid".to_string(), vec![addr]);
+        let client = delivery_client(Some(&pin), DELIVERY_TIMEOUT, DELIVERY_CONNECT_TIMEOUT).expect("client");
         let response = client
             .get(format!("http://pin.sylvode-test.invalid:{}/", addr.port()))
             .send()
@@ -920,7 +908,7 @@ mod tests {
         assert_eq!(response.text().await.expect("text"), "pinned");
         server.abort();
         // Without the pin the same name does not resolve.
-        let unpinned = pinned_client(None).expect("client");
+        let unpinned = delivery_client(None, DELIVERY_TIMEOUT, DELIVERY_CONNECT_TIMEOUT).expect("client");
         assert!(
             unpinned
                 .get(format!("http://pin.sylvode-test.invalid:{}/", addr.port()))
@@ -945,7 +933,7 @@ mod tests {
                     .await;
             }
         });
-        let response = pinned_client(None)
+        let response = delivery_client(None, DELIVERY_TIMEOUT, DELIVERY_CONNECT_TIMEOUT)
             .expect("client")
             .get(format!("http://{addr}/"))
             .send()

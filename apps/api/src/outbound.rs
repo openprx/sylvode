@@ -199,6 +199,23 @@ pub async fn resolve_outbound_target_with(
     })
 }
 
+/// The client for one delivery: no redirects, the given timeouts, and, for a host name that was
+/// resolved and checked, connecting only to the addresses the check saw (see [`OutboundTarget`]).
+pub fn delivery_client(
+    pin: Option<&(String, Vec<std::net::SocketAddr>)>,
+    timeout: std::time::Duration,
+    connect_timeout: std::time::Duration,
+) -> Result<reqwest::Client, reqwest::Error> {
+    let mut builder = reqwest::Client::builder()
+        .timeout(timeout)
+        .connect_timeout(connect_timeout)
+        .redirect(reqwest::redirect::Policy::none());
+    if let Some((host, addresses)) = pin {
+        builder = builder.resolve_to_addrs(host, addresses);
+    }
+    builder.build()
+}
+
 /// The resolved `addresses` of `host` when none is blocked.
 fn checked_addresses(host: &str, addresses: Vec<std::net::SocketAddr>) -> Result<Vec<std::net::SocketAddr>, String> {
     if addresses.is_empty() {
@@ -212,7 +229,34 @@ fn checked_addresses(host: &str, addresses: Vec<std::net::SocketAddr>) -> Result
 
 #[cfg(test)]
 mod tests {
-    use super::{checked_addresses, host_is_allowlisted, is_blocked_ip, truncate_string};
+    use super::{checked_addresses, delivery_client, host_is_allowlisted, is_blocked_ip, truncate_string};
+    use std::time::Duration;
+
+    /// A pinned client connects to the checked address and never asks DNS: `.invalid` never
+    /// resolves, so a successful request proves the pin was used.
+    #[tokio::test]
+    async fn a_pinned_client_connects_to_the_checked_address() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut buffer = [0_u8; 1024];
+                let _ = socket.read(&mut buffer).await;
+                let _ = socket
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\npinned")
+                    .await;
+            }
+        });
+        let url = format!("http://pinned.invalid:{}/", addr.port());
+        let pin = ("pinned.invalid".to_string(), vec![addr]);
+        let client = delivery_client(Some(&pin), Duration::from_secs(5), Duration::from_secs(2)).expect("client");
+        let response = client.get(&url).send().await.expect("the pinned address answers");
+        assert_eq!(response.text().await.expect("text"), "pinned");
+        server.abort();
+        let unpinned = delivery_client(None, Duration::from_secs(5), Duration::from_secs(2)).expect("client");
+        assert!(unpinned.get(&url).send().await.is_err());
+    }
 
     #[test]
     fn checked_addresses_refuse_a_name_with_any_blocked_address() {

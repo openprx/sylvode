@@ -3360,7 +3360,11 @@ async fn ready(State(state): State<AppState>) -> impl IntoResponse {
         Ok(()) => ApiResponse::success(serde_json::json!({"status":"ready"})).into_response(),
         Err(err) => {
             tracing::warn!(error = %err, "database not ready");
-            ApiResponse::error(500, "database not ready").into_response()
+            (
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                ApiResponse::error(503, "database not ready"),
+            )
+                .into_response()
         }
     }
 }
@@ -7320,6 +7324,20 @@ mod flow_surface_boundary_tests {
             db,
             flow_permission_cache: platform::app::FlowPermissionCacheSlot::default(),
         }
+    }
+
+    /// A database that does not answer is HTTP 503 with code 503, so a probe that only looks at the
+    /// status line sees the failure.
+    #[tokio::test]
+    async fn ready_answers_503_when_the_database_is_unreachable() {
+        let state = state_for(DatabaseConnection::Disconnected);
+        let response = axum::response::IntoResponse::into_response(super::ready(axum::extract::State(state)).await);
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let body: Value = serde_json::from_slice(&bytes).expect("json body");
+        assert_eq!(body["code"], 503, "{body}");
     }
 
     #[test]
