@@ -29,7 +29,9 @@ const MERGED_ROOTS = [
 function globRoots(language: 'en' | 'zh'): string[] {
 	const source = readFileSync(join(LIB, 'i18n/index.ts'), 'utf8');
 	const match = source.match(
-		new RegExp(`import\\.meta\\.glob<Messages>\\('\\.\\./\\{([^}]*)\\}/\\*\\*/locale\\.${language}\\.json'`)
+		new RegExp(
+			`import\\.meta\\.glob<Messages>\\(\\s*'\\.\\./\\{([^}]*)\\}/\\*\\*/locale\\.${language}\\.json'`
+		)
 	);
 	assert.ok(match, `no ${language} locale glob in src/lib/i18n/index.ts`);
 	return match[1].split(',');
@@ -54,7 +56,9 @@ function leafKeys(node: unknown, prefix = ''): string[] {
 // A plural message has one leaf per plural category and the languages differ in their categories
 // (`zh` has no `one`), so the twin check compares the messages, not the categories.
 function messageKeys(node: unknown): string[] {
-	return [...new Set(leafKeys(node).map((key) => key.replace(/\.(zero|one|two|few|many|other)$/, '')))].sort();
+	return [
+		...new Set(leafKeys(node).map((key) => key.replace(/\.(zero|one|two|few|many|other)$/, '')))
+	].sort();
 }
 
 function read(path: string): Messages {
@@ -71,7 +75,10 @@ test('every locale module lives in a merged folder and has its twin with the sam
 	assert.ok(modules.length > 0, 'no locale modules found');
 	for (const path of modules) {
 		const folder = relative(LIB, path).split(sep)[0];
-		assert.ok(MERGED_ROOTS.includes(folder), `${relative(ROOT, path)} is outside the merged folders`);
+		assert.ok(
+			MERGED_ROOTS.includes(folder),
+			`${relative(ROOT, path)} is outside the merged folders`
+		);
 		const twin = path.endsWith('locale.en.json')
 			? path.replace(/locale\.en\.json$/, 'locale.zh.json')
 			: path.replace(/locale\.zh\.json$/, 'locale.en.json');
