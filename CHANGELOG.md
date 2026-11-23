@@ -2043,7 +2043,7 @@ replacement and the earliest removal.
 
 Version 0.2.1 was not tagged; its changes first shipped in 0.2.2. 0.2.1 is a breaking release:
 an existing deployment will not start without configuration changes, and several operations that
-previously succeeded now return `403`. Follow [docs/upgrade-0.2.1.md](docs/upgrade-0.2.1.md)
+previously succeeded now return `403`. Follow `docs/upgrade-0.2.1.md` (shipped with that release)
 before upgrading from 0.1.x.
 
 ### Breaking changes
