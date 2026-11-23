@@ -9,13 +9,15 @@ use axum::{
     response::IntoResponse,
 };
 use platform::{app::AppState, auth::JwtClaims};
-use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
+use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
     error::ApiError,
+    request::nullable,
     response::{ApiResponse, PaginatedData},
+    services::issue_view::identifier,
     webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks},
 };
 
@@ -29,7 +31,11 @@ pub struct LabelResponse {
     pub created_at: String,
 }
 
+/// The default colour of a label that is created without one.
+const DEFAULT_LABEL_COLOR: &str = "#6b7280";
+
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CreateLabelRequest {
     pub name: String,
     pub color: Option<String>,
@@ -37,10 +43,52 @@ pub struct CreateLabelRequest {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(
+    clippy::option_option,
+    reason = "absent, null and a value are three different requests"
+)]
 pub struct UpdateLabelRequest {
-    pub name: Option<String>,
-    pub color: Option<String>,
-    pub description: Option<String>,
+    #[serde(default, deserialize_with = "nullable")]
+    pub name: Option<Option<String>>,
+    #[serde(default, deserialize_with = "nullable")]
+    pub color: Option<Option<String>>,
+    #[serde(default, deserialize_with = "nullable")]
+    pub description: Option<Option<String>>,
+}
+
+/// The value of a field that cannot be cleared: `null` is a request error, not "no change".
+#[allow(
+    clippy::option_option,
+    reason = "absent, null and a value are three different requests"
+)]
+fn not_null<T>(value: Option<Option<T>>, field: &str) -> Result<Option<T>, ApiError> {
+    match value {
+        Some(None) => Err(ApiError::BadRequest(format!("{field} cannot be null"))),
+        Some(Some(value)) => Ok(Some(value)),
+        None => Ok(None),
+    }
+}
+
+/// A label colour: `#rrggbb`, kept lower-case.
+fn normalize_color(raw: &str) -> Result<String, ApiError> {
+    let color = raw.trim();
+    let valid = color.len() == 7
+        && color.starts_with('#')
+        && color.chars().skip(1).all(|character| character.is_ascii_hexdigit());
+    if !valid {
+        return Err(ApiError::BadRequest("color must be a hex colour #rrggbb".to_string()));
+    }
+    Ok(color.to_ascii_lowercase())
+}
+
+/// Two requests racing for one name meet the unique index; the answer is the same 409 as the check.
+fn name_conflict(err: sea_orm::DbErr) -> ApiError {
+    if err.to_string().contains("labels_workspace_lower_name_key") {
+        ApiError::Conflict("label with this name already exists in workspace".to_string())
+    } else {
+        ApiError::from(err)
+    }
 }
 
 /// Collect the auth context into an `Extensions` bag for `require_workspace_access`,
@@ -95,12 +143,17 @@ pub async fn create_label(
     // Check workspace membership (bot tokens are bound to their own workspace)
     require_workspace_access(&state, &extensions, workspace_id).await?;
 
-    // Check name uniqueness
+    let color = match req.color.as_deref() {
+        Some(raw) => normalize_color(raw)?,
+        None => DEFAULT_LABEL_COLOR.to_string(),
+    };
+
+    // Check name uniqueness, ignoring case
     let existing = state
         .db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT id FROM labels WHERE workspace_id = $1 AND name = $2",
+            "SELECT id FROM labels WHERE workspace_id = $1 AND lower(name) = lower($2)",
             vec![workspace_id.into(), req.name.clone().into()],
         ))
         .await?;
@@ -113,7 +166,6 @@ pub async fn create_label(
 
     let label_id = Uuid::new_v4();
     let now = platform::timestamp::Timestamp::now();
-    let color = req.color.unwrap_or_else(|| "#gray".to_string());
     let description = req.description.unwrap_or_default();
 
     state
@@ -130,7 +182,8 @@ pub async fn create_label(
                 now.into(),
             ],
         ))
-        .await?;
+        .await
+        .map_err(name_conflict)?;
 
     Ok(ApiResponse::success(LabelResponse {
         id: label_id,
@@ -201,6 +254,15 @@ pub async fn update_label(
 ) -> Result<impl IntoResponse, ApiError> {
     let extensions = build_auth_extensions(claims, bot);
 
+    let UpdateLabelRequest {
+        name: requested_name,
+        color: requested_color,
+        description: requested_description,
+    } = req;
+    let requested_name = not_null(requested_name, "name")?;
+    let requested_color = not_null(requested_color, "color")?;
+    let requested_description = not_null(requested_description, "description")?;
+
     // Get label's workspace and verify access
     #[derive(Debug, FromQueryResult)]
     struct LabelWorkspace {
@@ -219,8 +281,10 @@ pub async fn update_label(
     let (_, role, is_bot) = require_workspace_access(&state, &extensions, label.workspace_id).await?;
     ensure_label_mutation_allowed(&role, is_bot, "update")?;
 
-    // Check name uniqueness if name is being updated
-    if let Some(ref name) = req.name {
+    let requested_color = requested_color.as_deref().map(normalize_color).transpose()?;
+
+    // Check name uniqueness if name is being updated, ignoring case
+    if let Some(ref name) = requested_name {
         if name.trim().is_empty() {
             return Err(ApiError::BadRequest("name cannot be empty".to_string()));
         }
@@ -229,7 +293,7 @@ pub async fn update_label(
             .db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Postgres,
-                "SELECT id FROM labels WHERE workspace_id = $1 AND name = $2 AND id != $3",
+                "SELECT id FROM labels WHERE workspace_id = $1 AND lower(name) = lower($2) AND id != $3",
                 vec![label.workspace_id.into(), name.clone().into(), label_id.into()],
             ))
             .await?;
@@ -246,19 +310,19 @@ pub async fn update_label(
     let mut values: Vec<sea_orm::Value> = Vec::new();
     let mut param_idx = 1;
 
-    if let Some(name) = req.name {
+    if let Some(name) = requested_name {
         updates.push(format!("name = ${param_idx}"));
         values.push(name.into());
         param_idx += 1;
     }
 
-    if let Some(color) = req.color {
+    if let Some(color) = requested_color {
         updates.push(format!("color = ${param_idx}"));
         values.push(color.into());
         param_idx += 1;
     }
 
-    if let Some(description) = req.description {
+    if let Some(description) = requested_description {
         updates.push(format!("description = ${param_idx}"));
         values.push(description.into());
         param_idx += 1;
@@ -275,7 +339,8 @@ pub async fn update_label(
     state
         .db
         .execute(Statement::from_sql_and_values(DbBackend::Postgres, &query, values))
-        .await?;
+        .await
+        .map_err(name_conflict)?;
 
     // Fetch updated label
     #[derive(Debug, FromQueryResult)]
@@ -314,6 +379,7 @@ pub async fn delete_label(
     bot: Option<Extension<BotAuthContext>>,
     Path(label_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
+    let user_id = Uuid::parse_str(&claims.sub).map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))?;
     let extensions = build_auth_extensions(claims, bot);
 
     // Get label's workspace and check permission
@@ -334,14 +400,83 @@ pub async fn delete_label(
     let (_, role, is_bot) = require_workspace_access(&state, &extensions, label.workspace_id).await?;
     ensure_label_mutation_allowed(&role, is_bot, "delete")?;
 
-    state
-        .db
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "DELETE FROM labels WHERE id = $1",
-            vec![label_id.into()],
-        ))
-        .await?;
+    // The label and the items it was on are read in the transaction that deletes it, so the events
+    // describe what was removed (the label row is gone by the time they are delivered).
+    #[derive(Debug, FromQueryResult)]
+    struct LabelBrief {
+        name: String,
+        color: String,
+    }
+
+    #[derive(Debug, FromQueryResult)]
+    struct AttachedItem {
+        work_item_id: Uuid,
+        project_id: Uuid,
+        title: String,
+        sequence_number: i32,
+        project_key: String,
+    }
+
+    let tx = state.db.begin().await?;
+    let brief = LabelBrief::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT name, color FROM labels WHERE id = $1 FOR UPDATE",
+        vec![label_id.into()],
+    ))
+    .one(&tx)
+    .await?
+    .ok_or_else(|| ApiError::NotFound("label not found".to_string()))?;
+    let items = AttachedItem::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r"
+            SELECT wil.work_item_id, wi.project_id, wi.title, wi.sequence_number, p.key AS project_key
+            FROM work_item_labels wil
+            INNER JOIN work_items wi ON wi.id = wil.work_item_id
+            INNER JOIN projects p ON p.id = wi.project_id
+            WHERE wil.label_id = $1
+            ORDER BY p.key, wi.sequence_number
+        ",
+        vec![label_id.into()],
+    ))
+    .all(&tx)
+    .await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "DELETE FROM labels WHERE id = $1",
+        vec![label_id.into()],
+    ))
+    .await?;
+    tx.commit().await?;
+
+    for item in items {
+        trigger_webhooks(
+            state.clone(),
+            TriggerContext {
+                event: WebhookEvent::LabelRemoved,
+                workspace_id: label.workspace_id,
+                project_id: item.project_id,
+                actor_id: user_id,
+                issue_id: Some(item.work_item_id),
+                comment_id: None,
+                label_id: Some(label_id),
+                sprint_id: None,
+                changes: None,
+                mentions: Vec::new(),
+                extra_data: Some(serde_json::json!({
+                    "issue": {
+                        "id": item.work_item_id.to_string(),
+                        "key": identifier(&item.project_key, item.sequence_number),
+                        "title": item.title,
+                    },
+                    "label": {
+                        "id": label_id.to_string(),
+                        "name": brief.name,
+                        "color": brief.color,
+                    },
+                })),
+            },
+        );
+    }
 
     Ok(ApiResponse::ok())
 }
@@ -401,30 +536,21 @@ pub async fn add_label_to_issue(
         return Err(ApiError::NotFound("label not found in workspace".to_string()));
     }
 
-    // Check if already associated
-    let already_linked = state
+    // Attaching twice is not an error: the second request changes nothing and sends no event.
+    let now = platform::timestamp::Timestamp::now();
+
+    let inserted = state
         .db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT 1 FROM work_item_labels WHERE work_item_id = $1 AND label_id = $2",
-            vec![issue_id.into(), label_id.into()],
-        ))
-        .await?;
-
-    if already_linked.is_some() {
-        return Err(ApiError::Conflict("label already added to issue".to_string()));
-    }
-
-    let now = platform::timestamp::Timestamp::now();
-
-    state
-        .db
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "INSERT INTO work_item_labels (work_item_id, label_id, created_at) VALUES ($1, $2, $3)",
+            "INSERT INTO work_item_labels (work_item_id, label_id, created_at) VALUES ($1, $2, $3) \
+             ON CONFLICT (work_item_id, label_id) DO NOTHING RETURNING label_id",
             vec![issue_id.into(), label_id.into(), now.into()],
         ))
         .await?;
+    if inserted.is_none() {
+        return Ok(ApiResponse::ok());
+    }
 
     trigger_webhooks(
         state.clone(),
@@ -557,14 +683,18 @@ pub async fn remove_label_from_issue(
 
     require_workspace_access(&state, &extensions, issue_context.workspace_id).await?;
 
-    state
+    // Detaching a label that is not attached is not an error either, and sends no event.
+    let removed = state
         .db
-        .execute(Statement::from_sql_and_values(
+        .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "DELETE FROM work_item_labels WHERE work_item_id = $1 AND label_id = $2",
+            "DELETE FROM work_item_labels WHERE work_item_id = $1 AND label_id = $2 RETURNING label_id",
             vec![issue_id.into(), label_id.into()],
         ))
         .await?;
+    if removed.is_none() {
+        return Ok(ApiResponse::ok());
+    }
 
     trigger_webhooks(
         state.clone(),
@@ -810,7 +940,7 @@ mod tests {
 
         exec(
             &state,
-            "INSERT INTO labels (id, workspace_id, name, color, description) VALUES ($1, $2, 'bug', '#f00', '')",
+            "INSERT INTO labels (id, workspace_id, name, color, description) VALUES ($1, $2, 'bug', '#ff0000', '')",
             vec![label_id.into(), workspace_id.into()],
         )
         .await;
@@ -869,7 +999,7 @@ mod tests {
             bot,
             Path(fx.label_id),
             Json(UpdateLabelRequest {
-                name: Some(new_name.to_string()),
+                name: Some(Some(new_name.to_string())),
                 color: None,
                 description: None,
             }),

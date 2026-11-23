@@ -17,7 +17,7 @@ pub fn create_label_tool() -> ToolDefinition {
                 },
                 "color": {
                     "type": "string",
-                    "description": "Label color (optional, defaults to gray)"
+                    "description": "Label color as #rrggbb (optional, defaults to #6b7280); any other value is refused"
                 }
             },
             "required": ["name"]
@@ -128,7 +128,7 @@ pub fn update_label_tool() -> ToolDefinition {
                 },
                 "color": {
                     "type": "string",
-                    "description": "Label color (optional)"
+                    "description": "New label color as #rrggbb (optional)"
                 },
                 "description": {
                     "type": "string",

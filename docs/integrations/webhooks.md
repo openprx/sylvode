@@ -66,8 +66,8 @@ A webhook can subscribe to these events:
 | `comment.created` | A comment is added to a work item. | `comment`, `issue`, `mentions` (user ids) |
 | `comment.updated` | A comment is edited. | `comment`, `issue` |
 | `comment.deleted` | A comment is deleted. | `comment`, `issue` |
-| `label.added` | A label is added to a work item. | `issue` (`id`, `key`, `title`), `label` (`id`, `name`, `color`) |
-| `label.removed` | A label is removed from a work item. | `issue`, `label` |
+| `label.added` | A label is added to a work item that did not have it. | `issue` (`id`, `key`, `title`), `label` (`id`, `name`, `color`) |
+| `label.removed` | A label is removed from a work item that had it, and once for every work item that had it when the label is deleted. | `issue`, `label` (the name and colour it had) |
 | `sprint.started` | A sprint starts. | `sprint` (`id`, `name`, `description`, `status`, `start_date`, `end_date`, timestamps) |
 | `sprint.completed` | A sprint is completed. | `sprint`, `rollover` (`moved_count`, `target_sprint_id`: what happened to the unfinished work items) |
 | `ai.task_completed` | A bot task completes. | `task_id`, `task_type`, `status`, `reference_type`, `reference_id`, `result` |

@@ -292,7 +292,8 @@
 				id: label.id,
 				name: label.name,
 				color: label.color,
-				project_id: issue?.project_id ?? data.project_id,
+				workspace_id: workspaceId,
+				description: '',
 				created_at: ''
 			}));
 		}

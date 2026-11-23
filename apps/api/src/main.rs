@@ -3248,6 +3248,9 @@ mod item_api_tests;
 mod sprint_api_tests;
 
 #[cfg(test)]
+mod label_api_tests;
+
+#[cfg(test)]
 mod legacy_auth_characterization_tests;
 
 #[cfg(test)]
@@ -3841,6 +3844,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     (
         "0117_sprint_rules.sql",
         include_str!("../../../migrations/0117_sprint_rules.sql"),
+    ),
+    (
+        "0118_label_rules.sql",
+        include_str!("../../../migrations/0118_label_rules.sql"),
     ),
 ];
 
@@ -4440,6 +4447,10 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
         "0117_sprint_rules.sql",
         SchemaProbe::Relation("sprints_one_active_per_project"),
     ),
+    (
+        "0118_label_rules.sql",
+        SchemaProbe::Relation("labels_workspace_lower_name_key"),
+    ),
 ];
 
 /// One recorded migration outcome.
@@ -5011,6 +5022,7 @@ mod tests {
                 "0115_flow_default_on.sql",
                 "0116_webhook_delivery_duration.sql",
                 "0117_sprint_rules.sql",
+                "0118_label_rules.sql",
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
         );
@@ -7102,6 +7114,123 @@ mod migration_runner_database_tests {
             read(bogus).await,
         );
         assert_eq!(before, after, "a second execution changes nothing");
+        scratch.drop_self().await;
+    }
+
+    /// 0118 rewrites colours that are not `#rrggbb`, lower-cases the rest, renames the later of two
+    /// labels whose names differ only in case, replaces the exact-case name constraint, and does
+    /// nothing the second time. The old state is rebuilt by dropping the new rules.
+    #[tokio::test]
+    async fn label_rules_migration_fixes_data_and_reruns() {
+        let scratch = scratch_or_skip!("label_rules_migration");
+        run_migrations_with(&scratch.db, MigrationOptions::default())
+            .await
+            .expect("a fresh database migrates cleanly");
+        let db = &scratch.db;
+        db.execute_unprepared(
+            "ALTER TABLE labels DROP CONSTRAINT labels_color_hex; \
+             DROP INDEX labels_workspace_lower_name_key; \
+             ALTER TABLE labels ALTER COLUMN color SET DEFAULT '#gray'; \
+             ALTER TABLE labels ADD CONSTRAINT labels_workspace_id_name_key UNIQUE (workspace_id, name)",
+        )
+        .await
+        .expect("the pre-0118 rules are restored");
+
+        let user = insert_user(db).await;
+        let workspace = insert_workspace(db, user).await;
+        let [gray, shouty, fine, bug_upper, bug_lower] = std::array::from_fn(|_| uuid::Uuid::new_v4());
+        for (id, name, color, created) in [
+            (gray, "gray one", "#gray", "2030-01-01"),
+            (shouty, "shouty", "#AABBCC", "2030-01-02"),
+            (fine, "fine", "#112233", "2030-01-03"),
+            (bug_upper, "Bug", "#112233", "2030-01-04"),
+            (bug_lower, "bug", "#112233", "2030-01-05"),
+        ] {
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "INSERT INTO labels (id, workspace_id, name, color, created_at) \
+                 VALUES ($1, $2, $3, $4, $5::timestamptz)",
+                vec![id.into(), workspace.into(), name.into(), color.into(), created.into()],
+            ))
+            .await
+            .expect("the old data is stored");
+        }
+
+        let sql = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == "0118_label_rules.sql")
+            .map(|(_, sql)| *sql)
+            .expect("0118 is registered");
+        db.execute_unprepared(sql).await.expect("0118 first execution succeeds");
+
+        let read = || async {
+            let rows = db
+                .query_all(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT id::text AS id, name, color FROM labels WHERE workspace_id = $1 ORDER BY id",
+                    vec![workspace.into()],
+                ))
+                .await
+                .expect("labels are readable");
+            rows.iter()
+                .map(|row| {
+                    (
+                        row.try_get::<String>("", "id").expect("id"),
+                        row.try_get::<String>("", "name").expect("name"),
+                        row.try_get::<String>("", "color").expect("color"),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let first = read().await;
+        let label_row = |id: uuid::Uuid| {
+            first
+                .iter()
+                .find(|row| row.0 == id.to_string())
+                .expect("the label exists")
+        };
+        assert_eq!(label_row(gray).2, "#6b7280", "an invalid colour gets the default");
+        assert_eq!(label_row(shouty).2, "#aabbcc", "colours are lower-cased");
+        assert_eq!(label_row(fine).2, "#112233");
+        assert_eq!(label_row(bug_upper).1, "Bug", "the first of two names is kept");
+        assert_eq!(label_row(bug_lower).1, format!("bug ({})", &bug_lower.to_string()[..8]));
+        let names: Vec<String> = db
+            .query_all(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT conname FROM pg_constraint WHERE conrelid = 'labels'::regclass",
+                vec![],
+            ))
+            .await
+            .expect("constraints are readable")
+            .iter()
+            .map(|row| row.try_get("", "conname").expect("conname"))
+            .collect();
+        assert!(
+            !names.iter().any(|name| name == "labels_workspace_id_name_key"),
+            "{names:?}"
+        );
+        assert!(names.iter().any(|name| name == "labels_color_hex"), "{names:?}");
+        assert!(
+            db.execute_unprepared(&format!(
+                "INSERT INTO labels (id, workspace_id, name, color) VALUES (gen_random_uuid(), '{workspace}', 'BUG', '#000000')"
+            ))
+            .await
+            .is_err(),
+            "the case-insensitive name index refuses a twin"
+        );
+        assert!(
+            db.execute_unprepared(&format!(
+                "INSERT INTO labels (id, workspace_id, name, color) VALUES (gen_random_uuid(), '{workspace}', 'new', 'red')"
+            ))
+            .await
+            .is_err(),
+            "the colour constraint refuses a non-hex colour"
+        );
+
+        db.execute_unprepared(sql)
+            .await
+            .expect("0118 second execution succeeds");
+        assert_eq!(read().await, first, "a second execution changes nothing");
         scratch.drop_self().await;
     }
 

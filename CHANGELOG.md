@@ -103,6 +103,18 @@ name.
 - **Cycles page sends `description`.** The page sent `goal`, which the API never stored; the field
   is now `description`, so a sprint's description is saved from the page.
 
+- **Label rules.** Label colours must be `#rrggbb` (stored lower-case, default `#6b7280` instead of
+  `#gray`; anything else is a 400), label names are unique in a workspace ignoring case, and label
+  bodies refuse unknown fields. Attaching a label that is already on a work item and detaching one
+  that is not now succeed, and `label.added` / `label.removed` are sent only when something changed.
+  The batch attach route sends `label.added` for each label it attached, and deleting a label sends
+  `label.removed` for each work item it was on, with the label's name and colour and the item's
+  identifier. Migration `0118_label_rules.sql` rewrites invalid colours to the default, lower-cases
+  colours, renames the later of two labels that differ only in case (adding eight characters of its
+  id) and adds the constraints. Creating a project from a scenario template still adds the
+  template's labels, skipping any whose name already exists in another case. The frontend `Label`
+  type has `workspace_id` and `description` (it had `project_id`).
+
 ### Removed
 
 - **Universal forms delivery and sign-off tooling.** The scripts and schemas that produced and

@@ -2,9 +2,11 @@ import { apiClient, type ApiResult, type PaginatedData } from './client';
 
 export interface Label {
 	id: string;
-	project_id: string;
+	workspace_id: string;
 	name: string;
+	/** `#rrggbb`, lower-case. */
 	color: string;
+	description: string;
 	created_at: string;
 }
 

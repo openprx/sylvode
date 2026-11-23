@@ -246,7 +246,7 @@ pub async fn handle_delete_sprint(client: &OpenPrClient, args: serde_json::Value
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used)]
+#[allow(clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::update_sprint;
     use crate::tools::test_support::{Api, Policy, UUID};

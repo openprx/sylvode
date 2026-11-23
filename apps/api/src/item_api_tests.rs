@@ -672,6 +672,32 @@ impl Api {
             .expect("n")
     }
 
+    /// The first column (`v` or `n`) of a query that returns one text value for one uuid parameter.
+    pub(super) async fn db_count_text(&self, sql: &str, id: Uuid) -> String {
+        self.db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                sql,
+                vec![id.into()],
+            ))
+            .await
+            .expect("query")
+            .expect("row")
+            .try_get("", "n")
+            .expect("n")
+    }
+
+    /// The `v` column of every row of a query.
+    pub(super) async fn db_strings(&self, sql: &str) -> Vec<String> {
+        self.db
+            .query_all(Statement::from_string(DbBackend::Postgres, sql.to_string()))
+            .await
+            .expect("query")
+            .iter()
+            .map(|row| row.try_get("", "v").expect("v"))
+            .collect()
+    }
+
     pub(super) async fn notifications_of(&self, user: Uuid) -> i64 {
         self.db
             .query_one(Statement::from_sql_and_values(

@@ -611,7 +611,7 @@ async fn create_template_labels(
             r"
                 INSERT INTO labels (id, workspace_id, name, color, description, created_at)
                 VALUES ($1, $2, $3, $4, $5, now())
-                ON CONFLICT (workspace_id, name) DO NOTHING
+                ON CONFLICT (workspace_id, lower(name)) DO NOTHING
             ",
             vec![
                 Uuid::new_v4().into(),

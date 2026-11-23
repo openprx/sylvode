@@ -184,7 +184,10 @@ Assigning an issue to a bot, or mentioning a bot, can start agent work; see [Age
 ### Labels
 
 Labels belong to the workspace and are shared by all its projects. Add an existing label to an
-issue on the issue page, or create one there with **Create label**.
+issue on the issue page, or create one there with **Create label**. A label colour is a hex colour
+such as `#2563eb`, and label names are unique in the workspace ignoring case (`Bug` and `bug` are
+the same name). Adding a label that is already on the issue, or removing one that is not, changes
+nothing.
 
 ### Board
 

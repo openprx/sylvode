@@ -1292,16 +1292,18 @@ pub async fn add_labels_to_issue(
     if payload.label_ids.is_empty() {
         return Err(ApiError::BadRequest("label_ids must not be empty".to_string()));
     }
+    let user_id = Uuid::parse_str(&claims.sub).map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))?;
     let extensions = build_auth_extensions(claims, bot);
 
     #[derive(Debug, FromQueryResult)]
     struct IssueWorkspace {
         workspace_id: Uuid,
+        project_id: Uuid,
     }
 
     let owner = IssueWorkspace::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT p.workspace_id FROM work_items wi INNER JOIN projects p ON wi.project_id = p.id WHERE wi.id = $1",
+        "SELECT p.workspace_id, wi.project_id FROM work_items wi INNER JOIN projects p ON wi.project_id = p.id WHERE wi.id = $1",
         vec![issue_id.into()],
     ))
     .one(&state.db)
@@ -1309,7 +1311,28 @@ pub async fn add_labels_to_issue(
     .ok_or_else(|| ApiError::NotFound("work item not found or access denied".to_string()))?;
     require_workspace_access(&state, &extensions, owner.workspace_id).await?;
 
-    attach_labels_to_issue(&state.db, issue_id, owner.workspace_id, &payload.label_ids).await?;
+    let added = attach_labels_to_issue(&state.db, issue_id, owner.workspace_id, &payload.label_ids).await?;
+
+    // One `label.added` for each label that was really attached; one that was already there is not
+    // a change.
+    for label_id in added {
+        trigger_webhooks(
+            state.clone(),
+            TriggerContext {
+                event: WebhookEvent::LabelAdded,
+                workspace_id: owner.workspace_id,
+                project_id: owner.project_id,
+                actor_id: user_id,
+                issue_id: Some(issue_id),
+                comment_id: None,
+                label_id: Some(label_id),
+                sprint_id: None,
+                changes: None,
+                mentions: Vec::new(),
+                extra_data: None,
+            },
+        );
+    }
 
     Ok(ApiResponse::ok())
 }
@@ -1329,7 +1352,7 @@ async fn attach_labels_to_issue(
     issue_id: Uuid,
     workspace_id: Uuid,
     label_ids: &[Uuid],
-) -> Result<(), ApiError> {
+) -> Result<Vec<Uuid>, ApiError> {
     // Verify issue belongs to the caller's workspace
     let exists = db
         .query_one(Statement::from_sql_and_values(
@@ -1361,19 +1384,25 @@ async fn attach_labels_to_issue(
         }
     }
 
-    // Insert all label associations (ignore conflicts)
+    // Insert all label associations; the ones already attached are left alone and not reported.
     let tx = db.begin().await?;
+    let mut added = Vec::new();
     for label_id in label_ids {
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "INSERT INTO work_item_labels (work_item_id, label_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-            vec![issue_id.into(), (*label_id).into()],
-        ))
-        .await?;
+        let inserted = tx
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "INSERT INTO work_item_labels (work_item_id, label_id) VALUES ($1, $2) \
+                 ON CONFLICT DO NOTHING RETURNING label_id",
+                vec![issue_id.into(), (*label_id).into()],
+            ))
+            .await?;
+        if inserted.is_some() && !added.contains(label_id) {
+            added.push(*label_id);
+        }
     }
     tx.commit().await?;
 
-    Ok(())
+    Ok(added)
 }
 
 #[cfg(test)]

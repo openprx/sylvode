@@ -480,6 +480,13 @@ async fn build_event_data(
             })
         }
         WebhookEvent::LabelAdded | WebhookEvent::LabelRemoved => {
+            // A deleted label has no row left to read: its sender passes the data it captured.
+            if let Some(extra) = ctx.extra_data.clone() {
+                return Ok(BuiltEventData {
+                    data: extra,
+                    assignee_ids: Vec::new(),
+                });
+            }
             let issue_id = ctx
                 .issue_id
                 .ok_or_else(|| sea_orm::DbErr::Custom("missing issue_id".to_string()))?;

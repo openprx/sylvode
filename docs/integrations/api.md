@@ -383,6 +383,19 @@ change or delete it. A sprint has `name`, `description`, `start_date` and `end_d
   deletes it.
 - A body with a field the route does not know is refused with HTTP 422.
 
+### Labels
+
+Labels belong to a workspace (`/workspaces/{workspace_id}/labels`, `/labels/{id}`). A `color` is
+`#rrggbb` (any case is accepted and stored lower-case; anything else is `400 color must be a hex
+colour #rrggbb`) and defaults to `#6b7280`. Names are unique in the workspace ignoring case (`409`).
+A body with an unknown field is refused with HTTP 422, and `null` on `name`, `color` or
+`description` is `400`.
+
+`POST /issues/{issue_id}/labels/{label_id}` and `POST /issues/{issue_id}/labels/batch` succeed when
+a label is already attached, and `DELETE /issues/{issue_id}/labels/{label_id}` succeeds when it is
+not; the `label.added` and `label.removed` events are sent only for a real change, once per label in
+a batch. Deleting a label sends `label.removed` for each work item it was on.
+
 ### Routes open to users and bots
 
 These routes used to require a bot and answered a user token with HTTP 500. They now answer both:
