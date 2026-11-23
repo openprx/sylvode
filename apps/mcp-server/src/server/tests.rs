@@ -1315,17 +1315,35 @@ async fn a_smuggled_project_id_cannot_reach_a_destructive_tool() -> TestResult {
     Ok(())
 }
 
-/// Tools whose owner the API cannot report must refuse rather than run unguarded.
+/// Sprint and comment tools resolve the owning project through the API's own read and apply the
+/// project agent policy: a disabled tool is refused before any mutation, an enabled one runs and
+/// a project claim that is not the owner is refused.
 #[tokio::test]
-async fn tools_without_an_owner_lookup_fail_closed() -> TestResult {
+async fn sprint_and_comment_tools_resolve_the_owner_and_apply_policy() -> TestResult {
     let mutations = Arc::new(AtomicUsize::new(0));
-    let sprint_counter = Arc::clone(&mutations);
-    let comment_counter = Arc::clone(&mutations);
+    let sprint_lookups = Arc::new(AtomicUsize::new(0));
+    let (sprint_delete, sprint_update, comment_delete) =
+        (Arc::clone(&mutations), Arc::clone(&mutations), Arc::clone(&mutations));
+    let lookups = Arc::clone(&sprint_lookups);
     let router = Router::new()
         .route(
             &format!("/api/v1/sprints/{SPRINT}"),
-            delete(move || {
-                let counter = Arc::clone(&sprint_counter);
+            get(move || {
+                let lookups = Arc::clone(&lookups);
+                async move {
+                    lookups.fetch_add(1, Ordering::SeqCst);
+                    Json(json!({ "code": 0, "data": { "id": SPRINT, "project_id": PROJECT } }))
+                }
+            })
+            .put(move || {
+                let counter = Arc::clone(&sprint_update);
+                async move {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    Json(json!({ "code": 0, "data": { "id": SPRINT } }))
+                }
+            })
+            .delete(move || {
+                let counter = Arc::clone(&sprint_delete);
                 async move {
                     counter.fetch_add(1, Ordering::SeqCst);
                     Json(json!({ "code": 0, "message": "ok" }))
@@ -1334,39 +1352,110 @@ async fn tools_without_an_owner_lookup_fail_closed() -> TestResult {
         )
         .route(
             &format!("/api/v1/comments/{COMMENT}"),
-            delete(move || {
-                let counter = Arc::clone(&comment_counter);
-                async move {
-                    counter.fetch_add(1, Ordering::SeqCst);
-                    Json(json!({ "code": 0, "message": "ok" }))
-                }
-            }),
+            get(|| async { Json(json!({ "code": 0, "data": { "id": COMMENT, "project_id": PROJECT } })) }).delete(
+                move || {
+                    let counter = Arc::clone(&comment_delete);
+                    async move {
+                        counter.fetch_add(1, Ordering::SeqCst);
+                        Json(json!({ "code": 0, "message": "ok" }))
+                    }
+                },
+            ),
+        )
+        .route(
+            &format!("/api/v1/projects/{PROJECT}/agent-policy"),
+            policy_route(json!(["work_items.list", "sprints.update", "comments.delete"])),
         );
     let server = server(crate::client::test_api::spawn(router).await?)?;
 
-    for (tool, args, endpoint) in [
-        (
-            "sprints.delete",
-            json!({ "sprint_id": SPRINT }),
-            "GET /api/v1/sprints/{sprint_id}",
-        ),
-        (
+    // Disabled by the owner's policy: refused with the policy reason, nothing mutated.
+    let result = server.call_tool("sprints.delete", json!({ "sprint_id": SPRINT })).await;
+    assert_eq!(result.is_error, Some(true));
+    assert!(
+        message(&result).contains("disabled by project agent policy"),
+        "{}",
+        message(&result)
+    );
+    assert_eq!(mutations.load(Ordering::SeqCst), 0);
+
+    // A project claim that is not the owner is refused before the mutation.
+    let result = server
+        .call_tool(
             "sprints.update",
-            json!({ "sprint_id": SPRINT, "name": "renamed" }),
-            "GET /api/v1/sprints/{sprint_id}",
-        ),
-        (
-            "comments.delete",
-            json!({ "comment_id": COMMENT }),
-            "GET /api/v1/comments/{comment_id}",
-        ),
-    ] {
-        let result = server.call_tool(tool, args).await;
-        assert_eq!(result.is_error, Some(true), "{tool} ran unguarded");
-        assert!(message(&result).contains(endpoint), "{tool}: {}", message(&result));
-    }
+            json!({ "sprint_id": SPRINT, "name": "renamed", "project_id": FOREIGN_PROJECT }),
+        )
+        .await;
+    assert_eq!(result.is_error, Some(true));
+    assert_eq!(mutations.load(Ordering::SeqCst), 0);
+
+    // Enabled tools run, and the sprint owner is read once and cached.
+    let result = server
+        .call_tool("sprints.update", json!({ "sprint_id": SPRINT, "name": "renamed" }))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", message(&result));
+    let result = server
+        .call_tool("comments.delete", json!({ "comment_id": COMMENT }))
+        .await;
+    assert_ne!(result.is_error, Some(true), "{}", message(&result));
+    assert_eq!(mutations.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        sprint_lookups.load(Ordering::SeqCst),
+        1,
+        "the owner is read once and cached"
+    );
+    Ok(())
+}
+
+/// An owner that cannot be read (the API answers 404) still refuses the call: nothing runs
+/// without the project agent policy.
+#[tokio::test]
+async fn an_unreadable_owner_refuses_the_call_with_the_lookup_error() -> TestResult {
+    let mutations = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&mutations);
+    let router = Router::new().route(
+        &format!("/api/v1/sprints/{SPRINT}"),
+        delete(move || {
+            let counter = Arc::clone(&counter);
+            async move {
+                counter.fetch_add(1, Ordering::SeqCst);
+                Json(json!({ "code": 0, "message": "ok" }))
+            }
+        }),
+    );
+    let server = server(crate::client::test_api::spawn(router).await?)?;
+    let result = server.call_tool("sprints.delete", json!({ "sprint_id": SPRINT })).await;
+    assert_eq!(result.is_error, Some(true));
+    assert!(
+        message(&result).contains("Failed to resolve owning project for sprint"),
+        "{}",
+        message(&result)
+    );
     assert_eq!(mutations.load(Ordering::SeqCst), 0);
     Ok(())
+}
+
+/// No source text of this crate claims the API lacks a read endpoint the owner lookup needs.
+#[test]
+fn no_stale_api_exposes_no_text_remains() {
+    fn scan(dir: &std::path::Path, found: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                scan(&path, found);
+            } else if path.extension().is_some_and(|ext| ext == "rs")
+                && std::fs::read_to_string(&path).is_ok_and(|text| text.contains(concat!("exposes", " no")))
+            {
+                found.push(path.display().to_string());
+            }
+        }
+    }
+    let mut found = Vec::new();
+    scan(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut found,
+    );
+    assert!(found.is_empty(), "{found:?}");
 }
 
 /// Workspace scoped tools have no owning project by design, but a call that smuggles

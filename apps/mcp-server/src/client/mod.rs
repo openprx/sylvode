@@ -788,9 +788,8 @@ impl OpenPrClient {
         .await
     }
 
-    /// Reads one attachment so the MCP server can resolve which project owns it.
-    /// The API does not expose this route yet; until it does the call fails and the
-    /// attachment tools are refused instead of skipping the project agent policy.
+    /// Reads one attachment so the MCP server can resolve which project owns it. A failed read
+    /// refuses the attachment tools instead of skipping the project agent policy.
     pub async fn get_form_attachment(&self, attachment_id: &str) -> Result<Value, String> {
         self.get(&format!(
             "/api/v1/form-attachments/{}",
@@ -1332,6 +1331,11 @@ impl OpenPrClient {
         .await
     }
 
+    pub async fn get_comment(&self, comment_id: &str) -> Result<Value, String> {
+        self.get(&format!("/api/v1/comments/{}", urlencoding::encode(comment_id)))
+            .await
+    }
+
     pub async fn delete_comment(&self, comment_id: &str) -> Result<Value, String> {
         self.delete(&format!("/api/v1/comments/{}", urlencoding::encode(comment_id)))
             .await
@@ -1514,6 +1518,11 @@ impl OpenPrClient {
 
     pub async fn list_sprints(&self, project_id: &str) -> Result<Value, String> {
         self.get(&format!("/api/v1/projects/{}/sprints", urlencoding::encode(project_id)))
+            .await
+    }
+
+    pub async fn get_sprint(&self, sprint_id: &str) -> Result<Value, String> {
+        self.get(&format!("/api/v1/sprints/{}", urlencoding::encode(sprint_id)))
             .await
     }
 

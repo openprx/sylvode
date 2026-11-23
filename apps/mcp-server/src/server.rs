@@ -81,12 +81,9 @@ enum OwnerLookup {
     Plugin,
     /// `check_result_id` -> `GET /api/v1/check-results/{id}`.
     CheckResult,
-    /// `sprint_id`. Sprints are project owned (`migrations/0004_sprints.sql`) but the
-    /// API exposes no `GET /api/v1/sprints/{sprint_id}`, so the owner cannot be read
-    /// back and the call fails closed.
+    /// `sprint_id` -> `GET /api/v1/sprints/{id}`.
     Sprint,
-    /// `comment_id`. Comments are owned through their work item but the API exposes no
-    /// `GET /api/v1/comments/{comment_id}`, so the call fails closed.
+    /// `comment_id` -> `GET /api/v1/comments/{id}`.
     Comment,
     /// `object_id` -> `GET /api/v1/flow/objects/{id}`.
     ///
@@ -1001,7 +998,7 @@ impl McpServer {
     /// genuinely does not hold admin capability in this workspace; the write's own check
     /// downstream remains the authority of record for the "route workspace admin policy" leg.
     ///
-    /// Applied only to `flow.feature_set`: `apps/api` exposes no legacy-pages admin REST
+    /// Applied only to `flow.feature_set`: `apps/api` has no legacy-pages admin REST
     /// surface at all yet (see `tools::legacy_pages`'s module doc), so probing an unrelated
     /// endpoint to gate a feature with zero backend would be exactly the "MCP 侧跑到后端就绪
     /// 之前" mistake this package was told to avoid. Those four tools keep their existing,
@@ -1365,23 +1362,6 @@ impl McpServer {
             )),
             OwnerLookup::AiTask => self.resolve_ai_task_owner(tool_name, args).await,
             OwnerLookup::FormData => self.resolve_form_data_owner(tool_name, args).await,
-            OwnerLookup::Sprint | OwnerLookup::Comment => {
-                let id = required_owner_argument(tool_name, lookup, args)?;
-                let endpoint = match lookup {
-                    OwnerLookup::Sprint => "GET /api/v1/sprints/{sprint_id}",
-                    _ => "GET /api/v1/comments/{comment_id}",
-                };
-                tracing::warn!(
-                    tool_name = %tool_name,
-                    resource_id = %id,
-                    "Refusing call: the API exposes no read endpoint to resolve the owning project"
-                );
-                Err(format!(
-                    "Tool '{tool_name}' is refused because the owning project of {} {id} cannot be resolved: the API \
-                     exposes no `{endpoint}` returning project_id, so the project agent policy cannot be evaluated",
-                    lookup.argument()
-                ))
-            }
             OwnerLookup::WorkItemIdentifier => {
                 let identifier = identifier_argument(args)?.ok_or_else(|| {
                     format!("Tool '{tool_name}' carries no identifier, so the owning project cannot be resolved")
@@ -1405,6 +1385,8 @@ impl McpServer {
                 let (prefix, kind) = match lookup {
                     OwnerLookup::WorkItem => ("work_item", "work item"),
                     OwnerLookup::Plugin => ("plugin", "plugin"),
+                    OwnerLookup::Sprint => ("sprint", "sprint"),
+                    OwnerLookup::Comment => ("comment", "comment"),
                     _ => ("check_result", "check result"),
                 };
                 let cache_key = format!("{prefix}:{id}");
@@ -1415,6 +1397,8 @@ impl McpServer {
                 let response = match lookup {
                     OwnerLookup::WorkItem => self.client.get_work_item(&id).await,
                     OwnerLookup::Plugin => self.client.get_plugin(&id).await,
+                    OwnerLookup::Sprint => self.client.get_sprint(&id).await,
+                    OwnerLookup::Comment => self.client.get_comment(&id).await,
                     _ => self.client.get_check_result(&id).await,
                 }
                 .map_err(|error| format!("Failed to resolve owning project for {description}: {error}"))?;
