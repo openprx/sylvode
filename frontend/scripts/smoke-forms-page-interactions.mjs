@@ -26,8 +26,7 @@
  *   PLAYWRIGHT_CORE        path to a playwright-core package directory (default: resolve 'playwright-core')
  *   OPENPR_FORMS_UI_PORT   port of the mock server (default: a random free-ish port)
  *   OPENPR_FORMS_UI_SCREENSHOT_DIR  when set, writes forms-ui-desktop.png (1366x900) and
- *                          forms-ui-mobile.png (390x844) of the records page there, the evidence
- *                          `scripts/collect-universal-forms-ui-artifacts.sh` gathers
+ *                          forms-ui-mobile.png (390x844) of the records page there
  */
 import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync } from 'node:fs';

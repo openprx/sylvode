@@ -281,10 +281,6 @@ contains "MCP regression stdio path uses serve subcommand" "$ROOT_DIR/skills/syl
 contains "MCP regression derives the expected registry count" "$ROOT_DIR/skills/sylvode-mcp/scripts/mcp-regression.py" "expected-tool-count.py"
 contains "MCP validation derives the expected registry count" "$ROOT_DIR/skills/sylvode-mcp/scripts/validate-mcp.sh" "expected-tool-count.py"
 not_contains "MCP validation does not retain stale 65-tool minimum" "$ROOT_DIR/skills/sylvode-mcp/scripts/validate-mcp.sh" "-ge 65"
-contains "readiness summary generator links implementation map" "$ROOT_DIR/scripts/report-universal-forms-readiness-summary.sh" "universal-forms-implementation-map.md"
-contains "user acceptance packet generator links implementation map" "$ROOT_DIR/scripts/prepare-universal-forms-user-acceptance-packet.sh" "universal-forms-implementation-map.md"
-contains "delivery bundle audit runs implementation map verifier" "$ROOT_DIR/scripts/audit-universal-forms-delivery-bundle.sh" "implementation map verifier passes"
-contains "delivery bundle audit runs implementation map contract smoke" "$ROOT_DIR/scripts/audit-universal-forms-delivery-bundle.sh" "implementation map contract smoke passes"
 contains "MCP integration test uses current JSON-RPC endpoint" "$TEST_MCP_SCRIPT" "/mcp/rpc"
 contains "MCP integration test lists tools through JSON-RPC" "$TEST_MCP_SCRIPT" '"method":"tools/list"'
 contains "MCP integration test invokes tools through JSON-RPC" "$TEST_MCP_SCRIPT" '"method":"tools/call"'
@@ -320,19 +316,6 @@ contains "source-build image execs selected binary" "$SOURCE_DOCKERFILE" 'CMD ["
 contains "source-build image uses non-root user" "$SOURCE_DOCKERFILE" "USER appuser"
 contains "frontend image builds with frozen lockfile" "$FRONTEND_DOCKERFILE" "bun install --frozen-lockfile"
 contains "frontend image runs nginx" "$FRONTEND_DOCKERFILE" "nginx"
-contains "acceptance script uses resolved Bun for frontend check" "$ROOT_DIR/scripts/acceptance-universal-forms.sh" 'cd frontend && $FRONTEND_BUN run check'
-contains "acceptance script uses resolved Bun for frontend smoke" "$ROOT_DIR/scripts/acceptance-universal-forms.sh" 'cd frontend && $FRONTEND_BUN run smoke:forms-page-interactions'
-contains "acceptance script resolves common Bun install path" "$ROOT_DIR/scripts/acceptance-universal-forms.sh" '$HOME/.bun/bin'
-contains "UI artifact collector uses Bun for frontend build" "$ROOT_DIR/scripts/collect-universal-forms-ui-artifacts.sh" "FRONTEND_BUN"
-contains "UI artifact collector uses Bun for frontend smoke" "$ROOT_DIR/scripts/collect-universal-forms-ui-artifacts.sh" "FRONTEND_BUN"
-contains "UI artifact collector captures project template screenshots" "$ROOT_DIR/scripts/collect-universal-forms-ui-artifacts.sh" "OPENPR_PROJECT_TEMPLATE_SCREENSHOT_DIR"
-contains "UI artifact collector captures template work item screenshots" "$ROOT_DIR/scripts/collect-universal-forms-ui-artifacts.sh" "OPENPR_TEMPLATE_WORK_ITEMS_SCREENSHOT_DIR"
-contains "UI artifact collector prepares review gallery" "$ROOT_DIR/scripts/collect-universal-forms-ui-artifacts.sh" "prepare-universal-forms-ui-review-gallery.sh"
-contains "UI artifact collector verifies review gallery" "$ROOT_DIR/scripts/collect-universal-forms-ui-artifacts.sh" "verify-universal-forms-ui-review-gallery.sh"
-contains "UI artifact collector renders review gallery" "$ROOT_DIR/scripts/collect-universal-forms-ui-artifacts.sh" "smoke-universal-forms-ui-review-gallery-render.sh"
-contains "UI artifact collector resolves common Bun install path" "$ROOT_DIR/scripts/collect-universal-forms-ui-artifacts.sh" '$HOME/.bun/bin'
-not_contains "acceptance script does not use npm for frontend commands" "$ROOT_DIR/scripts/acceptance-universal-forms.sh" "npm run"
-not_contains "UI artifact collector does not use npm for frontend commands" "$ROOT_DIR/scripts/collect-universal-forms-ui-artifacts.sh" "npm run"
 contains "auth API exposes current profile update" "$ROOT_DIR/apps/api/src/routes/auth.rs" "update_profile"
 contains "auth API exposes current password update" "$ROOT_DIR/apps/api/src/routes/auth.rs" "update_password"
 contains "auth API exposes current preference update" "$ROOT_DIR/apps/api/src/routes/auth.rs" "update_preferences"
