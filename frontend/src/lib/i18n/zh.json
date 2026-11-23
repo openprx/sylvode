@@ -2286,6 +2286,7 @@
 			}
 		},
 		"session": {
+			"title": "标题",
 			"remoteChanged": "远端有更新，本地草稿已保留。",
 			"refreshFailed": "暂时无法刷新，保留当前内容。",
 			"conflict": "内容已变化，草稿未提交。",
@@ -4309,6 +4310,7 @@
 			"link": "链接",
 			"linkUrl": "链接地址",
 			"removeLink": "移除链接",
+			"applyLink": "应用",
 			"linkError": "请先选择文字，再使用安全的网页、邮箱或相对链接。",
 			"editorFailed": "草稿编辑器未能加载，本地草稿已保留。",
 			"savedChecked": "保存的勾选状态",

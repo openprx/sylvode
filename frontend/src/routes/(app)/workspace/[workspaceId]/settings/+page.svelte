@@ -114,7 +114,7 @@
 			<div class="mt-4 grid grid-cols-1 gap-4">
 				<Input label={$t('workspace.name')} bind:value={form.name} required />
 				<Input
-					label="Slug"
+					label={$t('workspace.slug')}
 					bind:value={form.slug}
 					readonly
 					helperText={$t('workspace.slugReadonlyHint')}

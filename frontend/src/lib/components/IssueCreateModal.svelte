@@ -502,7 +502,7 @@
 				</div>
 
 				<div>
-					<label class="mb-1 block text-sm font-medium text-fg" for="issueSprint">Sprint</label>
+					<label class="mb-1 block text-sm font-medium text-fg" for="issueSprint">{$t('issue.sprint')}</label>
 					<select
 						id="issueSprint"
 						bind:value={form.sprint_id}

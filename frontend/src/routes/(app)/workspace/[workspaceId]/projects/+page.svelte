@@ -712,7 +712,7 @@
 		</div>
 		<div class="space-y-1">
 			<label class="block text-sm font-medium text-fg" for="edit-project-workflow">
-				Workflow
+				{$t('project.workflow')}
 			</label>
 			<select
 				id="edit-project-workflow"

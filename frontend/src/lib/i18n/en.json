@@ -2286,6 +2286,7 @@
 			}
 		},
 		"session": {
+			"title": "Title",
 			"remoteChanged": "Remote changes available; local drafts kept.",
 			"refreshFailed": "Could not refresh; current content kept.",
 			"conflict": "Content changed; draft was not saved.",
@@ -4309,6 +4310,7 @@
 			"link": "Link",
 			"linkUrl": "Link address",
 			"removeLink": "Remove link",
+			"applyLink": "Apply",
 			"linkError": "Select text and use a safe web, email or relative link.",
 			"editorFailed": "The draft editor could not load. Your local draft is preserved.",
 			"savedChecked": "Saved checkbox state",

@@ -1151,7 +1151,7 @@
 	{#if selection && !selection.empty && !readOnly}
 		<div
 			role="toolbar"
-			aria-label="Text formatting"
+			aria-label={$t('flow.shared.formatting')}
 			data-testid="flow-format-toolbar"
 			class="fixed z-40 flex flex-wrap items-center gap-1 rounded-float border border-overlay-line bg-overlay p-1 shadow-overlay"
 			style={`left:${Math.max(8, Math.min(selection.left, typeof window === 'undefined' ? 800 : window.innerWidth - 300))}px;top:${Math.max(8, selection.top - 44)}px`}
@@ -1175,14 +1175,14 @@
 			{/each}
 			<button
 				type="button"
-				aria-label="Link"
+				aria-label={$t('flow.shared.link')}
 				class="rounded px-2 py-1 text-sm hover:bg-surface"
 				onmousedown={(event) => event.preventDefault()}
 				onclick={() => {
 					linkOpen = !linkOpen;
 					linkHref = selection?.linkHref ?? '';
 					linkError = '';
-				}}>Link</button
+				}}>{$t('flow.shared.link')}</button
 			>
 			{#if linkOpen}
 				<form
@@ -1195,15 +1195,15 @@
 					}}
 				>
 					<input
-						aria-label="Link address"
+						aria-label={$t('flow.shared.linkUrl')}
 						bind:value={linkHref}
 						placeholder="https://"
 						class="w-44 rounded border px-2 py-1 text-sm"
 					/>
-					<button type="submit" class="px-2 text-sm">Apply</button>
+					<button type="submit" class="px-2 text-sm">{$t('flow.shared.applyLink')}</button>
 					<button
 						type="button"
-						aria-label="Remove link"
+						aria-label={$t('flow.shared.removeLink')}
 						onclick={() => {
 							adapter?.setLink('');
 							linkOpen = false;

@@ -59,7 +59,7 @@
 							></thead
 						><tbody>
 							<tr
-								><th>Title</th><td class="whitespace-pre-wrap">{s.recordTitle}</td><td
+								><th>{$t('forms.session.title')}</th><td class="whitespace-pre-wrap">{s.recordTitle}</td><td
 									class="whitespace-pre-wrap">{s.formsSessionRemoteRecord.title}</td
 								></tr
 							>

@@ -103,14 +103,14 @@
 				})}
 			class="w-full rounded-card border border-input bg-raised px-3 py-2 text-sm text-fg"
 		>
-			<option value="grid">Grid</option>
-			<option value="detail">Detail</option>
-			<option value="kanban">Kanban</option>
-			<option value="calendar">Calendar</option>
-			<option value="card">Card</option>
-			<option value="timeline">Timeline</option>
-			<option value="pivot">Pivot</option>
-			<option value="gantt">Gantt</option>
+			<option value="grid">{$t('forms.views.types.grid')}</option>
+			<option value="detail">{$t('forms.views.types.detail')}</option>
+			<option value="kanban">{$t('forms.views.types.kanban')}</option>
+			<option value="calendar">{$t('forms.views.types.calendar')}</option>
+			<option value="card">{$t('forms.views.types.card')}</option>
+			<option value="timeline">{$t('forms.views.types.timeline')}</option>
+			<option value="pivot">{$t('forms.views.types.pivot')}</option>
+			<option value="gantt">{$t('forms.views.types.gantt')}</option>
 		</select>
 	</label>
 
