@@ -3,8 +3,9 @@ use super::{
 };
 use platform::config::MigrationsConfig;
 
-/// A migration file has to be registered in two places: on disk and in [`MIGRATIONS`].
-/// Forgetting the second one makes it silently never run, so the two are compared here.
+/// [`MIGRATIONS`] is generated from the `migrations/` directory at build time; this compares the
+/// generated list with a fresh directory listing, so a registry that stops covering the directory
+/// (a filter or an ordering change in `build.rs`) is caught.
 #[test]
 fn every_migration_file_is_registered() {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../migrations");
@@ -19,7 +20,7 @@ fn every_migration_file_is_registered() {
     let registered: Vec<String> = MIGRATIONS.iter().map(|(name, _)| (*name).to_string()).collect();
     assert_eq!(
         registered, on_disk,
-        "migrations/ and MIGRATIONS must list the same files"
+        "migrations/ and the generated MIGRATIONS must list the same files"
     );
 }
 

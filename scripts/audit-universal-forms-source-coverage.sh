@@ -171,7 +171,7 @@ contains "user profile migration adds avatar URL" "migrations/0034_user_profile_
 contains "user profile migration adds notification preferences" "migrations/0034_user_profile_preferences.sql" "notification_prefs"
 contains "form permission migration creates form_permissions" "migrations/0038_form_permissions.sql" "CREATE TABLE IF NOT EXISTS form_permissions"
 contains "form permission migration supports role subjects" "migrations/0038_form_permissions.sql" "subject_type IN ('role')"
-contains "API runtime registers form permission migration" "apps/api/src/migrate/mod.rs" "0038_form_permissions.sql"
+contains "API build generates the migration registry from migrations/" "apps/api/build.rs" "write_migration_registry"
 
 printf '\nBackend behavior coverage:\n'
 contains "decimal normalization uses rust_decimal" "apps/api/src/forms/decimal.rs" "rust_decimal"
