@@ -1,0 +1,40 @@
+
+  >_ OpenAI Codex (v0.171.0)
+     /srv/projects/example                                      
+  permissions: YOLO mode
+
+  Tip: Use the desktop app. Run codex app to open it. It installs automatically if needed.
+
+
+› Ask Codex to do anything
+
+  GPT-6.2-Astra high · /srv/projects/example                                      
+  ← for agents · ? for shortcuts
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1758,6 +1758,17 @@ url = "http://127.0.0.1:9000/hook"
         );
         assert!(cfg.runner.cli.claude.hooks && !cfg.runner.mcp.allow_write_call);
         assert!(cfg.runner.cli.codex.headless_args.is_empty());
+        let codex = &cfg.runner.cli.codex;
+        assert_eq!(
+            codex.launch_command,
+            [
+                "codex",
+                "--no-daemon",
+                "--no-alt-screen",
+                "--dangerously-bypass-approvals-and-sandbox"
+            ]
+        );
+        assert!(codex.hooks && codex.process_names == ["codex"] && codex.push_settle_ms == 700);
         // The agent resolves a token for its bot, with the surface the block registered.
         match cfg.ai_task_callback_for(GOLDEN_BOT) {
             super::AiTaskCallback::Report(target) => {
@@ -2110,7 +2121,6 @@ url = "http://127.0.0.1:9000/hook"
             ("[runner.cli.codex]", "sandbox = \"read-only\""),
             ("[runner.cli.codex]", "approval = \"never\""),
             ("[runner.cli.codex]", "dangerously_bypass_permissions = true"),
-            ("[runner.cli.codex]", "process_names = [\"codex\"]"),
             ("[runner.cli.codex]", "env_passthrough = []"),
             ("[runner.cli.opencode]", "process_names = [\"opencode\"]"),
             ("[runner.cli.opencode]", "env_passthrough = []"),
@@ -2143,6 +2153,43 @@ url = "http://127.0.0.1:9000/hook"
         assert_eq!(config.runner.cli.claude.launch_command, ["claude", "--model", "x"]);
         assert!(!config.runner.cli.claude.hooks && config.runner.mcp.allow_write_call);
         assert_eq!(config.runner.cli.codex.headless_args, ["--sandbox", "read-only"]);
+    }
+
+    /// The codex session keys load, validate per key, and the settle time is the longer of the
+    /// global and the codex value.
+    #[test]
+    fn the_codex_session_keys_load_and_validate() {
+        let config = Config::from_toml(&format!(
+            "{GOLDEN_BLOCK}\n[runner.cli.codex]\nlaunch_command = [\"codex\", \"--no-alt-screen\", \"{{notify_override}}\"]\n\
+             hooks = false\nprocess_names = [\"codex\", \"node\"]\npush_settle_ms = 900\n"
+        ))
+        .expect("loads");
+        let settings = config.runner.cli_settings("codex").expect("codex settings");
+        assert_eq!(settings.launch_command.len(), 3);
+        assert!(!settings.hooks);
+        assert_eq!(settings.process_names, ["codex", "node"]);
+        assert!(config.runner.cli_settings("opencode").is_none());
+        assert_eq!(config.runner.push_settle_ms("codex"), 900);
+        assert_eq!(config.runner.push_settle_ms("claude"), 300);
+        // The global value wins when it is longer.
+        let longer =
+            Config::from_toml(&format!("{GOLDEN_BLOCK}\n[runner.tmux]\npush_settle_ms = 1500\n")).expect("loads");
+        assert_eq!(longer.runner.push_settle_ms("codex"), 1500);
+        assert_eq!(longer.runner.push_settle_ms("claude"), 1500);
+        for (key, line) in [
+            ("codex.launch_command", "launch_command = []"),
+            ("codex.launch_command", "launch_command = [\"--no-daemon\"]"),
+            ("codex.launch_command", "launch_command = [\"codex\", \"a\\nb\"]"),
+            ("codex.process_names", "process_names = []"),
+            ("codex.process_names", "process_names = [\" \"]"),
+            ("codex.push_settle_ms", "push_settle_ms = 499"),
+            ("codex.push_settle_ms", "push_settle_ms = 10001"),
+        ] {
+            let error = Config::from_toml(&format!("{GOLDEN_BLOCK}\n[runner.cli.codex]\n{line}\n")).expect_err(line);
+            assert!(error.contains(&format!("runner.cli.{key}")), "{line}: {error}");
+        }
+        let at_floor = Config::from_toml(&format!("{GOLDEN_BLOCK}\n[runner.cli.codex]\npush_settle_ms = 500\n"));
+        assert!(at_floor.is_ok());
     }
 
     #[test]

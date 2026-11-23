@@ -1,0 +1,40 @@
+
+  /init[2m - create an AGENTS.md file with instructions for Codex[0m
+  /status[2m - show current session configuration[0m
+  /permissions[2m - choose what Codex is allowed to do[0m
+  /model[2m - choose what model and reasoning effort to use[0m
+  /review[2m - review any changes and find issues[0m
+
+[48;2;68;68;68m
+[1;2m[38;2;238;238;238m› [0m[38;2;238;238;238m[48;2;68;68;68m[Sylvode task][39m
+[38;2;238;238;238m  id=00000000-0000-4000-8000-000000000000[39m
+[38;2;238;238;238m  filler line 01: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do[39m
+[38;2;238;238;238m  filler line 02: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do[39m
+[38;2;238;238;238m  filler line 03: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do[39m
+[38;2;238;238;238m  filler line 04: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do[39m
+[38;2;238;238;238m  filler line 05: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do[39m
+[38;2;238;238;238m  filler line 06: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do[39m
+[38;2;238;238;238m  filler line 07: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do[39m
+[38;2;238;238;238m  filler line 08: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do[39m
+[38;2;238;238;238m  filler line 09: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do[39m
+[38;2;238;238;238m  filler line 10: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do[39m
+[38;2;238;238;238m  filler line 11: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do[39m
+[38;2;238;238;238m  filler line 12: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do[39m
+[38;2;238;238;238m  filler line 13: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do[39m
+[38;2;238;238;238m  filler line 14: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do[39m
+[38;2;238;238;238m  filler line 15: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do[39m
+[38;2;238;238;238m  filler line 16: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do[39m
+[38;2;238;238;238m  filler line 17: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do[39m
+[38;2;238;238;238m  filler line 18: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do[39m
+[38;2;238;238;238m  filler line 19: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do[39m
+[38;2;238;238;238m  filler line 20: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do[39m
+[38;2;238;238;238m  Reply with the word ok only.[39m
+
+[49m
+[1m[38;2;128;128;128m•[0m [2mWorking[0m [2m(2s • [0;1mesc[0;2m to interrupt)[0m
+
+
+[1m›[0m [2mAsk Codex to do anything[0m
+
+  [38;2;246;226;183mGPT-6.2-Astra high[39m · [38;2;171;223;167m/srv/projects/example                                      [39m · [38;2;180;190;254m[Sylvode task] id=00000000-0000-40…
+[39m  [1m←[0m for agents · [1m?[0m for shortcuts

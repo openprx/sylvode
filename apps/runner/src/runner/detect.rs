@@ -1,7 +1,9 @@
 //! What the screen of a CLI says: blocking dialogs, and whether the input line is empty
 //! (design sections 7.2, 7.3 and 7.6). The screen text (`capture-pane`) is used only for these
 //! classifications; it is never logged above `debug`, cut to 400 characters there, and never sent
-//! to Sylvode.
+//! to Sylvode. What differs per CLI is read from its profile (`profile.rs`).
+
+use super::profile::profile;
 
 /// A dialog that blocks the CLI.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,13 +18,24 @@ pub enum Dialog {
     Chooser,
     /// The account's usage limit is reached.
     UsageLimit,
+    /// codex asks to review or trust its hooks.
+    HooksReview,
+    /// codex asks whether it may run a command.
+    CommandPermission,
+    /// codex asks whether an MCP server may run a tool.
+    McpApproval,
 }
 
 impl Dialog {
     /// The `reason_code` of the failure this dialog causes.
     pub const fn code(self) -> &'static str {
         match self {
-            Self::Trust | Self::BypassConfirm | Self::Chooser => "cli_dialog",
+            Self::Trust
+            | Self::BypassConfirm
+            | Self::Chooser
+            | Self::HooksReview
+            | Self::CommandPermission
+            | Self::McpApproval => "cli_dialog",
             Self::NotLoggedIn => "cli_not_logged_in",
             Self::UsageLimit => "cli_usage_limit",
         }
@@ -37,7 +50,12 @@ impl Dialog {
     /// The failure text, with the fix. Names the session, never a path.
     pub fn reason(self, session: &str) -> String {
         match self {
-            Self::Trust | Self::BypassConfirm | Self::Chooser => format!(
+            Self::Trust
+            | Self::BypassConfirm
+            | Self::Chooser
+            | Self::HooksReview
+            | Self::CommandPermission
+            | Self::McpApproval => format!(
                 "the CLI in tmux session {session} shows a dialog; attach with tmux attach -t {session} and answer it"
             ),
             Self::NotLoggedIn => {
@@ -50,47 +68,31 @@ impl Dialog {
 
 /// The dialog on `screen`, if any, by the texts verified for each CLI.
 pub fn classify_dialog(cli: &str, screen: &str) -> Option<Dialog> {
-    let screen = &*plain(screen);
-    match cli {
-        "claude" => {
-            if screen.contains("Is this a project you created or one you trust")
-                || screen.contains("Yes, I trust this folder")
-            {
-                Some(Dialog::Trust)
-            } else if screen.contains("Bypass Permissions mode") && screen.contains("Yes, I accept") {
-                Some(Dialog::BypassConfirm)
-            } else if screen.contains("Select login method") || screen.contains("Please run /login") {
-                Some(Dialog::NotLoggedIn)
-            } else {
-                None
-            }
-        }
-        "codex" => {
-            if screen.contains("usage limit") {
-                Some(Dialog::UsageLimit)
-            } else if screen.contains("enter select \u{b7} esc back") {
-                Some(Dialog::Chooser)
-            } else {
-                None
-            }
-        }
-        _ => None,
-    }
+    let dialogs = profile(cli)?.dialogs;
+    dialogs(&plain(screen))
 }
 
-/// The prompt glyphs: claude's `>` (also `❯`) and codex's `›`.
+/// The text after the prompt glyph of `line`, when the line is the CLI's input line.
 fn prompt_rest(cli: &str, line: &str) -> Option<String> {
+    let profile = profile(cli);
+    let glyphs: &[char] = profile.map_or(&['>'], |p| p.prompt_glyphs);
     let stripped = line.trim_start_matches(|c: char| c.is_whitespace() || matches!(c, '\u{2502}' | '\u{2503}' | '|'));
-    let glyphs: &[char] = match cli {
-        "claude" => &['>', '\u{276f}'],
-        "codex" => &['\u{203a}'],
-        _ => &['>'],
-    };
     let first = stripped.chars().next()?;
     if !glyphs.contains(&first) {
         return None;
     }
-    Some(stripped[first.len_utf8()..].to_string())
+    let rest = &stripped[first.len_utf8()..];
+    if profile.is_some_and(|p| p.options_use_prompt_glyph) && is_numbered_option(rest) {
+        return None;
+    }
+    Some(rest.to_string())
+}
+
+/// Whether `text` starts like `1. Yes`: a dialog option, not something typed.
+fn is_numbered_option(text: &str) -> bool {
+    let rest = text.trim_start();
+    let digits = rest.chars().take_while(char::is_ascii_digit).count();
+    digits > 0 && rest[digits..].starts_with(". ")
 }
 
 /// One screen cell: the character and whether it is drawn faint (SGR 2).
@@ -191,6 +193,11 @@ fn last_prompt(cli: &str, screen: &str) -> Option<(String, bool)> {
             .iter()
             .filter(|(c, _)| !is_blank_or_box(*c))
             .all(|(_, f)| *f);
+        let ghost = ghost
+            || profile(cli).is_some_and(|p| {
+                let text = rest.trim_matches(is_blank_or_box);
+                p.placeholders.contains(&text)
+            });
         Some((rest, ghost))
     })
 }

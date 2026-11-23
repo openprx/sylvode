@@ -2,6 +2,7 @@ use super::detect::{
     Dialog, awaits_choice, bottom, classify_bottom, classify_dialog, cut_for_log, input_is_empty, input_text,
     looks_busy, screens_equal,
 };
+use super::profile::profile;
 
 /// The confirmation screen of claude's bypass-permissions mode, from `fixtures/` (reconstructed from
 /// the text the CLI shows; the capture of hand check A5 replaces it).
@@ -226,4 +227,124 @@ fn only_faint_text_is_a_placeholder() {
         input_text("claude", "\u{276f}\u{a0}git sta\u{1b}[2mtus\u{1b}[0m").as_deref(),
         Some("git status")
     );
+}
+
+const CODEX_IDLE: &str = include_str!("fixtures/codex-idle-placeholder.ansi");
+const CODEX_IDLE_BYPASS: &str = include_str!("fixtures/codex-idle-bypass.ansi");
+const CODEX_AFTER_TURN: &str = include_str!("fixtures/codex-after-turn.ansi");
+const CODEX_BUSY: &str = include_str!("fixtures/codex-busy.ansi");
+const CODEX_DRAFT: &str = include_str!("fixtures/codex-draft.ansi");
+const CODEX_PASTED: &str = include_str!("fixtures/codex-pasted.ansi");
+const CODEX_LOGIN: &str = include_str!("fixtures/codex-login.ansi");
+const CODEX_TRUST: &str = include_str!("fixtures/codex-trust.ansi");
+const CODEX_TRUST_BYPASS: &str = include_str!("fixtures/codex-trust-git-dir-with-bypass-flag.ansi");
+const CODEX_HOOK_TRUST: &str = include_str!("fixtures/codex-hook-trust.ansi");
+const CODEX_PERMISSION: &str = include_str!("fixtures/codex-permission.ansi");
+const CODEX_MCP_APPROVAL: &str = include_str!("fixtures/codex-mcp-approval.ansi");
+
+/// Real codex 0.171.0 idle screens: the composer shows a faint placeholder, which is not a draft,
+/// before and after a turn and with the bypass flag.
+#[test]
+fn codex_idle_screens_have_an_empty_input_and_no_dialog() {
+    for (name, screen) in [
+        ("idle", CODEX_IDLE),
+        ("idle bypass", CODEX_IDLE_BYPASS),
+        ("after turn", CODEX_AFTER_TURN),
+    ] {
+        assert_eq!(input_is_empty("codex", screen), Some(true), "{name}");
+        assert_eq!(input_text("codex", screen).as_deref(), Some(""), "{name}");
+        assert!(!looks_busy("codex", screen), "{name}");
+        assert!(!awaits_choice("codex", screen), "{name}");
+        assert_eq!(classify_bottom("codex", screen), None, "{name}");
+    }
+}
+
+/// The non-faint placeholder the same composer draws in another mode still counts as empty.
+#[test]
+fn a_plain_codex_follow_up_placeholder_is_an_empty_input() {
+    assert_eq!(input_is_empty("codex", "\u{203a} Ask a follow-up question"), Some(true));
+    assert_eq!(
+        input_text("codex", "\u{203a} Ask a follow-up question").as_deref(),
+        Some("")
+    );
+    assert_eq!(
+        input_is_empty("codex", "\u{203a} Ask a follow-up question now"),
+        Some(false)
+    );
+    assert_eq!(input_is_empty("claude", "> Ask a follow-up question"), Some(false));
+}
+
+#[test]
+fn codex_draft_and_pasted_text_are_input() {
+    assert_eq!(input_is_empty("codex", CODEX_DRAFT), Some(false));
+    assert_eq!(input_text("codex", CODEX_DRAFT).as_deref(), Some("run tests"));
+    assert_eq!(input_is_empty("codex", CODEX_PASTED), Some(false));
+    let pasted = input_text("codex", CODEX_PASTED).expect("input text");
+    assert_eq!(pasted, "[Pasted Content 1663 chars]");
+    assert!(profile("codex").is_some_and(|p| p.has_pasted_marker(&pasted)));
+    assert!(!looks_busy("codex", CODEX_PASTED) && classify_bottom("codex", CODEX_PASTED).is_none());
+}
+
+/// Busy is the `Working (Ns . esc to interrupt)` line above the composer, which stays drawn with its
+/// placeholder; the echoed task text in the transcript (it starts with the glyph too) is not the
+/// input line.
+#[test]
+fn codex_busy_is_the_working_line_and_the_composer_stays_empty() {
+    assert!(looks_busy("codex", CODEX_BUSY));
+    assert_eq!(input_is_empty("codex", CODEX_BUSY), Some(true));
+    assert!(!awaits_choice("codex", CODEX_BUSY));
+    assert_eq!(classify_bottom("codex", CODEX_BUSY), None);
+}
+
+#[test]
+fn codex_dialogs_are_recognised_on_the_captures() {
+    for (name, screen, want) in [
+        ("login", CODEX_LOGIN, Dialog::NotLoggedIn),
+        ("trust", CODEX_TRUST, Dialog::Trust),
+        ("trust with the bypass flag", CODEX_TRUST_BYPASS, Dialog::Trust),
+        ("hooks review", CODEX_HOOK_TRUST, Dialog::HooksReview),
+        ("command permission", CODEX_PERMISSION, Dialog::CommandPermission),
+        ("mcp approval", CODEX_MCP_APPROVAL, Dialog::McpApproval),
+    ] {
+        assert_eq!(classify_dialog("codex", screen), Some(want), "{name}");
+        assert_eq!(classify_bottom("codex", screen), Some(want), "{name} at the bottom");
+        assert_eq!(
+            want.code(),
+            if want == Dialog::NotLoggedIn {
+                "cli_not_logged_in"
+            } else {
+                "cli_dialog"
+            }
+        );
+        assert!(want.retryable());
+        // The pane is not an input line to push into.
+        assert_ne!(input_is_empty("codex", screen), Some(true), "{name}");
+    }
+    // The approval prompts are choices the runner never answers.
+    assert!(awaits_choice("codex", CODEX_PERMISSION));
+    assert!(awaits_choice("codex", CODEX_MCP_APPROVAL));
+    // A dialog text of another CLI does not match, and the codex idle screens show none.
+    assert_eq!(classify_dialog("claude", CODEX_TRUST), None);
+    assert_eq!(classify_dialog("codex", CODEX_IDLE), None);
+}
+
+/// The MCP approval text names any server; a line that only mentions the words does not count.
+#[test]
+fn the_codex_mcp_approval_matches_any_server_name() {
+    for server in ["probe", "sylvode", "node_repl"] {
+        let screen = format!("  Allow the {server} MCP server to run tool \"x\"?");
+        assert_eq!(classify_dialog("codex", &screen), Some(Dialog::McpApproval), "{server}");
+    }
+    assert_eq!(classify_dialog("codex", "Allow the MCP server"), None);
+    assert_eq!(classify_dialog("codex", "MCP server to run tool"), None);
+}
+
+/// Text of a dialog quoted in the transcript above the composer is not a dialog.
+#[test]
+fn codex_dialog_text_in_the_transcript_does_not_count() {
+    let screen = format!(
+        "\u{203a} Trust this folder? 1. Trust and continue\nWould you like to run the following command?\n\
+         Hooks need review\n{CODEX_IDLE}"
+    );
+    assert_eq!(classify_bottom("codex", &screen), None);
 }

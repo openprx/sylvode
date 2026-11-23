@@ -39,6 +39,7 @@ use super::machine::{
     Action, EnsureOutcome, Machine, PushOutcome, Reminder, State, Task, Timers, TurnWatch, ViewFacts,
 };
 use super::message::{reminder_not_acknowledged, reminder_still_open};
+use super::profile::profile;
 use super::sv_client::SvClient;
 use super::tmux::{
     BracketedPasteConfirmed, ListedPane, Pane, PaneId, PasteGuard, Refusal, SessionName, SocketName, Tmux, TmuxError,
@@ -1213,10 +1214,10 @@ type Create = Result<(WorkDir, Vec<String>), String>;
 
 /// The names that identify the CLI's pane.
 fn process_names(config: &Config, cli: &str) -> Vec<String> {
-    match cli {
-        "claude" => config.runner.cli.claude.process_names.clone(),
-        other => vec![other.to_string()],
-    }
+    config
+        .runner
+        .cli_settings(cli)
+        .map_or_else(|| vec![cli.to_string()], |settings| settings.process_names.to_vec())
 }
 
 /// What Sylvode says about a task view.
@@ -1382,7 +1383,8 @@ fn enter_retry_allowed(tmux: &Tmux, pane: &Pane, cli: &str, process_names: &[Str
     if classify_bottom(cli, &screen).is_some() {
         return false;
     }
-    if !input_text(cli, &screen).is_some_and(|text| text.starts_with("[Sylvode")) {
+    let pasted = profile(cli).is_some_and(|p| input_text(cli, &screen).is_some_and(|text| p.has_pasted_marker(&text)));
+    if !pasted {
         return false;
     }
     let now = unix_now();

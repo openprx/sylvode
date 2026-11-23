@@ -71,6 +71,29 @@ pub struct LaunchFiles<'a> {
     pub hook_socket: &'a Path,
 }
 
+/// Where the files of one codex launch are. codex gets no settings file: the MCP server and the
+/// turn hook go on its command line.
+#[derive(Debug, Clone)]
+pub struct CodexLaunchFiles<'a> {
+    /// The MCP server executable.
+    pub mcp_server: &'a Path,
+    /// `mcp/<bot>.toml`, which holds the bot's token.
+    pub mcp_toml: &'a Path,
+    /// This executable, for the notify program.
+    pub runner_exe: &'a Path,
+    /// `state_dir/hook.sock`.
+    pub hook_socket: &'a Path,
+}
+
+/// The placeholder of a codex launch command for the value of the MCP server's command override.
+pub const PLACEHOLDER_MCP_COMMAND: &str = "{mcp_command_override}";
+
+/// The placeholder of a codex launch command for the value of the MCP server's args override.
+pub const PLACEHOLDER_MCP_ARGS: &str = "{mcp_args_override}";
+
+/// The placeholder of a codex launch command for the value of the notify override.
+pub const PLACEHOLDER_NOTIFY: &str = "{notify_override}";
+
 /// The placeholder of a launch command for the path of the bot's MCP file.
 pub const PLACEHOLDER_MCP_CONFIG: &str = "{mcp_config}";
 
@@ -116,6 +139,77 @@ pub fn session_argv(
         argv.push(settings);
     }
     Ok(argv)
+}
+
+/// The argument vector of codex in a session the runner creates, `program` first.
+///
+/// The words of `launch_command` after the program, in order. A word that is exactly
+/// `{mcp_command_override}`, `{mcp_args_override}` or `{notify_override}` is replaced by the value
+/// of that `-c` override (the template writes the `-c` itself; whole words only). What the
+/// template does not place is appended as `-c <value>`: the MCP server's command and args always,
+/// the notify program only with `hooks` on. No value holds a token: the MCP file that does is
+/// named, not read.
+///
+/// # Errors
+///
+/// [`LaunchError`] for a path that is not UTF-8 (or has control characters, for the notify
+/// program) or an empty `launch_command`.
+pub fn codex_session_argv(
+    program: &Path,
+    cfg: &RunnerCodexConfig,
+    files: &CodexLaunchFiles<'_>,
+) -> Result<Vec<String>, LaunchError> {
+    let Some((_, rest)) = cfg.launch_command.split_first() else {
+        return Err(LaunchError::Unsafe("the launch command is empty".to_string()));
+    };
+    let overrides = [
+        (PLACEHOLDER_MCP_COMMAND, mcp_command_override(files.mcp_server)?),
+        (PLACEHOLDER_MCP_ARGS, mcp_args_override(files.mcp_toml)?),
+        (
+            PLACEHOLDER_NOTIFY,
+            notify_override(files.runner_exe, files.hook_socket)?,
+        ),
+    ];
+    let mut argv = vec![utf8(program)?];
+    argv.extend(rest.iter().map(|word| {
+        overrides
+            .iter()
+            .find(|(placeholder, _)| word == placeholder)
+            .map_or_else(|| word.clone(), |(_, value)| value.clone())
+    }));
+    for (placeholder, value) in overrides {
+        let placed = rest.iter().any(|word| word == placeholder);
+        if !placed && (placeholder != PLACEHOLDER_NOTIFY || cfg.hooks) {
+            argv.push("-c".to_string());
+            argv.push(value);
+        }
+    }
+    Ok(argv)
+}
+
+fn mcp_command_override(mcp_server: &Path) -> Result<String, LaunchError> {
+    Ok(format!(
+        "mcp_servers.{SERVER_NAME}.command={}",
+        toml_string(&utf8(mcp_server)?)
+    ))
+}
+
+fn mcp_args_override(mcp_toml: &Path) -> Result<String, LaunchError> {
+    let server_args = vec![
+        "serve".to_string(),
+        "--transport".to_string(),
+        "stdio".to_string(),
+        "--config".to_string(),
+        utf8(mcp_toml)?,
+    ];
+    Ok(format!("mcp_servers.{SERVER_NAME}.args={}", toml_array(&server_args)))
+}
+
+fn notify_override(runner_exe: &Path, hook_socket: &Path) -> Result<String, LaunchError> {
+    Ok(format!(
+        "notify={}",
+        toml_array(&hook_words_for(runner_exe, hook_socket, "codex", "turn-ended")?)
+    ))
 }
 
 /// The argument vector of a headless claude run.
@@ -176,6 +270,10 @@ pub fn toml_array(items: &[String]) -> String {
 /// The words of a hook run by the CLI: this executable's `hook` subcommand for one event. They
 /// hold no secret: the runner knows the sender by the tmux pane it runs in.
 pub fn hook_words(files: &LaunchFiles<'_>, cli: &str, event: &str) -> Result<Vec<String>, LaunchError> {
+    hook_words_for(files.runner_exe, files.hook_socket, cli, event)
+}
+
+fn hook_words_for(runner_exe: &Path, hook_socket: &Path, cli: &str, event: &str) -> Result<Vec<String>, LaunchError> {
     let text = |p: &Path| -> Result<String, LaunchError> {
         p.to_str()
             .filter(|t| !t.chars().any(char::is_control))
@@ -183,14 +281,14 @@ pub fn hook_words(files: &LaunchFiles<'_>, cli: &str, event: &str) -> Result<Vec
             .ok_or_else(|| LaunchError::Unsafe("a runner file path is not UTF-8 or has control characters".to_string()))
     };
     Ok(vec![
-        text(files.runner_exe)?,
+        text(runner_exe)?,
         "hook".to_string(),
         "--cli".to_string(),
         cli.to_string(),
         "--event".to_string(),
         event.to_string(),
         "--socket".to_string(),
-        text(files.hook_socket)?,
+        text(hook_socket)?,
     ])
 }
 
@@ -208,21 +306,14 @@ pub fn codex_headless_argv(
     prompt: &str,
 ) -> Result<Vec<String>, LaunchError> {
     check_prompt(prompt)?;
-    let server_args = vec![
-        "serve".to_string(),
-        "--transport".to_string(),
-        "stdio".to_string(),
-        "--config".to_string(),
-        utf8(mcp_toml)?,
-    ];
     let mut argv = vec![
         utf8(program)?,
         "exec".to_string(),
         "--skip-git-repo-check".to_string(),
         "-c".to_string(),
-        format!("mcp_servers.{SERVER_NAME}.command={}", toml_string(&utf8(mcp_server)?)),
+        mcp_command_override(mcp_server)?,
         "-c".to_string(),
-        format!("mcp_servers.{SERVER_NAME}.args={}", toml_array(&server_args)),
+        mcp_args_override(mcp_toml)?,
     ];
     argv.extend(cfg.headless_args.iter().cloned());
     argv.push(prompt.to_string());

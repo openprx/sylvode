@@ -1,0 +1,40 @@
+
+  /init - create an AGENTS.md file with instructions for Codex
+  /status - show current session configuration
+  /permissions - choose what Codex is allowed to do
+  /model - choose what model and reasoning effort to use
+  /review - review any changes and find issues
+
+
+› [Sylvode task]
+  id=00000000-0000-4000-8000-000000000000
+  filler line 01: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do
+  filler line 02: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do
+  filler line 03: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do
+  filler line 04: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do
+  filler line 05: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do
+  filler line 06: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do
+  filler line 07: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do
+  filler line 08: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do
+  filler line 09: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do
+  filler line 10: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do
+  filler line 11: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do
+  filler line 12: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do
+  filler line 13: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do
+  filler line 14: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do
+  filler line 15: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do
+  filler line 16: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do
+  filler line 17: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do
+  filler line 18: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do
+  filler line 19: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do
+  filler line 20: lorem ipsum dolor sit amet, consectetur adipiscing elit sed do
+  Reply with the word ok only.
+
+
+• Working (2s • esc to interrupt)
+
+
+› Ask Codex to do anything
+
+  GPT-6.2-Astra high · /srv/projects/example                                       · [Sylvode task] id=00000000-0000-40…
+  ← for agents · ? for shortcuts

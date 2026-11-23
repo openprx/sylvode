@@ -31,6 +31,7 @@ pub mod launch;
 #[allow(dead_code, reason = "used by the session worker")]
 pub mod machine;
 pub mod paths;
+pub mod profile;
 #[allow(dead_code, reason = "used by the session worker")]
 pub mod queue;
 pub mod recovery;
@@ -73,6 +74,8 @@ mod machine_tests;
 mod message_tests;
 #[cfg(test)]
 mod paths_tests;
+#[cfg(test)]
+mod profile_tests;
 #[cfg(test)]
 mod queue_tests;
 #[cfg(test)]

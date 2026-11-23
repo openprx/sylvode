@@ -4,8 +4,9 @@ use std::path::Path;
 
 use super::config::{RunnerClaudeConfig, RunnerCodexConfig};
 use super::launch::{
-    LaunchFiles, SEARCH_MODE_TOOLS, claude_headless_argv, claude_hook_command, codex_headless_argv, hook_words,
-    mcp_tool, opencode_headless_argv, session_argv, shell_quote, toml_array, toml_string,
+    CodexLaunchFiles, LaunchFiles, SEARCH_MODE_TOOLS, claude_headless_argv, claude_hook_command, codex_headless_argv,
+    codex_session_argv, hook_words, mcp_tool, opencode_headless_argv, session_argv, shell_quote, toml_array,
+    toml_string,
 };
 
 fn files() -> LaunchFiles<'static> {
@@ -300,4 +301,138 @@ fn a_quoted_hook_command_is_parsed_by_a_shell_into_the_same_words() {
         .map(str::to_string)
         .collect();
     assert_eq!(words, hook_words(&weird, "claude", "Stop").expect("words"));
+}
+
+fn codex_files() -> CodexLaunchFiles<'static> {
+    CodexLaunchFiles {
+        mcp_server: Path::new("/opt/sylvode/bin/mcp-server"),
+        mcp_toml: Path::new("/state/mcp/BOT.toml"),
+        runner_exe: Path::new("/opt/sylvode/bin/sylvode-runner"),
+        hook_socket: Path::new("/state/hook.sock"),
+    }
+}
+
+const CODEX_MCP_COMMAND: &str = "mcp_servers.sylvode.command=\"/opt/sylvode/bin/mcp-server\"";
+const CODEX_MCP_ARGS: &str =
+    "mcp_servers.sylvode.args=[\"serve\", \"--transport\", \"stdio\", \"--config\", \"/state/mcp/BOT.toml\"]";
+const CODEX_NOTIFY: &str = "notify=[\"/opt/sylvode/bin/sylvode-runner\", \"hook\", \"--cli\", \"codex\", \
+                            \"--event\", \"turn-ended\", \"--socket\", \"/state/hook.sock\"]";
+
+/// A codex session: the launch words, then the MCP server and the turn hook as `-c` overrides.
+#[test]
+fn a_created_codex_session_gets_the_mcp_server_and_the_notify_hook_as_overrides() {
+    let program = Path::new("/usr/local/bin/codex");
+    let argv = codex_session_argv(program, &RunnerCodexConfig::default(), &codex_files()).expect("argv");
+    assert_eq!(
+        argv,
+        strings(&[
+            "/usr/local/bin/codex",
+            "--no-daemon",
+            "--no-alt-screen",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "-c",
+            CODEX_MCP_COMMAND,
+            "-c",
+            CODEX_MCP_ARGS,
+            "-c",
+            CODEX_NOTIFY,
+        ])
+    );
+    // `hooks = false` leaves out the notify override only.
+    let no_hooks = RunnerCodexConfig {
+        hooks: false,
+        ..RunnerCodexConfig::default()
+    };
+    let argv = codex_session_argv(program, &no_hooks, &codex_files()).expect("argv");
+    assert_eq!(argv.len(), 8);
+    assert!(!argv.iter().any(|word| word.starts_with("notify=")));
+}
+
+/// A placeholder is replaced by its value (the template writes the `-c`) and owns its position;
+/// the others are still appended. Whole words only.
+#[test]
+fn the_codex_placeholders_own_their_position() {
+    let program = Path::new("/usr/local/bin/codex");
+    let cfg = RunnerCodexConfig {
+        launch_command: strings(&[
+            "codex",
+            "-c",
+            "{notify_override}",
+            "--model",
+            "x",
+            "-c",
+            "{mcp_args_override}",
+        ]),
+        ..RunnerCodexConfig::default()
+    };
+    let argv = codex_session_argv(program, &cfg, &codex_files()).expect("argv");
+    assert_eq!(
+        argv,
+        strings(&[
+            "/usr/local/bin/codex",
+            "-c",
+            CODEX_NOTIFY,
+            "--model",
+            "x",
+            "-c",
+            CODEX_MCP_ARGS,
+            "-c",
+            CODEX_MCP_COMMAND,
+        ])
+    );
+    let all = RunnerCodexConfig {
+        launch_command: strings(&[
+            "codex",
+            "-c",
+            "{mcp_command_override}",
+            "-c",
+            "{mcp_args_override}",
+            "-c",
+            "{notify_override}",
+        ]),
+        hooks: false,
+        ..RunnerCodexConfig::default()
+    };
+    // A placed notify override is written even with hooks off, like claude's `{settings}`.
+    let argv = codex_session_argv(program, &all, &codex_files()).expect("argv");
+    assert_eq!(
+        argv[1..],
+        strings(&["-c", CODEX_MCP_COMMAND, "-c", CODEX_MCP_ARGS, "-c", CODEX_NOTIFY])
+    );
+    // A word that merely contains a placeholder is left alone, and the value is still appended.
+    let partial = RunnerCodexConfig {
+        launch_command: strings(&["codex", "x{notify_override}"]),
+        ..RunnerCodexConfig::default()
+    };
+    let argv = codex_session_argv(program, &partial, &codex_files()).expect("argv");
+    assert_eq!(argv[1], "x{notify_override}");
+    assert_eq!(argv.len(), 8);
+}
+
+/// No vector holds a token (it is in the file the vector names), and unusable input is refused.
+#[test]
+fn a_codex_session_argv_holds_no_token_and_refuses_unusable_input() {
+    let program = Path::new("/usr/local/bin/codex");
+    let argv = codex_session_argv(program, &RunnerCodexConfig::default(), &codex_files()).expect("argv");
+    assert!(!argv.join(" ").to_lowercase().contains("token"));
+    let empty = RunnerCodexConfig {
+        launch_command: Vec::new(),
+        ..RunnerCodexConfig::default()
+    };
+    assert!(codex_session_argv(program, &empty, &codex_files()).is_err());
+    let hostile = CodexLaunchFiles {
+        hook_socket: Path::new("/state/hook\n.sock"),
+        ..codex_files()
+    };
+    assert!(codex_session_argv(program, &RunnerCodexConfig::default(), &hostile).is_err());
+    // The same override values as the headless run.
+    let headless = codex_headless_argv(
+        program,
+        &RunnerCodexConfig::default(),
+        Path::new("/opt/sylvode/bin/mcp-server"),
+        Path::new("/state/mcp/BOT.toml"),
+        "go",
+    )
+    .expect("headless");
+    assert!(headless.iter().any(|w| w == CODEX_MCP_COMMAND) && headless.iter().any(|w| w == CODEX_MCP_ARGS));
 }
