@@ -128,4 +128,25 @@ suite.check(
 	}
 );
 
+suite.check('the issue page has Sprint and Due date controls that send null to clear', () => {
+	const page = readFileSync(
+		join(
+			fileURLToPath(new URL('.', import.meta.url)),
+			'../src/routes/(app)/workspace/[workspaceId]/projects/[projectId]/issues/[issueId]/+page.svelte'
+		),
+		'utf8'
+	);
+	assert(/sprintOptionsForIssue\(/.test(page), 'the sprint options follow the offering rule');
+	assert(
+		/updateIssue\(\{ sprint_id: sprintValue \|\| null \}\)/.test(page),
+		'no sprint sends null'
+	);
+	assert(/due_at: dueDateToTimestamp\(next\)/.test(page), 'the due date goes through the mapping');
+	assert(/<DatePicker[\s\S]*?onchange=\{handleDueChange\}/.test(page), 'a date picker edits it');
+	assert(
+		/<Select\s+label=\{\$t\('issue\.sprint'\)\}/.test(page),
+		'the sprint control is a labelled select'
+	);
+});
+
 finish(suite.result());

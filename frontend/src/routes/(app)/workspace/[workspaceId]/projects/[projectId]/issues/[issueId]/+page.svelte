@@ -31,6 +31,9 @@
 	import Input from '#lib/components/Input.svelte';
 	import Select from '#lib/components/Select.svelte';
 	import Tag from '#lib/components/Tag.svelte';
+	import DatePicker from '#lib/ui/date/DatePicker.svelte';
+	import { sprintOptionsForIssue } from '#lib/sprints/rules.js';
+	import { dueDateToTimestamp, timestampToDueDate } from '#lib/utils/due-date.js';
 	import Textarea from '#lib/components/Textarea.svelte';
 	import BotIcon from '#lib/components/BotIcon.svelte';
 	import AgentTasksPanel from '#lib/project/agent-tasks/AgentTasksPanel.svelte';
@@ -83,7 +86,9 @@
 	let statusValue = $state<IssueStatus>('backlog');
 	let priorityValue = $state<IssuePriority>('medium');
 	let assigneeValue = $state('');
-	let updatingField = $state<'status' | 'priority' | 'assignee' | 'sprint' | null>(null);
+	let sprintValue = $state('');
+	let dueValue = $state<string | null>(null);
+	let updatingField = $state<'status' | 'priority' | 'assignee' | 'sprint' | 'due' | null>(null);
 
 	let selectedLabelId = $state('');
 	let labelSaving = $state(false);
@@ -130,13 +135,17 @@
 			.map((item) => ({ label: item.name, value: item.id }));
 	});
 
-	const currentSprintName = $derived.by(() => {
-		const sprintId = issue?.sprint_id;
-		if (!sprintId) {
-			return get(t)('issue.noSprint');
-		}
-		return sprints.find((sprint) => sprint.id === sprintId)?.name ?? get(t)('issue.noSprint');
-	});
+	// "No sprint" and the sprints the issue can be moved into: planned and active ones. A completed
+	// or cancelled sprint is listed only while the issue is still in it, and cannot be chosen.
+	const sprintSelectOptions = $derived.by<SelectOption[]>(() => [
+		{ label: get(t)('issue.noSprint'), value: '' },
+		...sprintOptionsForIssue(sprints, issue?.sprint_id ?? null).map((option) => {
+			const ended = sprints.find((sprint) => sprint.id === option.id);
+			const suffix =
+				!option.selectable && ended ? ` (${get(t)(`cycles.status.${ended.status}`)})` : '';
+			return { label: `${option.name}${suffix}`, value: option.id, disabled: !option.selectable };
+		})
+	]);
 
 	const mentionCandidates = $derived.by(() =>
 		workspaceMembers.filter((member) => member.user_id !== currentUserId)
@@ -213,6 +222,8 @@
 			statusValue = issueResponse.data.status;
 			priorityValue = issueResponse.data.priority;
 			assigneeValue = issueResponse.data.assignee_id ?? '';
+			sprintValue = issueResponse.data.sprint_id ?? '';
+			dueValue = timestampToDueDate(issueResponse.data.due_at);
 			issueLabels = extractIssueLabels(issueResponse.data);
 		}
 
@@ -342,6 +353,8 @@
 			statusValue = response.data.status;
 			priorityValue = response.data.priority;
 			assigneeValue = response.data.assignee_id ?? '';
+			sprintValue = response.data.sprint_id ?? '';
+			dueValue = timestampToDueDate(response.data.due_at);
 		}
 
 		return true;
@@ -432,6 +445,45 @@
 			assigneeValue = previous;
 		} else {
 			toast.success(get(t)('issue.assigneeUpdated'));
+		}
+		updatingField = null;
+	}
+
+	async function handleSprintChange() {
+		if (!issue || updatingField) {
+			return;
+		}
+		if ((issue.sprint_id ?? '') === sprintValue) {
+			return;
+		}
+
+		updatingField = 'sprint';
+		const previous = issue.sprint_id ?? '';
+		const success = await updateIssue({ sprint_id: sprintValue || null });
+		if (!success) {
+			sprintValue = previous;
+		} else {
+			toast.success(get(t)('issue.sprintUpdated'));
+		}
+		updatingField = null;
+	}
+
+	async function handleDueChange(next: string | null) {
+		if (!issue || updatingField) {
+			return;
+		}
+		const previous = timestampToDueDate(issue.due_at);
+		if (next === previous) {
+			return;
+		}
+
+		dueValue = next;
+		updatingField = 'due';
+		const success = await updateIssue({ due_at: dueDateToTimestamp(next) });
+		if (!success) {
+			dueValue = previous;
+		} else {
+			toast.success(get(t)('issue.dueDateUpdated'));
 		}
 		updatingField = null;
 	}
@@ -1254,28 +1306,20 @@
 							onchange={handleAssigneeChange}
 							disabled={updatingField !== null}
 						/>
-						<div class="space-y-1">
-							<p class="text-sm font-medium text-fg">
-								{$t('issue.sprint')}
-							</p>
-							{#if currentSprintName && currentSprintName !== $t('issue.noSprint')}
-								<span
-									class="inline-flex items-center rounded-full px-3 py-1 text-sm font-medium bg-surface text-fg border"
-								>
-									<svg class="mr-1.5 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											stroke-width="2"
-											d="M5 4v16m0-14h10l-2 4 2 4H5"
-										></path>
-									</svg>
-									{currentSprintName}
-								</span>
-							{:else}
-								<span class="text-sm text-fg-muted">{$t('issue.noLinkedSprint')}</span>
-							{/if}
-						</div>
+						<Select
+							label={$t('issue.sprint')}
+							options={sprintSelectOptions}
+							bind:value={sprintValue}
+							onchange={handleSprintChange}
+							disabled={updatingField !== null}
+						/>
+						<DatePicker
+							label={$t('issue.dueDate')}
+							helper={$t('issue.dueDateHelper')}
+							value={dueValue}
+							onchange={handleDueChange}
+							disabled={updatingField !== null}
+						/>
 
 						<div class="space-y-2">
 							<p class="text-sm font-medium text-fg">

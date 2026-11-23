@@ -27,6 +27,8 @@ export interface Issue {
 	updated_at: string;
 	/** The short identifier, `KEY-n`, such as `WEB-12`. */
 	identifier: string;
+	/** The due date as the API stores it (midnight UTC of the day); see `utils/due-date.ts`. */
+	due_at?: string | null;
 	type?: string;
 }
 

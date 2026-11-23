@@ -94,6 +94,11 @@ name.
   under a Cancelled badge; sprints without dates are shown as such; the form field is `description`
   and the status labels are translated. The MCP `sprints.create` offers only `planned` and `active`,
   and `sprints.update` takes `description` and `rollover_sprint_id`.
+- **Sprint and Due date on the issue page.** The issue page's properties have a Sprint select (No
+  Sprint, planned and active sprints; an ended sprint is shown only while the issue is in it) and a
+  Due date picker with a clear action, both saved like the assignee and priority controls. A due date
+  is a calendar date: it is stored as midnight UTC of the day and read back from its UTC date, so
+  it does not shift by a day between time zones.
 - **Added: `GET /sprints/{id}`.** It reads one sprint, with the same access as the sprint list.
 - **Cycles page sends `description`.** The page sent `goal`, which the API never stored; the field
   is now `description`, so a sprint's description is saved from the page.

@@ -173,6 +173,12 @@ and comments. The issue page also shows its
 activity. Assigning someone else, or mentioning them in a comment, sends them a notification; your
 own actions never notify you.
 
+On the issue page, **Sprint** moves the issue into a planned or active sprint, or back to the
+backlog with **No Sprint**; a sprint that has ended is shown only while the issue is still in it and
+cannot be chosen. **Due date** is a calendar date with a picker and a clear action. It is saved as
+the start of that day in UTC and shown as the same date to everyone, so a date set in one time zone
+does not move to another day in another.
+
 Assigning an issue to a bot, or mentioning a bot, can start agent work; see [Agents](agents.md).
 
 ### Labels
