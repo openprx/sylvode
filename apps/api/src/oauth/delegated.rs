@@ -43,7 +43,6 @@ use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use axum::Router;
-use axum::extract::rejection::ExtensionRejection;
 use axum::extract::{ConnectInfo, FromRequestParts, MatchedPath, RawPathParams, Request, State};
 use axum::http::request::Parts;
 use axum::http::{Extensions, HeaderMap, Method};
@@ -198,8 +197,8 @@ const fn entry(method: &'static str, pattern: &'static str, required: Required, 
 /// principal.
 ///
 /// Patterns are copied from `main.rs`. Forms and the form-record routes, the batch label route, the
-/// project label list and search are absent on purpose: their handlers either are bot-only or
-/// decide permissions or results through paths that do not read the delegated grant, so they stay
+/// project label list and search are absent on purpose: they have not been reviewed for delegation,
+/// or decide permissions or results through paths that do not read the delegated grant, so they stay
 /// denied until each is made delegation-aware.
 pub static DELEGATED_ROUTES: &[RouteEntry] = &[
     entry(
@@ -427,26 +426,6 @@ pub fn refuse_agent_task() -> Result<(), ApiError> {
         scope.dispatch_refused.store(true, Ordering::Release);
         Err(agent_task_refused())
     })
-}
-
-/// The workspace a bot-or-delegated request works in, for handlers that were bot-only.
-///
-/// A delegated request supplies the grant's workspace (its project set was enforced before the
-/// handler); a bot supplies its own. A request with neither fails exactly as the plain
-/// `Extension<BotAuthContext>` extractor did.
-pub struct CallerWorkspace(pub Uuid);
-
-impl<S: Send + Sync> FromRequestParts<S> for CallerWorkspace {
-    type Rejection = ExtensionRejection;
-
-    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        if let Some(context) = parts.extensions.get::<DelegatedAuthContext>() {
-            return Ok(Self(context.workspace_id));
-        }
-        let axum::Extension(bot) =
-            axum::Extension::<crate::middleware::bot_auth::BotAuthContext>::from_request_parts(parts, state).await?;
-        Ok(Self(bot.workspace_id))
-    }
 }
 
 // ---------------------------------------------------------------------------------------------

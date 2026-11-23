@@ -586,14 +586,16 @@ pub async fn remove_label_from_issue(
     Ok(ApiResponse::ok())
 }
 
-/// GET /`api/v1/projects/:project_id/labels` (bot-auth)
-/// Lists all workspace labels available for a project.
+/// GET /`api/v1/projects/:project_id/labels`
+/// Lists all workspace labels available for a project, to any member of its workspace or a bot of it.
 pub async fn list_project_labels(
     State(state): State<AppState>,
-    Extension(bot): Extension<BotAuthContext>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
     Path(project_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
-    // Verify project belongs to bot's workspace
+    let extensions = build_auth_extensions(claims, bot);
+
     #[derive(Debug, FromQueryResult)]
     struct ProjectRow {
         workspace_id: Uuid,
@@ -608,9 +610,7 @@ pub async fn list_project_labels(
     .await?
     .ok_or_else(|| ApiError::NotFound("project not found".to_string()))?;
 
-    if project.workspace_id != bot.workspace_id {
-        return Err(ApiError::Forbidden("project not in bot workspace".to_string()));
-    }
+    require_workspace_access(&state, &extensions, project.workspace_id).await?;
 
     #[derive(Debug, FromQueryResult)]
     struct LabelRow {

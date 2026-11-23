@@ -158,6 +158,7 @@ struct World {
     ws2: Uuid,
     alice: Uuid,
     bob: Uuid,
+    carol: Uuid,
     agent: Uuid,
     p1: Uuid,
     p2: Uuid,
@@ -331,6 +332,7 @@ impl World {
             ws2,
             alice,
             bob,
+            carol,
             agent,
             p1,
             p2,
@@ -2539,5 +2541,216 @@ async fn a_server_with_open_event_streams_shuts_down_within_a_bound_and_the_stre
         flow_drain_called.load(std::sync::atomic::Ordering::SeqCst),
         "the rest of the shutdown sequence still ran"
     );
+    w.finish().await;
+}
+
+/// The routes that used to demand a bot extension answer a user's token like any other route:
+/// the answer is the API's own envelope, never an extractor rejection (HTTP 500).
+#[tokio::test]
+async fn a_member_lists_project_labels_with_a_user_token() {
+    let Some(w) = World::new("user_project_labels").await else {
+        return;
+    };
+    let reply = w
+        .send(
+            "GET",
+            &format!("/api/v1/projects/{}/labels", w.p1),
+            Some(&World::jwt(w.bob)),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.text());
+    assert_eq!(reply.code(), Some(0), "{}", reply.text());
+    assert_eq!(ids(&reply, "items"), BTreeSet::from([w.label1]), "{}", reply.text());
+    w.finish().await;
+}
+
+#[tokio::test]
+async fn a_non_member_gets_404_on_project_labels() {
+    let Some(w) = World::new("user_project_labels_404").await else {
+        return;
+    };
+    // carol belongs to ws2 only; p1 is in ws1.
+    let reply = w
+        .send(
+            "GET",
+            &format!("/api/v1/projects/{}/labels", w.p1),
+            Some(&World::jwt(w.carol)),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(reply.code(), Some(404), "{} {}", reply.status, reply.text());
+    w.finish().await;
+}
+
+#[tokio::test]
+async fn a_user_token_never_gets_http_500_on_formerly_bot_only_routes() {
+    let Some(w) = World::new("user_token_no_500").await else {
+        return;
+    };
+    let token = World::jwt(w.bob);
+    let cases = [
+        ("GET", format!("/api/v1/projects/{}/labels", w.p1), None),
+        (
+            "POST",
+            format!("/api/v1/issues/{}/labels/batch", w.i1),
+            Some(json!({"label_ids": [w.label1]})),
+        ),
+        ("GET", format!("/api/v1/issues/by-identifier/{}", w.ident1), None),
+        ("GET", "/api/v1/issues/by-identifier/ZZZ-999".to_string(), None),
+        ("GET", "/api/v1/issues/by-identifier/no-number".to_string(), None),
+    ];
+    for (method, uri, body) in cases {
+        let reply = w.send(method, &uri, Some(&token), &[], body.as_ref()).await;
+        assert_ne!(reply.status, StatusCode::INTERNAL_SERVER_ERROR, "{method} {uri}");
+        assert!(
+            reply.code().is_some(),
+            "{method} {uri} has no envelope: {}",
+            reply.text()
+        );
+    }
+    // The batch attach worked for a member: one row, and a repeat is harmless.
+    assert_eq!(
+        count(
+            &w.db,
+            "SELECT COUNT(*) AS n FROM work_item_labels WHERE work_item_id = $1",
+            vec![w.i1.into()]
+        )
+        .await,
+        1
+    );
+    w.finish().await;
+}
+
+#[tokio::test]
+async fn a_user_cannot_batch_attach_labels_to_an_item_of_another_workspace() {
+    let Some(w) = World::new("user_batch_labels_foreign").await else {
+        return;
+    };
+    // bob is a member of ws1 only; i3 is in ws2.
+    let reply = w
+        .send(
+            "POST",
+            &format!("/api/v1/issues/{}/labels/batch", w.i3),
+            Some(&World::jwt(w.bob)),
+            &[],
+            Some(&json!({"label_ids": [w.label1]})),
+        )
+        .await;
+    assert_eq!(reply.code(), Some(404), "{} {}", reply.status, reply.text());
+    assert_eq!(
+        count(
+            &w.db,
+            "SELECT COUNT(*) AS n FROM work_item_labels WHERE work_item_id = $1",
+            vec![w.i3.into()]
+        )
+        .await,
+        0
+    );
+    w.finish().await;
+}
+
+#[tokio::test]
+async fn by_identifier_works_for_a_member_user_and_is_404_for_a_non_member() {
+    let Some(w) = World::new("user_by_identifier").await else {
+        return;
+    };
+    let member = w
+        .send(
+            "GET",
+            &format!("/api/v1/issues/by-identifier/{}", w.ident1),
+            Some(&World::jwt(w.bob)),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(member.code(), Some(0), "{}", member.text());
+    assert_eq!(member.json()["data"]["id"], json!(w.i1));
+    // The key is matched ignoring case.
+    let lower = w
+        .send(
+            "GET",
+            &format!("/api/v1/issues/by-identifier/{}", w.ident1.to_lowercase()),
+            Some(&World::jwt(w.bob)),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(lower.code(), Some(0), "{}", lower.text());
+    // ident3 is in ws2, where bob is not a member: indistinguishable from an unknown item.
+    let outsider = w
+        .send(
+            "GET",
+            &format!("/api/v1/issues/by-identifier/{}", w.ident3),
+            Some(&World::jwt(w.bob)),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(outsider.code(), Some(404), "{}", outsider.text());
+    w.finish().await;
+}
+
+#[tokio::test]
+async fn by_identifier_is_409_when_two_member_workspaces_share_the_key_and_resolves_with_workspace_id() {
+    let Some(w) = World::new("user_by_identifier_409").await else {
+        return;
+    };
+    // A second project with the key AAA in ws2, where alice is also a member, with one item.
+    let (p4, i4) = (Uuid::new_v4(), Uuid::new_v4());
+    exec(
+        &w.db,
+        "INSERT INTO projects (id, workspace_id, key, name, created_by, type_key) \
+         VALUES ($1, $2, 'AAA', 'twin', $3, 'code_project')",
+        vec![p4.into(), w.ws2.into(), w.alice.into()],
+    )
+    .await;
+    exec(
+        &w.db,
+        "INSERT INTO work_items (id, project_id, title, state, created_by) VALUES ($1, $2, 'twin item', 'todo', $3)",
+        vec![i4.into(), p4.into(), w.alice.into()],
+    )
+    .await;
+    let sequence_of = |id: Uuid| {
+        let db = w.db.clone();
+        async move {
+            Count::find_by_statement(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT sequence_number::bigint AS n FROM work_items WHERE id = $1",
+                vec![id.into()],
+            ))
+            .one(&db)
+            .await
+            .expect("sequence number is readable")
+            .expect("the work item exists")
+            .n
+        }
+    };
+    let (seq1, seq4) = (sequence_of(w.i1).await, sequence_of(i4).await);
+    assert_eq!(seq1, seq4, "both items are the first of their project");
+    let token = World::jwt(w.alice);
+    let uri = format!("/api/v1/issues/by-identifier/{}", w.ident1);
+    let ambiguous = w.send("GET", &uri, Some(&token), &[], None).await;
+    assert_eq!(ambiguous.code(), Some(409), "{}", ambiguous.text());
+    assert!(
+        ambiguous.text().contains("workspace_id"),
+        "the message names the way out: {}",
+        ambiguous.text()
+    );
+    for (workspace, expected) in [(w.ws1, w.i1), (w.ws2, i4)] {
+        let resolved = w
+            .send(
+                "GET",
+                &format!("{uri}?workspace_id={workspace}"),
+                Some(&token),
+                &[],
+                None,
+            )
+            .await;
+        assert_eq!(resolved.code(), Some(0), "{}", resolved.text());
+        assert_eq!(resolved.json()["data"]["id"], json!(expected));
+    }
     w.finish().await;
 }

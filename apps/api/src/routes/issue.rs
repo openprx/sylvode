@@ -1296,12 +1296,25 @@ pub async fn delete_issue(
     Ok(ApiResponse::ok())
 }
 
-/// GET /api/v1/issues/by-identifier/:identifier (bot-auth, or a connected application)
+/// Query of `GET /api/v1/issues/by-identifier/:identifier`.
+#[derive(Debug, Deserialize)]
+pub struct ByIdentifierQuery {
+    /// Narrows the lookup to one workspace; needed when a user's workspaces share a project key.
+    pub workspace_id: Option<Uuid>,
+}
+
+/// GET /api/v1/issues/by-identifier/:identifier
 /// Get a work item by its short identifier, e.g. "PRX-42".
+///
+/// A bot or a connected application looks in its own workspace. A user looks in the workspaces
+/// they are a member of: one match answers, none is 404, and several answer 409 so the caller
+/// passes `workspace_id`.
 pub async fn get_issue_by_identifier(
     State(state): State<AppState>,
-    crate::oauth::delegated::CallerWorkspace(workspace_id): crate::oauth::delegated::CallerWorkspace,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
     Path(identifier): Path<String>,
+    Query(query): Query<ByIdentifierQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     // Parse "PREFIX-N"
     let (prefix, seq) = identifier
@@ -1311,6 +1324,68 @@ pub async fn get_issue_by_identifier(
     let seq_num: i64 = seq
         .parse()
         .map_err(|_| ApiError::BadRequest(format!("sequence number '{seq}' is not a valid integer")))?;
+
+    let not_found = || ApiError::NotFound(format!("work item '{identifier}' not found"));
+
+    #[derive(Debug, FromQueryResult)]
+    struct Located {
+        id: Uuid,
+        workspace_id: Uuid,
+    }
+
+    let fixed_workspace = match (crate::oauth::delegated::current(), bot.as_ref()) {
+        (Some(delegated), _) => Some(delegated.workspace_id),
+        (None, Some(Extension(bot_ctx))) => Some(bot_ctx.workspace_id),
+        (None, None) => None,
+    };
+    let located = if let Some(workspace_id) = fixed_workspace {
+        if query.workspace_id.is_some_and(|requested| requested != workspace_id) {
+            return Err(not_found());
+        }
+        Located::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r"
+                SELECT wi.id, p.workspace_id
+                FROM work_items wi
+                INNER JOIN projects p ON wi.project_id = p.id
+                WHERE p.workspace_id = $1
+                  AND UPPER(p.key) = UPPER($2)
+                  AND wi.sequence_number = $3
+            ",
+            vec![workspace_id.into(), prefix.into(), seq_num.into()],
+        ))
+        .one(&state.db)
+        .await?
+        .ok_or_else(not_found)?
+    } else {
+        let user_id =
+            Uuid::parse_str(&claims.sub).map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))?;
+        let mut matches = Located::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r"
+                SELECT wi.id, p.workspace_id
+                FROM work_items wi
+                INNER JOIN projects p ON wi.project_id = p.id
+                INNER JOIN workspace_members wm ON wm.workspace_id = p.workspace_id AND wm.user_id = $1
+                WHERE UPPER(p.key) = UPPER($2)
+                  AND wi.sequence_number = $3
+                  AND ($4::uuid IS NULL OR p.workspace_id = $4)
+                LIMIT 2
+            ",
+            vec![user_id.into(), prefix.into(), seq_num.into(), query.workspace_id.into()],
+        ))
+        .all(&state.db)
+        .await?;
+        if matches.len() > 1 {
+            return Err(ApiError::Conflict(format!(
+                "identifier '{identifier}' matches work items in several of your workspaces; pass workspace_id"
+            )));
+        }
+        matches.pop().ok_or_else(not_found)?
+    };
+
+    let extensions = build_auth_extensions(claims, bot);
+    require_workspace_access(&state, &extensions, located.workspace_id).await?;
 
     #[derive(Debug, FromQueryResult)]
     struct IssueRow {
@@ -1340,15 +1415,13 @@ pub async fn get_issue_by_identifier(
                    wi.proposal_id, wi.governance_exempt, wi.governance_exempt_reason
             FROM work_items wi
             INNER JOIN projects p ON wi.project_id = p.id
-            WHERE p.workspace_id = $1
-              AND UPPER(p.key) = UPPER($2)
-              AND wi.sequence_number = $3
+            WHERE wi.id = $1
         ",
-        vec![workspace_id.into(), prefix.into(), seq_num.into()],
+        vec![located.id.into()],
     ))
     .one(&state.db)
     .await?
-    .ok_or_else(|| ApiError::NotFound(format!("work item '{identifier}' not found")))?;
+    .ok_or_else(not_found)?;
 
     Ok(ApiResponse::success(IssueResponse {
         id: issue.id,
@@ -1370,7 +1443,7 @@ pub async fn get_issue_by_identifier(
     }))
 }
 
-/// POST /`api/v1/issues/:issue_id/labels/batch` (bot-auth)
+/// POST /`api/v1/issues/:issue_id/labels/batch`
 /// Add multiple labels to a work item in one request.
 #[derive(Debug, serde::Deserialize)]
 pub struct AddLabelsRequest {
@@ -1379,15 +1452,32 @@ pub struct AddLabelsRequest {
 
 pub async fn add_labels_to_issue(
     State(state): State<AppState>,
-    Extension(bot): Extension<BotAuthContext>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
     Path(issue_id): Path<Uuid>,
     Json(payload): Json<AddLabelsRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     if payload.label_ids.is_empty() {
         return Err(ApiError::BadRequest("label_ids must not be empty".to_string()));
     }
+    let extensions = build_auth_extensions(claims, bot);
 
-    attach_labels_to_issue(&state.db, issue_id, bot.workspace_id, &payload.label_ids).await?;
+    #[derive(Debug, FromQueryResult)]
+    struct IssueWorkspace {
+        workspace_id: Uuid,
+    }
+
+    let owner = IssueWorkspace::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT p.workspace_id FROM work_items wi INNER JOIN projects p ON wi.project_id = p.id WHERE wi.id = $1",
+        vec![issue_id.into()],
+    ))
+    .one(&state.db)
+    .await?
+    .ok_or_else(|| ApiError::NotFound("work item not found or access denied".to_string()))?;
+    require_workspace_access(&state, &extensions, owner.workspace_id).await?;
+
+    attach_labels_to_issue(&state.db, issue_id, owner.workspace_id, &payload.label_ids).await?;
 
     Ok(ApiResponse::ok())
 }

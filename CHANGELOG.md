@@ -53,6 +53,18 @@ name.
 
 ### Fixed
 
+- **Webhook deliveries connect to the checked address.** The API and the worker resolved a webhook
+  host name for the outbound check and then again for the connection, so a name could answer a
+  public address to the check and an internal one to the connection. Event-dispatcher and legacy
+  webhook deliveries now connect only to the addresses the check saw.
+- **`GET /ready` reports an unreachable database as HTTP 503.** It answered HTTP 200 with `code`
+  500; it now answers HTTP 503 with `code` 503.
+- **Project labels, batch label attach and lookup by identifier for user tokens.** A user token on
+  `GET /projects/{project_id}/labels` or `POST /issues/{issue_id}/labels/batch` answered HTTP 500
+  because the handlers required a bot. Both now accept any member of the workspace (and a bot of it),
+  and `GET /issues/by-identifier/{identifier}` also answers users: it searches the workspaces the
+  user belongs to, accepts `?workspace_id=`, and answers 409 when the identifier matches work items
+  in more than one of them.
 - **Windows build.** The thread CPU clock is read on Unix only, so every workspace binary now builds
   for the Windows target; CI checks that target in the `windows-build` job.
 

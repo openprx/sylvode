@@ -114,9 +114,8 @@ Every JSON response uses one envelope:
 ```
 
 **The HTTP status of an error is usually `200 OK`.** Most endpoints report errors only in the
-envelope, so a client must check `code`, not only the HTTP status. `GET /ready` is an example: when
-the database cannot be reached it answers HTTP 200 with `{"code": 500, "message": "database not
-ready"}`.
+envelope, so a client must check `code`, not only the HTTP status. The health endpoints are the
+exception: `GET /ready` answers HTTP 503 when the database cannot be reached.
 
 Some errors carry a stable machine-readable name and structured details next to the message:
 
@@ -169,7 +168,7 @@ their own shape; the tables say so.
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/health` | `{"status": "ok", "service": "<app_name>"}` in the envelope. |
-| GET | `/ready` | `{"status": "ready"}` when the database answers, otherwise `code: 500`. |
+| GET | `/ready` | `{"status": "ready"}` when the database answers, otherwise HTTP 503 with `code: 503` and the message `database not ready`. |
 
 ## Webhooks
 
@@ -321,6 +320,20 @@ A notification has `id`, `user_id`, `type`, `title`, `content`, `link`, `related
 
 `title` is a message key for the web UI (for example `notification.mentionedTitle`) and `content`
 holds its parameters.
+
+## Work items, sprints and labels
+
+Work items, sprints and labels are reached with a user token, a bot token or, for the routes on the
+connected-application allow-list, a connected application. Every route checks that the caller can
+reach the workspace that owns the object: a non-member gets `404`.
+
+These routes used to require a bot and answered a user token with HTTP 500. They now answer both:
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/projects/{project_id}/labels` | The labels of the project's workspace. |
+| POST | `/issues/{issue_id}/labels/batch` | Body `{"label_ids": [...]}`. Every label must belong to the item's workspace; nothing is written when one does not. |
+| GET | `/issues/by-identifier/{identifier}` | A work item by its short identifier such as `WEB-12`, the key matched ignoring case. A bot or a connected application searches its own workspace. A user searches the workspaces they belong to; add `?workspace_id=` when the same identifier exists in more than one, otherwise the answer is `409`. |
 
 ## Search
 
