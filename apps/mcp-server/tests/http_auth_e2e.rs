@@ -409,9 +409,9 @@ async fn stdio_without_a_configured_bot_token_refuses_to_start() -> TestResult {
     Ok(())
 }
 
-/// The shared inbound secret is gone. A file that still carries `mcp.auth_token` must be
-/// stopped with an explanation: serving it silently would leave the operator believing the
-/// port is gated by a secret that nothing reads.
+/// The shared inbound secret is gone. A file that still carries `mcp.auth_token` is refused as an
+/// unknown key: serving it silently would leave the operator believing the port is gated by a
+/// secret that nothing reads.
 #[tokio::test]
 async fn a_configuration_still_carrying_the_retired_shared_secret_refuses_to_start() -> TestResult {
     let config = support::write_config_with_extra_mcp_keys(
@@ -440,8 +440,8 @@ async fn a_configuration_still_carrying_the_retired_shared_secret_refuses_to_sta
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("mcp.auth_token has been removed"),
-        "the refusal must explain what happened to the key: {stderr}"
+        stderr.contains("unknown field") && stderr.contains("auth_token"),
+        "the refusal must name the unknown key: {stderr}"
     );
     assert!(
         !stderr.contains("a-retired-inbound-shared-secret"),

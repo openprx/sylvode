@@ -154,6 +154,15 @@ name.
   Creator need `SV_FORM_PLUGIN_EXTENSIONS_ENABLED` as well; both are passed now (default `0`) and
   documented in `.env.example`, the configuration reference and the plugin guide.
 
+- **Settings that nothing read are gone; unknown ones are refused plainly.** `auth.default_author_id`
+  and `oauth.embed_frame_ancestors` were validated and never used; a file that still has either is
+  refused as an unknown key, as is `mcp.auth_token` (which had a dedicated refusal message). The
+  runner refuses an `agent_type` it does not dispatch to, `cli` included, listing the valid types.
+  The Flow-only command line and MCP profile default to `http://localhost:8081`, like the rest of
+  the MCP configuration (the Flow code defaulted to `http://127.0.0.1:3000`), the unused root
+  `VITE_API_BASE_URL` of `.env.example` is removed, and the voting rule descriptions of the proposal
+  form say what the server applies (the Absolute Majority and Consensus texts did not).
+
 ### Removed
 
 - **Universal forms delivery and sign-off tooling.** The scripts and schemas that produced and

@@ -110,9 +110,9 @@ workspace_id = "your-workspace-uuid"
 | `oauth_issuer`, `oauth_resource`, `oauth_forward_secret` | none | Delegated access; all three or none; see [Delegated access](#delegated-access-oauth) |
 
 The global options `--api-url`, `--bot-token` and `--workspace-id`, and `serve --transport`,
-`--bind-addr` and `--tools`, override the matching keys. The loader refuses an `auth_token` key in
-`[mcp]` and names it in the error; delete the line. Inbound HTTP and SSE requests authenticate with
-the caller's own token, as described under [Authentication](#authentication).
+`--bind-addr` and `--tools`, override the matching keys. Inbound HTTP and SSE requests authenticate
+with the caller's own token, as described under [Authentication](#authentication); there is no
+shared inbound secret key.
 
 ## Commands
 
@@ -455,7 +455,7 @@ curl -X POST "http://localhost:8090/mcp/rpc?tools=full" \
 
 | Symptom | Cause and fix |
 |---|---|
-| The server refuses to start and names `mcp.auth_token` | The `[mcp]` section has an `auth_token` key, which the loader refuses. Delete the line; HTTP and SSE callers present their own tokens |
+| The server refuses to start with `unknown field auth_token` | The `[mcp]` section has an `auth_token` key; the loader accepts no such key. Delete the line; HTTP and SSE callers present their own tokens |
 | `mcp.bot_token is required by the stdio transport and by the CLI subcommands...` | `stdio` and the command line have no per-request caller, so they act as a configured bot. Set `bot_token`, `api_url` and `workspace_id` in `[mcp]`. `http` and `sse` never need `bot_token` |
 | `mcp.oauth_issuer, mcp.oauth_resource and mcp.oauth_forward_secret are set together or not at all` | Only some of the three keys are set. Set all three or remove them |
 | Every request answers `401` | The request has no `Authorization: Bearer` header, or the API rejected the token |

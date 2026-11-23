@@ -191,7 +191,6 @@ struct RawMcp {
     /// Retired. Kept only so that a file still carrying it gets an explanation instead of
     /// `deny_unknown_fields`' bare "unknown field" — the key used to be load bearing, and an
     /// operator who wrote it deserves to be told what replaced it.
-    auth_token: Option<String>,
     transport: Option<String>,
     bind_addr: Option<String>,
     oauth_issuer: Option<String>,
@@ -832,15 +831,6 @@ impl RawMcp {
         let workspace_id = self
             .workspace_id
             .and_then(|raw| issues.record(parse_workspace_scale_uuid("mcp.workspace_id", &raw)));
-        if self.auth_token.is_some() {
-            // The value is never echoed, not even its length.
-            issues.push(
-                "mcp.auth_token has been removed: an inbound http/sse caller now presents its own workspace bot token \
-                 in `Authorization: Bearer opr_...`, which the MCP server forwards to the API unchanged and the API \
-                 authenticates. Delete the key; there is no shared inbound secret any more, and a request without a \
-                 caller bot token is refused",
-            );
-        }
         let transport = self.transport.map_or_else(
             || Some(McpTransport::default()),
             |raw| {

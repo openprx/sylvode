@@ -938,9 +938,8 @@ A secret counts as a placeholder when it is one of the example values or contain
 | `[agents.webhook]` | `url` (required), `secret` |
 | `[agents.custom]` | `command` (required), `args` |
 
-An agent type that is not one of the five is answered `refused` (`unknown agent type: ...`) when
-it is selected. `agent_type = "cli"` refuses start-up with a message that points to a `runner`
-agent on the headless channel.
+An agent type that is not one of the five refuses start-up, naming the agent, the type and the
+valid values (`runner, openclaw, openprx, webhook, custom`).
 
 ### `[runner]`
 

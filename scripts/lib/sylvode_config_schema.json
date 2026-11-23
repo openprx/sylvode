@@ -63,7 +63,5 @@
       "followup_interval_secs"
     ]
   },
-  "retired": {
-    "mcp.auth_token": "the shared inbound secret has been removed and the MCP server refuses to start while the key is present. An http/sse caller now presents its own workspace bot token in the Authorization: Bearer opr_... header, which the server forwards to the API unchanged. Fix: delete the auth_token line from the [mcp] section"
-  }
+  "retired": {}
 }

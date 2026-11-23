@@ -519,6 +519,9 @@ fn validate_api_url(api_url: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The agent types the runner dispatches to.
+pub const AGENT_TYPES: [&str; 5] = ["runner", "openclaw", "openprx", "webhook", "custom"];
+
 /// Every trigger kind a Sylvode deployment sends, the closed set `route.trigger_kinds` may name.
 ///
 /// A direct webhook delivery carries `bot_context.trigger_reason`: `created`, `assigned`,
@@ -695,12 +698,12 @@ impl Config {
         self.validate_tunnel()?;
         self.validate_ai_task_callback()?;
         for agent in &self.agents {
-            if agent.agent_type == "cli" {
+            if !AGENT_TYPES.contains(&agent.agent_type.as_str()) {
                 return Err(format!(
-                    "agent `{}`: agent_type = \"cli\" was removed; use agent_type = \"runner\" with the \
-                     project's execution channel set to headless (the CLI's permissions come from \
-                     [runner.cli.*])",
-                    agent.id
+                    "agent `{}`: unknown agent_type `{}`; valid values: {}",
+                    agent.id,
+                    agent.agent_type,
+                    AGENT_TYPES.join(", ")
                 ));
             }
             if let Some(route) = &agent.route {
@@ -2059,10 +2062,10 @@ url = "http://127.0.0.1:9000/hook"
         assert!(error.contains("mystery"), "{error}");
     }
 
-    /// `agent_type = "cli"` and the settings that only it used are gone: a configuration that
-    /// still has them is refused, naming what replaces them.
+    /// An agent type the runner does not know is refused with the list of valid ones (`cli` was one
+    /// that is gone); the settings that only it used are unknown keys.
     #[test]
-    fn the_retired_cli_agent_and_its_settings_are_refused() {
+    fn an_unknown_agent_type_and_the_retired_cli_settings_are_refused() {
         let base = |extra: &str| {
             format!(
                 "[server]\nlisten = \"127.0.0.1:9090\"\n[security]\nwebhook_secrets = [\"a-real-secret-value\"]\n{extra}"
@@ -2073,7 +2076,9 @@ url = "http://127.0.0.1:9000/hook"
         ))
         .expect_err("a cli agent is refused");
         assert!(
-            err.contains("agent `fixer`") && err.contains("agent_type = \"runner\"") && err.contains("headless"),
+            err.contains("agent `fixer`")
+                && err.contains("unknown agent_type `cli`")
+                && err.contains("valid values: runner, openclaw, openprx, webhook, custom"),
             "{err}"
         );
         for (extra, key) in [

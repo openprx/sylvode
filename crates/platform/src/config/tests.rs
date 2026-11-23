@@ -604,13 +604,11 @@ fn malformed_and_nil_uuids_are_refused_everywhere_they_appear() {
 
 // ---- tokens ----
 
-/// The shared inbound secret is gone, and a file that still carries it is stopped with an
-/// explanation rather than serving on an assumption the operator no longer holds. Silently
-/// ignoring the key would leave a deployment believing its port was gated by a secret that
-/// nothing reads any more.
+/// The shared inbound secret is gone: a file that still carries `auth_token` is refused as an
+/// unknown key (the value is never echoed), like any other key nothing reads.
 #[test]
-fn a_retired_mcp_auth_token_is_refused_with_an_explanation_and_never_echoed() {
-    let reported = issues(&format!(
+fn a_retired_mcp_auth_token_is_an_unknown_key_and_never_echoed() {
+    let error = parse(&format!(
         r#"
 [database]
 url = "postgres://localhost/openpr"
@@ -623,20 +621,13 @@ workspace_id = "{WORKSPACE}"
 bot_token = "opr_live_token"
 auth_token = "an-inbound-secret-value"
 "#
-    ));
+    ))
+    .expect_err("an mcp key that nothing reads is refused");
+    let text = error.to_string();
+    assert!(text.contains("unknown field") && text.contains("auth_token"), "{text}");
     assert!(
-        reported
-            .iter()
-            .any(|issue| issue.contains("mcp.auth_token has been removed")),
-        "{reported:?}"
-    );
-    assert!(
-        reported.iter().any(|issue| issue.contains("Authorization: Bearer")),
-        "the refusal has to say what replaced it: {reported:?}"
-    );
-    assert!(
-        !reported.iter().any(|issue| issue.contains("an-inbound-secret-value")),
-        "the retired secret must never be echoed: {reported:?}"
+        !text.contains("an-inbound-secret-value"),
+        "the retired secret must never be echoed: {text}"
     );
 }
 

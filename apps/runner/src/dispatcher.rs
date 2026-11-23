@@ -80,9 +80,6 @@ pub async fn dispatch(
         "openprx" => dispatch_openprx(config, background, agent, payload).await,
         "webhook" => dispatch_webhook(config, agent, payload).await,
         "custom" => dispatch_custom(config, background, agent, payload).await,
-        "cli" => Dispatched::refused(
-            "agent_type = \"cli\" was removed; use agent_type = \"runner\" with the project's channel set to headless",
-        ),
         other => Dispatched::refused(format!("unknown agent type: {other}")),
     };
     if let Some(http) = http
