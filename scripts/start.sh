@@ -237,8 +237,6 @@ min_connections = 2
 jwt_secret = "$(random_hex 32)"
 access_ttl_seconds = 1296000
 refresh_ttl_seconds = 1728000
-# default_author_id is deliberately unset: it must name a user that actually exists, and a
-# generated UUID would only point at a row that never gets created.
 
 [logging]
 # filter is left out so each binary keeps its own default scope ("<service>=info,tower_http=info").

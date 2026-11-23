@@ -1491,7 +1491,6 @@ mod tests {
                 jwt_secret: Secret::new("flow-export-test-secret"),
                 jwt_access_ttl_seconds: 900,
                 jwt_refresh_ttl_seconds: 3600,
-                default_author_id: None,
                 allow_insecure_cookies: false,
                 collab_allowed_origins: Vec::new(),
             },

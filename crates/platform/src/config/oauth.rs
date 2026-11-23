@@ -55,7 +55,6 @@ pub struct OAuthConfig {
     pub event_backfill_max_events: u32,
     pub event_backfill_max_age_hours: u32,
     pub max_streams_per_process: u32,
-    pub embed_frame_ancestors: Vec<String>,
 }
 
 impl OAuthConfig {
@@ -78,7 +77,6 @@ impl OAuthConfig {
             event_backfill_max_events: DEFAULT_EVENT_BACKFILL_MAX_EVENTS,
             event_backfill_max_age_hours: DEFAULT_EVENT_BACKFILL_MAX_AGE_HOURS,
             max_streams_per_process: DEFAULT_MAX_STREAMS_PER_PROCESS,
-            embed_frame_ancestors: Vec::new(),
         }
     }
 }
@@ -100,7 +98,6 @@ pub(super) struct RawOAuth {
     event_backfill_max_events: Option<u32>,
     event_backfill_max_age_hours: Option<u32>,
     max_streams_per_process: Option<u32>,
-    embed_frame_ancestors: Option<Vec<String>>,
 }
 
 /// What a URL value is meant to be, which decides which parts it may carry.
@@ -362,20 +359,6 @@ impl RawOAuth {
             10,
             20_000,
         );
-        let embed_frame_ancestors = self
-            .embed_frame_ancestors
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|entry| {
-                issues.record(validate_url(
-                    "oauth.embed_frame_ancestors entry",
-                    entry,
-                    UrlRole::Origin,
-                    allow_insecure,
-                ))
-            })
-            .collect();
-
         Some(OAuthConfig {
             issuer: issuer_url?,
             api_resource: api_resource?,
@@ -391,7 +374,6 @@ impl RawOAuth {
             event_backfill_max_events,
             event_backfill_max_age_hours,
             max_streams_per_process,
-            embed_frame_ancestors,
         })
     }
 }

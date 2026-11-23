@@ -14,7 +14,6 @@
       "jwt_secret",
       "access_ttl_seconds",
       "refresh_ttl_seconds",
-      "default_author_id",
       "allow_insecure_cookies"
     ],
     "logging": ["filter", "format", "output"],
@@ -51,8 +50,7 @@
       "event_feed_retention_days",
       "event_backfill_max_events",
       "event_backfill_max_age_hours",
-      "max_streams_per_process",
-      "embed_frame_ancestors"
+      "max_streams_per_process"
     ],
     "inbound": [
       "enabled",

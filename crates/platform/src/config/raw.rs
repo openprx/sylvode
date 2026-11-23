@@ -110,7 +110,6 @@ struct RawAuth {
     jwt_secret: Option<String>,
     access_ttl_seconds: Option<i64>,
     refresh_ttl_seconds: Option<i64>,
-    default_author_id: Option<String>,
     allow_insecure_cookies: Option<bool>,
 }
 
@@ -423,15 +422,10 @@ impl RawAuth {
             DEFAULT_REFRESH_TTL_SECONDS,
         );
 
-        let default_author_id = self
-            .default_author_id
-            .and_then(|raw| issues.record(parse_workspace_scale_uuid("auth.default_author_id", &raw)));
-
         AuthConfig {
             jwt_secret,
             access_ttl_seconds,
             refresh_ttl_seconds,
-            default_author_id,
             allow_insecure_cookies: self.allow_insecure_cookies.unwrap_or(false),
         }
     }

@@ -88,10 +88,6 @@ jwt_secret = "replace_with_a_64_character_hex_secret"
 access_ttl_seconds = 1296000   # default: 1296000 (15 days)
 refresh_ttl_seconds = 1728000  # default: 1728000 (20 days)
 
-# Optional. When set it must be a real, non-nil UUID. The value is validated and loaded, but no
-# part of Sylvode reads it.
-# default_author_id = "00000000-0000-0000-0000-000000000000"  # the nil UUID is rejected
-
 # Drops the `Secure` attribute from the access/refresh/clear auth cookies. Default: false (cookies
 # are always Secure, even over plain HTTP). ONLY for local development over plain http://: the api
 # refuses to start with this set to true unless [server].bind_addr also resolves to a loopback
@@ -359,10 +355,6 @@ transport = "stdio"
 # event_backfill_max_events = 1000            # [100, 10000]
 # event_backfill_max_age_hours = 72           # [1, 168]
 # max_streams_per_process = 2000              # [10, 20000]
-
-# Accepted and validated (each entry an origin, scheme://host[:port]), but no part of Sylvode
-# reads it. Default: none.
-# embed_frame_ancestors = []
 
 
 # ---------------------------------------------------------------------------------------------

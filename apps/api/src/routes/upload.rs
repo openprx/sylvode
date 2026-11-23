@@ -1017,7 +1017,6 @@ mod tests {
                 jwt_secret: Secret::new(TEST_SECRET),
                 jwt_access_ttl_seconds: 3600,
                 jwt_refresh_ttl_seconds: 7200,
-                default_author_id: None,
                 allow_insecure_cookies: false,
                 collab_allowed_origins: Vec::new(),
             },

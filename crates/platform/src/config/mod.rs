@@ -337,7 +337,6 @@ pub struct AuthConfig {
     pub jwt_secret: Option<Secret>,
     pub access_ttl_seconds: i64,
     pub refresh_ttl_seconds: i64,
-    pub default_author_id: Option<Uuid>,
     /// Explicit developer opt-out of the `Secure` attribute on the access/refresh/clear auth
     /// cookies. Defaults to `false` (cookies are always `Secure`). `AppConfig::from_config`
     /// refuses to start when this is `true` but `server.bind_addr` does not resolve to a loopback
@@ -365,7 +364,6 @@ impl AuthConfig {
             jwt_secret: jwt_secret.clone(),
             access_ttl_seconds: self.access_ttl_seconds,
             refresh_ttl_seconds: self.refresh_ttl_seconds,
-            default_author_id: self.default_author_id,
         })
     }
 }
@@ -376,7 +374,6 @@ pub struct AuthRuntime {
     pub jwt_secret: Secret,
     pub access_ttl_seconds: i64,
     pub refresh_ttl_seconds: i64,
-    pub default_author_id: Option<Uuid>,
 }
 
 /// Rendering of the tracing subscriber's output.
@@ -808,7 +805,6 @@ pub struct AppConfig {
     pub jwt_secret: Secret,
     pub jwt_access_ttl_seconds: i64,
     pub jwt_refresh_ttl_seconds: i64,
-    pub default_author_id: Option<Uuid>,
     /// See [`AuthConfig::allow_insecure_cookies`]. Already validated against `bind_addr` by
     /// [`Self::from_config`]: by the time a handler reads this field, `true` implies `bind_addr`
     /// is a loopback host.
@@ -875,7 +871,6 @@ impl AppConfig {
             jwt_secret: jwt_secret.clone(),
             jwt_access_ttl_seconds: config.auth.access_ttl_seconds,
             jwt_refresh_ttl_seconds: config.auth.refresh_ttl_seconds,
-            default_author_id: config.auth.default_author_id,
             allow_insecure_cookies: config.auth.allow_insecure_cookies,
             collab_allowed_origins: config.flow.collab_allowed_origins.clone(),
         })
@@ -891,7 +886,6 @@ impl std::fmt::Debug for AppConfig {
             .field("jwt_secret", &REDACTED)
             .field("jwt_access_ttl_seconds", &self.jwt_access_ttl_seconds)
             .field("jwt_refresh_ttl_seconds", &self.jwt_refresh_ttl_seconds)
-            .field("default_author_id", &self.default_author_id)
             .field("allow_insecure_cookies", &self.allow_insecure_cookies)
             .field("collab_allowed_origins", &self.collab_allowed_origins)
             .finish()

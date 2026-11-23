@@ -72,7 +72,6 @@ Token signing and issuance.
 | `jwt_secret` | string | none | Required by `api` and `worker`. Signs every access and refresh token. At least 16 characters; generate one with `openssl rand -hex 32`. Changing it invalidates every issued token. Never logged. |
 | `access_ttl_seconds` | integer | `1296000` (15 days) | Greater than 0. |
 | `refresh_ttl_seconds` | integer | `1728000` (20 days) | Greater than 0. |
-| `default_author_id` | string (UUID) | none | Must be a valid, non-nil UUID when set. The value is validated and loaded, but no part of Sylvode reads it. |
 | `allow_insecure_cookies` | boolean | `false` | `true` drops the `Secure` attribute from the authentication cookies, for local development over plain `http://`. `api` and `worker` refuse to start with `true` unless `server.bind_addr` (or the binary's default when it is unset) is a loopback host: `127.0.0.1`, `::1` or `localhost`. |
 
 ## `[logging]`
@@ -206,7 +205,6 @@ URLs in this section must use `https`. Plain `http` is accepted only for a loopb
 | `event_backfill_max_events` | integer | `1000` | 100 to 10000. How many events a resuming event stream may be behind. |
 | `event_backfill_max_age_hours` | integer | `72` | 1 to 168. How many hours a resuming event stream may be behind. |
 | `max_streams_per_process` | integer | `2000` | 10 to 20000. Concurrent event streams per `api` process. |
-| `embed_frame_ancestors` | array of strings | `[]` | Each entry an origin (`scheme://host[:port]`). Validated, but no part of Sylvode reads it. |
 
 ## `[inbound]`
 

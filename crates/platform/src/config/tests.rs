@@ -45,7 +45,6 @@ acquire_timeout_seconds = 6
 jwt_secret = "0123456789abcdef0123456789abcdef"
 access_ttl_seconds = 3600
 refresh_ttl_seconds = 604800
-default_author_id = "a1b2c3d4-e5f6-4890-abcd-ef1234567890"
 
 [logging]
 filter = "api=debug,tower_http=info"
@@ -109,10 +108,6 @@ fn a_complete_file_parses_into_every_section() {
     assert_eq!(auth.jwt_secret.expose(), "0123456789abcdef0123456789abcdef");
     assert_eq!(auth.access_ttl_seconds, 3600);
     assert_eq!(auth.refresh_ttl_seconds, 604_800);
-    assert_eq!(
-        auth.default_author_id.map(|id| id.to_string()),
-        Some("a1b2c3d4-e5f6-4890-abcd-ef1234567890".to_string())
-    );
 
     assert_eq!(config.logging.filter.as_deref(), Some("api=debug,tower_http=info"));
     assert_eq!(config.logging.format, LogFormat::Text);
@@ -180,7 +175,6 @@ jwt_secret = "0123456789abcdef0123456789abcdef"
     let auth = config.auth_runtime().expect("the secret alone is enough");
     assert_eq!(auth.access_ttl_seconds, 1_296_000);
     assert_eq!(auth.refresh_ttl_seconds, 1_728_000);
-    assert!(auth.default_author_id.is_none());
     assert_eq!(config.logging.format, LogFormat::Json);
     assert_eq!(config.logging.output, LogOutput::Stderr);
     assert_eq!(
@@ -338,7 +332,6 @@ connect_timeout_seconds = 0
 [auth]
 jwt_secret = "short"
 access_ttl_seconds = 0
-default_author_id = "00000000-0000-0000-0000-000000000000"
 
 [logging]
 format = "yaml"
@@ -364,7 +357,6 @@ transport = "grpc"
         "database.connect_timeout_seconds",
         "auth.jwt_secret must be at least",
         "auth.access_ttl_seconds",
-        "auth.default_author_id must not be the nil UUID",
         "logging.format",
         "storage.backend",
         "outbound.allowed_hosts entry https://hooks.example.com/path",
@@ -379,7 +371,7 @@ transport = "grpc"
             "missing {expected:?} in {reported:?}"
         );
     }
-    assert!(reported.len() >= 14, "expected every problem at once, got {reported:?}");
+    assert!(reported.len() >= 13, "expected every problem at once, got {reported:?}");
 }
 
 #[test]
@@ -588,19 +580,15 @@ fn the_shipped_example_is_structurally_valid_toml_for_this_schema() {
 
 #[test]
 fn malformed_and_nil_uuids_are_refused_everywhere_they_appear() {
-    for field in ["auth.default_author_id", "mcp.workspace_id"] {
+    for field in ["mcp.workspace_id"] {
         for (value, marker) in [
             ("not-a-uuid", "not a valid UUID"),
             ("00000000-0000-0000-0000-000000000000", "nil UUID"),
             ("replace_with_workspace_uuid", "placeholder"),
         ] {
-            let section = if field == "auth.default_author_id" {
-                format!("[auth]\njwt_secret = \"0123456789abcdef0123456789abcdef\"\ndefault_author_id = \"{value}\"\n")
-            } else {
-                format!(
-                    "[auth]\njwt_secret = \"0123456789abcdef0123456789abcdef\"\n\n[mcp]\nworkspace_id = \"{value}\"\n"
-                )
-            };
+            let section = format!(
+                "[auth]\njwt_secret = \"0123456789abcdef0123456789abcdef\"\n\n[mcp]\nworkspace_id = \"{value}\"\n"
+            );
             let reported = issues(&format!(
                 "[database]\nurl = \"postgres://localhost/openpr\"\n\n{section}"
             ));
@@ -871,7 +859,6 @@ fn app_config_takes_the_file_over_the_binary_defaults() {
     assert_eq!(cfg.jwt_secret.expose(), "0123456789abcdef0123456789abcdef");
     assert_eq!(cfg.jwt_access_ttl_seconds, 3600);
     assert_eq!(cfg.jwt_refresh_ttl_seconds, 604_800);
-    assert!(cfg.default_author_id.is_some());
 }
 
 #[test]
@@ -1189,7 +1176,6 @@ fn an_issuer_alone_enables_it_with_every_default() {
     assert_eq!(oauth.event_backfill_max_events, 1_000);
     assert_eq!(oauth.event_backfill_max_age_hours, 72);
     assert_eq!(oauth.max_streams_per_process, 2_000);
-    assert!(oauth.embed_frame_ancestors.is_empty());
     // The in-memory constructor and the loader agree on every default.
     assert_eq!(
         format!("{oauth:?}"),
@@ -1361,26 +1347,27 @@ fn every_numeric_setting_is_bounded() {
     );
 }
 
+/// Two settings that were validated and never read are gone: a file that still has either is
+/// refused as an unknown key, so nobody believes they do something.
 #[test]
-fn embed_origins_are_origins() {
-    let issuer = "issuer = \"https://sylvode.example.com\"";
-    assert_refused(
-        &format!("{issuer}\nembed_frame_ancestors = [\"https://app.example.com/path\"]"),
-        "without a path",
+fn the_retired_unused_settings_are_unknown_keys() {
+    let error = parse(&oauth_file(
+        "issuer = \"https://sylvode.example.com\"\nembed_frame_ancestors = [\"https://app.example.com\"]",
+    ))
+    .expect_err("an oauth key that nothing reads is refused");
+    let text = error.to_string();
+    assert!(
+        text.contains("unknown field") && text.contains("embed_frame_ancestors"),
+        "{text}"
     );
-    assert_refused(
-        &format!("{issuer}\nembed_frame_ancestors = [\"http://app.example.com\"]"),
-        "must use https",
-    );
-    let config = parse(&oauth_file(&format!(
-        "{issuer}\nembed_frame_ancestors = [\"https://App.Example.com\", \"https://other.example.com:8443\"]"
-    )))
-    .expect("validates")
-    .oauth
-    .expect("enabled");
-    assert_eq!(
-        config.embed_frame_ancestors,
-        ["https://app.example.com", "https://other.example.com:8443"]
+    let error = parse(
+        "[database]\nurl = \"postgres://localhost/openpr\"\n\n[auth]\njwt_secret = \"0123456789abcdef0123456789abcdef\"\ndefault_author_id = \"a1b2c3d4-e5f6-4890-abcd-ef1234567890\"\n",
+    )
+    .expect_err("an auth key that nothing reads is refused");
+    let text = error.to_string();
+    assert!(
+        text.contains("unknown field") && text.contains("default_author_id"),
+        "{text}"
     );
 }
 
