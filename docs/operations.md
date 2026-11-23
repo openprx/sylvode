@@ -87,6 +87,11 @@ Whatever proxy you use:
   (loopback and `172.16.0.0/12`), so the API sees real client addresses in rate limits and
   allow-lists.
 - List the public origin in `flow.collab_allowed_origins`, or live editing is refused.
+- Terminate TLS. A web UI served over plain `http://` on an address other than `localhost` still
+  works for sign-in (with `auth.allow_insecure_cookies`), live editing and copying, but it sends
+  every credential and document in clear text, and the browser withholds the features that need a
+  secure context. What changes is listed in
+  [install.md](install.md#serving-the-web-ui-over-plain-http).
 
 The MCP server is not proxied by `nginx.conf`. MCP clients reach its port directly or through a
 tunnel, and authenticate with their own workspace bot tokens.

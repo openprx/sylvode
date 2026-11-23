@@ -107,6 +107,41 @@ collab_allowed_origins = ["https://sylvode.example.com"]
 
 Then restart the API: `docker compose restart api`.
 
+### Serving the web UI over plain HTTP
+
+HTTPS is recommended for every deployment that is reached from another machine. If you serve the web
+UI over plain `http://` on an address other than `localhost` (for example `http://10.0.0.5:3000`
+on a trusted LAN), browsers treat the page as an insecure context and hide a few features that
+exist only on HTTPS and on `localhost`. What that means:
+
+What works:
+
+- Sign-in and all pages, only if the authentication cookies are allowed without `Secure`: browsers
+  do not store a `Secure` cookie that arrives over plain HTTP outside `localhost`, so set
+  `auth.allow_insecure_cookies = true`. The API accepts that only while `server.bind_addr` is a
+  loopback host, so the plain HTTP address has to be a proxy or port forward on the same machine
+  in front of the API; see [configuration.md](configuration.md).
+- Flow live editing. The browser builds its identifiers from `crypto.getRandomValues`, which exists
+  in every context. List the origin exactly as typed, `http://` and port included, in
+  `flow.collab_allowed_origins`, or live editing is refused.
+- Copy buttons. The browser's Clipboard API is missing there, so the page copies through a hidden
+  text field. If the browser still refuses, the page says so and asks you to select the text and
+  copy it yourself.
+- Integrity checks that hash content in the browser (workspace package downloads and plugin panels).
+  Web Crypto is missing there, so the same SHA-256 runs in script. The result is identical.
+
+What is limited:
+
+- Nothing protects the traffic. Passwords, access tokens, session cookies and every document cross
+  the network in clear text, and anyone who can alter the traffic can also alter the pages and the
+  checksums the integrity checks compare against. Use plain HTTP only on a network you trust.
+- Plugin panels run in sandboxed frames that inherit the insecure context, so a plugin that uses a
+  browser feature limited to HTTPS (for example `crypto.randomUUID` or Web Crypto) fails there.
+  The plugin templates of the plugin creator do not need either.
+- If the live editing connection cannot be established, the page shows "Live editing could not
+  start" with a Try again button. On a plain HTTP deployment the usual causes are an origin missing
+  from `flow.collab_allowed_origins` and a proxy that does not forward WebSocket upgrades.
+
 ### The MCP server in Compose
 
 The generated MCP file carries a random placeholder `workspace_id` and `bot_token` so the container

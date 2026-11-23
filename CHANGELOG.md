@@ -195,6 +195,18 @@ name.
 
 ### Fixed
 
+- **Web UI served over plain HTTP on a non-localhost address.** Flow live editing never started
+  there and said nothing. Without `crypto.randomUUID` the client sent a client id that was not a UUID,
+  the server could not parse its hello and dropped the connection silently, and the page ended in
+  the permission, not-enabled or loading state. Every identifier the web client sends is now a
+  version 4 UUID built from `crypto.getRandomValues` when `randomUUID` is missing (no `Math.random`
+  fallbacks remain), the collaboration handshake answers an invalid or missing first frame, an
+  invalid `open` and a handshake timeout with a `rejected` frame and a close, and logs the reason
+  with the document id. The page shows "Live editing could not start" with a retry button when the
+  handshake does not complete, after three attempts with a doubling wait of at least 1 s. Copy
+  buttons use a hidden text field where the Clipboard API is missing and say so when copying fails,
+  and the SHA-256 checks of package downloads and plugin panels run in script where Web Crypto is
+  missing. `docs/install.md` lists what works and what is limited over plain HTTP.
 - **Sprint refusals carry a code.** The `400` and `409` answers of the sprint API for an invalid
   status change, an end date before the start, a duplicate name and a second active sprint now carry
   `error_code` (`sprint_invalid_transition`, `sprint_end_before_start`, `sprint_name_taken`,
