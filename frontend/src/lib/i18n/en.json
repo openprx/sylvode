@@ -618,7 +618,18 @@
 		"rolloverBacklog": "Backlog",
 		"rolloverKeep": "Keep the sprint",
 		"rolloverMoved": "{count} unfinished issues moved to {target}",
-		"rolloverNone": "No unfinished issues to move"
+		"rolloverNone": "No unfinished issues to move",
+		"rolloverMovedElsewhere": "{count} unfinished issues moved to another sprint",
+		"cancelledList": "Cancelled Sprints",
+		"noCancelled": "No cancelled sprint",
+		"error": {
+			"failed": "The sprint action failed: {message}",
+			"activeExists": "The project already has an active sprint: {name}. Complete or cancel it before starting another.",
+			"activeExistsUnnamed": "The project already has an active sprint. Complete or cancel it before starting another.",
+			"invalidTransition": "A sprint cannot change from {from} to {to}.",
+			"invalidTransitionUnnamed": "That status change is not allowed for this sprint.",
+			"nameTaken": "Another sprint in this project already has this name."
+		}
 	},
 	"members": {
 		"title": "Member Management",

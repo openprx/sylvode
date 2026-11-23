@@ -32,7 +32,8 @@
 	import Select from '#lib/components/Select.svelte';
 	import Tag from '#lib/components/Tag.svelte';
 	import DatePicker from '#lib/ui/date/DatePicker.svelte';
-	import { sprintOptionsForIssue } from '#lib/sprints/rules.js';
+	import { sprintChoices } from '#lib/sprints/rules.js';
+	import { workflowStateLabel } from '#lib/utils/workflow-state.js';
 	import { dueDateToTimestamp, timestampToDueDate } from '#lib/utils/due-date.js';
 	import Textarea from '#lib/components/Textarea.svelte';
 	import BotIcon from '#lib/components/BotIcon.svelte';
@@ -137,15 +138,12 @@
 
 	// "No sprint" and the sprints the issue can be moved into: planned and active ones. A completed
 	// or cancelled sprint is listed only while the issue is still in it, and cannot be chosen.
-	const sprintSelectOptions = $derived.by<SelectOption[]>(() => [
-		{ label: get(t)('issue.noSprint'), value: '' },
-		...sprintOptionsForIssue(sprints, issue?.sprint_id ?? null).map((option) => {
-			const ended = sprints.find((sprint) => sprint.id === option.id);
-			const suffix =
-				!option.selectable && ended ? ` (${get(t)(`cycles.status.${ended.status}`)})` : '';
-			return { label: `${option.name}${suffix}`, value: option.id, disabled: !option.selectable };
+	const sprintSelectOptions = $derived.by<SelectOption[]>(() =>
+		sprintChoices(sprints, issue?.sprint_id ?? null, {
+			none: get(t)('issue.noSprint'),
+			status: (status) => get(t)(`cycles.status.${status}`)
 		})
-	]);
+	);
 
 	const mentionCandidates = $derived.by(() =>
 		workspaceMembers.filter((member) => member.user_id !== currentUserId)
@@ -258,7 +256,7 @@
 		if (workflowResponse.code === 0 && workflowResponse.data?.states?.length) {
 			workflowStates = workflowResponse.data.states;
 			statusOptions = workflowResponse.data.states.map((s) => ({
-				label: s.display_name || s.key,
+				label: workflowStateLabel(s, get(t)),
 				value: s.key
 			}));
 		}
@@ -928,13 +926,10 @@
 	}
 
 	function formatStatus(status: string): string {
-		const map: Record<string, string> = {
-			backlog: get(t)('issue.backlog'),
-			todo: get(t)('issue.todo'),
-			in_progress: get(t)('issue.inProgress'),
-			done: get(t)('issue.done')
-		};
-		return map[status] || status;
+		return workflowStateLabel(
+			workflowStates.find((s) => s.key === status) ?? { key: status },
+			get(t)
+		);
 	}
 
 	function formatPriority(priority: string): string {

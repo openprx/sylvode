@@ -201,6 +201,14 @@ name.
   `sprint_active_exists`) and structured `details`; the active-sprint answer names the sprint in
   `details.active_sprint_id` and `details.active_sprint_name`, and its message no longer contains the
   id. The Cycles page shows a translated text for each of them.
+- **Cycles page.** Completing or cancelling a sprint now reports the sprint the unfinished issues
+  moved to instead of "Backlog", and says that nothing needed moving when that is the case. Cancelled
+  sprints have their own collapsed group with a heading and a count.
+- **Create issue dialog.** Its Sprint options are the same as on the issue page: No Sprint, the active
+  sprint and the planned sprints.
+- **Chinese texts.** The remaining "Issue" wording in the Chinese texts is "工作项", and the built-in
+  workflow states (Backlog, Todo, In Progress, Done) are shown with translated names on the issue,
+  board and list pages; custom state names are shown as stored.
 - **Webhook deliveries connect to the checked address.** The API and the worker resolved a webhook
   host name for the outbound check and then again for the connection, so a name could answer a
   public address to the check and an internal one to the connection. Event-dispatcher and legacy

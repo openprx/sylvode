@@ -11,6 +11,7 @@
 	import { labelsApi, type Label } from '#lib/api/labels.js';
 	import { sprintsApi, type Sprint } from '#lib/api/sprints.js';
 	import { toast } from '#lib/stores/toast.js';
+	import { workflowStateLabel } from '#lib/utils/workflow-state.js';
 	import { requireRouteParam } from '#lib/utils/route-params.js';
 	import Badge from '#lib/components/Badge.svelte';
 	import Avatar from '#lib/components/Avatar.svelte';
@@ -313,7 +314,7 @@
 					<option value="all">{$t('issue.all')}</option>
 					{#if workflowStates.length > 0}
 						{#each workflowStates as state (state.key)}
-							<option value={state.key}>{state.display_name || state.key}</option>
+							<option value={state.key}>{workflowStateLabel(state, $t)}</option>
 						{/each}
 					{:else}
 						<option value="backlog">{$t('issue.backlog')}</option>

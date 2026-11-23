@@ -8,7 +8,13 @@
 	import { issuesApi, type Issue } from '#lib/api/issues.js';
 	import { workspacesApi } from '#lib/api/workspaces.js';
 	import { authStore } from '#lib/stores/auth.js';
-	import { canManageSprints, pastSprints, rolloverTargets } from '#lib/sprints/rules.js';
+	import {
+		canManageSprints,
+		pastSprints,
+		rolloverMessage,
+		rolloverTargets,
+		sprintFailureMessage
+	} from '#lib/sprints/rules.js';
 	import type { WorkspaceRole } from '#lib/workspace/home.js';
 	import { WorkspaceRoleTracker } from '#lib/workspace/role.js';
 	import {
@@ -92,8 +98,9 @@
 	const plannedSprints = $derived.by(() =>
 		sprints.filter((item) => item.status === 'planned').sort((a, b) => startTime(a) - startTime(b))
 	);
-	// Cancelled sprints are listed with the completed ones, under a Cancelled badge.
-	const completedSprints = $derived(pastSprints(sprints));
+	// Completed and cancelled sprints are two collapsed groups.
+	const completedSprints = $derived(pastSprints(sprints, 'completed'));
+	const cancelledSprints = $derived(pastSprints(sprints, 'cancelled'));
 
 	const sprintProgress = $derived.by(() => {
 		const stats: Record<string, { done: number; total: number; percent: number }> = {};
@@ -178,6 +185,12 @@
 		return map[status];
 	}
 
+	// A refused call shows its own translated text for the sprint rules the server names, and the
+	// generic failure text with the server's message otherwise.
+	function showFailure(response: { message: string; error_code?: string; details?: unknown }) {
+		toast.error(sprintFailureMessage(get(t), response));
+	}
+
 	function formatIssueCode(issue: Issue): string {
 		return issue.identifier;
 	}
@@ -233,7 +246,7 @@
 		saving = false;
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			showFailure(response);
 			return;
 		}
 
@@ -256,7 +269,7 @@
 		saving = false;
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			showFailure(response);
 			return;
 		}
 
@@ -278,7 +291,7 @@
 
 		const response = await sprintsApi.delete(sprint.id);
 		if (response.code !== 0) {
-			toast.error(response.message);
+			showFailure(response);
 			return;
 		}
 
@@ -286,12 +299,11 @@
 		await loadData();
 	}
 
-	// Starting a second sprint is a 409 whose message names the sprint that is already active;
-	// the server's message is shown as it is.
+	// Starting a second sprint is a 409 that names the sprint already active in its details.
 	async function startSprint(sprint: Sprint) {
 		const response = await sprintsApi.update(sprint.id, { status: 'active' });
 		if (response.code !== 0) {
-			toast.error(response.message);
+			showFailure(response);
 			return;
 		}
 		toast.success(get(t)('cycles.started'));
@@ -307,6 +319,8 @@
 	async function submitEnd() {
 		if (saving || !endDialog) return;
 		const { sprint, status } = endDialog;
+		// The sprints that could take the items, as they are before the call changes the list.
+		const targets = endTargets.map(({ id, name }) => ({ id, name }));
 		saving = true;
 		const response = await sprintsApi.update(sprint.id, {
 			status,
@@ -314,21 +328,12 @@
 		});
 		saving = false;
 		if (response.code !== 0) {
-			toast.error(response.message);
+			showFailure(response);
 			return;
 		}
 		showEndDialog = false;
 		endDialog = null;
-		const moved = response.data?.rollover?.moved_count ?? 0;
-		const targetName =
-			endTargets.find((target) => target.id === response.data?.rollover?.target_sprint_id)?.name ??
-			get(t)('cycles.rolloverBacklog');
-		const done = status === 'completed' ? get(t)('cycles.completed') : get(t)('cycles.cancelled');
-		toast.success(
-			moved > 0
-				? `${done}. ${get(t)('cycles.rolloverMoved', { values: { count: moved, target: targetName } })}`
-				: `${done}. ${get(t)('cycles.rolloverNone')}`
-		);
+		toast.success(rolloverMessage(get(t), status, response.data?.rollover, targets));
 		await loadData();
 	}
 
@@ -605,7 +610,10 @@
 			{/if}
 		</section>
 
-		<section class="rounded-card border border-line bg-raised p-4 sm:p-5">
+		<section
+			class="rounded-card border border-line bg-raised p-4 sm:p-5"
+			data-testid="cycles-completed-group"
+		>
 			<details>
 				<summary class="cursor-pointer list-none text-lg font-semibold text-fg">
 					<span class="inline-flex items-center gap-2"
@@ -618,63 +626,29 @@
 						<p class="text-sm text-fg-muted">{$t('cycles.noCompleted')}</p>
 					{:else}
 						{#each completedSprints as sprint (sprint.id)}
-							<div class="rounded-card border border-line p-4">
-								<div class="mb-2 flex items-start justify-between gap-2">
-									<div>
-										<p class="font-medium text-fg">{sprint.name}</p>
-										<p class="text-sm text-fg-muted">
-											{formatRange(sprint)}
-										</p>
-									</div>
-									<span
-										class="inline-flex rounded px-2 py-1 text-xs font-medium {getStatusClass(
-											sprint.status
-										)}"
-									>
-										{$t(`cycles.status.${sprint.status}`)}
-									</span>
-								</div>
-								<ProgressBar
-									value={sprintProgress[sprint.id]?.percent ?? 0}
-									label={$t('cycles.completedLabel', {
-										values: {
-											done: sprintProgress[sprint.id]?.done ?? 0,
-											total: sprintProgress[sprint.id]?.total ?? 0
-										}
-									})}
-								/>
-								<div class="mt-3 rounded-control border border-line bg-surface p-3">
-									<p class="mb-2 text-xs font-medium uppercase tracking-wide text-fg-muted">
-										{$t('cycles.linkedIssues', {
-											values: { count: sprintIssues[sprint.id]?.length ?? 0 }
-										})}
-									</p>
-									{#if (sprintIssues[sprint.id]?.length ?? 0) === 0}
-										<p class="text-sm text-fg-muted">
-											{$t('cycles.noLinkedIssue')}
-										</p>
-									{:else}
-										<div class="space-y-2">
-											{#each sprintIssues[sprint.id].slice(0, 5) as issue (issue.id)}
-												<a
-													href={resolve(
-														'/(app)/workspace/[workspaceId]/projects/[projectId]/issues/[issueId]',
-														{ workspaceId, projectId, issueId: issue.id }
-													)}
-													class="block rounded border border-line bg-raised px-3 py-2 text-sm hover:border-line-strong hover:bg-surface"
-												>
-													<p class="font-medium text-fg">
-														{issue.title}
-													</p>
-													<p class="font-mono text-xs text-fg-muted">
-														{formatIssueCode(issue)}
-													</p>
-												</a>
-											{/each}
-										</div>
-									{/if}
-								</div>
-							</div>
+							{@render pastCard(sprint)}
+						{/each}
+					{/if}
+				</div>
+			</details>
+		</section>
+		<section
+			class="rounded-card border border-line bg-raised p-4 sm:p-5"
+			data-testid="cycles-cancelled-group"
+		>
+			<details>
+				<summary class="cursor-pointer list-none text-lg font-semibold text-fg">
+					<span class="inline-flex items-center gap-2"
+						>{$t('cycles.cancelledList')}
+						<span class="text-sm text-fg-muted">({cancelledSprints.length})</span></span
+					>
+				</summary>
+				<div class="mt-4 space-y-3">
+					{#if cancelledSprints.length === 0}
+						<p class="text-sm text-fg-muted">{$t('cycles.noCancelled')}</p>
+					{:else}
+						{#each cancelledSprints as sprint (sprint.id)}
+							{@render pastCard(sprint)}
 						{/each}
 					{/if}
 				</div>
@@ -682,6 +656,64 @@
 		</section>
 	{/if}
 </div>
+
+{#snippet pastCard(sprint: Sprint)}
+	<div class="rounded-card border border-line p-4">
+		<div class="mb-2 flex items-start justify-between gap-2">
+			<div>
+				<p class="font-medium text-fg">{sprint.name}</p>
+				<p class="text-sm text-fg-muted">
+					{formatRange(sprint)}
+				</p>
+			</div>
+			<span
+				class="inline-flex rounded px-2 py-1 text-xs font-medium {getStatusClass(sprint.status)}"
+			>
+				{$t(`cycles.status.${sprint.status}`)}
+			</span>
+		</div>
+		<ProgressBar
+			value={sprintProgress[sprint.id]?.percent ?? 0}
+			label={$t('cycles.completedLabel', {
+				values: {
+					done: sprintProgress[sprint.id]?.done ?? 0,
+					total: sprintProgress[sprint.id]?.total ?? 0
+				}
+			})}
+		/>
+		<div class="mt-3 rounded-control border border-line bg-surface p-3">
+			<p class="mb-2 text-xs font-medium uppercase tracking-wide text-fg-muted">
+				{$t('cycles.linkedIssues', {
+					values: { count: sprintIssues[sprint.id]?.length ?? 0 }
+				})}
+			</p>
+			{#if (sprintIssues[sprint.id]?.length ?? 0) === 0}
+				<p class="text-sm text-fg-muted">
+					{$t('cycles.noLinkedIssue')}
+				</p>
+			{:else}
+				<div class="space-y-2">
+					{#each sprintIssues[sprint.id].slice(0, 5) as issue (issue.id)}
+						<a
+							href={resolve(
+								'/(app)/workspace/[workspaceId]/projects/[projectId]/issues/[issueId]',
+								{ workspaceId, projectId, issueId: issue.id }
+							)}
+							class="block rounded border border-line bg-raised px-3 py-2 text-sm hover:border-line-strong hover:bg-surface"
+						>
+							<p class="font-medium text-fg">
+								{issue.title}
+							</p>
+							<p class="font-mono text-xs text-fg-muted">
+								{formatIssueCode(issue)}
+							</p>
+						</a>
+					{/each}
+				</div>
+			{/if}
+		</div>
+	</div>
+{/snippet}
 
 {#snippet createFooter()}
 	<button

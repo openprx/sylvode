@@ -13,8 +13,12 @@ import { Suite, assert, assertDeepEqual, assertEqual, finish } from './support/h
 import {
 	canManageSprints,
 	pastSprints,
+	rolloverMessage,
 	rolloverTargets,
-	sprintOptionsForIssue
+	sprintChoices,
+	sprintFailureMessage,
+	sprintOptionsForIssue,
+	type Translate
 } from '../src/lib/sprints/rules';
 import type { Sprint, SprintStatus } from '../src/lib/api/sprints';
 
@@ -72,6 +76,123 @@ suite.check('past sprints are completed and cancelled ones, latest end first, un
 	);
 });
 
+suite.check('past sprints can be listed as completed or cancelled ones separately', () => {
+	assertDeepEqual(
+		pastSprints(ALL, 'completed').map((s) => s.id),
+		['c2', 'c1'],
+		'completed'
+	);
+	assertDeepEqual(
+		pastSprints(ALL, 'cancelled').map((s) => s.id),
+		['x1', 'x2'],
+		'cancelled'
+	);
+});
+
+// A translator that shows the key and the values, so a test sees which text was chosen.
+const tr: Translate = (key, options) =>
+	options?.values ? `${key}${JSON.stringify(options.values)}` : key;
+
+suite.check('the issue page and the create dialog offer No Sprint, active and planned', () => {
+	const text = { none: 'none', status: (status: SprintStatus) => `st:${status}` };
+	const choices = sprintChoices(ALL, null, text);
+	assertDeepEqual(
+		choices.map((c) => c.value),
+		['', 'a', 'p1', 'p2'],
+		'ids'
+	);
+	assertEqual(choices[0].label, 'none', 'the first choice is No Sprint');
+	assert(
+		choices.every((c) => !c.disabled),
+		'all can be chosen'
+	);
+	const ended = sprintChoices(ALL, 'c1', text).find((c) => c.value === 'c1');
+	assertEqual(ended?.label, 'Sprint c1 (st:completed)', 'an ended current sprint is labelled');
+	assertEqual(ended?.disabled, true, 'and cannot be chosen');
+});
+
+suite.check('rollover message names the target sprint from the server answer', () => {
+	const targets = [
+		{ id: 'p1', name: 'Sprint 12' },
+		{ id: 'p2', name: 'Sprint 13' }
+	];
+	assertEqual(
+		rolloverMessage(tr, 'completed', { moved_count: 3, target_sprint_id: 'p2' }, targets),
+		'cycles.completed. cycles.rolloverMoved{"count":3,"target":"Sprint 13"}',
+		'completed into a planned sprint'
+	);
+	assertEqual(
+		rolloverMessage(tr, 'cancelled', { moved_count: 1, target_sprint_id: 'p1' }, targets),
+		'cycles.cancelled. cycles.rolloverMoved{"count":1,"target":"Sprint 12"}',
+		'cancelled into a planned sprint'
+	);
+	assertEqual(
+		rolloverMessage(tr, 'completed', { moved_count: 2, target_sprint_id: null }, targets),
+		'cycles.completed. cycles.rolloverMoved{"count":2,"target":"cycles.rolloverBacklog"}',
+		'no target is the backlog'
+	);
+	assertEqual(
+		rolloverMessage(tr, 'completed', { moved_count: 0, target_sprint_id: 'p1' }, targets),
+		'cycles.completed. cycles.rolloverNone',
+		'nothing moved'
+	);
+	assertEqual(
+		rolloverMessage(tr, 'cancelled', undefined, targets),
+		'cycles.cancelled. cycles.rolloverNone',
+		'no rollover in the answer'
+	);
+	assertEqual(
+		rolloverMessage(tr, 'completed', { moved_count: 2, target_sprint_id: 'gone' }, targets),
+		'cycles.completed. cycles.rolloverMovedElsewhere{"count":2,"target":null}',
+		'a target that is not known is never reported as the backlog'
+	);
+});
+
+suite.check('known sprint refusals get translated texts, unknown ones the generic text', () => {
+	const id = '3f9c1a52-0000-4000-8000-000000000001';
+	const active = sprintFailureMessage(tr, {
+		message: `project already has an active sprint: Sprint One`,
+		error_code: 'sprint_active_exists',
+		details: { active_sprint_id: id, active_sprint_name: 'Sprint One' }
+	});
+	assertEqual(active, 'cycles.error.activeExists{"name":"Sprint One"}', 'names the sprint');
+	assert(!active.includes(id), 'no id in the text');
+	assertEqual(
+		sprintFailureMessage(tr, { message: 'x', error_code: 'sprint_active_exists' }),
+		'cycles.error.activeExistsUnnamed',
+		'a race answers without names'
+	);
+	assertEqual(
+		sprintFailureMessage(tr, {
+			message: 'sprint status cannot change from completed to active',
+			error_code: 'sprint_invalid_transition',
+			details: { from: 'completed', to: 'active' }
+		}),
+		'cycles.error.invalidTransition{"from":"cycles.status.completed","to":"cycles.status.active"}',
+		'invalid transition'
+	);
+	assertEqual(
+		sprintFailureMessage(tr, { message: 'x', error_code: 'sprint_end_before_start' }),
+		'cycles.endDateAfterStart',
+		'end before start'
+	);
+	assertEqual(
+		sprintFailureMessage(tr, { message: 'x', error_code: 'sprint_name_taken' }),
+		'cycles.error.nameTaken',
+		'duplicate name'
+	);
+	assertEqual(
+		sprintFailureMessage(tr, { message: 'database error', error_code: 'server_rejected' }),
+		'cycles.error.failed{"message":"database error"}',
+		'unknown code'
+	);
+	assertEqual(
+		sprintFailureMessage(tr, { message: 'forbidden' }),
+		'cycles.error.failed{"message":"forbidden"}',
+		'no code'
+	);
+});
+
 suite.check('an issue can be moved into planned and active sprints only', () => {
 	const options = sprintOptionsForIssue(ALL, null);
 	assertDeepEqual(
@@ -124,7 +245,14 @@ suite.check(
 		}
 		assert(/rollover_sprint_id/.test(page), 'the end dialog sends rollover_sprint_id');
 		assert(!/\bgoal\b/.test(page), 'no goal field is left');
-		assert(/pastSprints\(/.test(page), 'cancelled sprints are listed with the completed ones');
+		assert(
+			/pastSprints\(sprints, 'completed'\)/.test(page) &&
+				/pastSprints\(sprints, 'cancelled'\)/.test(page),
+			'completed and cancelled sprints are separate groups'
+		);
+		assert(/cycles\.cancelledList/.test(page), 'the cancelled group has its own heading');
+		assert(!/toast\.error\(response\.message\)/.test(page), 'refusals go through the translator');
+		assert(/rolloverMessage\(/.test(page), 'the end toast comes from the helper');
 	}
 );
 
@@ -136,7 +264,7 @@ suite.check('the issue page has Sprint and Due date controls that send null to c
 		),
 		'utf8'
 	);
-	assert(/sprintOptionsForIssue\(/.test(page), 'the sprint options follow the offering rule');
+	assert(/sprintChoices\(/.test(page), 'the sprint options follow the offering rule');
 	assert(
 		/updateIssue\(\{ sprint_id: sprintValue \|\| null \}\)/.test(page),
 		'no sprint sends null'
@@ -147,6 +275,18 @@ suite.check('the issue page has Sprint and Due date controls that send null to c
 		/<Select\s+label=\{\$t\('issue\.sprint'\)\}/.test(page),
 		'the sprint control is a labelled select'
 	);
+});
+
+suite.check('the create dialog uses the same sprint offering as the issue page', () => {
+	const modal = readFileSync(
+		join(
+			fileURLToPath(new URL('.', import.meta.url)),
+			'../src/lib/components/IssueCreateModal.svelte'
+		),
+		'utf8'
+	);
+	assert(/sprintChoices\(/.test(modal), 'the dialog builds its sprint options with the helper');
+	assert(!/#each sprints as sprint/.test(modal), 'it no longer lists every sprint');
 });
 
 finish(suite.result());

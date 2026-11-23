@@ -3,6 +3,7 @@
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
+	import { workflowStateLabel } from '#lib/utils/workflow-state.js';
 	import { page } from '$app/state';
 	import { projectsApi, type Project } from '#lib/api/projects.js';
 	import { membersApi, type WorkspaceMember } from '#lib/api/members.js';
@@ -28,14 +29,7 @@
 
 	function getColumnName(status: IssueStatus): string {
 		const stateDef = workflowStates.find((s) => s.key === status);
-		if (stateDef?.display_name) return stateDef.display_name;
-		const keys: Record<string, string> = {
-			backlog: 'issue.backlog',
-			todo: 'issue.todo',
-			in_progress: 'issue.inProgress',
-			done: 'issue.done'
-		};
-		return keys[status] ? get(t)(keys[status]) : status;
+		return workflowStateLabel(stateDef ?? { key: status }, get(t));
 	}
 
 	let issues = $state<Issue[]>([]);

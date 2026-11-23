@@ -201,13 +201,16 @@ to change its state. Opening the board from a sprint filters it to that sprint.
 **Cycles** (**Sprint Management**) plans sprints. **Create Sprint** takes a name, an optional
 description and start and end dates; the end cannot be before the start, and names are unique in a
 project (ignoring case). The page shows the **Current Sprint** with its progress and linked issues,
-**Planned Sprints**, and **Completed Sprints**, which also lists cancelled sprints under a
-**Cancelled** badge.
+**Planned Sprints**, **Completed Sprints** and **Cancelled Sprints**; the last two are collapsed
+groups with their own heading and count.
 
 A project has one active sprint at a time. **Start sprint** on a planned sprint is refused while
-another is active, and the message names that sprint. **Complete sprint** and **Cancel sprint** open
+another is active, and the message names that sprint. Refusals of the sprint rules (a second active
+sprint, a status change that is not allowed, an end date before the start, a name that is already
+taken) are shown in the page's language. **Complete sprint** and **Cancel sprint** open
 a dialog that asks where the issues that are not finished go: **Backlog** (the default) or one of the
-planned sprints. Finished issues stay in the sprint. Every moved issue records the change in its
+planned sprints. The message that follows names the sprint the issues went to, or says that nothing
+needed moving. Finished issues stay in the sprint. Every moved issue records the change in its
 activity, and deleting a sprint moves all its issues to the backlog the same way. A completed or
 cancelled sprint cannot be started again.
 

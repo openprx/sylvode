@@ -4,6 +4,8 @@
 	import { issuesApi, type Issue, type IssuePriority, type IssueStatus } from '#lib/api/issues.js';
 	import type { WorkflowStateDef } from '#lib/api/workflows.js';
 	import { sprintsApi, type Sprint } from '#lib/api/sprints.js';
+	import { sprintChoices } from '#lib/sprints/rules.js';
+	import { workflowStateLabel } from '#lib/utils/workflow-state.js';
 	import { toast } from '#lib/stores/toast.js';
 	import { renderMarkdown } from '#lib/utils/markdown.js';
 	import {
@@ -70,9 +72,17 @@
 
 	const scenarioFields = $derived<ScenarioFieldDef[]>(getScenarioFields(scenarioTemplate));
 
+	// The same offering as the issue page: no sprint, then the active and planned sprints.
+	const sprintSelectChoices = $derived(
+		sprintChoices(sprints, null, {
+			none: $t('issue.noSprint'),
+			status: (status) => $t(`cycles.status.${status}`)
+		})
+	);
+
 	const statusSelectOptions = $derived.by(() => {
 		if (workflowStates.length > 0) {
-			return workflowStates.map((s) => ({ value: s.key, label: s.display_name || s.key }));
+			return workflowStates.map((s) => ({ value: s.key, label: workflowStateLabel(s, get(t)) }));
 		}
 		return [
 			{ value: 'backlog', label: get(t)('issue.backlog') },
@@ -510,9 +520,8 @@
 						bind:value={form.sprint_id}
 						class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 					>
-						<option value="">{$t('issue.noSprint')}</option>
-						{#each sprints as sprint (sprint.id)}
-							<option value={sprint.id}>{sprint.name}</option>
+						{#each sprintSelectChoices as choice (choice.value)}
+							<option value={choice.value} disabled={choice.disabled}>{choice.label}</option>
 						{/each}
 					</select>
 				</div>
