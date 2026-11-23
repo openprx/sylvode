@@ -89,9 +89,8 @@ When voting ends, the weighted yes and no votes decide the result:
 | Absolute Majority | Weighted yes is at least 67% of weighted yes plus no. |
 | Consensus | Weighted yes is at least 80% of weighted yes plus no. |
 
-A proposal with no yes or no votes is rejected. The descriptions shown next to the rules in the
-proposal form differ from this behaviour for Absolute Majority ("half of all eligible members") and
-Consensus ("no no votes"); the table above is what the server applies.
+A proposal with no yes or no votes is rejected. Abstentions are not counted. The descriptions next
+to the rules in the proposal form say the same.
 
 A bot votes only when it has voting permission in the proposal's primary domain, and must give a
 reason (at least 50 characters unless the project configures another minimum).

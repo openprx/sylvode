@@ -826,9 +826,9 @@
 			"consensus": "共识制"
 		},
 		"votingRuleDescription": {
-			"simple_majority": "赞成票超过半数即通过。3 人团队中，2 票赞成即可通过。",
-			"absolute_majority": "需超过全体应投成员的半数赞成才通过。",
-			"consensus": "无反对票才通过。"
+			"simple_majority": "加权赞成票多于加权反对票即通过，弃权不计。",
+			"absolute_majority": "加权赞成票达到加权赞成票与反对票之和的 67% 即通过。",
+			"consensus": "加权赞成票达到加权赞成票与反对票之和的 80% 即通过。"
 		},
 		"cycleTemplate": {
 			"rapid": "极速(1h+1h)",

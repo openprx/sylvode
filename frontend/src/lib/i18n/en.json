@@ -826,9 +826,9 @@
 			"consensus": "Consensus"
 		},
 		"votingRuleDescription": {
-			"simple_majority": "Passes with more than half yes votes. In a 3-person team, 2 yes votes pass.",
-			"absolute_majority": "Passes only when yes votes exceed half of all eligible members.",
-			"consensus": "Passes only when there are no no votes."
+			"simple_majority": "Passes when weighted yes votes are more than weighted no votes. Abstentions are not counted.",
+			"absolute_majority": "Passes when weighted yes votes are at least 67% of weighted yes and no votes.",
+			"consensus": "Passes when weighted yes votes are at least 80% of weighted yes and no votes."
 		},
 		"cycleTemplate": {
 			"rapid": "Rapid(1h+1h)",
