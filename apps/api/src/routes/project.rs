@@ -354,6 +354,20 @@ async fn create_template_plugins(
         let plugin_description = manifest.description.clone();
         let plugin_status = plugin.status.clone();
 
+        if plugin_status == "active" {
+            // One active version per key: a template plugin disables an earlier one of its key.
+            tx.execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "UPDATE plugins SET status = 'disabled', updated_at = now() \
+                 WHERE project_id = $1 AND key = $2 AND status = 'active' AND version <> $3",
+                vec![
+                    project_id.into(),
+                    plugin_key.clone().into(),
+                    plugin_version.clone().into(),
+                ],
+            ))
+            .await?;
+        }
         let inserted = IdRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r"
@@ -765,18 +779,16 @@ fn scenario_form_templates(template: &ScenarioTemplateRow) -> Vec<JsonValue> {
 }
 
 fn scenario_plugin_templates(template: &ScenarioTemplateRow) -> Result<Vec<TemplatePlugin>, ApiError> {
-    if let Some(plugins) = template
+    // Only a template that carries plugins in its sample data installs any; no built-in template
+    // does (the restaurant line total is a formula field).
+    template
         .sample_data
         .get("plugins")
         .and_then(JsonValue::as_array)
-        .filter(|plugins| !plugins.is_empty())
-    {
-        return plugins
-            .iter()
-            .map(template_plugin_from_json)
-            .collect::<Result<Vec<_>, _>>();
-    }
-    default_plugin_templates(&template.key)
+        .into_iter()
+        .flatten()
+        .map(template_plugin_from_json)
+        .collect()
 }
 
 fn template_plugin_from_json(value: &JsonValue) -> Result<TemplatePlugin, ApiError> {
@@ -799,38 +811,6 @@ fn template_plugin_from_json(value: &JsonValue) -> Result<TemplatePlugin, ApiErr
         wasm_bytes: constant_json_wasm(&output)?,
         status: status.to_string(),
     })
-}
-
-fn default_plugin_templates(template_key: &str) -> Result<Vec<TemplatePlugin>, ApiError> {
-    match template_key {
-        "restaurant_ordering_default" => Ok(vec![TemplatePlugin {
-            manifest: json!({
-                "schema_version": "openpr.plugin.v1",
-                "key": "restaurant_calc",
-                "name": "Restaurant Calculation",
-                "version": "0.1.0",
-                "description": "Computes restaurant line totals and exposes restaurant scenario tools.",
-                "capabilities": {
-                    "hooks": [
-                        {"kind": "formula", "form_key": "order_line", "field_key": "line_total"},
-                        {"kind": "event_handler", "event_type": "print_job.created"}
-                    ],
-                    "tools": [
-                        {"name": "restaurant_calc.today_revenue", "description": "Read restaurant daily revenue context."}
-                    ],
-                    "runtime": {"timeout_ms": 500, "fuel": 100_000, "memory_bytes": 1_048_576}
-                }
-            }),
-            wasm_bytes: constant_json_wasm(&json!({
-                "ok": true,
-                "patch": {"line_total": "19.98"},
-                "print_payload": {"format": "text", "template": "kitchen_or_receipt"},
-                "today_revenue": "19.98"
-            }))?,
-            status: "active".to_string(),
-        }]),
-        _ => Ok(Vec::new()),
-    }
 }
 
 fn default_form_templates(template_key: &str) -> Vec<JsonValue> {
@@ -1161,7 +1141,14 @@ fn restaurant_form_templates() -> Vec<JsonValue> {
                 field("sku_name", "SKU Name", "text", true),
                 field("quantity", "Quantity", "integer", true),
                 amount_field("unit_price", "Unit Price", true, "CNY", 2),
-                amount_field("line_total", "Line Total", false, "CNY", 2),
+                formula_amount_field(
+                    "line_total",
+                    "Line Total",
+                    "CNY",
+                    2,
+                    "multiply",
+                    &["quantity", "unit_price"],
+                ),
                 field("seat_no", "Seat", "text", false),
                 select_field(
                     "status",
@@ -1238,6 +1225,15 @@ fn amount_field(key: &str, label: &str, required: bool, currency: &str, scale: u
         "required": required,
         "amount": {"currency": currency, "scale": scale, "allow_negative": false, "rounding": "half_up"}
     })
+}
+
+/// An amount calculated from other fields of the same record: `op` over the fields `args`.
+fn formula_amount_field(key: &str, label: &str, currency: &str, scale: u32, op: &str, args: &[&str]) -> JsonValue {
+    let mut field = amount_field(key, label, false, currency, scale);
+    if let Some(object) = field.as_object_mut() {
+        object.insert("formula".to_string(), json!({"op": op, "args": args}));
+    }
+    field
 }
 
 fn relation_field(key: &str, label: &str, form_key: &str, required: bool) -> JsonValue {
@@ -2546,23 +2542,53 @@ mod tests {
     }
 
     #[test]
-    fn restaurant_template_generates_active_wasm_plugin() {
+    fn restaurant_template_installs_no_plugin_and_calculates_line_total() {
         let mut template = template_row();
         template.key = "restaurant_ordering_default".to_string();
 
-        let plugins = scenario_plugin_templates(&template).expect("restaurant plugins should build");
-        assert_eq!(plugins.len(), 1);
-        let plugin = plugins.first().expect("plugin should exist");
-        assert_eq!(plugin.status, "active");
-        validate_wasm_module(&plugin.wasm_bytes).expect("default plugin wasm should validate");
-        let manifest = parse_manifest(&plugin.manifest).expect("default plugin manifest should parse");
-        assert_eq!(manifest.key, "restaurant_calc");
-        assert!(
-            manifest
-                .capabilities
-                .hooks
-                .iter()
-                .any(|hook| hook.kind == "formula" && hook.form_key.as_deref() == Some("order_line"))
+        let plugins = scenario_plugin_templates(&template).expect("plugins should build");
+        assert!(plugins.is_empty(), "the restaurant template installs no plugin");
+
+        // The order line's total is a formula field of the form itself.
+        let forms = default_form_templates("restaurant_ordering_default");
+        let order_line = forms
+            .iter()
+            .find(|form| form.get("key").and_then(JsonValue::as_str) == Some("order_line"))
+            .expect("the order line form");
+        let schema = order_line.get("schema").cloned().expect("schema");
+        let total = schema
+            .get("fields")
+            .and_then(JsonValue::as_array)
+            .and_then(|fields| {
+                fields
+                    .iter()
+                    .find(|field| field.get("key").and_then(JsonValue::as_str) == Some("line_total"))
+            })
+            .expect("line_total");
+        assert_eq!(
+            total.get("formula"),
+            Some(&json!({"op": "multiply", "args": ["quantity", "unit_price"]}))
+        );
+        let normalized = normalize_form_template_schema(schema).expect("the schema normalizes");
+        let computed = crate::forms::calculation::evaluate_calculated_values(
+            &normalized,
+            json!({"quantity": 2, "unit_price": "9.99"}),
+        )
+        .expect("the total is calculated");
+        assert_eq!(
+            computed.get("line_total"),
+            Some(&json!({"currency": "CNY", "decimal": "19.98"})),
+            "{computed}"
+        );
+        let other = crate::forms::calculation::evaluate_calculated_values(
+            &normalized,
+            json!({"quantity": 5, "unit_price": "1.10"}),
+        )
+        .expect("the total is calculated");
+        assert_eq!(
+            other.get("line_total"),
+            Some(&json!({"currency": "CNY", "decimal": "5.50"})),
+            "{other}"
         );
     }
 

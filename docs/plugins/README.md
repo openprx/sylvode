@@ -161,16 +161,17 @@ workspace.
 | `GET /api/v1/plugins/{plugin_id}/invocations` | Invocation log, newest first (`page`, `per_page`) |
 
 `status` is `active` (the default), `disabled` or `failed`; only `active` plugins run. A project can
-hold one plugin per key and version. Installing and status changes write `plugin.installed` and
+hold one plugin per key and version, and at most one version of a key is active: installing an
+active version, or setting a version to `active`, disables the other active version of that key in
+the same step (a `plugin.updated` event records each one that was disabled). Installing and status changes write `plugin.installed` and
 `plugin.updated` business events. A plugin installed without `wasm_base64` is stored with its
 manifest only; hooks skip it.
 
 The MCP server offers the same operations as `plugins.list`, `plugins.get`, `plugins.install`,
 `plugins.invoke` and `plugin_invocations.list`; see the [MCP server README](../../apps/mcp-server/README.md).
 
-The `restaurant_ordering_default` scenario template installs an `openpr.plugin.v1` plugin named
-`restaurant_calc` whose module returns fixed sample output; see
-[scenario templates](../guide/scenario-templates.md).
+No built-in scenario template installs a plugin; the restaurant template calculates its order-line
+totals with a formula field (see [scenario templates](../guide/scenario-templates.md)).
 
 ### Building a plugin
 
@@ -212,18 +213,9 @@ them, and both must be set to exactly `1` for packages to work:
 Both are read from the process environment on each request; restart the `api` process after
 changing them. The Plugin Creator also needs both.
 
-With Docker Compose, `docker-compose.yml` passes only `SV_FORM_PLUGIN_PACKAGES_ENABLED` to the `api`
-service (from `.env`, default `0`). It does not pass `SV_FORM_PLUGIN_EXTENSIONS_ENABLED`, so to use
-form plugin packages under Compose, add that variable to the `api` service's `environment` block
-as well:
-
-```yaml
-    environment:
-      SV_FORM_PLUGIN_PACKAGES_ENABLED: "${SV_FORM_PLUGIN_PACKAGES_ENABLED:-0}"
-      SV_FORM_PLUGIN_EXTENSIONS_ENABLED: "${SV_FORM_PLUGIN_EXTENSIONS_ENABLED:-0}"
-```
-
-and set both to `1` in `.env`. Outside Compose, set both in the environment of the `api` binary.
+With Docker Compose, `docker-compose.yml` passes both variables to the `api` service, from `.env`
+(each defaults to `0`); set both to `1` there to use form plugin packages. Outside Compose, set
+both in the environment of the `api` binary.
 See [configuration](../configuration.md) for every environment variable Sylvode reads.
 
 ### Package format

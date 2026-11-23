@@ -201,8 +201,8 @@ async function main() {
     'restaurant template list item should expose aggregate MCP tool',
   );
   assert(
-    restaurantTemplateListItem.usage_guide.plugin_keys.includes('restaurant_calc'),
-    'restaurant template list item should expose restaurant_calc plugin key',
+    restaurantTemplateListItem.usage_guide.plugin_keys.length === 0,
+    'restaurant template list item should list no plugin key',
   );
 
   const restaurantTemplate = await request('GET', '/api/v1/scenario-templates/restaurant_ordering_default');
@@ -251,19 +251,35 @@ async function main() {
     'business_report',
   ]);
   const plugins = await request('GET', `/api/v1/projects/${restaurant.projectId}/plugins`);
-  const restaurantPlugin = plugins.data.items.find((plugin) => plugin.key === 'restaurant_calc');
-  assert(restaurantPlugin, 'restaurant template should install restaurant_calc plugin');
-  assert(restaurantPlugin.status === 'active', 'restaurant_calc plugin should be active');
-  assert(restaurantPlugin.wasm_sha256, 'restaurant_calc plugin should have wasm bytes');
   assert(
-    restaurantPlugin.manifest.capabilities.hooks.some((hook) => hook.kind === 'formula' && hook.form_key === 'order_line'),
-    'restaurant_calc plugin should declare order_line formula hook',
+    !plugins.data.items.some((plugin) => plugin.key === 'restaurant_calc'),
+    'restaurant template should not install a restaurant_calc plugin',
   );
 
   const orderForm = restaurant.forms.find((form) => form.key === 'order');
   assert(orderForm.schema.fields.some((field) => field.key === 'total_amount' && field.type === 'amount'), 'order form should contain amount field');
   const orderLineForm = restaurant.forms.find((form) => form.key === 'order_line');
   assert(orderLineForm.schema.fields.some((field) => field.key === 'order_id' && field.type === 'relation'), 'order_line should relate to order');
+
+  // The order line calculates its own total: quantity x unit price.
+  const lineSchemaTotal = orderLineForm.schema.fields.find((field) => field.key === 'line_total');
+  assert(
+    lineSchemaTotal && lineSchemaTotal.formula && lineSchemaTotal.formula.op === 'multiply',
+    'order_line line_total should be a formula field',
+  );
+  const table = await request('POST', `/api/v1/forms/${restaurant.forms.find((form) => form.key === 'table').id}/records`, {
+    values: { table_no: 'A03' },
+  });
+  const sku = await request('POST', `/api/v1/forms/${restaurant.forms.find((form) => form.key === 'sku').id}/records`, {
+    values: { sku: 'NOO-1', name: 'Noodles', price: '9.99' },
+  });
+  const order = await request('POST', `/api/v1/forms/${orderForm.id}/records`, {
+    values: { order_no: 'SMOKE-1', table_id: table.data.id, status: 'draft' },
+  });
+  const line = await request('POST', `/api/v1/forms/${orderLineForm.id}/records`, {
+    values: { order_id: order.data.id, sku_id: sku.data.id, sku_name: 'Noodles', quantity: 3, unit_price: '12.34' },
+  });
+  assert(line.data.values.line_total.decimal === '37.02', 'an order line should get line_total 3 x 12.34 = 37.02');
 
   console.log('scenario template forms smoke passed');
 }
@@ -293,14 +309,14 @@ if [[ "$SCENARIO_VIEW_EVENT_COUNT" -lt 44 ]]; then
 fi
 
 SCENARIO_PLUGIN_EVENT_COUNT="$(psql_smoke -Atqc "SELECT COUNT(*) FROM business_events WHERE event_type = 'plugin.installed' AND metadata->>'scenario_template_initialized' = 'true' AND metadata->>'plugin_key' = 'restaurant_calc'")"
-if [[ "$SCENARIO_PLUGIN_EVENT_COUNT" -lt 1 ]]; then
-  echo "Expected restaurant_calc scenario plugin.installed business event, got $SCENARIO_PLUGIN_EVENT_COUNT" >&2
+if [[ "$SCENARIO_PLUGIN_EVENT_COUNT" -ne 0 ]]; then
+  echo "Expected no restaurant_calc scenario plugin.installed business event, got $SCENARIO_PLUGIN_EVENT_COUNT" >&2
   exit 1
 fi
 
 SCENARIO_OUTBOX_COUNT="$(psql_smoke -Atqc "SELECT COUNT(*) FROM event_outbox eo JOIN business_events be ON be.id = eo.business_event_id WHERE be.event_type IN ('project.created', 'form.created', 'form.view.created', 'plugin.installed') AND be.metadata->>'scenario_template_initialized' = 'true'")"
-if [[ "$SCENARIO_OUTBOX_COUNT" -lt 73 ]]; then
-  echo "Expected at least 73 scenario initialization outbox rows, got $SCENARIO_OUTBOX_COUNT" >&2
+if [[ "$SCENARIO_OUTBOX_COUNT" -lt 72 ]]; then
+  echo "Expected at least 72 scenario initialization outbox rows, got $SCENARIO_OUTBOX_COUNT" >&2
   exit 1
 fi
 

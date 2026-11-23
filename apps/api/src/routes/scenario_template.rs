@@ -211,8 +211,8 @@ fn scenario_template_usage_guide(key: &str, name: &str) -> JsonValue {
                 "Generate print jobs, receipts, and business reports"
             ],
             "primary_mcp_tools": ["scenario_templates.get", "projects.create", "forms.list", "form_records.create", "form_records.link", "form_records.aggregate", "events.tail", "plugins.invoke"],
-            "plugin_keys": ["restaurant_calc"],
-            "acceptance_focus": ["Order-line totals are calculated by the plugin", "Revenue aggregate returns decimal strings"]
+            "plugin_keys": [],
+            "acceptance_focus": ["Order-line totals are calculated from quantity and unit price", "Revenue aggregate returns decimal strings"]
         }),
         _ => json!({
             "schema_version": "openpr.scenario_template.usage_guide.v1",
@@ -364,7 +364,7 @@ mod tests {
                 .iter()
                 .any(|tool| tool == "form_records.aggregate")
         );
-        assert_eq!(usage["plugin_keys"][0], "restaurant_calc");
+        assert_eq!(usage["plugin_keys"], serde_json::json!([]));
     }
 
     #[test]

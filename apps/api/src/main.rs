@@ -3254,6 +3254,9 @@ mod label_api_tests;
 mod export_import_api_tests;
 
 #[cfg(test)]
+mod plugin_template_api_tests;
+
+#[cfg(test)]
 mod legacy_auth_characterization_tests;
 
 #[cfg(test)]
@@ -3851,6 +3854,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     (
         "0118_label_rules.sql",
         include_str!("../../../migrations/0118_label_rules.sql"),
+    ),
+    (
+        "0119_plugin_single_active_version.sql",
+        include_str!("../../../migrations/0119_plugin_single_active_version.sql"),
     ),
 ];
 
@@ -4454,6 +4461,10 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
         "0118_label_rules.sql",
         SchemaProbe::Relation("labels_workspace_lower_name_key"),
     ),
+    (
+        "0119_plugin_single_active_version.sql",
+        SchemaProbe::Relation("plugins_one_active_version"),
+    ),
 ];
 
 /// One recorded migration outcome.
@@ -5026,6 +5037,7 @@ mod tests {
                 "0116_webhook_delivery_duration.sql",
                 "0117_sprint_rules.sql",
                 "0118_label_rules.sql",
+                "0119_plugin_single_active_version.sql",
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
         );

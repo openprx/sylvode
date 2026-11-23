@@ -161,6 +161,10 @@ pub async fn install_project_plugin(
     let status = normalize_plugin_status(req.status.as_deref())?;
 
     let tx = state.db.begin().await?;
+    // Activating a version disables the other active version of the key, in the same transaction.
+    if status == "active" {
+        disable_other_active_versions(&tx, project_id, &manifest.key, None, actor_id, is_bot).await?;
+    }
     let row = PluginResponse::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"INSERT INTO plugins (
@@ -232,6 +236,17 @@ pub async fn update_plugin(
     let status = normalize_plugin_status(req.status.as_deref())?;
 
     let tx = state.db.begin().await?;
+    if status == "active" {
+        disable_other_active_versions(
+            &tx,
+            existing.project_id,
+            &existing.key,
+            Some(plugin_id),
+            actor_id,
+            is_bot,
+        )
+        .await?;
+    }
     let row = PluginResponse::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"UPDATE plugins
@@ -689,10 +704,54 @@ async fn decode_and_validate_wasm(value: Option<&str>) -> Result<(Option<Vec<u8>
     Ok((Some(bytes.to_vec()), Some(format!("{hash:x}"))))
 }
 
+/// Disables the other active versions of a plugin key (all of them when `except` is `None`) and
+/// records a `plugin.updated` event for each, so at most one version of a key is active and the
+/// hooks never run two.
+async fn disable_other_active_versions<C: ConnectionTrait>(
+    tx: &C,
+    project_id: Uuid,
+    key: &str,
+    except: Option<Uuid>,
+    actor_id: Uuid,
+    is_bot: bool,
+) -> Result<(), ApiError> {
+    let disabled = PluginResponse::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r"UPDATE plugins
+              SET status = 'disabled', updated_at = now()
+            WHERE project_id = $1 AND key = $2 AND status = 'active'
+              AND ($3::uuid IS NULL OR id <> $3)
+            RETURNING id, workspace_id, project_id, key, name, version, description, manifest,
+                      wasm_sha256, status, installed_by, created_at, updated_at",
+        vec![project_id.into(), key.to_string().into(), except.into()],
+    ))
+    .all(tx)
+    .await?;
+    for row in disabled {
+        insert_plugin_event(
+            tx,
+            &row,
+            "plugin.updated",
+            if is_bot { None } else { Some(actor_id) },
+            json!({ "type": if is_bot { "bot" } else { "user" }, "actor_id": actor_id }),
+            json!({
+                "plugin_id": row.id,
+                "plugin_key": row.key,
+                "previous_status": "active",
+                "status": row.status
+            }),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 fn map_plugin_insert_error(err: sea_orm::DbErr) -> ApiError {
     let text = err.to_string();
     if text.contains("plugins_project_key_version_unique") {
         ApiError::Conflict("plugin key/version already installed for this project".to_string())
+    } else if text.contains("plugins_one_active_version") {
+        ApiError::Conflict("another version of this plugin is being activated; try again".to_string())
     } else {
         ApiError::Database(err)
     }

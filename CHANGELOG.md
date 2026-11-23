@@ -139,6 +139,21 @@ name.
   The project overview page imports into the current project and says how many issues and comments
   it added.
 
+- **One active version per plugin key; the restaurant template calculates for real.** Two active
+  versions of one plugin key both ran their hooks. Installing a version as `active`, or setting one
+  to `active`, now disables the other active version of the key in the same transaction (each disabled
+  version gets a `plugin.updated` event), and a unique index guarantees it; migration
+  `0119_plugin_single_active_version.sql` disables the older of any existing duplicates. The
+  restaurant scenario template no longer installs the `restaurant_calc` plugin, a module that
+  returned the constant `19.98`: the `line_total` of an `order_line` is a formula field (quantity
+  times unit price), so it is calculated from the real inputs, and the template's usage guide and
+  AI roles no longer name the plugin.
+
+- **Compose passes both plugin switches.** `docker-compose.yml` passed only
+  `SV_FORM_PLUGIN_PACKAGES_ENABLED` to the `api` service although form plugin packages and the Plugin
+  Creator need `SV_FORM_PLUGIN_EXTENSIONS_ENABLED` as well; both are passed now (default `0`) and
+  documented in `.env.example`, the configuration reference and the plugin guide.
+
 ### Removed
 
 - **Universal forms delivery and sign-off tooling.** The scripts and schemas that produced and

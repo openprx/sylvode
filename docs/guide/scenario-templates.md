@@ -6,8 +6,9 @@ template into a project creates:
 - a project workflow with the template's states (when the project has no workflow yet);
 - the template's labels in the workspace (labels that already exist are kept);
 - the template's forms, each with a table view and a detail view;
-- a governance configuration for the project (see [Governance](governance.md));
-- for the restaurant template, the `restaurant_calc` WASM plugin, installed and active.
+- a governance configuration for the project (see [Governance](governance.md)).
+
+No built-in template installs a plugin.
 
 Templates are built in. Each template also names a project type, which a project created from the
 template receives.
@@ -87,7 +88,7 @@ scenario template card in the project list; the web interface does not have that
 | `equipment_maintenance_default` | `custom_form` | Fault reports, maintenance ownership, inspection acceptance | `equipment`, `repair_order`, `inspection_record` | MCP inspection assistant, business events |
 | `quality_corrective_action_default` | `custom_form` | Defect classification, root-cause analysis, corrective action, recheck | `defect_record`, `root_cause_analysis`, `corrective_action` | MCP quality audit assistant, business events |
 | `customer_delivery_default` | `custom_form` | Customer milestones, acceptance materials, risk and change governance | `customer`, `delivery_milestone`, `change_request` | MCP delivery assistant, REST API, business events |
-| `restaurant_ordering_default` | `custom_form` | Menu, SKU, tables, orders, print jobs, receipts and daily revenue reporting | `menu_category`, `sku`, `table`, `order`, `order_line`, `print_job`, `business_report` | MCP kitchen assistant, `print_job.created` events, `restaurant_calc` WASM plugin |
+| `restaurant_ordering_default` | `custom_form` | Menu, SKU, tables, orders, print jobs, receipts and daily revenue reporting | `menu_category`, `sku`, `table`, `order`, `order_line`, `print_job`, `business_report` | MCP kitchen assistant, `print_job.created` events, order-line totals calculated by a formula field |
 
 ## Template details
 
@@ -153,10 +154,9 @@ API.
 - Workflow: Draft, Sent to Kitchen, Served, Paid, Cancelled.
 - Labels: `menu`, `kitchen`, `receipt`, `revenue`.
 
-The template installs the `restaurant_calc` plugin with a formula hook on `order_line.line_total`
-and an event handler for `print_job.created`. It is a demonstration module: it returns a fixed
-result (a `line_total` of `"19.98"`) instead of calculating from the order line. Replace it with
-your own plugin for real totals; see [Plugins](../plugins/README.md).
+The `line_total` of an `order_line` is a calculated field: quantity multiplied by unit price,
+computed by the server when the record is saved (3 x 12.34 gives 37.02). No plugin is involved. To
+add your own calculations or tools, install a plugin; see [Plugins](../plugins/README.md).
 
 For a local demonstration with sample data, `scripts/bootstrap-restaurant-demo.sh` creates a demo
 workspace and a restaurant project on a local stack; see the [installation guide](../install.md).

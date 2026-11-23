@@ -258,7 +258,8 @@ root. `scripts/start.sh` creates `.env` from `.env.example` when it is missing.
 | `SYLVODE_FRONTEND_DOCKERFILE` | `Dockerfile` | `Dockerfile` builds the web UI inside the image; `Dockerfile.prebuilt` serves an existing `frontend/build`. |
 | `SYLVODE_APP_CONFIG_PATH` | `./config/sylvode.compose.toml` | Configuration file mounted into `api` and `worker`. `scripts/start.sh` always sets this value. |
 | `SYLVODE_MCP_CONFIG_PATH` | `./config/sylvode.compose.mcp.toml` | Configuration file mounted into `mcp-server`. `scripts/start.sh` always sets this value. |
-| `SV_FORM_PLUGIN_PACKAGES_ENABLED` | `0` | Passed to the `api` container. The Compose file does not pass `SV_FORM_PLUGIN_EXTENSIONS_ENABLED`; add it to the `api` service's `environment` (for example in a `docker-compose.override.yml`) to use protocol 3 packages. |
+| `SV_FORM_PLUGIN_PACKAGES_ENABLED` | `0` | Passed to the `api` container. Enables personal plugin libraries and protocol 3 form plugin packages. |
+| `SV_FORM_PLUGIN_EXTENSIONS_ENABLED` | `0` | Passed to the `api` container. Enables the protocol 3 package extensions; the Plugin Creator needs this and the packages switch. |
 
 `scripts/start.sh` also reads `SYLVODE_COMPOSE_STAGED`: with `1` it builds the images first and then
 starts `postgres`, `api`, `worker`, `mcp-server` and `frontend` one by one, for Compose providers
