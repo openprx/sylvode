@@ -46,10 +46,10 @@ file of its own, so the UI runs under a Content Security Policy with `script-src
 
 The value is read at build time and compiled into the files.
 
-| Value | Effect |
-|---|---|
+| Value          | Effect                                                                                                                                                                                                                                           |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | unset or empty | API requests go to the origin the UI is served from, and the live editing WebSocket uses the same origin with `ws` or `wss`. Use this when nginx (or another proxy) forwards `/api` to the API, as in the Compose stack and the release archive. |
-| a URL | API requests go to that URL, and the WebSocket URL is derived from it by replacing `http` with `ws`. |
+| a URL          | API requests go to that URL, and the WebSocket URL is derived from it by replacing `http` with `ws`.                                                                                                                                             |
 
 Whatever the value, live editing works only from an origin listed in the API's
 `flow.collab_allowed_origins`, for the development server `http://localhost:5173`; see
@@ -64,9 +64,9 @@ Outside the Compose network, change the upstream address and the resolver includ
 [docs/install.md](../docs/install.md#serve-the-web-ui). `nginx-static-only.conf` serves the files
 without forwarding anything.
 
-| File | Image it builds |
-|---|---|
-| `Dockerfile` | Installs the dependencies and builds the UI inside the image, then serves it with nginx. The Compose default. |
+| File                  | Image it builds                                                                                                                 |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `Dockerfile`          | Installs the dependencies and builds the UI inside the image, then serves it with nginx. The Compose default.                   |
 | `Dockerfile.prebuilt` | Serves an existing `build/` directory, for hosts without Bun. Select it with `SYLVODE_FRONTEND_DOCKERFILE=Dockerfile.prebuilt`. |
 
 Reverse proxy requirements are listed in [docs/operations.md](../docs/operations.md#reverse-proxy).
