@@ -10,7 +10,7 @@ set -euo pipefail
 # they require, then checks every promise due in the requested release against
 # the shipped implementation: MCP names come from executing list-tools, CLI
 # commands from executing sylvode's command tree, and REST identities from
-# the Axum route registrations assembled by apps/api/src/main.rs.
+# the Axum route registrations assembled by apps/api/src/router/flow.rs.
 # the full 49-endpoint REST<->matrix 1:1 correspondence, matrix<->live
 # MCP tool/resource/CLI-command bidirectional coverage (no orphans, no
 # unknown refs), the three-item MCP not_exposed allowlist with

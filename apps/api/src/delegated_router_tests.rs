@@ -19,8 +19,9 @@
     clippy::doc_markdown
 )]
 
-use super::migration_runner_database_tests::{Scratch, scratch};
-use super::{MigrationOptions, build_router, build_router_with, run_migrations_with};
+use crate::migrate::db_tests::{Scratch, scratch};
+use crate::migrate::{MigrationOptions, run_migrations_with};
+use crate::router::{build_router, build_router_with};
 use api::oauth::delegated::{DELEGATED_ROUTES, OAuthConfigOverride, Required, Resolver, RouteEntry, lookup};
 use api::oauth::scopes::{Scope, ScopeSet};
 use api::oauth::tokens::{TokenKind, mint};

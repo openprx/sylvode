@@ -9,8 +9,9 @@
 
 #![allow(clippy::print_stderr, clippy::indexing_slicing)]
 
-use super::migration_runner_database_tests::scratch;
-use super::{MigrationOptions, build_router, run_migrations_with};
+use crate::migrate::db_tests::scratch;
+use crate::migrate::{MigrationOptions, run_migrations_with};
+use crate::router::build_router;
 use axum::body::Body;
 use axum::http::{Request, header};
 use platform::{

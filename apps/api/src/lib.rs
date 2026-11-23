@@ -11,6 +11,9 @@ pub mod outbound;
 pub mod plugins;
 pub mod request;
 pub mod response;
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod router_source;
 pub mod routes;
 pub mod security;
 pub mod services;

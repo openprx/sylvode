@@ -56,8 +56,8 @@ def balanced_route_calls(text: str):
         pos = i
 
 
-def live_rest(main_rs: str) -> tuple[list[str], str]:
-    raw = open(main_rs, encoding="utf-8").read()
+def live_rest(router_file: str) -> tuple[list[str], str]:
+    raw = open(router_file, encoding="utf-8").read()
     found: set[str] = set()
     for body in balanced_route_calls(raw):
         path_match = re.match(r'\s*"([^"]+)"\s*,', body)
@@ -146,7 +146,7 @@ def main() -> int:
 
     mcp_text = open(args.mcp_output, encoding="utf-8").read()
     mcp_live = parse_live_mcp(mcp_text)
-    rest_live, rest_sha = live_rest(f"{args.repo_root}/apps/api/src/main.rs")
+    rest_live, rest_sha = live_rest(f"{args.repo_root}/apps/api/src/router/flow.rs")
     # Probe the whole command contract so evidence can distinguish a future
     # command that happens to exist from one that correctly does not exist yet.
     # Only contract_cli_keys participates in the current-release subset check.
@@ -201,7 +201,7 @@ def main() -> int:
             "conditional_entry_disposition": "conditional entries require their contract activation condition before becoming required",
         },
         "mcp": dimension(mcp_declared, contract_mcp, mcp_future, mcp_conditional, mcp_live, "executed shipped list-tools binary"),
-        "rest": dimension(rest_declared, contract_rest, rest_future, rest_conditional, rest_live, "Axum route registrations assembled by apps/api/src/main.rs", route_source_sha256=rest_sha),
+        "rest": dimension(rest_declared, contract_rest, rest_future, rest_conditional, rest_live, "Axum route registrations assembled by apps/api/src/router/flow.rs", route_source_sha256=rest_sha),
         "cli": dimension(cli_declared, contract_cli_keys, cli_future, cli_conditional, cli_live, "executed shipped sylvode command tree with per-command --help and required-flag presence", probes=cli_probes),
     }
     result["version_scope_diagnostic"] = {
@@ -227,7 +227,7 @@ def main() -> int:
     result["proof_limitations"] = {
         "rest": {
             "proof_kind": "source_route_registration_parser",
-            "proves": "matching method/path registrations were found by parsing balanced .route(...) calls in apps/api/src/main.rs",
+            "proves": "matching method/path registrations were found by parsing balanced .route(...) calls in apps/api/src/router/flow.rs",
             "does_not_prove": "the routes are present in a running runtime router",
         },
         "cli": {

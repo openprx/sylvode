@@ -515,9 +515,10 @@ mod tests {
     use super::{Class, Find, RUNNER_BOT_ROUTES, lookup};
     use std::collections::{BTreeMap, BTreeSet};
 
-    /// Every `(method, pattern)` that `main.rs` registers behind `bot_or_user_auth_middleware`.
+    /// Every `(method, pattern)` that the router files register behind `bot_or_user_auth_middleware`.
     fn routes_of_main() -> BTreeSet<(String, String)> {
-        let source = include_str!("../main.rs");
+        let source = crate::router_source::text();
+        let source = source.as_str();
         let bytes = source.as_bytes();
         let mut found = BTreeSet::new();
         let mut from = 0;
@@ -587,7 +588,7 @@ mod tests {
         let stale: Vec<_> = table.difference(&main).collect();
         assert!(
             stale.is_empty(),
-            "classified routes that main.rs does not register: {stale:#?}"
+            "classified routes that no router file registers: {stale:#?}"
         );
     }
 

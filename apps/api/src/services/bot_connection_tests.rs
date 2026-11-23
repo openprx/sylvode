@@ -1882,10 +1882,10 @@ async fn the_report_route_is_rate_limited_and_body_limited() {
     let (_, answer) = body_of(limited).await;
     assert_eq!(answer["code"], 429);
 
-    // The route's body limit, built as `main.rs` builds it: the body is cut off before the handler.
+    // The route's body limit, built as the router builds it: the body is cut off before the handler.
     assert!(
-        include_str!("../main.rs").contains("runner_report_body_limit()"),
-        "main.rs applies it"
+        crate::router_source::text().contains("runner_report_body_limit()"),
+        "the router applies it"
     );
     let app = Router::new()
         .route(

@@ -14,8 +14,9 @@
     clippy::doc_markdown
 )]
 
-use super::migration_runner_database_tests::{Scratch, scratch};
-use super::{MigrationOptions, build_router, run_migrations_with};
+use crate::migrate::db_tests::{Scratch, scratch};
+use crate::migrate::{MigrationOptions, run_migrations_with};
+use crate::router::build_router;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode, header};

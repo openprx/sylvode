@@ -14822,8 +14822,8 @@ mod flow_database_tests {
         .await;
         assert_ne!(outsider["code"], 0, "{outsider}");
         assert!(
-            include_str!("../main.rs").contains("get(routes::flow::get_flow_object_schema)"),
-            "main.rs must route the schema resource to the record-aware handler"
+            crate::router_source::text().contains("get(routes::flow::get_flow_object_schema)"),
+            "the router must route the schema resource to the record-aware handler"
         );
         scratch.drop_self().await;
     }

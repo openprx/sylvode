@@ -19,8 +19,8 @@
 //! `server_draining{reason:"contention"}` (anything else), and that rendering is switched on in
 //! exactly one place, `routes::flow_surface::seal`. The second test here proves the wiring from
 //! source: every route that names a `routes::flow` / `routes::collab` handler, or whose path has a
-//! `flow` / `collab` segment, is registered inside `fn flow_surface_routes` in `src/main.rs`, and
-//! that function's router reaches the application only through `seal`. A Flow route registered
+//! `flow` / `collab` segment, is registered in `src/router/flow.rs`, and
+//! that file's router reaches the application only through `seal`. A Flow route registered
 //! anywhere else turns it red. So does a route that is Flow by its path and names a handler of
 //! another module (or the reverse), and so does a handler that is not written out as
 //! `routes::<module>::...::<handler>`, because an alias would hide a Flow handler from every check
@@ -424,7 +424,7 @@ fn handler_module(handler: &str) -> Option<&str> {
 /// the liveness and readiness probes, which are functions of `main.rs` itself and so cannot be
 /// handlers of `routes::flow` / `routes::collab`. Nothing else may be added without a reason of
 /// that kind.
-const LOCAL_HANDLERS: &[(&str, &str)] = &[("/health", "health"), ("/ready", "ready")];
+const LOCAL_HANDLERS: &[(&str, &str)] = &[("/health", "crate::health"), ("/ready", "crate::ready")];
 
 fn is_flow_module(module: &str) -> bool {
     module == "flow" || module == "collab"
@@ -499,44 +499,71 @@ fn route_calls(raw: &str) -> Vec<RouteCall> {
         .collect()
 }
 
-/// Char span of the body of `fn <name>` in production code.
-fn fn_body_span(code: &[char], name: &str) -> Option<(usize, usize)> {
-    let start = *occurrences(code, &format!("fn {name}(")).first()?;
-    let open = (start..code.len()).find(|&i| code[i] == '{')?;
-    Some((open, matching_brace(code, open)))
+/// The file of the router that holds every Flow route and nothing else.
+const FLOW_ROUTER_FILE: &str = "flow.rs";
+
+/// The files of `src/router`, as `(file name, text)`, in file name order.
+fn router_files() -> Vec<(String, String)> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join("router");
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|err| panic!("cannot read {}: {err}", dir.display()))
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
+        .collect();
+    paths.sort();
+    paths
+        .into_iter()
+        .map(|path| {
+            let text =
+                std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("cannot read {}: {err}", path.display()));
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            (name, text)
+        })
+        .collect()
 }
 
-fn main_rs() -> String {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join("main.rs");
-    std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("cannot read {}: {err}", path.display()))
-}
-
-/// What is wrong with the Flow route wiring of a `main.rs` source, one line per finding.
-fn flow_wiring_findings(main: &str) -> Vec<String> {
+/// What is wrong with the Flow route wiring of the router files, one line per finding. The
+/// Flow region is the file `flow.rs`; every other file is outside the boundary.
+fn flow_wiring_findings(files: &[(String, String)]) -> Vec<String> {
+    let mut main = String::new();
+    let mut flow_span = None;
+    for (name, text) in files {
+        let start = main.chars().count();
+        main.push_str(text);
+        main.push('\n');
+        if name == FLOW_ROUTER_FILE {
+            flow_span = Some((start, main.chars().count()));
+        }
+    }
+    let main = main.as_str();
     let code = production_code(main);
     let text: String = code.iter().collect();
     let mut findings = Vec::new();
-    let Some((open, close)) = fn_body_span(&code, "flow_surface_routes") else {
-        return vec!["main.rs has no `fn flow_surface_routes`".to_string()];
+    let Some((open, close)) = flow_span else {
+        return vec![format!("the router has no `{FLOW_ROUTER_FILE}`")];
     };
     let routes = route_calls(main);
     let flow_routes = routes.iter().filter(|route| route.is_flow()).count();
     if flow_routes < 40 {
         findings.push(format!(
-            "only {flow_routes} Flow routes found; the route parser no longer matches main.rs"
+            "only {flow_routes} Flow routes found; the route parser no longer matches the router files"
         ));
     }
     for route in &routes {
         let inside = route.at > open && route.at < close;
         if route.is_flow() && !inside {
             findings.push(format!(
-                "Flow route {} is registered outside `fn flow_surface_routes`",
+                "Flow route {} is registered outside `router/flow.rs`",
                 route.path
             ));
         }
         if inside && !route.flow_handler {
             findings.push(format!(
-                "{} inside `fn flow_surface_routes` names no routes::flow / routes::collab handler",
+                "{} inside `router/flow.rs` names no routes::flow / routes::collab handler",
                 route.path
             ));
         }
@@ -599,23 +626,26 @@ fn flow_wiring_findings(main: &str) -> Vec<String> {
             let rest: String = code[at..code.len().min(at + 40)].iter().collect();
             let inside = at > open && at < close;
             if !inside && !rest.starts_with("routes::collab::trace_span") {
-                findings.push(format!("`{}` is used outside `fn flow_surface_routes`", rest.trim()));
+                findings.push(format!("`{}` is used outside `router/flow.rs`", rest.trim()));
             }
         }
     }
     // One definition and one use, and that use is wrapped by the boundary.
-    let uses = text.matches("flow_surface_routes(").count();
-    let sealed = text.matches("routes::flow_surface::seal(flow_surface_routes(").count();
+    let flow_text: String = code[open..close].iter().collect();
+    let definitions = flow_text.matches("fn routes(").count();
+    let uses = text.matches("flow::routes(").count();
+    let sealed = text.matches("routes::flow_surface::seal(flow::routes(").count();
     let seals = text.matches("flow_surface::seal(").count();
     if seals != 1 {
         findings.push(format!(
             "`flow_surface::seal(` is called {seals} time(s); only the Flow router is sealed, once"
         ));
     }
-    if uses != 2 || sealed != 1 {
+    if definitions != 1 || uses != 1 || sealed != 1 {
         findings.push(format!(
-            "`flow_surface_routes(` appears {uses} time(s) and is sealed {sealed} time(s); expected its \
-             definition plus exactly one `routes::flow_surface::seal(flow_surface_routes(..))`"
+            "`router/flow.rs` defines `fn routes(` {definitions} time(s); `flow::routes(` appears {uses} time(s) and is \
+             sealed {sealed} time(s); expected one definition and exactly one \
+             `routes::flow_surface::seal(flow::routes(..))`"
         ));
     }
     findings
@@ -623,7 +653,7 @@ fn flow_wiring_findings(main: &str) -> Vec<String> {
 
 #[test]
 fn the_wiring_check_sees_a_flow_route_registered_outside_the_boundary() {
-    let template = |extra_app_route: &str, extra_flow_route: &str| {
+    let template = |extra_app_route: &str, extra_flow_route: &str| -> Vec<(String, String)> {
         let mut flow_routes = String::new();
         for n in 0..40 {
             let _ = writeln!(
@@ -631,16 +661,26 @@ fn the_wiring_check_sees_a_flow_route_registered_outside_the_boundary() {
                 "        .route(\"/api/v1/flow/things/{n}\", get(routes::flow::thing))"
             );
         }
-        format!(
-            "fn build_router(state: AppState) -> Router {{\n    Router::new()\n        \
-             .route(\"/api/v1/workflows\", get(routes::workflow::list))\n{extra_app_route}        \
-             .merge(routes::flow_surface::seal(flow_surface_routes(&state)))\n        \
-             .layer(TraceLayer::new_for_http().make_span_with(routes::collab::trace_span))\n        \
-             .with_state(state)\n}}\n\
-             fn flow_surface_routes(auth_state: &AppState) -> Router<AppState> {{\n    Router::new()\n\
-             {flow_routes}{extra_flow_route}}}\n\
-             #[cfg(test)]\nmod tests {{ fn t() {{ Router::new().route(\"/api/v1/flow/x\", get(routes::flow::x)); }} }}\n"
-        )
+        vec![
+            (
+                "mod.rs".to_string(),
+                format!(
+                    "fn build_router(state: AppState) -> Router {{\n    Router::new()\n        \
+                     .route(\"/api/v1/workflows\", get(routes::workflow::list))\n{extra_app_route}        \
+                     .merge(routes::flow_surface::seal(flow::routes(&state)))\n        \
+                     .layer(TraceLayer::new_for_http().make_span_with(routes::collab::trace_span))\n        \
+                     .with_state(state)\n}}\n\
+                     #[cfg(test)]\nmod tests {{ fn t() {{ Router::new().route(\"/api/v1/flow/x\", get(routes::flow::x)); }} }}\n"
+                ),
+            ),
+            (
+                FLOW_ROUTER_FILE.to_string(),
+                format!(
+                    "pub(crate) fn routes(auth_state: &AppState) -> Router<AppState> {{\n    Router::new()\n\
+                     {flow_routes}{extra_flow_route}}}\n"
+                ),
+            ),
+        ]
     };
     assert_eq!(flow_wiring_findings(&template("", "")), Vec::<String>::new());
     // By handler, by path alone, a non-Flow route put behind the boundary, a handler of another
@@ -703,13 +743,16 @@ fn the_wiring_check_sees_a_flow_route_registered_outside_the_boundary() {
         ("use api::routes::{flow, label};\n", "`routes::{`"),
         ("use api::routes as r;\n", "`routes as `"),
     ] {
-        let findings = flow_wiring_findings(&format!("{import}{}", template("", "")));
+        let mut files = template("", "");
+        files[0].1.insert_str(0, import);
+        let findings = flow_wiring_findings(&files);
         assert!(
             findings.iter().any(|finding| finding.contains(expected)),
             "{import}: {findings:?}"
         );
     }
-    let sealed_twice = template("", "").replace(
+    let mut sealed_twice = template("", "");
+    sealed_twice[0].1 = sealed_twice[0].1.replace(
         "Router::new()\n        .route(\"/api/v1/workflows\"",
         "routes::flow_surface::seal(Router::new())\n        .route(\"/api/v1/workflows\"",
     );
@@ -719,9 +762,10 @@ fn the_wiring_check_sees_a_flow_route_registered_outside_the_boundary() {
             .any(|finding| finding.contains("called 2 time(s)")),
         "a second sealed router is reported"
     );
-    let unsealed = template("", "").replace(
-        "routes::flow_surface::seal(flow_surface_routes(&state))",
-        "flow_surface_routes(&state)",
+    let mut unsealed = template("", "");
+    unsealed[0].1 = unsealed[0].1.replace(
+        "routes::flow_surface::seal(flow::routes(&state))",
+        "flow::routes(&state)",
     );
     assert!(
         flow_wiring_findings(&unsealed)
@@ -733,7 +777,7 @@ fn the_wiring_check_sees_a_flow_route_registered_outside_the_boundary() {
 
 #[test]
 fn every_flow_route_is_registered_behind_the_typed_database_failure_boundary() {
-    let findings = flow_wiring_findings(&main_rs());
+    let findings = flow_wiring_findings(&router_files());
     assert!(findings.is_empty(), "Flow route wiring:\n  {}", findings.join("\n  "));
 
     // The boundary is switched on in one place and applied from one place.
@@ -759,20 +803,19 @@ fn every_flow_route_is_registered_behind_the_typed_database_failure_boundary() {
     );
     assert_eq!(
         mentions("flow_surface::seal("),
-        vec!["main.rs"],
+        vec!["router/mod.rs"],
         "only the application router seals a Flow router"
     );
     // The OAuth module registers its own routes (`oauth/router.rs` merges them into the router in
-    // main.rs). They are not Flow routes, and the guard below keeps it that way: nothing under
+    // `router/mod.rs`). They are not Flow routes, and the guard below keeps it that way: nothing under
     // `oauth/` may name a Flow or collaboration handler, so a Flow route can not hide there.
     let outside_oauth: Vec<String> = mentions(".route(")
         .into_iter()
         .filter(|path| !path.starts_with("oauth/"))
         .collect();
-    assert_eq!(
-        outside_oauth,
-        vec!["main.rs"],
-        "routes are registered in main.rs only, where the wiring check above reads them"
+    assert!(
+        !outside_oauth.is_empty() && outside_oauth.iter().all(|path| path.starts_with("router/")),
+        "routes are registered in src/router only, where the wiring check above reads them: {outside_oauth:?}"
     );
     for needle in ["routes::flow", "routes::collab", "crate::flow::", "api::flow::"] {
         let hits: Vec<String> = mentions(needle)
