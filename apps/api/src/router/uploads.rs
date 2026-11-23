@@ -7,7 +7,7 @@ use axum::{
 };
 use platform::app::AppState;
 
-pub(crate) fn routes(auth_state: &AppState) -> Router<AppState> {
+pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
     // Uploaded object downloads are gated by `uploads_access_middleware`: it accepts either a
     // signed download URL or a normal session, and the handlers then scope the object to the
     // workspace that owns it.

@@ -7,7 +7,7 @@ use axum::{
 };
 use platform::app::AppState;
 
-pub(crate) fn routes(auth_state: &AppState) -> Router<AppState> {
+pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
     Router::new()
         // Auth routes
         .route("/api/v1/auth/register", post(routes::auth::register))

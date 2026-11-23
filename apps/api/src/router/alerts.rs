@@ -7,7 +7,7 @@ use axum::{
 };
 use platform::app::AppState;
 
-pub(crate) fn routes(auth_state: &AppState) -> Router<AppState> {
+pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
     Router::new()
         // Alert chain: the inbound event endpoint. It carries its own layer, which accepts a source
         // credential only (never a session, a bot token or a delegated token) and applies the
@@ -15,7 +15,7 @@ pub(crate) fn routes(auth_state: &AppState) -> Router<AppState> {
         .route(
             api::inbound::INBOUND_EVENTS_PATH,
             post(routes::inbound_events::post_event).route_layer(axum_middleware::from_fn_with_state(
-                api::inbound::auth_state(&auth_state, api::config::runtime().inbound),
+                api::inbound::auth_state(auth_state, api::config::runtime().inbound),
                 api::inbound::auth::inbound_source_auth,
             )),
         )

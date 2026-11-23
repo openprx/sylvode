@@ -9,7 +9,7 @@ use axum::{
 };
 use platform::app::AppState;
 
-pub(crate) fn routes(auth_state: &AppState) -> Router<AppState> {
+pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
     Router::new()
         // Project routes (protected)
         .route(

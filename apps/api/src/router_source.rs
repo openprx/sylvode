@@ -4,7 +4,7 @@
 //! new area file is covered without an edit here.
 
 /// The text of every file of `src/router`, in file name order.
-pub(crate) fn text() -> String {
+pub fn text() -> String {
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/router");
     let mut names: Vec<_> = std::fs::read_dir(dir)
         .expect("the router directory is readable")

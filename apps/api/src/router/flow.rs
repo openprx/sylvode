@@ -18,7 +18,7 @@ use super::MAX_HTTP_REQUEST_BYTES;
 /// else, so a route registered here cannot answer a database failure with the legacy envelope.
 /// A Flow route belongs here and not in [`build_router`]; `tests/flow_typed_error_gate.rs` fails
 /// on one registered anywhere else, and on a route here that is not a Flow handler.
-pub(crate) fn routes(auth_state: &AppState) -> Router<AppState> {
+pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
     let v2 = Router::new()
         .route(
             "/api/v2/flow/objects/{id}/portable-page-package",

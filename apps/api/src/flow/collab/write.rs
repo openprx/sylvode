@@ -3856,7 +3856,7 @@ mod isolation_rejection_tests {
 // ---- Real-database tests (opt-in via `OPENPR_TEST_DATABASE_URL`) ----
 //
 // Mirrors the scratch-database convention `apps/api/src/routes/flow.rs::flow_database_tests` and
-// `apps/api/src/main.rs::migration_runner_database_tests` already use: own throwaway database per
+// `apps/api/src/migrate/db_tests.rs` already use: own throwaway database per
 // run, migrated from `migrations/*.sql` on disk, dropped on the way out.
 #[cfg(test)]
 #[allow(

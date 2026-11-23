@@ -25,7 +25,7 @@ const MAX_HTTP_REQUEST_BYTES: usize = 200 * 1024 * 1024;
 /// The source text of every router file, for the tests that check the route registrations
 /// (authentication layers, Flow boundary, bot route classes) against what the router declares.
 #[cfg(test)]
-pub(crate) const ROUTER_SOURCES: &[(&str, &str)] = &[
+pub const ROUTER_SOURCES: &[(&str, &str)] = &[
     ("mod.rs", include_str!("mod.rs")),
     ("alerts.rs", include_str!("alerts.rs")),
     ("auth_workspace.rs", include_str!("auth_workspace.rs")),
@@ -39,37 +39,14 @@ pub(crate) const ROUTER_SOURCES: &[(&str, &str)] = &[
     ("uploads.rs", include_str!("uploads.rs")),
 ];
 
-#[cfg(test)]
-mod tests {
-    use super::ROUTER_SOURCES;
-
-    /// A router file left out of [`ROUTER_SOURCES`] would escape every source-level route check.
-    #[test]
-    fn every_router_file_is_scanned() {
-        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/router");
-        let mut on_disk: Vec<String> = std::fs::read_dir(dir)
-            .expect("router directory is readable")
-            .filter_map(Result::ok)
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .collect();
-        on_disk.sort();
-        let mut listed: Vec<String> = ROUTER_SOURCES.iter().map(|(name, _)| (*name).to_string()).collect();
-        listed.sort();
-        assert_eq!(listed, on_disk, "ROUTER_SOURCES must list every file of src/router");
-    }
-}
-
 /// The application router: every REST route, with the global layers applied.
-pub(crate) fn build_router(state: AppState) -> Router {
+pub fn build_router(state: AppState) -> Router {
     build_router_with(state, api::config::runtime().oauth.as_ref())
 }
 
 /// [`build_router`] with an explicit `[oauth]` configuration (tests; the server passes the
 /// installed one).
-pub(crate) fn build_router_with(
-    state: AppState,
-    oauth: Option<&std::sync::Arc<platform::config::OAuthConfig>>,
-) -> Router {
+pub fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::config::OAuthConfig>>) -> Router {
     let auth_state = state.clone();
 
     Router::new()
@@ -97,4 +74,24 @@ pub(crate) fn build_router_with(
         .layer(CorsLayer::permissive())
         .layer(CompressionLayer::new())
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ROUTER_SOURCES;
+
+    /// A router file left out of [`ROUTER_SOURCES`] would escape every source-level route check.
+    #[test]
+    fn every_router_file_is_scanned() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/router");
+        let mut on_disk: Vec<String> = std::fs::read_dir(dir)
+            .expect("router directory is readable")
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        on_disk.sort();
+        let mut listed: Vec<String> = ROUTER_SOURCES.iter().map(|(name, _)| (*name).to_string()).collect();
+        listed.sort();
+        assert_eq!(listed, on_disk, "ROUTER_SOURCES must list every file of src/router");
+    }
 }

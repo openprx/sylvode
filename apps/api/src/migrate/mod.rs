@@ -1116,7 +1116,7 @@ enum MigrationOutcome {
 /// Kept as a value rather than read from the environment deep inside the runner, so both branches
 /// can be exercised by a test without mutating process wide state.
 #[derive(Clone, Copy, Default)]
-pub(crate) struct MigrationOptions {
+pub struct MigrationOptions {
     /// Re-execute every migration, including those the ledger already records as successful.
     replay: bool,
     /// Start even though a migration failed or the post-run schema check found a gap.
@@ -1137,11 +1137,11 @@ impl MigrationOptions {
     }
 }
 
-pub(crate) async fn run_migrations(db: &DatabaseConnection, migrations: MigrationsConfig) -> anyhow::Result<()> {
+pub async fn run_migrations(db: &DatabaseConnection, migrations: MigrationsConfig) -> anyhow::Result<()> {
     run_migrations_with(db, MigrationOptions::from_config(migrations)).await
 }
 
-pub(crate) async fn run_migrations_with(db: &DatabaseConnection, options: MigrationOptions) -> anyhow::Result<()> {
+pub async fn run_migrations_with(db: &DatabaseConnection, options: MigrationOptions) -> anyhow::Result<()> {
     let Some((ledger_name, ledger_sql)) = MIGRATIONS.first() else {
         return Err(anyhow::anyhow!("migration list is empty, refusing to start"));
     };
@@ -1477,7 +1477,7 @@ async fn load_migration_ledger(db: &DatabaseConnection) -> anyhow::Result<HashMa
     Ok(ledger)
 }
 
-pub(crate) async fn verify_governance_schema(db: &DatabaseConnection) -> anyhow::Result<()> {
+pub async fn verify_governance_schema(db: &DatabaseConnection) -> anyhow::Result<()> {
     const CHECKS: &[(&str, &str)] = &[
         ("proposals table", "SELECT 1 FROM proposals LIMIT 1"),
         ("proposal_type enum", "SELECT 'feature'::proposal_type"),
