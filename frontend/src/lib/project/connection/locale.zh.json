@@ -28,7 +28,7 @@
 				"affects": "修改会影响 {count} 个项目"
 			},
 			"cli": {
-				"label": "CLI",
+				"label": "命令行",
 				"claude": "Claude Code",
 				"codex": "Codex（实验性）",
 				"opencode": "opencode（实验性）",

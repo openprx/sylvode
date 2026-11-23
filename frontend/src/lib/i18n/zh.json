@@ -216,7 +216,7 @@
 		"status": "状态",
 		"priority": "优先级",
 		"assignee": "指派人",
-		"sprint": "Sprint",
+		"sprint": "迭代",
 		"labels": "标签",
 		"comments": "评论",
 		"activity": "活动记录",
@@ -323,9 +323,9 @@
 		"noResults": "未找到结果，尝试更换关键词",
 		"searching": "搜索中...",
 		"startTyping": "输入关键词开始搜索",
-		"issues": "ISSUES",
-		"projects": "PROJECTS",
-		"comments": "COMMENTS",
+		"issues": "工作项",
+		"projects": "项目",
+		"comments": "评论",
 		"missingWorkspace": "搜索结果缺少工作区信息，无法跳转"
 	},
 	"auth": {
@@ -341,15 +341,15 @@
 		"required": "请填写邮箱和密码"
 	},
 	"roles": {
-		"owner": "Owner",
-		"admin": "Admin",
-		"member": "Member",
-		"user": "User"
+		"owner": "所有者",
+		"admin": "管理员",
+		"member": "成员",
+		"user": "用户"
 	},
 	"agentTypes": {
 		"openclaw": "OpenClaw",
 		"webhook": "Webhook",
-		"custom": "Custom"
+		"custom": "自定义"
 	},
 	"placeholders": {
 		"emailPlaceholder": "your@email.com",
@@ -364,12 +364,12 @@
 		"customArgs": "--mode run --target demo"
 	},
 	"formLabels": {
-		"command": "Command",
-		"channel": "Channel",
-		"target": "Target",
+		"command": "命令",
+		"channel": "渠道",
+		"target": "目标",
 		"url": "URL",
-		"secret": "Secret",
-		"args": "Args"
+		"secret": "密钥",
+		"args": "参数"
 	},
 	"landing": {
 		"title": "Sylvode",
@@ -390,7 +390,7 @@
 		"entityType": "身份类型",
 		"human": "人类",
 		"bot": "机器人",
-		"botBadge": "Bot",
+		"botBadge": "机器人",
 		"agentType": "Agent 类型",
 		"agentConfig": "Agent 配置",
 		"role": "角色",
@@ -643,7 +643,7 @@
 		"changeRoleAction": "改为 {role}",
 		"changeRoleFailed": "角色更新失败：{message}",
 		"changeRoleSuccess": "成员角色已更新",
-		"apiTokensTitle": "API Tokens",
+		"apiTokensTitle": "API Token 管理",
 		"apiTokensSubtitle": "管理用于 API 访问的 Bot Token",
 		"apiTokensEmpty": "暂无 API Token",
 		"createToken": "创建 Token",
@@ -704,7 +704,7 @@
 				"description": "sylvode 与 mcp-server 的命令（tools call 除外），此 Token 填入 mcp.bot_token 或 --bot-token。"
 			},
 			"cli_tools_call": {
-				"label": "CLI tools call",
+				"label": "命令行 tools call",
 				"description": "sylvode 与 mcp-server 的 tools call 命令（按名称调用任意 MCP 工具），此 Token 填入 mcp.bot_token 或 --bot-token。「命令行」Token 不能用于 tools call。"
 			}
 		}
@@ -795,13 +795,13 @@
 		"domainPlaceholder": "域筛选，如 api",
 		"status": {
 			"all": "全部状态",
-			"draft": "Draft",
-			"open": "Open",
-			"voting": "Voting",
-			"approved": "Approved",
-			"rejected": "Rejected",
-			"vetoed": "Vetoed",
-			"archived": "Archived"
+			"draft": "草稿",
+			"open": "开放",
+			"voting": "投票中",
+			"approved": "已通过",
+			"rejected": "已拒绝",
+			"vetoed": "已否决",
+			"archived": "已归档"
 		},
 		"type": {
 			"all": "全部类型",
@@ -935,11 +935,11 @@
 			"ended": "已结束"
 		},
 		"progress": {
-			"draft": "Draft",
-			"open": "Open",
-			"voting": "Voting",
-			"approved": "Approved",
-			"rejected": "Rejected"
+			"draft": "草稿",
+			"open": "开放",
+			"voting": "投票中",
+			"approved": "已通过",
+			"rejected": "已拒绝"
 		},
 		"field": {
 			"title": "标题",
@@ -961,7 +961,7 @@
 		}
 	},
 	"impactReview": {
-		"title": "Impact Review",
+		"title": "影响评审",
 		"listTitle": "Impact Review 列表",
 		"listSubtitle": "追踪决策落地效果与积分应用情况",
 		"detailSubtitle": "查看该提案的结果评估、经验复盘与积分应用情况",
@@ -979,7 +979,7 @@
 		"empty": "暂无 Impact Review",
 		"project": "项目",
 		"allProjects": "全部项目",
-		"reviewId": "Review ID",
+		"reviewId": "评审 ID",
 		"scheduledAt": "计划时间",
 		"conductedAt": "完成时间",
 		"trustApplied": "积分已应用",
@@ -1113,7 +1113,7 @@
 		"pagination": "共 {total} 条，第 {page}/{pages} 页",
 		"prevPage": "上一页",
 		"nextPage": "下一页",
-		"typeHuman": "Human",
+		"typeHuman": "人类",
 		"typeAi": "AI",
 		"hasVeto": "持有否决权",
 		"projectLabel": "项目",
@@ -1158,8 +1158,8 @@
 		"reason": "否决理由",
 		"totalVetoers": "Vetoer 总数",
 		"requiredVotes": "所需票数（2/3）",
-		"escalationDeadline": "Escalation 截止时间",
-		"escalationTitle": "Escalation",
+		"escalationDeadline": "升级处理截止时间",
+		"escalationTitle": "升级处理",
 		"overturnVotes": "推翻票",
 		"upholdVotes": "维持票",
 		"voteProgress": "投票进度",
@@ -1284,11 +1284,11 @@
 	},
 	"trustCommon": {
 		"level": {
-			"observer": "Observer",
-			"advisor": "Advisor",
-			"voter": "Voter",
-			"vetoer": "Vetoer",
-			"autonomous": "Autonomous"
+			"observer": "观察者",
+			"advisor": "顾问",
+			"voter": "投票者",
+			"vetoer": "否决者",
+			"autonomous": "自主"
 		},
 		"vetoStatus": {
 			"active": "生效中",
@@ -1435,7 +1435,7 @@
 	"connections": {
 		"title": "操作记录",
 		"subtitle": "记录所有已认证 MCP、CLI 与 Bot REST 操作的纯元数据历史。",
-		"bot": "Bot",
+		"bot": "机器人",
 		"botFilterPlaceholder": "Bot UUID",
 		"tool": "工具",
 		"surface": "调用面",
@@ -1485,7 +1485,7 @@
 		"name": "名称",
 		"titleTemplate": "标题模板",
 		"description": "描述",
-		"schemaJson": "Schema JSON",
+		"schemaJson": "表单结构 JSON",
 		"fieldDesigner": "字段设计",
 		"fieldDesignerDescription": "用控件定义字段，只有开发者才需要打开高级 Schema。",
 		"addField": "添加字段",
@@ -1649,7 +1649,7 @@
 		"recordDeleted": "记录已删除",
 		"kanbanMoveTo": "移动到",
 		"kanbanStatusUpdated": "看板状态已更新",
-		"kanbanWipCount": "WIP {count}/{limit}",
+		"kanbanWipCount": "在制 {count}/{limit}",
 		"kanbanWipLimitReached": "该列已达到 WIP 限制",
 		"kanbanWipPolicy": "看板 WIP 策略",
 		"kanbanWipPolicyDescription": "为当前保存视图设置可选的每列在制品限制。",
@@ -2496,9 +2496,9 @@
 		"issueDetail": "Sylvode - Issue 详情",
 		"proposals": "Sylvode - 提案",
 		"proposalNew": "Sylvode - 发起提案",
-		"impactReviews": "Sylvode - Impact Review",
+		"impactReviews": "Sylvode - 影响评审",
 		"proposalImpactReview": "Sylvode - Impact Review 详情",
-		"proposalImpactReviewWithTitle": "Sylvode - Impact Review: {title}",
+		"proposalImpactReviewWithTitle": "Sylvode - 影响评审：{title}",
 		"proposalTemplates": "Sylvode - 提案模板",
 		"decisionAnalytics": "Sylvode - 决策分析",
 		"auditReports": "Sylvode - 审计报告",
@@ -4746,7 +4746,7 @@
 			"reviewCapabilities": "不请求任何业务能力。",
 			"reviewLocation": "{label} · {slot}",
 			"reviewRoute": "路由 {route}",
-			"reviewForm": "Form {form}",
+			"reviewForm": "表单 {form}",
 			"previewSampleProject": "预览使用 3 行按该 Form 字段类型生成的示例数据，不读取真实记录，也不会安装。",
 			"previewSamplePersonal": "预览的所有值都是占位文本，不读取真实记录，也不会安装。",
 			"previewSchemaFailed": "无法读取该 Form 的字段，预览改用文本示例。",
@@ -4787,7 +4787,7 @@
 			"colEnabled": "启用",
 			"colOrder": "顺序",
 			"route": "路由 {route}",
-			"form": "Form {form}",
+			"form": "表单 {form}",
 			"grantsTitle": "要授予的权限",
 			"grantsHelp": "显示权限会让项目成员看到该应用。每项数据读取只向本来就能查看该 Form 的成员开放所列字段。",
 			"grant": {
