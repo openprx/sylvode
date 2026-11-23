@@ -2,11 +2,13 @@
  * Status derivations and word mappings of the inbound sections, the duration unit rule, the
  * shared components' states, and the locale files' placeholders.
  *
- * Run standalone: `bun tests/inbound-status.test.ts`
+ * Run standalone: `bun test tests/features/inbound-status.test.ts`
  */
+import { test } from 'node:test';
+import nodeAssert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { Suite, assert, assertEqual, finish } from './support/harness';
-import { installSvelteSsr, renderToHtml } from './support/svelte-ssr';
+import { Suite, assert, assertEqual } from '../support/harness';
+import { installSvelteSsr, renderToHtml } from '../support/svelte-ssr';
 import {
 	actingUserName,
 	botNotConnected,
@@ -24,15 +26,14 @@ import {
 	testCauseWord,
 	testReasonWord,
 	testTaskWord
-} from '../src/lib/project/inbound/status';
-import { changeUnit, toDuration, toSeconds } from '../src/lib/project/inbound/duration';
-import { loadStateOf } from '../src/lib/project/inbound/load-state';
-import { parseEvent, parseRule, parseSource } from '../src/lib/project/inbound/wire';
-import type { Connection } from '../src/lib/project/connection/wire';
+} from '../../src/lib/project/inbound/status';
+import { changeUnit, toDuration, toSeconds } from '../../src/lib/project/inbound/duration';
+import { loadStateOf } from '../../src/lib/project/inbound/load-state';
+import { parseEvent, parseRule, parseSource } from '../../src/lib/project/inbound/wire';
 
 await installSvelteSsr();
-const { default: SeverityChip } = await import('../src/lib/project/inbound/SeverityChip.svelte');
-const { default: SectionFrame } = await import('../src/lib/project/inbound/SectionFrame.svelte');
+const { default: SeverityChip } = await import('../../src/lib/project/inbound/SeverityChip.svelte');
+const { default: SectionFrame } = await import('../../src/lib/project/inbound/SectionFrame.svelte');
 
 const suite = new Suite('inbound-status');
 const NOW = new Date('2026-11-22T12:00:00Z');
@@ -191,16 +192,13 @@ const rule = parseRule({
 	version: 1
 });
 assert(rule !== null, 'rule fixture');
-const connection = (enabled: boolean, bot: string) =>
-	({ enabled, bot: { id: bot } }) as unknown as Connection;
 
 suite.check('the "bot not connected" warning from the connection answer', () => {
-	assertEqual(botNotConnected(rule, null), true, 'no connection');
-	assertEqual(botNotConnected(rule, connection(false, 'b1')), true, 'disabled');
-	assertEqual(botNotConnected(rule, connection(true, 'b2')), true, 'another bot');
-	assertEqual(botNotConnected(rule, connection(true, 'b1')), false, 'same bot enabled');
+	assertEqual(botNotConnected(rule, new Set()), true, 'no connection');
+	assertEqual(botNotConnected(rule, new Set(['b2'])), true, 'another bot');
+	assertEqual(botNotConnected(rule, new Set(['b2', 'b1'])), false, 'one of several bots enabled');
 	assertEqual(
-		botNotConnected({ ...rule, action: 'work_item', bot_user_id: null }, null),
+		botNotConnected({ ...rule, action: 'work_item', bot_user_id: null }, new Set()),
 		false,
 		'open-only rule'
 	);
@@ -301,7 +299,7 @@ await suite.checkAsync('components: severity chip words and the section frame st
 suite.check('locale files: placeholders are plain {name} words the stand-in i18n can fill', () => {
 	for (const lang of ['en', 'zh']) {
 		const text = readFileSync(
-			new URL(`../src/lib/project/inbound/locale.${lang}.json`, import.meta.url),
+			new URL(`../../src/lib/project/inbound/locale.${lang}.json`, import.meta.url),
 			'utf8'
 		);
 		assert(!/\{\s*\}/.test(text), `${lang}: empty placeholder`);
@@ -309,4 +307,7 @@ suite.check('locale files: placeholders are plain {name} words the stand-in i18n
 	}
 });
 
-finish(suite.result());
+test(suite.name, () => {
+	const result = suite.result();
+	nodeAssert.equal(result.failed, 0, result.failures.join('\n'));
+});

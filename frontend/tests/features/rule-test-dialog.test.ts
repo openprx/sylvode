@@ -5,16 +5,18 @@
  * Only the first render is observable (effects do not run in SSR) and the stand-in i18n prints
  * message keys, so the assertions look for keys, codes and escaped content.
  *
- * Run standalone: `bun tests/rule-test-dialog.test.ts`
+ * Run standalone: `bun test tests/features/rule-test-dialog.test.ts`
  */
-import { Suite, assert, finish } from './support/harness';
-import { installSvelteSsr, renderToHtml } from './support/svelte-ssr';
-import { begin, settle } from '../src/lib/project/inbound/test-view';
-import { parseTestResult, type TestResult } from '../src/lib/project/inbound/wire';
+import { test } from 'node:test';
+import nodeAssert from 'node:assert/strict';
+import { Suite, assert } from '../support/harness';
+import { installSvelteSsr, renderToHtml } from '../support/svelte-ssr';
+import { begin, settle } from '../../src/lib/project/inbound/test-view';
+import { parseTestResult, type TestResult } from '../../src/lib/project/inbound/wire';
 
 await installSvelteSsr();
-const { default: Outcome } = await import('../src/lib/project/inbound/RuleTestOutcome.svelte');
-const { default: Dialog } = await import('../src/lib/project/inbound/RuleTestDialog.svelte');
+const { default: Outcome } = await import('../../src/lib/project/inbound/RuleTestOutcome.svelte');
+const { default: Dialog } = await import('../../src/lib/project/inbound/RuleTestDialog.svelte');
 
 const suite = new Suite('rule-test-dialog');
 
@@ -226,4 +228,7 @@ await suite.checkAsync(
 	}
 );
 
-finish(suite.result());
+test(suite.name, () => {
+	const result = suite.result();
+	nodeAssert.equal(result.failed, 0, result.failures.join('\n'));
+});

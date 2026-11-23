@@ -3,6 +3,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { t } from 'svelte-i18n';
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { inboundApi } from '#lib/api/inbound.js';
 	import Button from '#lib/ui/button/Button.svelte';
 	import Dialog from '#lib/ui/dialog/Dialog.svelte';
@@ -87,8 +88,8 @@
 		else fail(result);
 	}
 
-	function fail(result: { code: number; message: string }): void {
-		const routed = routeFailure(result);
+	function fail(result: { code: number; message: string; messageKey?: string }): void {
+		const routed = routeFailure({ code: result.code, message: describeResult(result) });
 		if (routed.type === 'field') {
 			serverError = { field: routed.field, text: routed.message };
 			if (routed.field !== 'name') advancedOpen = true;

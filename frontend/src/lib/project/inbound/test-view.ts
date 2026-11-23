@@ -1,12 +1,13 @@
 /**
  * The rule test dialog without the dialog: the sample event (default text and client-side checks),
  * the request, the state of one test run, and the rows the result is shown as. Pure: no requests,
- * no stores, no markup.
+ * no markup; the one store read is `describeResult`, for a failure the client made itself.
  *
  * Everything an external system may have written (event kinds, the work item title built from
  * them) reaches the screen only as text; this module never builds markup.
  */
 import type { CallResult, RuleBody, TestInput } from '#lib/api/inbound.js';
+import { describeResult } from '#lib/i18n/describe.js';
 import { testAlertWord, testCauseWord, testReasonWord, testTaskWord, type Word } from './status.js';
 import type { RuleVerdict, TestCaps, TestResult } from './wire.js';
 
@@ -136,7 +137,7 @@ export function failureOf(
 	result: Extract<CallResult<unknown>, { ok: false }>,
 	mode: TestMode
 ): TestFailure {
-	const message = result.message;
+	const message = describeResult(result);
 	if (result.code === 404 && message.includes('inbound event not found')) return { place: 'gone' };
 	if (result.code === 400 && mode === 'sample' && message.startsWith('envelope'))
 		return { place: 'sample', message };

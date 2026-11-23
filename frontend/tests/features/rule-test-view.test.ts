@@ -1,9 +1,11 @@
 /**
  * The rule test without the dialog: sample event checks, request shape, state of a run, result rows.
  *
- * Run standalone: `bun tests/rule-test-view.test.ts`
+ * Run standalone: `bun test tests/features/rule-test-view.test.ts`
  */
-import { Suite, assert, assertDeepEqual, assertEqual, finish } from './support/harness';
+import { test } from 'node:test';
+import nodeAssert from 'node:assert/strict';
+import { Suite, assert, assertDeepEqual, assertEqual } from '../support/harness';
 import {
 	SAMPLE_MAX_BYTES,
 	begin,
@@ -19,8 +21,8 @@ import {
 	sampleText,
 	settle,
 	verdictView
-} from '../src/lib/project/inbound/test-view';
-import { parseTestResult, type TestResult } from '../src/lib/project/inbound/wire';
+} from '../../src/lib/project/inbound/test-view';
+import { parseTestResult, type TestResult } from '../../src/lib/project/inbound/wire';
 
 const suite = new Suite('rule-test-view');
 
@@ -277,4 +279,7 @@ suite.check('failures: field, event gone, forbidden, other', () => {
 	assertEqual(sampleFieldError({ phase: 'idle' }), null, 'none when idle');
 });
 
-finish(suite.result());
+test(suite.name, () => {
+	const result = suite.result();
+	nodeAssert.equal(result.failed, 0, result.failures.join('\n'));
+});

@@ -3,12 +3,14 @@
  * touched), the full-body rule of every save (create, replace, enable switch), the reorder step,
  * server message routing, and the row and editor states of the rules section.
  *
- * Run standalone: `bun tests/inbound-rule-form.test.ts`
+ * Run standalone: `bun test tests/features/inbound-rule-form.test.ts`
  */
-import { Suite, assert, assertDeepEqual, assertEqual, finish } from './support/harness';
-import { installSvelteSsr, renderToHtml } from './support/svelte-ssr';
-import { apiClient, type ApiResult } from '../src/lib/api/client';
-import { inboundApi } from '../src/lib/api/inbound';
+import { test } from 'node:test';
+import nodeAssert from 'node:assert/strict';
+import { Suite, assert, assertDeepEqual, assertEqual } from '../support/harness';
+import { installSvelteSsr, renderToHtml } from '../support/svelte-ssr';
+import { apiClient, type ApiResult } from '../../src/lib/api/client';
+import { inboundApi } from '../../src/lib/api/inbound';
 import {
 	RULE_BODY_FIELDS,
 	buildBody,
@@ -22,6 +24,7 @@ import {
 	limitsAreDefault,
 	movedOrder,
 	newDraft,
+	onlyConnectedBot,
 	parseKinds,
 	routeServerMessage,
 	ruleToBody,
@@ -29,13 +32,13 @@ import {
 	validateDraft,
 	withAction,
 	withSeverity
-} from '../src/lib/project/inbound/rule-form';
-import { toDuration } from '../src/lib/project/inbound/duration';
-import { parseRule, type Rule } from '../src/lib/project/inbound/wire';
+} from '../../src/lib/project/inbound/rule-form';
+import { toDuration } from '../../src/lib/project/inbound/duration';
+import { parseRule, type Rule } from '../../src/lib/project/inbound/wire';
 
 await installSvelteSsr();
-const { default: RuleRow } = await import('../src/lib/project/inbound/RuleRow.svelte');
-const { default: RuleEditor } = await import('../src/lib/project/inbound/RuleEditor.svelte');
+const { default: RuleRow } = await import('../../src/lib/project/inbound/RuleRow.svelte');
+const { default: RuleEditor } = await import('../../src/lib/project/inbound/RuleEditor.svelte');
 
 const suite = new Suite('inbound-rule-form');
 
@@ -125,6 +128,9 @@ suite.check('new rule defaults: severity, recipient, connected bot, limits', () 
 		'priorities'
 	);
 	assertEqual(newDraft({ currentUserId: null, connectedBotId: null }).botId, null, 'no bot');
+	assertEqual(onlyConnectedBot(new Set(['botC'])), 'botC', 'one connected bot is the default');
+	assertEqual(onlyConnectedBot(new Set(['a', 'b'])), null, 'several: no default');
+	assertEqual(onlyConnectedBot(new Set()), null, 'none: no default');
 	assertDeepEqual(newDraft({ currentUserId: null, connectedBotId: null }).notifyIds, [], 'nobody');
 });
 
@@ -491,7 +497,7 @@ await suite.checkAsync(
 			people: [{ id: 'me', name: 'Me' }],
 			labels: [],
 			currentUserId: 'me',
-			connectedBotId: 'botC',
+			connectedBotIds: new Set(['botC']),
 			connectionKnown: true,
 			onsaved: () => {},
 			oncancel: () => {},
@@ -524,4 +530,7 @@ suite.check('the first exact kind skips prefixes and invalid lines', () => {
 	assertEqual(firstExactKind(''), null, 'empty');
 });
 
-finish(suite.result());
+test(suite.name, () => {
+	const result = suite.result();
+	nodeAssert.equal(result.failed, 0, result.failures.join('\n'));
+});

@@ -3,6 +3,7 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import { t } from 'svelte-i18n';
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { beforeNavigate, goto } from '$app/navigation';
 	import { inboundApi } from '#lib/api/inbound.js';
 	import { membersApi } from '#lib/api/members.js';
@@ -69,7 +70,7 @@
 			if (editingId !== null && !sources.some((s) => s.id === editingId)) editingId = null;
 			if (eventsId !== null && !sources.some((s) => s.id === eventsId)) eventsId = null;
 		} else if (loadState !== 'loading') {
-			toast.error(result.message);
+			toast.error(describeResult(result));
 			return;
 		}
 		loadState = loadStateOf(result);

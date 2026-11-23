@@ -4,11 +4,13 @@
  * shapes are what the rules document specifies, and the secrets appear only in the create and
  * rotate answers.
  *
- * Run standalone: `bun tests/inbound-wire.test.ts`
+ * Run standalone: `bun test tests/features/inbound-wire.test.ts`
  */
-import { Suite, assert, assertDeepEqual, assertEqual, finish } from './support/harness';
-import { apiClient, type ApiResult } from '../src/lib/api/client';
-import { inboundApi } from '../src/lib/api/inbound';
+import { test } from 'node:test';
+import nodeAssert from 'node:assert/strict';
+import { Suite, assert, assertDeepEqual, assertEqual } from '../support/harness';
+import { apiClient, type ApiResult } from '../../src/lib/api/client';
+import { inboundApi } from '../../src/lib/api/inbound';
 import {
 	parseEvent,
 	parseEvents,
@@ -19,7 +21,7 @@ import {
 	parseSource,
 	parseSourceList,
 	parseTestResult
-} from '../src/lib/project/inbound/wire';
+} from '../../src/lib/project/inbound/wire';
 
 const suite = new Suite('inbound-wire');
 
@@ -390,4 +392,7 @@ await suite.checkAsync('results: success, conflict, errors and unreadable answer
 	assert(!garbled.ok && garbled.code === 500, 'an answer that is not understood fails');
 });
 
-finish(suite.result());
+test(suite.name, () => {
+	const result = suite.result();
+	nodeAssert.equal(result.failed, 0, result.failures.join('\n'));
+});

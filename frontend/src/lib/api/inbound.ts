@@ -34,7 +34,15 @@ import {
 export type CallResult<T> =
 	| { ok: true; value: T }
 	| { ok: false; kind: 'conflict'; code: number; message: string }
-	| { ok: false; kind: 'error'; code: number; message: string; errorCode: string | null };
+	| {
+			ok: false;
+			kind: 'error';
+			code: number;
+			message: string;
+			/** Set when the client produced the failure itself: `describeResult` makes words of it. */
+			messageKey?: string;
+			errorCode: string | null;
+		};
 
 /** The rejection of a rule write whose `expected_version` is stale (409 `version_conflict`). */
 export const VERSION_CONFLICT = 'version_conflict';
@@ -47,6 +55,7 @@ function failure(result: ApiResult<unknown>): CallResult<never> {
 		kind: 'error',
 		code: result.code,
 		message: result.message,
+		...(result.messageKey ? { messageKey: result.messageKey } : {}),
 		errorCode: result.error_code ?? null
 	};
 }
@@ -59,7 +68,8 @@ function narrowed<T>(result: ApiResult<unknown>, read: (data: unknown) => T | nu
 				ok: false,
 				kind: 'error',
 				code: 500,
-				message: 'The answer was not understood',
+				message: '',
+				messageKey: 'transport.invalidResponse',
 				errorCode: null
 			}
 		: { ok: true, value };

@@ -90,8 +90,13 @@ export interface RuleDraft {
 export interface NewDraftContext {
 	/** The person writing the rule: the default recipient. */
 	currentUserId: string | null;
-	/** The project's connected bot, when it has one: the default bot. */
+	/** The project's connected bot when it has exactly one: the default bot. */
 	connectedBotId: string | null;
+}
+
+/** The default bot of a new rule: the project's one enabled connection's bot, else none. */
+export function onlyConnectedBot(connectedBotIds: ReadonlySet<string>): string | null {
+	return connectedBotIds.size === 1 ? ([...connectedBotIds][0] ?? null) : null;
 }
 
 export function newDraft({ currentUserId, connectedBotId }: NewDraftContext): RuleDraft {

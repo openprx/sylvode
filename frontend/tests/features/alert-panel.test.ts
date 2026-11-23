@@ -3,12 +3,14 @@
  * pure view-model (`view.ts`), the feature locale files and the markup of the panel for every
  * state, including plain-text rendering of text written by an external system.
  *
- * Run standalone: `bun tests/alert-panel.test.ts`
+ * Run standalone: `bun test tests/features/alert-panel.test.ts`
  */
+import { test } from 'node:test';
+import nodeAssert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { Suite, assert, assertDeepEqual, assertEqual, finish } from './support/harness';
-import { installSvelteSsr, renderToHtml } from './support/svelte-ssr';
-import { parseIssueAlert, type IssueAlert } from '../src/lib/project/inbound/wire';
+import { Suite, assert, assertDeepEqual, assertEqual } from '../support/harness';
+import { installSvelteSsr, renderToHtml } from '../support/svelte-ssr';
+import { parseIssueAlert, type IssueAlert } from '../../src/lib/project/inbound/wire';
 import {
 	KIND_MAX,
 	NAME_MAX,
@@ -16,11 +18,11 @@ import {
 	outcomeOf,
 	severityWord,
 	taskRowView
-} from '../src/lib/project/alert-panel/view';
+} from '../../src/lib/project/alert-panel/view';
 
 await installSvelteSsr();
 const { default: AlertPanelView } =
-	await import('../src/lib/project/alert-panel/AlertPanelView.svelte');
+	await import('../../src/lib/project/alert-panel/AlertPanelView.svelte');
 
 const suite = new Suite('alert-panel');
 
@@ -235,13 +237,13 @@ suite.check('locale files have identical key sets and the page mounts the panel'
 				? keys(entry, `${prefix}${key}.`)
 				: [`${prefix}${key}`]
 		);
-	const en = keys(read('../src/lib/project/alert-panel/locale.en.json')).sort();
-	const zh = keys(read('../src/lib/project/alert-panel/locale.zh.json')).sort();
+	const en = keys(read('../../src/lib/project/alert-panel/locale.en.json')).sort();
+	const zh = keys(read('../../src/lib/project/alert-panel/locale.zh.json')).sort();
 	assertDeepEqual(en, zh, 'same keys');
 	assert(en.includes('alertPanel.taskWaitingUntil'), 'waiting copy key');
 	const page = readFileSync(
 		new URL(
-			'../src/routes/(app)/workspace/[workspaceId]/projects/[projectId]/issues/[issueId]/+page.svelte',
+			'../../src/routes/(app)/workspace/[workspaceId]/projects/[projectId]/issues/[issueId]/+page.svelte',
 			import.meta.url
 		),
 		'utf8'
@@ -249,4 +251,7 @@ suite.check('locale files have identical key sets and the page mounts the panel'
 	assert(page.indexOf('<AlertPanel') < page.indexOf('<AgentTasksPanel'), 'before agent tasks');
 });
 
-finish(suite.result());
+test(suite.name, () => {
+	const result = suite.result();
+	nodeAssert.equal(result.failed, 0, result.failures.join('\n'));
+});

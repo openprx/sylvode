@@ -2,9 +2,11 @@
  * The one-time credentials of an inbound source: shown, stored, finished only after the
  * confirmation, discarded, leave confirmation, and no state other than `shown` holds a value.
  *
- * Run standalone: `bun tests/inbound-secrets-state.test.ts`
+ * Run standalone: `bun test tests/features/inbound-secrets-state.test.ts`
  */
-import { Suite, assertEqual, finish } from './support/harness';
+import { test } from 'node:test';
+import nodeAssert from 'node:assert/strict';
+import { Suite, assertEqual } from '../support/harness';
 import {
 	NO_SECRETS,
 	canFinish,
@@ -16,7 +18,7 @@ import {
 	setStored,
 	showSecrets,
 	visibleValues
-} from '../src/lib/project/inbound/secrets-state';
+} from '../../src/lib/project/inbound/secrets-state';
 
 const suite = new Suite('inbound-secrets-state');
 const TOKEN = `svi_${'c3'.repeat(32)}`;
@@ -71,4 +73,7 @@ suite.check('copy all as JSON, and the endpoint fallback', () => {
 	assertEqual(guessed.url, 'https://host.example/api/v1/inbound/events', 'fallback address');
 });
 
-finish(suite.result());
+test(suite.name, () => {
+	const result = suite.result();
+	nodeAssert.equal(result.failed, 0, result.failures.join('\n'));
+});

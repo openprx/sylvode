@@ -4,12 +4,14 @@
  * components: credentials never rendered after the finish, a hostile event shown as text, the
  * delete dialog listing the bound rules, the suspended card.
  *
- * Run standalone: `bun tests/inbound-sources.test.ts`
+ * Run standalone: `bun test tests/features/inbound-sources.test.ts`
  */
+import { test } from 'node:test';
+import nodeAssert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Suite, assert, assertDeepEqual, assertEqual, finish } from './support/harness';
-import { installSvelteSsr, renderToHtml } from './support/svelte-ssr';
+import { Suite, assert, assertDeepEqual, assertEqual } from '../support/harness';
+import { installSvelteSsr, renderToHtml } from '../support/svelte-ssr';
 import {
 	ALLOWLIST_MAX,
 	changedFields,
@@ -24,7 +26,7 @@ import {
 	turnsSignatureOff,
 	validateDraft,
 	wholeNumber
-} from '../src/lib/project/inbound/source-form';
+} from '../../src/lib/project/inbound/source-form';
 import {
 	appendEvents,
 	boundRules,
@@ -35,23 +37,23 @@ import {
 	ruleNameOf,
 	ruleNames,
 	withoutSource
-} from '../src/lib/project/inbound/source-view';
+} from '../../src/lib/project/inbound/source-view';
 import {
 	NO_SECRETS,
 	discard,
 	finish as finishSecrets,
 	setStored,
 	showSecrets
-} from '../src/lib/project/inbound/secrets-state';
-import { parseEvent, parseRule, parseSource } from '../src/lib/project/inbound/wire';
-import type { InboundEvent, Rule, Source } from '../src/lib/project/inbound/wire';
+} from '../../src/lib/project/inbound/secrets-state';
+import { parseEvent, parseRule, parseSource } from '../../src/lib/project/inbound/wire';
+import type { InboundEvent, Rule, Source } from '../../src/lib/project/inbound/wire';
 
 await installSvelteSsr();
-const { default: SourceSecrets } = await import('../src/lib/project/inbound/SourceSecrets.svelte');
+const { default: SourceSecrets } = await import('../../src/lib/project/inbound/SourceSecrets.svelte');
 const { default: EventDetailDialog } =
-	await import('../src/lib/project/inbound/EventDetailDialog.svelte');
-const { default: SourceDialogs } = await import('../src/lib/project/inbound/SourceDialogs.svelte');
-const { default: SourceCard } = await import('../src/lib/project/inbound/SourceCard.svelte');
+	await import('../../src/lib/project/inbound/EventDetailDialog.svelte');
+const { default: SourceDialogs } = await import('../../src/lib/project/inbound/SourceDialogs.svelte');
+const { default: SourceCard } = await import('../../src/lib/project/inbound/SourceCard.svelte');
 
 const suite = new Suite('inbound-sources');
 
@@ -544,4 +546,7 @@ suite.check('the sources code never stores, logs or renders untrusted text as ma
 	}
 });
 
-finish(suite.result());
+test(suite.name, () => {
+	const result = suite.result();
+	nodeAssert.equal(result.failed, 0, result.failures.join('\n'));
+});

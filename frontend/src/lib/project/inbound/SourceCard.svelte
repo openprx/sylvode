@@ -3,6 +3,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { locale, t } from 'svelte-i18n';
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { inboundApi, type UpdateSourceInput } from '#lib/api/inbound.js';
 	import { absoluteTime, relativeTime } from '#lib/project/agent-tasks/time.js';
 	import { toast } from '#lib/stores/toast.js';
@@ -64,8 +65,8 @@
 	const actsAs = $derived(actingUserName(source, members));
 	const blocks = $derived(source.ip_allowlist.length);
 
-	function failed(result: { code: number; message: string }): void {
-		const routed = routeFailure(result);
+	function failed(result: { code: number; message: string; messageKey?: string }): void {
+		const routed = routeFailure({ code: result.code, message: describeResult(result) });
 		if (routed.type === 'stale') onstale();
 		else toast.error(routed.message);
 	}

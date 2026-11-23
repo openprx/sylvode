@@ -4,6 +4,7 @@
 	import { t } from 'svelte-i18n';
 	import { inboundApi, type RuleBody } from '#lib/api/inbound.js';
 	import { relativeTime } from '#lib/project/agent-tasks/time.js';
+	import { randomUuid } from '#lib/utils/uuid.js';
 	import Button from '#lib/ui/button/Button.svelte';
 	import Dialog from '#lib/ui/dialog/Dialog.svelte';
 	import Segmented from '#lib/ui/segmented/Segmented.svelte';
@@ -75,11 +76,6 @@
 	let loadSeq = 0;
 	let runSeq = 0;
 
-	const newEventId = (): string =>
-		typeof crypto !== 'undefined' && 'randomUUID' in crypto
-			? crypto.randomUUID()
-			: `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-
 	function reset() {
 		loadSeq += 1;
 		runSeq += 1;
@@ -114,7 +110,7 @@
 
 	async function start() {
 		reset();
-		sample = sampleText(newEventId(), new Date(), sampleKind);
+		sample = sampleText(randomUuid(), new Date(), sampleKind);
 		const mine = loadSeq;
 		const answer = await inboundApi.listSources(projectId);
 		if (mine !== loadSeq) return;

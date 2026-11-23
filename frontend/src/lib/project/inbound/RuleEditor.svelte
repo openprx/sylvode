@@ -2,6 +2,7 @@
 
 <script lang="ts">
 	import { t } from 'svelte-i18n';
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { beforeNavigate, goto } from '$app/navigation';
 	import { inboundApi, type RuleBody } from '#lib/api/inbound.js';
 	import { confirmAction } from '#lib/ui/dialog/confirm.js';
@@ -29,6 +30,7 @@
 		limitsAreDefault,
 		limitsInvalid,
 		newDraft,
+		onlyConnectedBot,
 		routeServerMessage,
 		validateDraft,
 		withAction,
@@ -66,8 +68,8 @@
 		people: readonly PersonOption[];
 		labels: readonly { id: string; name: string }[];
 		currentUserId: string | null;
-		/** The bot of the project's enabled connection; `null` when there is none. */
-		connectedBotId: string | null;
+		/** The bots of the project's enabled connections; empty when there are none. */
+		connectedBotIds: ReadonlySet<string>;
 		/** False when the connection could not be read: no "not connected" warning is made up. */
 		connectionKnown: boolean;
 		/** The saved rule and the warning codes of the answer. */
@@ -84,7 +86,7 @@
 		people,
 		labels,
 		currentUserId,
-		connectedBotId,
+		connectedBotIds,
 		connectionKnown,
 		onsaved,
 		oncancel,
@@ -96,7 +98,9 @@
 	// The initial values only: the editor owns its draft from here on.
 	// svelte-ignore state_referenced_locally
 	let original = $state<RuleDraft>(
-		rule !== null ? draftFromRule(rule) : newDraft({ currentUserId, connectedBotId })
+		rule !== null
+			? draftFromRule(rule)
+			: newDraft({ currentUserId, connectedBotId: onlyConnectedBot(connectedBotIds) })
 	);
 	// svelte-ignore state_referenced_locally
 	let draft = $state<RuleDraft>(structuredClone(original));
@@ -128,13 +132,12 @@
 
 	const botOptions = $derived(
 		[...bots]
-			.sort((a, b) => Number(b.id === connectedBotId) - Number(a.id === connectedBotId))
+			.sort((a, b) => Number(connectedBotIds.has(b.id)) - Number(connectedBotIds.has(a.id)))
 			.map((bot) => ({
 				value: bot.id,
-				label:
-					bot.id === connectedBotId
-						? `${bot.name} ${$t('inbound.rules.botConnectedSuffix')}`
-						: bot.name
+				label: connectedBotIds.has(bot.id)
+					? `${bot.name} ${$t('inbound.rules.botConnectedSuffix')}`
+					: bot.name
 			}))
 	);
 	const sourceOptions = $derived([
@@ -152,7 +155,7 @@
 		connectionKnown &&
 			draft.action === 'work_item_and_task' &&
 			draft.botId !== null &&
-			draft.botId !== connectedBotId
+			!connectedBotIds.has(draft.botId)
 	);
 	const botHelper = $derived(
 		botNotConnectedHere
@@ -218,12 +221,13 @@
 			conflict = true;
 			return;
 		}
-		const field = routeServerMessage(result.message);
+		const text = describeResult(result);
+		const field = routeServerMessage(text);
 		if (field === 'other') {
-			formError = result.message;
+			formError = text;
 			return;
 		}
-		serverField = { field, text: result.message };
+		serverField = { field, text };
 		if (isLimitsField(field)) limitsOpen = true;
 	}
 

@@ -4,6 +4,7 @@
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { goto } from '$app/navigation';
 	import { botConnectionApi } from '#lib/api/bot-connection.js';
 	import { inboundApi } from '#lib/api/inbound.js';
@@ -15,7 +16,6 @@
 	import DestructiveDialog from '#lib/ui/dialog/DestructiveDialog.svelte';
 	import StateBlock from '#lib/ui/state-block/StateBlock.svelte';
 	import TipBar from '#lib/ui/tip-bar/TipBar.svelte';
-	import type { Connection } from '#lib/project/connection/wire.js';
 	import SectionFrame from './SectionFrame.svelte';
 	import RuleEditor, { type BotOption, type PersonOption } from './RuleEditor.svelte';
 	import RuleTestDialog from './RuleTestDialog.svelte';
@@ -38,7 +38,7 @@
 	let people = $state<PersonOption[]>([]);
 	let bots = $state<BotOption[]>([]);
 	let labels = $state<{ id: string; name: string }[]>([]);
-	let connection = $state<Connection | null>(null);
+	let connectedBotIds = $state<ReadonlySet<string>>(new Set());
 	let connectionKnown = $state(false);
 
 	/** `null`: the list; `{ rule: null }`: a new rule; `{ rule }`: that rule's editor. */
@@ -56,9 +56,6 @@
 		id === null ? null : (sources.find((s) => s.id === id)?.name ?? null);
 	const botName = (id: string | null): string | null =>
 		id === null ? null : (bots.find((b) => b.id === id)?.name ?? null);
-	const connectedBotId = $derived(
-		connection !== null && connection.enabled ? connection.bot.id : null
-	);
 
 	async function load(): Promise<void> {
 		const [sourceResult, ruleResult, memberResult, labelResult, connectionResult] =
@@ -67,7 +64,7 @@
 				inboundApi.listRules(projectId),
 				membersApi.list(workspaceId),
 				labelsApi.list(workspaceId),
-				botConnectionApi.get(projectId)
+				botConnectionApi.list(projectId)
 			]);
 		if (sourceResult.ok) inboundEnabled = sourceResult.value.inbound_enabled;
 		const state = loadStateOf(sourceResult);
@@ -98,10 +95,13 @@
 			.map((m) => ({ id: m.user_id, name: m.name }));
 		labels = labelResult.data.items.map((l) => ({ id: l.id, name: l.name }));
 		connectionKnown = connectionResult.ok && connectionResult.value.kind !== 'reduced';
-		connection =
+		connectedBotIds = new Set(
 			connectionResult.ok && connectionResult.value.kind === 'full'
-				? connectionResult.value.connection
-				: null;
+				? connectionResult.value.items
+						.filter((item) => item.connection.enabled)
+						.map((item) => item.connection.bot.id)
+				: []
+		);
 		loadState = 'ready';
 	}
 
@@ -109,7 +109,7 @@
 	async function reloadRules(): Promise<void> {
 		const result = await inboundApi.listRules(projectId);
 		if (result.ok) rules = result.value;
-		else toast.error(result.message);
+		else toast.error(describeResult(result));
 	}
 
 	async function reload(): Promise<void> {
@@ -133,7 +133,7 @@
 			return true;
 		}
 		if (result.kind === 'conflict') conflict = true;
-		else toast.error(result.message);
+		else toast.error(describeResult(result));
 		return false;
 	}
 
@@ -148,7 +148,7 @@
 		const result = await inboundApi.reorderRules(projectId, next);
 		busy = false;
 		if (result.ok) rules = result.value;
-		else toast.error(result.message);
+		else toast.error(describeResult(result));
 	}
 
 	async function confirmDelete(): Promise<void> {
@@ -158,7 +158,7 @@
 		const result = await inboundApi.deleteRule(rule.id);
 		deleteBusy = false;
 		if (!result.ok) {
-			toast.error(result.message);
+			toast.error(describeResult(result));
 			return;
 		}
 		deleting = null;
@@ -201,7 +201,7 @@
 				{people}
 				{labels}
 				{currentUserId}
-				{connectedBotId}
+				{connectedBotIds}
 				{connectionKnown}
 				onsaved={() => void saved()}
 				oncancel={() => (editing = null)}
@@ -260,7 +260,7 @@
 						count={rules.length}
 						sourceName={sourceName(rule.source_id)}
 						botName={botName(rule.bot_user_id)}
-						warnBotNotConnected={connectionKnown && botNotConnected(rule, connection)}
+						warnBotNotConnected={connectionKnown && botNotConnected(rule, connectedBotIds)}
 						warnNoRecipients={hasNoRecipients(rule, humanIds)}
 						{busy}
 						ontoggle={(enabled) => toggle(rule, enabled)}

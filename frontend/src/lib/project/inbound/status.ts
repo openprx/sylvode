@@ -5,7 +5,6 @@
  * A code the server may add before the UI is never hidden: the mappers return `{ key: null,
  * code }` and the component prints the code itself in monospace.
  */
-import type { Connection } from '#lib/project/connection/wire.js';
 import { SEVERITIES, type InboundEvent, type Rule, type Severity, type Source } from './wire.js';
 
 export type Tone = 'success' | 'warning' | 'danger' | 'neutral';
@@ -163,13 +162,13 @@ export const testReasonWord = (code: string): Word =>
 // --- rule list ------------------------------------------------------------------------------
 
 /**
- * The "bot is not connected" warning of a rule row, from the project's bot connection (the
- * backend's own test: a connection exists, is enabled and names the rule's bot). `connection`
- * is `null` when the project has none.
+ * The "bot is not connected" warning of a rule row, from the project's bot connections (the
+ * backend's own test: a connection exists, is enabled and names the rule's bot). `connectedBotIds`
+ * holds the bots of the project's enabled connections; empty when the project has none.
  */
-export function botNotConnected(rule: Rule, connection: Connection | null): boolean {
+export function botNotConnected(rule: Rule, connectedBotIds: ReadonlySet<string>): boolean {
 	if (rule.action !== 'work_item_and_task' || rule.bot_user_id === null) return false;
-	return !(connection !== null && connection.enabled && connection.bot.id === rule.bot_user_id);
+	return !connectedBotIds.has(rule.bot_user_id);
 }
 
 /** No current human recipient among the workspace's people. */
