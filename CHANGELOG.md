@@ -61,6 +61,14 @@ name.
   the labels it had before the delete (it carried an empty `label_ids` and a key built from the
   UUID).
 
+- **Comment deletion event, mention link and delivery duration.** `comment.deleted` carries the
+  comment's author name and its original `created_at` and `updated_at` (it sent an empty author and
+  the time of the deletion), and its `issue` has `id`, `key` and `title` like the other comment
+  events. A `mentioned` notification for a comment now has `related_comment_id` set. The webhook
+  delivery log's `duration_ms` is the measured time of the request; it was computed from two equal
+  timestamps and so was always about zero. Migration `0116_webhook_delivery_duration.sql` adds the
+  column.
+
 ### Removed
 
 - **Universal forms delivery and sign-off tooling.** The scripts and schemas that produced and

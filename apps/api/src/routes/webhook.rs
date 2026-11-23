@@ -88,10 +88,7 @@ pub async fn list_deliveries(
                     response_status,
                     response_body,
                     error,
-                    CASE
-                        WHEN delivered_at IS NULL THEN NULL
-                        ELSE (EXTRACT(EPOCH FROM (delivered_at - created_at)) * 1000)::BIGINT
-                    END AS duration_ms,
+                    duration_ms,
                     CASE
                         WHEN response_status BETWEEN 200 AND 299 THEN true
                         ELSE false
@@ -146,10 +143,7 @@ pub async fn get_delivery(
                     response_status,
                     response_body,
                     error,
-                    CASE
-                        WHEN delivered_at IS NULL THEN NULL
-                        ELSE (EXTRACT(EPOCH FROM (delivered_at - created_at)) * 1000)::BIGINT
-                    END AS duration_ms,
+                    duration_ms,
                     CASE
                         WHEN response_status BETWEEN 200 AND 299 THEN true
                         ELSE false

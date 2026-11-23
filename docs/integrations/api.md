@@ -314,7 +314,7 @@ A notification has `id`, `user_id`, `type`, `title`, `content`, `link`, `related
 
 | `type` | Sent when |
 |---|---|
-| `mentioned` | Someone mentions the user in a work item comment or in Flow. |
+| `mentioned` | Someone mentions the user in a work item comment or in Flow. For a comment, `related_comment_id` is that comment. |
 | `assignment` | A work item is assigned to the user by someone else, when it is created or later. Assigning yourself, or a bot, sends none. |
 | `alert_opened`, `alert_escalated`, `alert_task_completed`, `alert_task_failed`, `alert_suppressed`, `alert_source_throttled` | Milestones of an alert; see [Alerts](alerts.md#notifications). |
 

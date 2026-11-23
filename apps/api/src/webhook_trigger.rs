@@ -2,7 +2,6 @@
 // Local SQL row types stay beside the queries whose column shapes they mirror.
 #![allow(clippy::items_after_statements, clippy::struct_field_names)]
 
-use std::collections::HashSet;
 use std::time::Instant;
 
 use hmac::{Hmac, Mac};
@@ -203,7 +202,6 @@ struct DeliveryRecord {
     response_body: Option<String>,
     error: Option<String>,
     duration_ms: Option<i64>,
-    success: bool,
     delivered_at: Timestamp,
 }
 
@@ -273,7 +271,6 @@ async fn trigger_webhooks_inner(
                         response_body: None,
                         error: Some(format!("build payload failed: {err}")),
                         duration_ms: None,
-                        success: false,
                         delivered_at: Timestamp::now(),
                     },
                 )
@@ -931,7 +928,6 @@ async fn deliver_webhook(
                     WEBHOOK_DIAGNOSTIC_CHARS,
                 )),
                 duration_ms: Some(0),
-                success: false,
                 delivered_at: Timestamp::now(),
             };
             if let Err(record_err) = record_delivery(state, record).await {
@@ -954,21 +950,19 @@ async fn deliver_webhook(
     let started = Instant::now();
     let sent = client.post(target.url).headers(headers).body(body).send().await;
 
-    let (response_status, response_body, error, success) = match sent {
+    let (response_status, response_body, error) = match sent {
         Ok(resp) => {
             let status = i32::from(resp.status().as_u16());
-            let success = resp.status().is_success();
             let text = truncate_string(
                 read_capped_body(resp, WEBHOOK_RESPONSE_BYTE_LIMIT).await,
                 WEBHOOK_DIAGNOSTIC_CHARS,
             );
-            (Some(status), Some(text), None, success)
+            (Some(status), Some(text), None)
         }
         Err(err) => (
             None,
             None,
             Some(truncate_string(err.to_string(), WEBHOOK_DIAGNOSTIC_CHARS)),
-            false,
         ),
     };
 
@@ -983,7 +977,6 @@ async fn deliver_webhook(
         response_body,
         error,
         duration_ms: Some(duration_ms),
-        success,
         delivered_at: Timestamp::now(),
     };
     if let Err(record_err) = record_delivery(state, record).await {
@@ -1032,95 +1025,31 @@ async fn read_capped_body(mut response: reqwest::Response, limit: usize) -> Stri
 }
 
 async fn record_delivery(state: &AppState, rec: DeliveryRecord) -> Result<(), sea_orm::DbErr> {
-    let column_rows = state
-        .db
-        .query_all(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            r"
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_schema = 'public'
-                  AND table_name = 'webhook_deliveries'
-            ",
-            vec![],
-        ))
-        .await?;
-
-    let mut columns = HashSet::new();
-    for row in column_rows {
-        if let Ok(col) = row.try_get::<String>("", "column_name") {
-            columns.insert(col);
-        }
-    }
-
-    let mut insert_cols = Vec::<String>::new();
-    let mut params = Vec::<sea_orm::Value>::new();
-
-    let mut push = |name: &str, value: sea_orm::Value| {
-        insert_cols.push(name.to_string());
-        params.push(value);
-    };
-
-    if columns.contains("id") {
-        push("id", Uuid::new_v4().into());
-    }
-    if columns.contains("webhook_id") {
-        push("webhook_id", rec.webhook_id.into());
-    }
-    if columns.contains("event") {
-        push("event", rec.event.clone().into());
-    } else if columns.contains("event_type") {
-        push("event_type", rec.event.into());
-    }
-    if columns.contains("payload") {
-        push("payload", rec.payload.into());
-    }
-    if columns.contains("request_headers") {
-        push("request_headers", rec.request_headers.into());
-    }
-    if columns.contains("response_status") {
-        push("response_status", rec.response_status.into());
-    }
-    if columns.contains("response_body") {
-        push("response_body", rec.response_body.into());
-    }
-    if columns.contains("error") {
-        push("error", rec.error.into());
-    }
-    if columns.contains("duration_ms") {
-        push("duration_ms", rec.duration_ms.into());
-    }
-    if columns.contains("success") {
-        push("success", rec.success.into());
-    }
-    if columns.contains("delivered_at") {
-        push("delivered_at", rec.delivered_at.into());
-    }
-    if columns.contains("created_at") {
-        push("created_at", Timestamp::now().into());
-    }
-    if columns.contains("retry_count") {
-        push("retry_count", 0_i32.into());
-    }
-
-    if insert_cols.is_empty() {
-        return Ok(());
-    }
-
-    let placeholders = (1..=insert_cols.len())
-        .map(|idx| format!("${idx}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    let sql = format!(
-        "INSERT INTO webhook_deliveries ({}) VALUES ({})",
-        insert_cols.join(", "),
-        placeholders
-    );
-
     state
         .db
-        .execute(Statement::from_sql_and_values(DbBackend::Postgres, &sql, params))
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r"
+                INSERT INTO webhook_deliveries (
+                    id, webhook_id, event_type, payload, request_headers, response_status,
+                    response_body, error, duration_ms, delivered_at, created_at, retry_count
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 0)
+            ",
+            vec![
+                Uuid::new_v4().into(),
+                rec.webhook_id.into(),
+                rec.event.into(),
+                rec.payload.into(),
+                rec.request_headers.into(),
+                rec.response_status.into(),
+                rec.response_body.into(),
+                rec.error.into(),
+                rec.duration_ms.into(),
+                rec.delivered_at.into(),
+                Timestamp::now().into(),
+            ],
+        ))
         .await?;
 
     Ok(())

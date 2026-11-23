@@ -3830,6 +3830,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0115_flow_default_on.sql",
         include_str!("../../../migrations/0115_flow_default_on.sql"),
     ),
+    (
+        "0116_webhook_delivery_duration.sql",
+        include_str!("../../../migrations/0116_webhook_delivery_duration.sql"),
+    ),
 ];
 
 /// Newest migration an existing database may claim without executing it.
@@ -4420,6 +4424,10 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
         "0115_flow_default_on.sql",
         SchemaProbe::Trigger("workspaces", "flow_provision_workspace_settings"),
     ),
+    (
+        "0116_webhook_delivery_duration.sql",
+        SchemaProbe::Column("webhook_deliveries", "duration_ms"),
+    ),
 ];
 
 /// One recorded migration outcome.
@@ -4989,6 +4997,7 @@ mod tests {
                 "0113_ai_task_chain.sql",
                 "0114_multi_bot_connections.sql",
                 "0115_flow_default_on.sql",
+                "0116_webhook_delivery_duration.sql",
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
         );

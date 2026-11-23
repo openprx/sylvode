@@ -576,7 +576,7 @@ async fn list_with_an_unknown_filter_or_a_bad_sprint_id_is_refused() {
     api.finish().await;
 }
 
-const ALL_ISSUE_EVENTS: &str = r#"["issue.created","issue.updated","issue.assigned","issue.state_changed","issue.deleted","label.added","label.removed","comment.created"]"#;
+const ALL_ISSUE_EVENTS: &str = r#"["issue.created","issue.updated","issue.assigned","issue.state_changed","issue.deleted","label.added","label.removed","comment.created","comment.deleted"]"#;
 
 impl Api {
     /// A member of the main workspace of its own.
@@ -960,5 +960,110 @@ async fn issue_deleted_payload_lists_labels_and_identifier() {
     assert_eq!(issue["key"], json!("QLB-1"), "{}", payloads[0]);
     assert_eq!(issue["label_ids"], json!([label.to_string()]), "{}", payloads[0]);
     assert_eq!(issue["title"], json!("short lived"));
+    api.finish().await;
+}
+
+#[tokio::test]
+async fn comment_deleted_payload_keeps_author_and_original_timestamps() {
+    let Some(api) = Api::new("item_event_comment_deleted").await else {
+        return;
+    };
+    api.add_webhook().await;
+    let item = api.create_item("discussed", json!({})).await;
+    let created = api
+        .post(
+            &format!("/api/v1/issues/{item}/comments"),
+            api.bob,
+            json!({"body": "to be deleted"}),
+        )
+        .await;
+    assert_eq!(created.code(), Some(0), "{}", created.body);
+    let comment = created.data()["id"].as_str().expect("comment id").to_string();
+    // Deleted by the workspace owner, so the author is not the actor.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let deleted = api
+        .call(Method::DELETE, &format!("/api/v1/comments/{comment}"), api.alice, None)
+        .await;
+    assert_eq!(deleted.code(), Some(0), "{}", deleted.body);
+
+    let payloads = api.payloads("comment.deleted", 1).await;
+    let data = &payloads[0]["data"];
+    assert_eq!(data["comment"]["author_name"], json!("bob"), "{}", payloads[0]);
+    assert_eq!(data["comment"]["author_id"], json!(api.bob), "{}", payloads[0]);
+    assert_eq!(data["comment"]["content"], json!("to be deleted"));
+    assert_eq!(
+        data["comment"]["created_at"],
+        created.data()["created_at"],
+        "{}",
+        payloads[0]
+    );
+    assert_eq!(
+        data["comment"]["updated_at"],
+        created.data()["updated_at"],
+        "{}",
+        payloads[0]
+    );
+    assert_eq!(data["issue"]["key"], json!("QLB-1"), "{}", payloads[0]);
+    assert_eq!(data["issue"]["title"], json!("discussed"));
+    assert_eq!(data["issue"]["id"], json!(item));
+    api.finish().await;
+}
+
+#[tokio::test]
+async fn mention_notification_links_the_comment() {
+    let Some(api) = Api::new("item_mention_comment").await else {
+        return;
+    };
+    let item = api.create_item("mentioned in", json!({})).await;
+    let created = api
+        .post(
+            &format!("/api/v1/issues/{item}/comments"),
+            api.alice,
+            json!({"body": "look @bob", "mentions": [api.bob]}),
+        )
+        .await;
+    assert_eq!(created.code(), Some(0), "{}", created.body);
+    let comment = created.data()["id"].as_str().expect("comment id").to_string();
+    let linked = |kind: &'static str| {
+        let (db, bob) = (api.db.clone(), api.bob);
+        async move {
+            db.query_all(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT related_comment_id::text AS c FROM notifications WHERE user_id = $1 AND kind = $2",
+                vec![bob.into(), kind.into()],
+            ))
+            .await
+            .expect("notifications are readable")
+            .iter()
+            .map(|row| row.try_get::<Option<String>>("", "c").expect("c"))
+            .collect::<Vec<_>>()
+        }
+    };
+    assert_eq!(linked("mentioned").await, [Some(comment.clone())]);
+
+    // An edit that mentions someone new links the edited comment too.
+    let dana = api.add_member("dana", "human").await;
+    let edited = api
+        .put(
+            &format!("/api/v1/comments/{comment}"),
+            api.alice,
+            json!({"body": "look @dana", "mentions": [dana]}),
+        )
+        .await;
+    assert_eq!(edited.code(), Some(0), "{}", edited.body);
+    let for_dana = api
+        .db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT related_comment_id::text AS c FROM notifications WHERE user_id = $1 AND kind = 'mentioned'",
+            vec![dana.into()],
+        ))
+        .await
+        .expect("notifications are readable");
+    assert_eq!(for_dana.len(), 1);
+    assert_eq!(
+        for_dana[0].try_get::<Option<String>>("", "c").expect("c"),
+        Some(comment)
+    );
     api.finish().await;
 }

@@ -76,7 +76,8 @@ A webhook can subscribe to these events:
 An `issue` object has `id`, `key`, `title`, `description`, `state`, `priority`, `assignee_ids`,
 `label_ids`, `sprint_id`, `due_at`, `created_at` and `updated_at`. A `comment` object has `id`, `issue_id`,
 `content`, `author_id`, `author_name`, `created_at` and `updated_at`; the `issue` next to it has
-`id`, `key` and `title`. In these payloads `key` is the work item's identifier: the project key and the
+`id`, `key` and `title`, in `comment.deleted` too, where the `comment` is the one that was deleted,
+with its author and its original timestamps. In these payloads `key` is the work item's identifier: the project key and the
 work item's number, for example `WEB-12`.
 
 An alert rule that opens a work item also sends `issue.created` for it (see [Alerts](alerts.md)).
@@ -125,8 +126,9 @@ Delivery rules:
   characters.
 - Every attempt, including a refused target, is recorded in the delivery log
   (`GET /api/v1/workspaces/{workspace_id}/webhooks/{webhook_id}/deliveries`) with the payload, the request headers as sent,
-  `response_status`, `response_body`, `error`, `duration_ms` and `success`. The webhook's
-  `last_triggered_at` is updated after each attempt.
+  `response_status`, `response_body`, `error`, `duration_ms` and `success`. `duration_ms` is the
+  measured time of the request (0 for a refused target; absent for entries from before it was
+  measured). The webhook's `last_triggered_at` is updated after each attempt.
 
 Bot tasks that the worker hands to a bot (assignments, mentions, vote requests, alert tasks) are
 also posted to the bot's webhook, with the same `User-Agent` and `X-Webhook-Signature`. Their

@@ -23,6 +23,7 @@ use crate::{
     services::{
         ai_task_service::{CreateAiTaskInput, DispatchOrigin, DispatchOutcome, dispatch_ai_task, runner_bot_block},
         comments::insert_comment,
+        issue_view::identifier,
     },
     webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks, trigger_webhooks_after_ai_tasks},
 };
@@ -91,6 +92,7 @@ async fn create_mention_notifications<C: ConnectionTrait>(
     workspace_id: Uuid,
     project_id: Uuid,
     issue_id: Uuid,
+    comment_id: Uuid,
 ) -> Result<(), ApiError> {
     if mention_user_ids.is_empty() {
         return Ok(());
@@ -118,7 +120,7 @@ async fn create_mention_notifications<C: ConnectionTrait>(
                 INSERT INTO notifications (
                     id, user_id, workspace_id, type, kind, payload, title, content, link, related_issue_id, related_comment_id, is_read, created_at
                 )
-                VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, NULL, false, $11)
+                VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, false, $12)
             ",
             vec![
                 Uuid::new_v4().into(),
@@ -131,6 +133,7 @@ async fn create_mention_notifications<C: ConnectionTrait>(
                 format!("mentioned_by:{actor_name}").into(),
                 link.clone().into(),
                 issue_id.into(),
+                comment_id.into(),
                 now.into(),
             ],
         ))
@@ -251,6 +254,7 @@ pub async fn create_comment(
         issue_context.workspace_id,
         issue_context.project_id,
         issue_id,
+        comment_id,
     )
     .await?;
 
@@ -528,6 +532,7 @@ pub async fn update_comment(
         comment.workspace_id,
         comment.project_id,
         comment.work_item_id,
+        comment_id,
     )
     .await?;
 
@@ -608,15 +613,24 @@ pub async fn delete_comment(
         project_id: Uuid,
         work_item_id: Uuid,
         body: String,
+        author_name: Option<String>,
+        created_at: platform::timestamp::Timestamp,
+        updated_at: platform::timestamp::Timestamp,
+        title: String,
+        sequence_number: i32,
+        project_key: String,
     }
 
     let comment_info = CommentInfo::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
-            SELECT c.author_id, p.workspace_id, wi.project_id, c.work_item_id, c.body
+            SELECT c.author_id, p.workspace_id, wi.project_id, c.work_item_id, c.body,
+                   u.name AS author_name, c.created_at, c.updated_at,
+                   wi.title, wi.sequence_number, p.key AS project_key
             FROM comments c
             INNER JOIN work_items wi ON c.work_item_id = wi.id
             INNER JOIN projects p ON wi.project_id = p.id
+            LEFT JOIN users u ON c.author_id = u.id
             WHERE c.id = $1
         ",
         vec![comment_id.into()],
@@ -689,12 +703,14 @@ pub async fn delete_comment(
             "issue_id": comment_info.work_item_id.to_string(),
             "content": comment_info.body,
             "author_id": comment_info.author_id.map(|id| id.to_string()),
-            "author_name": "",
-            "created_at": now.to_rfc3339(),
-            "updated_at": now.to_rfc3339(),
+            "author_name": comment_info.author_name.unwrap_or_default(),
+            "created_at": comment_info.created_at.to_rfc3339(),
+            "updated_at": comment_info.updated_at.to_rfc3339(),
         },
         "issue": {
             "id": comment_info.work_item_id.to_string(),
+            "key": identifier(&comment_info.project_key, comment_info.sequence_number),
+            "title": comment_info.title,
         }
     });
 
