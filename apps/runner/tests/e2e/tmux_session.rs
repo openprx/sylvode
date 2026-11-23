@@ -1289,3 +1289,53 @@ async fn doctor_describes_the_session_of_a_project() {
             .contains("tmux attach -t SVWL-claude")
     );
 }
+
+/// With a report interval of 600 seconds, the session the runner creates for the first delivery is
+/// reported within seconds, not at the next interval: the status Sylvode shows is current.
+#[tokio::test]
+async fn the_session_the_runner_creates_is_reported_without_waiting_for_the_interval() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::new(program, Standin::Normal).await;
+    fx.set_view(T1, true, true);
+    let server = fx.serve();
+    // The start-up report goes out first and has no session in it.
+    let first = fx
+        .api
+        .wait_for("PUT", "/api/v1/ai/runner/report", 1, Duration::from_secs(10))
+        .await;
+    assert!(!first.is_empty(), "the start-up report");
+    let has_session = |body: &Value| {
+        body["components"]
+            .as_array()
+            .is_some_and(|rows| rows.iter().any(|row| row["component"] == "tmux_session"))
+    };
+    assert!(!has_session(&first[0].body), "{}", first[0].body);
+
+    let delivered = Fixture::deliver(server.url("/webhook"), T1).await;
+    assert_eq!(delivered["status"], "dispatched", "{delivered}");
+    let started = Instant::now();
+    loop {
+        let reports = fx
+            .api
+            .wait_for("PUT", "/api/v1/ai/runner/report", 2, Duration::from_secs(1))
+            .await;
+        if reports.iter().any(|report| has_session(&report.body)) {
+            break;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "no report with the session within 30 s (the interval is 600 s): {reports:?}"
+        );
+    }
+    // Asking is paced: the rounds are at least ten seconds apart, so a burst of events is not a storm.
+    let reports = fx
+        .api
+        .requests()
+        .into_iter()
+        .filter(|r| r.path().ends_with("/runner/report"))
+        .count();
+    assert!(reports <= 3, "{reports} reports in a few seconds");
+}

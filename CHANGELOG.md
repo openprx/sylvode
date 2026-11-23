@@ -115,6 +115,16 @@ name.
   template's labels, skipping any whose name already exists in another case. The frontend `Label`
   type has `workspace_id` and `description` (it had `project_id`).
 
+- **Runner status is current, and the issued block merges.** The runner sends its status report
+  when a tmux session is created or recovered and after the first delivery to a session since it
+  started, not only every report interval (default 600 seconds), so Sylvode shows the session within
+  seconds. Requests are coalesced for two seconds and reports are never closer than ten seconds, so
+  at most six extra reports a minute (the API accepts twelve). The configuration block Sylvode issues
+  for a bot now carries `webhook_secret` in its `[[ai_task_callback.bots]]` table, so a second bot's
+  block can be appended to a runner's file as its header says (a runner serving two bots refuses to
+  start without a per-bot secret; the old text said to put the second secret in `[security]`).
+  The `runner` service of `docker-compose.yml` runs with `init: true` and `stop_grace_period: 45s`.
+
 ### Removed
 
 - **Universal forms delivery and sign-off tooling.** The scripts and schemas that produced and

@@ -177,6 +177,10 @@ services:
     volumes:
       - ${SYLVODE_RUNNER_CONFIG:-./config/sylvode-runner.example.toml}:/etc/sylvode-runner/config.toml:ro
     command: ["/app/sylvode-runner", "/etc/sylvode-runner/config.toml"]
+    # The runner starts CLI commands: init reaps the processes they leave, and the grace period gives
+    # a running task time to finish before the container is killed.
+    init: true
+    stop_grace_period: 45s
     ports:
       - "${SYLVODE_BIND_HOST:-127.0.0.1}:${SYLVODE_RUNNER_PORT:-9090}:9090"
     networks:

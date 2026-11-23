@@ -419,7 +419,8 @@ async fn serve(config: config::Config) -> ExitCode {
         },
         _ => None,
     };
-    let sessions = start_sessions(&config, &runner, &background);
+    let report_trigger = crate::handshake::ReportTrigger::default();
+    let sessions = start_sessions(&config, &runner, &background, &report_trigger);
     let state = Arc::new(AppState {
         config,
         background: background.clone(),
@@ -466,7 +467,7 @@ async fn serve(config: config::Config) -> ExitCode {
         let loop_handshake = state.handshake.clone();
         let loop_background = background.clone();
         background.spawn(async move {
-            crate::handshake::run_loop(loop_config, http, loop_handshake, loop_background).await;
+            crate::handshake::run_loop(loop_config, http, loop_handshake, loop_background, report_trigger).await;
         });
     }
 
@@ -558,6 +559,7 @@ fn start_sessions(
     config: &config::Config,
     runner: &crate::runner::RunnerRuntime,
     background: &Background,
+    report_trigger: &crate::handshake::ReportTrigger,
 ) -> Option<Arc<crate::runner::session::SessionManager>> {
     use sylvode_prereq::{Checker, InstallKind};
     if !config.agents.iter().any(|agent| agent.agent_type == "runner") {
@@ -574,6 +576,7 @@ fn start_sessions(
         exe,
         tmux_program,
         background.clone(),
+        report_trigger.clone(),
     ) {
         Ok(manager) => Arc::new(manager),
         Err(e) => {

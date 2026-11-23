@@ -1666,6 +1666,61 @@ url = "http://127.0.0.1:9000/hook"
 
     const GOLDEN_BOT: &str = "00000000-0000-0000-0000-000000000000";
 
+    /// Two blocks Sylvode issued for two bots, merged the way the block's header says: the shared
+    /// sections once, the second bot's `[[ai_task_callback.bots]]` and `[[agents]]` tables appended.
+    /// The runner then serves two bots, and each bot's own secret verifies only its own deliveries.
+    #[test]
+    fn two_issued_blocks_merged_load() {
+        const SECOND_BOT: &str = "00000000-0000-0000-0000-000000000002";
+        const SECOND_SECRET: &str = "second-fixture-signing-secret";
+        let second = GOLDEN_BLOCK
+            .replace(GOLDEN_BOT, SECOND_BOT)
+            .replace("golden-fixture-signing-secret", SECOND_SECRET)
+            .replace("opr_golden_fixture_token", "opr_second_fixture_token")
+            .replace("Build bot", "Second bot");
+        let tables_from = |text: &str, header: &str| -> String {
+            let start = text.find(&format!("\n{header}\n")).expect("the table is in the block") + 1;
+            let rest = &text[start..];
+            let end = rest[header.len()..]
+                .find("\n[")
+                .map_or(rest.len(), |offset| header.len() + offset);
+            rest[..end].trim_end().to_string()
+        };
+        // With more than one runner agent each needs its own, disjoint `allowed_roots` (the block's
+        // header says so; the global one is for a runner with a single agent).
+        let with_roots = |text: &str, root: &str| {
+            text.replace(
+                "agent_type = \"runner\"\n",
+                &format!("agent_type = \"runner\"\nallowed_roots = [\"{root}\"]\n"),
+            )
+        };
+        let second = with_roots(&second, "/srv/dev/work/second");
+        let mut merged = with_roots(GOLDEN_BLOCK, "/srv/dev/work/svwl").trim_end().to_string();
+        merged.push_str("\n\n");
+        merged.push_str(&tables_from(&second, "[[ai_task_callback.bots]]"));
+        merged.push_str("\n\n");
+        // The agent table and its route table.
+        let agent_start = second.find("\n[[agents]]\n").expect("agent table") + 1;
+        merged.push_str(second[agent_start..].trim_end());
+        merged.push('\n');
+
+        let cfg = Config::from_toml(&merged).expect("the merged file is accepted");
+        assert_eq!(cfg.agents.len(), 2, "both bots' agents");
+        assert_eq!(cfg.ai_task_callback.bots.len(), 2, "both bots' credentials");
+        assert_eq!(
+            cfg.webhook_secrets_for(Some(SECOND_BOT)),
+            vec![SECOND_SECRET.to_string()]
+        );
+        assert_eq!(
+            cfg.webhook_secrets_for(Some(GOLDEN_BOT)),
+            vec!["golden-fixture-signing-secret".to_string()],
+            "the first bot keeps its own secret"
+        );
+        // The shared sections stay as the first block had them.
+        assert_eq!(cfg.runner.allowed_roots, vec!["/srv/dev/work/svwl".to_string()]);
+        assert_eq!(cfg.server.listen, "127.0.0.1:9090");
+    }
+
     #[test]
     fn the_golden_configuration_block_loads_as_one_runner_agent() {
         let cfg = Config::from_toml(GOLDEN_BLOCK).expect("the block Sylvode issues is accepted");

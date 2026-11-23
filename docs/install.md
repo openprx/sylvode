@@ -123,7 +123,8 @@ The runner service belongs to the `connectors` profile and is not started by def
 docker compose --profile connectors up -d runner
 ```
 
-By default it mounts `config/sylvode-runner.example.toml`. Copy it to a file of your own, set real
+The service runs with `init: true` and `stop_grace_period: 45s`, as the runner's container
+guidance asks. By default it mounts `config/sylvode-runner.example.toml`. Copy it to a file of your own, set real
 secrets, and point `SYLVODE_RUNNER_CONFIG` at it. When no image named `SYLVODE_RUNNER_IMAGE` is
 present, Compose builds it from `apps/runner`; `docker compose pull runner` fetches the published
 one. Configuration and operation are described in

@@ -143,9 +143,10 @@ pub fn build(input: &BlockInput<'_>) -> ConfigBlock {
         "# Sylvode runner configuration for bot \"{name}\" ({bot_id}),\n\
          # issued {issued} for project {project}. Shown once: it holds the bot's token and the\n\
          # signing secret. Store it with mode 0600. To add this bot to a runner that already serves\n\
-         # another bot, add the secret to [security] webhook_secrets and append the [[ai_task_callback.bots]]\n\
-         # and [[agents]] tables; keep the other sections once. The token acts only in projects this\n\
-         # bot is connected to and has enabled, and only on the routes the runner needs.\n\n"
+         # another bot, append its [[ai_task_callback.bots]] table (which carries its own\n\
+         # webhook_secret) and its [[agents]] table, give every runner agent its own allowed_roots,\n\
+         # and keep the other sections once. The token acts only in projects this bot is connected\n\
+         # to and has enabled, and only on the routes the runner needs.\n\n"
     );
     text.push_str("[server]\n");
     let url = comment_safe(input.runner_url);
@@ -167,10 +168,11 @@ pub fn build(input: &BlockInput<'_>) -> ConfigBlock {
     );
     let _ = write!(
         text,
-        "[[ai_task_callback.bots]]\nbot_id = {}\nworkspace_id = {}\ntoken = {}\nsurface = \"mcp_stdio\"\n\n",
+        "[[ai_task_callback.bots]]\nbot_id = {}\nworkspace_id = {}\ntoken = {}\nsurface = \"mcp_stdio\"\nwebhook_secret = {}\n\n",
         toml_string(&bot_id.to_string()),
         toml_string(&input.workspace_id.to_string()),
-        toml_string(input.token)
+        toml_string(input.token),
+        toml_string(input.secret)
     );
     let _ = write!(
         text,
@@ -293,6 +295,11 @@ mod tests {
         assert_eq!(bots[0]["workspace_id"].as_str(), Some(WORKSPACE));
         assert_eq!(bots[0]["token"].as_str(), Some(token.as_str()));
         assert_eq!(bots[0]["surface"].as_str(), Some("mcp_stdio"));
+        assert_eq!(
+            bots[0]["webhook_secret"].as_str(),
+            Some(secret.as_str()),
+            "the bot's table carries its own secret, so it can be appended to another runner's file"
+        );
         assert_eq!(table["runner"]["allowed_roots"][0].as_str(), Some("/srv/dev/work/svwl"));
         let agents = table["agents"].as_array().expect("agents");
         assert_eq!(agents[0]["agent_type"].as_str(), Some("runner"));

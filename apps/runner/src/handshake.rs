@@ -376,20 +376,81 @@ fn note_failure(handshake: &Handshake, target: &Target, error: &SvError) {
     }
 }
 
-/// The start-up task: a round now and one every interval until shutdown.
+/// Asks for a report before the next periodic one: a session was created, recovered or first used,
+/// and Sylvode should not show the old state for up to a whole interval.
+///
+/// Asking is free and cheap to repeat. The loop decides when a round really runs ([`Pacing`]), so
+/// any number of requests cost at most one round per [`MIN_ROUND_GAP`].
+#[derive(Clone, Default)]
+pub struct ReportTrigger(Arc<tokio::sync::Notify>);
+
+impl ReportTrigger {
+    pub fn request(&self) {
+        self.0.notify_one();
+    }
+}
+
+/// How an extra round is paced. A request waits `debounce` (so several that arrive together are one
+/// round), and a round never starts less than `min_gap` after the start of the previous one,
+/// periodic or not: at most six extra reports a minute, under the API's limit of twelve a minute
+/// for one bot, and the periodic report is at most one a minute.
+#[derive(Clone, Copy, Debug)]
+pub struct Pacing {
+    pub debounce: Duration,
+    pub min_gap: Duration,
+}
+
+/// The pacing the runner runs with.
+pub const MIN_ROUND_GAP: Duration = Duration::from_secs(10);
+pub const PACING: Pacing = Pacing {
+    debounce: Duration::from_secs(2),
+    min_gap: MIN_ROUND_GAP,
+};
+
+/// Runs `round` now, then again after the interval it returned, or earlier when `trigger` asks and
+/// the pacing allows, until shutdown.
+pub async fn drive<F, Fut>(
+    trigger: &ReportTrigger,
+    background: &crate::background::Background,
+    pacing: Pacing,
+    mut round: F,
+) where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Duration>,
+{
+    loop {
+        let started = tokio::time::Instant::now();
+        let wait = round().await;
+        tokio::select! {
+            () = tokio::time::sleep(wait) => {}
+            () = background.cancelled() => return,
+            () = trigger.0.notified() => {
+                let paced = async {
+                    tokio::time::sleep(pacing.debounce).await;
+                    if let Some(remaining) = pacing.min_gap.checked_sub(started.elapsed()) {
+                        tokio::time::sleep(remaining).await;
+                    }
+                };
+                tokio::select! {
+                    () = paced => {}
+                    () = background.cancelled() => return,
+                }
+                // Requests that arrived while waiting are answered by the round about to run.
+                let _ = tokio::time::timeout(Duration::ZERO, trigger.0.notified()).await;
+            }
+        }
+    }
+}
+
+/// The start-up task: a round now and one every interval, or sooner when asked, until shutdown.
 pub async fn run_loop(
     config: Arc<Config>,
     http: reqwest::Client,
     handshake: Handshake,
     background: crate::background::Background,
+    trigger: ReportTrigger,
 ) {
-    loop {
-        let wait = run_once(&config, &http, &handshake).await;
-        tokio::select! {
-            () = tokio::time::sleep(wait) => {}
-            () = background.cancelled() => return,
-        }
-    }
+    drive(&trigger, &background, PACING, || run_once(&config, &http, &handshake)).await;
 }
 
 #[cfg(test)]
@@ -492,6 +553,102 @@ mod tests {
         for leaked in ["QLA-claude", "%3", "pane", "foreground", "\"b\""] {
             assert!(!text.contains(leaked), "{leaked}: {text}");
         }
+    }
+
+    /// Counts the rounds of a loop that is asked often, to show the rate rule: a burst of requests is
+    /// one round after the debounce, and rounds are never closer than the minimum gap.
+    #[tokio::test]
+    async fn a_trigger_runs_a_round_within_the_debounce_and_never_faster_than_the_gap() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let pacing = Pacing {
+            debounce: Duration::from_millis(30),
+            min_gap: Duration::from_millis(300),
+        };
+        let background = crate::background::Background::new(1);
+        let trigger = ReportTrigger::default();
+        let starts: Arc<Mutex<Vec<tokio::time::Instant>>> = Arc::new(Mutex::new(Vec::new()));
+        let rounds = Arc::new(AtomicUsize::new(0));
+        let task = {
+            let (trigger, background, starts, rounds) = (
+                trigger.clone(),
+                background.clone(),
+                Arc::clone(&starts),
+                Arc::clone(&rounds),
+            );
+            tokio::spawn(async move {
+                drive(&trigger, &background, pacing, || {
+                    starts.lock().push(tokio::time::Instant::now());
+                    rounds.fetch_add(1, Ordering::SeqCst);
+                    // A periodic interval far longer than the test.
+                    std::future::ready(Duration::from_hours(1))
+                })
+                .await;
+            })
+        };
+        // The first round runs at once.
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(rounds.load(Ordering::SeqCst), 1);
+        // A request right after it still waits for the minimum gap since that round started.
+        trigger.request();
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert_eq!(rounds.load(Ordering::SeqCst), 1, "not before the gap");
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        assert_eq!(rounds.load(Ordering::SeqCst), 2, "one round for the request");
+        // A burst of fifty requests is one round, after the gap.
+        for _ in 0..50 {
+            trigger.request();
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert_eq!(rounds.load(Ordering::SeqCst), 3, "a burst is one round");
+        // Nothing more runs without a request.
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        assert_eq!(rounds.load(Ordering::SeqCst), 3);
+        let times = starts.lock().clone();
+        for pair in times.windows(2) {
+            assert!(
+                pair[1].duration_since(pair[0]) >= pacing.min_gap,
+                "rounds are at least the gap apart"
+            );
+        }
+        background.begin_shutdown();
+        let _ = tokio::time::timeout(Duration::from_secs(2), task).await;
+    }
+
+    /// A request is honoured within the debounce when the previous round is old enough, and a
+    /// shutdown ends the loop even while it waits.
+    #[tokio::test]
+    async fn a_request_after_a_quiet_period_runs_after_the_debounce_and_shutdown_ends_the_loop() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let pacing = Pacing {
+            debounce: Duration::from_millis(40),
+            min_gap: Duration::from_millis(100),
+        };
+        let background = crate::background::Background::new(1);
+        let trigger = ReportTrigger::default();
+        let rounds = Arc::new(AtomicUsize::new(0));
+        let task = {
+            let (trigger, background, rounds) = (trigger.clone(), background.clone(), Arc::clone(&rounds));
+            tokio::spawn(async move {
+                drive(&trigger, &background, pacing, || {
+                    rounds.fetch_add(1, Ordering::SeqCst);
+                    std::future::ready(Duration::from_hours(1))
+                })
+                .await;
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        assert_eq!(rounds.load(Ordering::SeqCst), 1);
+        trigger.request();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(rounds.load(Ordering::SeqCst), 1, "waits for the debounce");
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        assert_eq!(rounds.load(Ordering::SeqCst), 2, "runs after it");
+        trigger.request();
+        background.begin_shutdown();
+        assert!(
+            tokio::time::timeout(Duration::from_secs(2), task).await.is_ok(),
+            "the loop ends on shutdown"
+        );
     }
 
     #[test]

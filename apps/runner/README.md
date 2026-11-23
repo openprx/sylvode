@@ -122,7 +122,8 @@ configured, `doctor` reports the `tmux` row as failed (`unsupported in container
 `runner` agents on a host.
 
 The repository's `docker-compose.yml` has an optional `runner` service (profile `connectors`)
-that mounts `config/sylvode-runner.example.toml`; see [Install](../../docs/install.md).
+that mounts `config/sylvode-runner.example.toml` and sets `init: true` and `stop_grace_period: 45s`
+(the equivalents of `--init` and `--stop-timeout 45`); see [Install](../../docs/install.md).
 
 ### From source
 
@@ -325,14 +326,14 @@ There are two ways a bot's tasks reach this runner.
   signing secret and a managed webhook that points at `<runner address>/webhook`, and shows a
   configuration block once (Sylvode keeps no copy; rotating the credentials issues a new one).
   The block holds `[server]`, `[security]`, `[ai_task_callback]` with one
-  `[[ai_task_callback.bots]]` entry, `[runner]` with `allowed_roots`, `[runner.cli.codex]` or
+  `[[ai_task_callback.bots]]` entry (which carries the bot's own `webhook_secret`), `[runner]` with `allowed_roots`, `[runner.cli.codex]` or
   `[runner.cli.opencode]` with `enabled = true` when the connection uses that CLI, and an
   `[[agents]]` entry with `agent_type = "runner"`. See
   [Connecting a bot to a project](../../docs/guide/agents.md) for the steps in the web interface.
   To add a further connection's block to a runner that already serves a `runner` bot, append its
-  `[[ai_task_callback.bots]]` and `[[agents]]` tables, put its signing secret in that bot's
-  `webhook_secret` (the runner refuses to start otherwise), give each `runner` agent its own
-  `allowed_roots` (they must not overlap), and keep the other sections once.
+  `[[ai_task_callback.bots]]` table (it already carries that bot's `webhook_secret`, which the
+  runner requires for every bot when it serves more than one) and its `[[agents]]` tables, give each
+  `runner` agent its own `allowed_roots` (they must not overlap), and keep the other sections once.
 - **A workspace webhook with a bot user (for the other agent types).** Create a webhook in the
   workspace whose URL is the runner's `/webhook` (for example
   `https://runner.example.com/webhook`), select the events, and choose the bot user whose tasks
@@ -778,7 +779,10 @@ At start-up and every report interval, the runner calls `GET /api/v1/ai/protocol
 runner bot's token and compares `task_protocol` with its own (1), then sends
 `PUT /api/v1/ai/runner/report`: component names, statuses and versions, the sessions and the
 posture. The report interval is the one Sylvode advertises, kept between 60 and 3600 seconds, or
-`[runner] report_interval_secs`. A mismatch shows in `/health` and refuses every `runner` agent
+`[runner] report_interval_secs`. A session that is created or recovered, and the first delivery to
+a session after the runner starts, also send a report at once (after two seconds, so several
+together are one report) instead of waiting for the next interval; reports are never closer than
+ten seconds apart, so there are at most six a minute. A mismatch shows in `/health` and refuses every `runner` agent
 with `protocol_mismatch`; other agents keep working. A bot without a runner connection in Sylvode
 (404) is logged once and not reported again until restart; a token Sylvode refuses is logged as
 `bot <id>: token refused by Sylvode (revoked, rotated or wrong surface)`. Tokens are never logged,

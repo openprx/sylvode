@@ -190,7 +190,10 @@ channel.
    (**Copy configuration** or **Download file**) and confirm **I have stored this configuration**.
    Sylvode keeps no copy and cannot show it again; **Rotate credentials** issues a new one.
 6. Merge the block into the runner's configuration, check `[runner] allowed_roots`, and start the
-   runner ([runner README](../../apps/runner/README.md#configure)).
+   runner ([runner README](../../apps/runner/README.md#configure)). To add a second bot to a
+   runner that already serves one, append the new block's `[[ai_task_callback.bots]]` and
+   `[[agents]]` tables (the bot table already has its own `webhook_secret`), give each `runner`
+   agent its own `allowed_roots`, and keep the other sections once.
 
 ### Execution settings
 

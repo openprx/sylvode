@@ -244,6 +244,9 @@ struct Shared {
     /// The pane each session's worker recorded, for the hook listener (which checks a message
     /// before it spends anything on it).
     panes: PaneMap,
+    /// Asked for a report when a session appears or changes, so Sylvode does not show the old
+    /// state until the next periodic one.
+    report_trigger: crate::handshake::ReportTrigger,
 }
 
 /// `(tmux socket path, pane id)` to the name of the session that uses the pane.
@@ -267,6 +270,7 @@ impl SessionManager {
         runner_exe: PathBuf,
         tmux_program: Option<PathBuf>,
         background: Background,
+        report_trigger: crate::handshake::ReportTrigger,
     ) -> Result<Self, String> {
         let socket = SocketName::new(&config.runner.tmux.socket_name).map_err(|e| e.to_string())?;
         Ok(Self {
@@ -278,6 +282,7 @@ impl SessionManager {
                 tmux_program,
                 background,
                 panes: Arc::new(Mutex::new(HashMap::new())),
+                report_trigger,
             }),
             workers: Mutex::new(HashMap::new()),
         })
@@ -423,6 +428,18 @@ struct Worker {
     /// Closes a turn the hooks never closed (an interrupt runs no `Stop`).
     turn_watch: TurnWatch,
     ticks: u32,
+    /// This session has already asked for a report since the runner started.
+    report_requested: bool,
+}
+
+/// Whether a session's record is worth an out-of-cycle report: there was no record before, its pane
+/// or process changed, or this session has not asked for one since the runner started (the first
+/// delivery after start, or a recovery).
+#[must_use]
+pub fn report_needed(previous: Option<&SessionRecord>, new: &SessionRecord, requested_since_start: bool) -> bool {
+    previous.is_none_or(|previous| {
+        previous.pane_id != new.pane_id || previous.pane_pid != new.pane_pid || !requested_since_start
+    })
 }
 
 /// Whether a hook message may be applied: (where the platform names the sender) the sender runs
@@ -515,6 +532,15 @@ impl Worker {
             seq_gate: super::hooks::SeqGate::default(),
             turn_watch: TurnWatch::new(3, TURN_QUIET, Instant::now()),
             ticks: 0,
+            report_requested: false,
+        }
+    }
+
+    /// Asks for an out-of-cycle report when [`report_needed`] says so.
+    fn request_report(&mut self, previous: Option<&SessionRecord>, new: &SessionRecord) {
+        if report_needed(previous, new, self.report_requested) {
+            self.report_requested = true;
+            self.shared.report_trigger.request();
         }
     }
 
@@ -574,11 +600,13 @@ impl Worker {
                         .unwrap_or(false),
                         None => false,
                     };
-                    if let (Some(pane), Some(_record), true) = (pane, record, alive) {
+                    if let (Some(pane), Some(recorded), true) = (pane, record, alive) {
                         self.pane = Some(pane);
                         // Until a hook of the pane is admitted, the screen tells the turns.
                         self.screen_mode = true;
                         self.machine.adopt_running(now);
+                        // The recovered session is what Sylvode should now be told about.
+                        self.request_report(Some(&recorded), &recorded);
                         // The `blocked` phase can be stale (nothing re-reports `pushed` after a
                         // dialog is answered): the session is blocked again only if a dialog is
                         // really on the screen.
@@ -1009,6 +1037,7 @@ impl Worker {
         let name = self.name.clone();
         let tmux_cfg = self.shared.config.runner.tmux.clone();
         let record = self.shared.state.read_session_record(&name);
+        let previous_record = record.clone();
         let task = task.clone();
         let job = self.settings_job(&task);
         // The pane is recorded for the hook listener inside the blocking call, right after it is
@@ -1045,8 +1074,11 @@ impl Worker {
                 if let Some(record) = record {
                     // Until a hook of the pane is admitted, the screen tells the turns.
                     self.screen_mode = true;
-                    if let Err(e) = self.shared.state.write_session_record(&record) {
-                        tracing::warn!("could not save session.json of {}: {e}", self.name.as_str());
+                    match self.shared.state.write_session_record(&record) {
+                        Ok(()) => self.request_report(previous_record.as_ref(), &record),
+                        Err(e) => {
+                            tracing::warn!("could not save session.json of {}: {e}", self.name.as_str());
+                        }
                     }
                 }
                 outcome

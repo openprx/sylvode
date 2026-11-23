@@ -1,7 +1,7 @@
 use super::files::{CreatedBy, SessionRecord};
 use super::session::{
-    EnsureDecision, EnsureFacts, admit_hook, decide_ensure, decline_for, dir_unchanged, recovered_blocked, stable_exe,
-    view_facts,
+    EnsureDecision, EnsureFacts, admit_hook, decide_ensure, decline_for, dir_unchanged, recovered_blocked,
+    report_needed, stable_exe, view_facts,
 };
 use super::tmux::{ListedPane, PaneId};
 
@@ -238,4 +238,36 @@ fn a_stale_blocked_phase_does_not_block_a_recovered_task() {
     assert!(!recovered_blocked(true, false), "stale phase");
     assert!(!recovered_blocked(false, true));
     assert!(!recovered_blocked(false, false));
+}
+
+/// An out-of-cycle report is asked for when a session is new, its pane or process changed, or it has
+/// not asked since the runner started; never for the same pane again once it has asked.
+#[test]
+fn report_needed_on_first_record_new_pane_and_first_since_start() {
+    let before = record(BOT, "%1", 10, CreatedBy::Runner);
+    let same = record(BOT, "%1", 10, CreatedBy::Runner);
+    let new_pane = record(BOT, "%2", 10, CreatedBy::Runner);
+    let new_pid = record(BOT, "%1", 11, CreatedBy::Runner);
+    for (label, previous, new, requested, expected) in [
+        ("first record", None, &same, true, true),
+        ("first record, nothing requested", None, &same, false, true),
+        ("a new pane", Some(&before), &new_pane, true, true),
+        ("a new process in the same pane", Some(&before), &new_pid, true, true),
+        (
+            "first delivery since start, same pane",
+            Some(&before),
+            &same,
+            false,
+            true,
+        ),
+        (
+            "same pane, already requested since start",
+            Some(&before),
+            &same,
+            true,
+            false,
+        ),
+    ] {
+        assert_eq!(report_needed(previous, new, requested), expected, "{label}");
+    }
 }
