@@ -27,7 +27,6 @@ pub mod paths {
     pub const RECIPES: &str = "skills/sylvode-mcp/generated/recipes.md";
     pub const LINT_ALLOW: &str = "skills/sylvode-mcp/.lint-allow";
     pub const SERVER_README: &str = "apps/mcp-server/README.md";
-    pub const SERVER_AGENTS: &str = "apps/mcp-server/AGENTS.md";
     pub const ROOT_README: &str = "README.md";
     pub const DOCS_README: &str = "docs/README.md";
     pub const TOOL_NAMES_FIXTURE: &str = "apps/api/tests/fixtures/mcp-tool-names.json";
@@ -54,7 +53,6 @@ pub struct Catalogue<'a> {
 pub struct Sources {
     pub skill_md: String,
     pub server_readme: String,
-    pub server_agents: String,
     pub root_readme: String,
     pub docs_readme: String,
 }
@@ -267,28 +265,6 @@ fn tool_table_block(catalogue: &Catalogue<'_>) -> String {
     )
 }
 
-fn agents_overview_block(catalogue: &Catalogue<'_>) -> String {
-    let mut block = format!("- The tool catalogue has {}:\n", tool_sentence(catalogue));
-    for category in catalogue.categories {
-        let (reads, total) = counts(catalogue, category.name);
-        let _ = writeln!(
-            block,
-            "  - `{}` ({} {}, {} read, {} write): {}",
-            category.name,
-            total,
-            if total == 1 { "tool" } else { "tools" },
-            reads,
-            total - reads,
-            category.summary
-        );
-    }
-    block.push_str(
-        "- Every tool, one line each, is in `skills/sylvode-mcp/reference/tools.md`; the hand-written skill is \
-         `skills/sylvode-mcp/SKILL.md`. Both are generated or checked by `sylvode-skillgen`.",
-    );
-    block
-}
-
 /// Replaces the text between the markers of the generated block `name` in `text`.
 pub fn replace_block(text: &str, name: &str, body: &str) -> Result<String, String> {
     let begin_marker = format!("<!-- BEGIN GENERATED: {name} ({GENERATED_NOTE}) -->");
@@ -370,17 +346,6 @@ pub fn outputs(catalogue: &Catalogue<'_>, sources: &Sources) -> Result<Vec<Outpu
             content: at(
                 paths::SERVER_README,
                 replace_block(&sources.server_readme, "tool-table", &tool_table_block(catalogue)),
-            )?,
-        },
-        Output {
-            path: paths::SERVER_AGENTS,
-            content: at(
-                paths::SERVER_AGENTS,
-                replace_block(
-                    &sources.server_agents,
-                    "tool-overview",
-                    &agents_overview_block(catalogue),
-                ),
             )?,
         },
         Output {
@@ -749,7 +714,6 @@ mod tests {
         Sources {
             skill_md: SKILL.to_string(),
             server_readme: block("tool-table"),
-            server_agents: block("tool-overview"),
             root_readme: block("tool-count"),
             docs_readme: block("tool-count"),
         }

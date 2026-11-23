@@ -539,7 +539,6 @@ async fn every_resource_is_served_by_its_sylvode_identity_only_over_stdio_http_a
     let expected = [
         "sylvode://skills/sylvode-mcp",
         "sylvode://skills/sylvode-mcp/tools",
-        "sylvode://guides/agents",
         "sylvode://guides/workflows",
         "sylvode://scenario-templates",
         "sylvode://projects/{project_id}/issues",

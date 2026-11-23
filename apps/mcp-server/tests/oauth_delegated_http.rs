@@ -1100,7 +1100,6 @@ async fn delegated_callers_read_the_static_guides_and_nothing_else() -> TestResu
         [
             "sylvode://skills/sylvode-mcp",
             "sylvode://skills/sylvode-mcp/tools",
-            "sylvode://guides/agents",
             "sylvode://guides/workflows"
         ]
     );

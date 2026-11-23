@@ -76,10 +76,9 @@ const CONTEXT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Largest token-context answer read. The real answer is a few hundred bytes.
 const MAX_CONTEXT_BODY: usize = 16 * 1024;
 /// The static documentation resources a delegated caller may read.
-const STATIC_GUIDE_RESOURCES: [&str; 4] = [
+const STATIC_GUIDE_RESOURCES: [&str; 3] = [
     "sylvode://skills/sylvode-mcp",
     "sylvode://skills/sylvode-mcp/tools",
-    "sylvode://guides/agents",
     "sylvode://guides/workflows",
 ];
 

@@ -76,7 +76,6 @@ fn sources(root: &Path) -> Result<Sources, String> {
     Ok(Sources {
         skill_md: read(root, paths::SKILL_MD)?,
         server_readme: read(root, paths::SERVER_README)?,
-        server_agents: read(root, paths::SERVER_AGENTS)?,
         root_readme: read(root, paths::ROOT_README)?,
         docs_readme: read(root, paths::DOCS_README)?,
     })

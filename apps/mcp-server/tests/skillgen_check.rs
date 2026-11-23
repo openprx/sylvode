@@ -57,7 +57,6 @@ fn check_fails_with_a_diff_when_a_generated_file_is_stale() -> Result<(), Box<dy
         "skills/sylvode-mcp/generated/server-instructions.md",
         "skills/sylvode-mcp/generated/recipes.md",
         "apps/mcp-server/README.md",
-        "apps/mcp-server/AGENTS.md",
         "README.md",
         "docs/README.md",
         "apps/api/tests/fixtures/mcp-tool-names.json",

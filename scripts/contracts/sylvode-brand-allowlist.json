@@ -219,18 +219,6 @@
       "explanation": "Frozen Flow engine and legacy-pages spikes with their recorded evidence (bundle metafiles, environment topology, inventories), captured under the OpenPR name."
     },
     {
-      "id": "sylvode-formerly-notes",
-      "reason": "formerly_note",
-      "repo": "sylvode",
-      "paths": [
-        "CHANGELOG.md",
-        "apps/mcp-server/AGENTS.md",
-        ".github/workflows/release.yml"
-      ],
-      "pattern": "\\(formerly OpenPR(?: Webhook)?;?\\)?|Formerly OpenPR\\.|published as OpenPR|OpenPR-era|Legacy OpenPR names|legacy OpenPR filenames|OpenPR names \\(|OpenPR compatibility names",
-      "explanation": "Notes that Sylvode was formerly OpenPR and that OpenPR-era names keep working (ADR-0020 D4: documentation keeps the 'formerly OpenPR' note)."
-    },
-    {
       "id": "sylvode-legacy-negative-checks",
       "reason": "legacy_behaviour_test",
       "repo": "sylvode",

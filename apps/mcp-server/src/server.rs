@@ -1804,12 +1804,6 @@ impl McpServer {
                 "mimeType": "text/markdown"
             }),
             json!({
-                "uri": "sylvode://guides/agents",
-                "name": "Sylvode Agent Development Guide",
-                "description": "Repository guidelines, build commands, coding style, and testing procedures.",
-                "mimeType": "text/markdown"
-            }),
-            json!({
                 "uri": "sylvode://guides/workflows",
                 "name": "Common Workflow Patterns",
                 "description": "Recipes: fix an assigned issue, answer a mention, vote on a proposal, find and change data.",
@@ -2025,7 +2019,6 @@ impl McpServer {
         match uri.as_str() {
             "sylvode://skills/sylvode-mcp" => return markdown_resource(id, &uri, guides::SKILL_MD),
             "sylvode://skills/sylvode-mcp/tools" => return markdown_resource(id, &uri, guides::TOOLS_MD),
-            "sylvode://guides/agents" => return markdown_resource(id, &uri, guides::AGENTS_GUIDE_MD),
             "sylvode://guides/workflows" => return markdown_resource(id, &uri, guides::RECIPES_MD),
             "sylvode://scenario-templates" => {
                 return match self.client.list_scenario_templates(None, None).await {
@@ -2521,13 +2514,12 @@ enum ResourceSubject {
 /// value is interpolated into the API URL that both the policy lookup and the read
 /// itself address, so a value that could reshape that URL must never reach either.
 fn resource_policy_subject(uri: &str) -> Result<ResourceSubject, String> {
-    // The three guides are compile time constants and the scenario catalogue is a global
+    // The guides are compile time constants and the scenario catalogue is a global
     // catalogue served by `scenario_templates.list`/`get`, both `WorkspaceWide`.
     if matches!(
         uri,
         "sylvode://skills/sylvode-mcp"
             | "sylvode://skills/sylvode-mcp/tools"
-            | "sylvode://guides/agents"
             | "sylvode://guides/workflows"
             | "sylvode://scenario-templates"
     ) || parse_scenario_template_uri(uri).is_some()

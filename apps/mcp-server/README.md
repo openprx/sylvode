@@ -359,7 +359,6 @@ How calls are scoped:
 |---|---|
 | `sylvode://skills/sylvode-mcp` | The agent skill: the task procedure, finding and calling tools, conventions and recipes |
 | `sylvode://skills/sylvode-mcp/tools` | Every tool with its category, whether it reads or writes, and a one-line summary |
-| `sylvode://guides/agents` | Agent development guide: repository guidelines, build commands, coding style, testing |
 | `sylvode://guides/workflows` | Common workflow recipes: fix an assigned issue, answer a mention, vote on a proposal, find and change data |
 | `sylvode://scenario-templates` | Project creation templates with workflow, fields, resources, AI roles and governance |
 

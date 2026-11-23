@@ -122,7 +122,6 @@ async fn every_registered_resource_is_served_by_its_sylvode_identity_only() -> T
     let expected = [
         "sylvode://skills/sylvode-mcp",
         "sylvode://skills/sylvode-mcp/tools",
-        "sylvode://guides/agents",
         "sylvode://guides/workflows",
         "sylvode://scenario-templates",
         "sylvode://projects/{project_id}/issues",
@@ -364,7 +363,6 @@ async fn the_static_resources_are_the_embedded_generated_files() -> TestResult {
         ("sylvode://skills/sylvode-mcp", guides::SKILL_MD),
         ("sylvode://skills/sylvode-mcp/tools", guides::TOOLS_MD),
         ("sylvode://guides/workflows", guides::RECIPES_MD),
-        ("sylvode://guides/agents", guides::AGENTS_GUIDE_MD),
     ] {
         let response = server
             .handle_resources_read(Some(json!(1)), Some(json!({ "uri": uri })))
@@ -409,7 +407,6 @@ async fn the_resource_list_and_the_embedded_skill_match_the_catalogue() -> TestR
         [
             "sylvode://skills/sylvode-mcp",
             "sylvode://skills/sylvode-mcp/tools",
-            "sylvode://guides/agents",
             "sylvode://guides/workflows",
             "sylvode://scenario-templates",
         ]
@@ -423,7 +420,6 @@ async fn the_resource_list_and_the_embedded_skill_match_the_catalogue() -> TestR
     for name in ["projects.list", "work_items.update", "sylvode_task_get"] {
         assert!(guides::TOOLS_MD.contains(&format!("`{name}`")), "{name}");
     }
-    assert!(!guides::AGENTS_GUIDE_MD.contains("work_items.") && !guides::AGENTS_GUIDE_MD.contains("sylvode_"));
     Ok(())
 }
 
@@ -1584,7 +1580,6 @@ fn every_readable_resource_uri_is_governed_like_its_tool() -> TestResult {
     for uri in [
         "sylvode://skills/sylvode-mcp",
         "sylvode://skills/sylvode-mcp/tools",
-        "sylvode://guides/agents",
         "sylvode://guides/workflows",
         "sylvode://scenario-templates",
         "sylvode://scenario-templates/software-delivery",
@@ -1695,9 +1690,9 @@ async fn static_guides_are_served_without_consulting_any_policy() -> TestResult 
     // Base URL points at a port nothing listens on: any API call would fail the read.
     let server = server("http://127.0.0.1:1".to_string())?;
     let response = server
-        .handle_resources_read(Some(json!(1)), Some(json!({ "uri": "sylvode://guides/agents" })))
+        .handle_resources_read(Some(json!(1)), Some(json!({ "uri": "sylvode://guides/workflows" })))
         .await;
     let body = serde_json::to_string(&response)?;
-    assert!(body.contains("Sylvode Agent Guide"), "{body}");
+    assert!(body.contains("Common workflows"), "{body}");
     Ok(())
 }

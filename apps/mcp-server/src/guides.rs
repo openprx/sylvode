@@ -15,15 +15,3 @@ pub const RECIPES_MD: &str = include_str!("../../../skills/sylvode-mcp/generated
 
 /// The `instructions` of `initialize`.
 pub const SERVER_INSTRUCTIONS: &str = include_str!("../../../skills/sylvode-mcp/generated/server-instructions.md");
-
-/// `sylvode://guides/agents`: build and test notes for contributors; it names no tools.
-pub const AGENTS_GUIDE_MD: &str = r#"# Sylvode Agent Guide
-
-## Build
-cargo build --release --bin mcp-server
-
-## Test
-curl -X POST http://localhost:8090/mcp/rpc -H "Content-Type: application/json" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"
-
-## Commit Style: Conventional Commits (feat/fix/docs/ci)
-"#;
