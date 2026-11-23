@@ -23,7 +23,6 @@ function apis(over: Partial<Apis> = {}): { apis: Apis; calls: string[] } {
 		calls,
 		apis: {
 			workspaces: async () => (calls.push('workspaces'), page([{ id: 'w1', name: 'North' }])),
-			bots: async (w) => (calls.push(`bots:${w}`), ok([{ id: 'b1', name: 'Bot' }])),
 			forms: async (p) => (calls.push(`forms:${p}`), page([{ id: 'f1', name: 'Orders' }])),
 			...over
 		} as Apis
@@ -46,13 +45,11 @@ await suite.checkAsync('lists load on their own and are cached', async () => {
 	await data.loadWorkspaces();
 	assertEqual(data.workspaces.status, 'ready', 'ready');
 	assertEqual(data.workspaces.items[0].name, 'North', 'items');
-	await data.loadBots('w1');
 	await data.loadForms('p1');
-	assertEqual(data.botsOf('w1').items[0].name, 'Bot', 'bots');
 	assertEqual(data.formsOf('p1').items[0].id, 'f1', 'forms');
 	assertEqual(data.formsOf('p9').status, 'idle', 'other project untouched');
 	await data.loadForms('p1');
-	assertDeepEqual(calls, ['workspaces', 'bots:w1', 'forms:p1'], 'no repeat requests');
+	assertDeepEqual(calls, ['workspaces', 'forms:p1'], 'no repeat requests');
 	await data.loadForms('p1', true);
 	assertEqual(calls.filter((c) => c === 'forms:p1').length, 2, 'force reloads');
 });
@@ -60,18 +57,18 @@ await suite.checkAsync('lists load on their own and are cached', async () => {
 await suite.checkAsync(
 	'one failed list does not touch the others; failure can be retried',
 	async () => {
-		let botCalls = 0;
+		let formCalls = 0;
 		const { apis: a } = apis({
-			bots: async () => (++botCalls === 1 ? fail(500) : ok([{ id: 'b1', name: 'Bot' }])),
-			forms: async () => fail(403)
+			forms: async () => (++formCalls === 1 ? fail(500) : page([{ id: 'f1', name: 'Orders' }])),
+			workspaces: async () => fail(403)
 		});
 		const data = new ColumnData(a);
-		await Promise.all([data.loadWorkspaces(), data.loadBots('w1'), data.loadForms('p1')]);
-		assertEqual(data.workspaces.status, 'ready', 'workspaces fine');
-		assertEqual(data.botsOf('w1').status, 'error', 'bots failed');
-		assertEqual(data.formsOf('p1').status, 'forbidden', 'forms forbidden');
-		await data.loadBots('w1');
-		assertEqual(data.botsOf('w1').status, 'ready', 'retry after failure succeeds without force');
+		await Promise.all([data.loadWorkspaces(), data.loadForms('p1')]);
+		assertEqual(data.workspaces.status, 'forbidden', 'workspaces forbidden');
+		assertEqual(data.formsOf('p1').status, 'error', 'forms failed');
+		await data.loadForms('p1');
+		assertEqual(data.formsOf('p1').status, 'ready', 'retry after failure succeeds without force');
+		assertEqual(data.workspaces.status, 'forbidden', 'the other list is untouched');
 	}
 );
 

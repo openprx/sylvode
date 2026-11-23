@@ -12,18 +12,20 @@ their members, projects and work items, notifications and search. Related guides
 
 ### The rail
 
-The narrow bar on the left is the rail. It always shows four destinations:
+The narrow bar on the left is the rail. It always shows three destinations:
 
 | Destination | Opens |
 |---|---|
 | **Home** | Your workspaces, the work assigned to you and recent activity (`/workspace`). |
 | **Projects** | The project list of the current workspace (`/workspace/{workspaceId}/projects`). |
 | **Flow** | Flow pages of the current scope: your personal Flow (`/flow`) or the workspace's Flow (`/workspace/{workspaceId}/flow`). |
-| **Agents** | Bots and their connections (`/agents`). See [Agents](agents.md). |
 
 **Governance** is not shown by default. Add it, or the page you are on, as a shortcut with
 **Edit navigation** at the bottom of the rail. The rail holds up to eight shortcuts. **Restore
-default navigation** removes all shortcuts and keeps the four main destinations.
+default navigation** removes all shortcuts and keeps the three main destinations.
+
+Bots and their connections are not a rail destination: manage bots in the workspace's **Members and
+bots** page and connect them to a project in its **Execution** settings (see [Agents](agents.md)).
 
 Each destination remembers the last page you opened in it, per scope, and takes you back there.
 
@@ -45,7 +47,7 @@ workspace." instead of opening it. See [Flow](flow.md).
 |---|---|
 | Ctrl+K (Cmd+K on macOS) | Opens **Search and commands**: search projects, forms, Flow pages, issues and comments, switch scope or workspace, change theme or language, open settings, sign out. |
 | Ctrl+, (Cmd+,) | Opens settings. |
-| G then H, P, F or A | Goes to **Home**, **Projects**, **Flow** or **Agents**. |
+| G then H, P or F | Goes to **Home**, **Projects** or **Flow**. |
 | G then S | Opens settings. |
 | P on a focused row of the secondary column | Adds that row to the rail as a shortcut. |
 

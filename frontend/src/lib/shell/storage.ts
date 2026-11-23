@@ -111,13 +111,7 @@ export interface ShellFile {
 	recent: RecentEntry[];
 }
 
-export const DESTINATION_IDS: readonly Destination[] = [
-	'home',
-	'projects',
-	'flow',
-	'agents',
-	'governance'
-];
+export const DESTINATION_IDS: readonly Destination[] = ['home', 'projects', 'flow', 'governance'];
 const LAST_KEYS: readonly LastKey[] = [...DESTINATION_IDS, 'settings'];
 
 export function emptyShellFile(): ShellFile {

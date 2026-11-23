@@ -10,8 +10,8 @@ const rule = (pattern: RegExp, key: string): TitleRule => ({ pattern, key });
 
 /**
  * Document title of each route, as the app layout built it; first match wins. The tail adds the
- * routes of the shell redesign: the Agents root and the project Apps index, and the project
- * pages that moved under the workspace (audit reports).
+ * routes of the shell redesign: the project Apps index and the project pages that moved under the
+ * workspace (audit reports).
  */
 const RULES: readonly TitleRule[] = [
 	rule(/^\/plugins(\/|$)/, 'plugins.library.title'),
@@ -72,7 +72,6 @@ const RULES: readonly TitleRule[] = [
 	rule(/^\/workspace\/[^/]+\/projects\/[^/]+\/forms$/, 'pageTitle.projectForms'),
 	rule(/^\/workspace\/[^/]+\/projects$/, 'pageTitle.workspaceProjects'),
 	rule(/^\/workspace\/[^/]+\/projects\/[^/]+$/, 'pageTitle.projectDetail'),
-	rule(/^\/agents$/, 'shell.pageTitle.agents'),
 	rule(/^\/workspace\/[^/]+\/projects\/[^/]+\/apps$/, 'shell.pageTitle.projectApps'),
 	rule(
 		/^\/workspace\/[^/]+\/projects\/[^/]+\/audit-reports\/[^/]+$/,

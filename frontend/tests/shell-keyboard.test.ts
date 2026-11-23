@@ -78,16 +78,12 @@ suite.check('Cmd or Ctrl+comma opens settings', () => {
 
 suite.check('G then H, P, F, A, S', () => {
 	const s = setup();
-	for (const key of ['h', 'p', 'f', 'a', 's']) {
+	for (const key of ['h', 'p', 'f', 's']) {
 		s.press('g');
 		s.press(key);
 	}
-	assertDeepEqual(
-		s.log,
-		['go:home', 'go:projects', 'go:flow', 'go:agents', 'settings'],
-		'all five'
-	);
-	assertEqual(s.prevented(), 5, 'second key prevented');
+	assertDeepEqual(s.log, ['go:home', 'go:projects', 'go:flow', 'settings'], 'all four');
+	assertEqual(s.prevented(), 4, 'second key prevented');
 });
 
 suite.check('the second key must follow within a second', () => {

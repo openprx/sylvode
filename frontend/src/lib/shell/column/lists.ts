@@ -172,37 +172,6 @@ export function flowList(input: {
 	return { rows, notice, loading };
 }
 
-// --- Agents ---
-
-export type AgentsMode = 'personal' | 'workspace';
-
-export function agentsMode(scope: ScopeKey): AgentsMode {
-	return scope === PERSONAL_SCOPE ? 'personal' : 'workspace';
-}
-
-/** Bots are listed only for owners and admins: the endpoint refuses everyone else. */
-export function showBots(scope: ScopeKey, workspaceAdmin: boolean): boolean {
-	return scope !== PERSONAL_SCOPE && workspaceAdmin;
-}
-
-export interface BotLike {
-	id: string;
-	name: string;
-}
-
-/** Bots link to the members page until bots move to their own settings section. */
-export function botRows(workspaceId: string, bots: readonly BotLike[]): NavRow[] {
-	return bots.map((bot) => ({
-		id: `bot:${bot.id}`,
-		label: bot.name,
-		href: `/workspace/${enc(workspaceId)}/members`,
-		glyph: 'bot' as const,
-		level: 0,
-		parentId: null,
-		attrs: { 'data-agent-kind': 'bot', 'data-bot-id': bot.id }
-	}));
-}
-
 // --- Governance ---
 
 export function governanceRows(input: { instanceAdmin: boolean; tr: Translate }): NavRow[] {

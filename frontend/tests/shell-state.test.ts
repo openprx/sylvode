@@ -82,7 +82,6 @@ suite.check('scope: workspace URL wins, personal Flow is personal, else unchange
 		'workspace'
 	);
 	assertEqual(scopeOfRoute(url('/flow/o'), ctx('/flow/o'), 'w1'), 'personal', 'personal flow');
-	assertEqual(scopeOfRoute(url('/agents'), ctx('/agents'), 'w1'), 'w1', 'agents keeps scope');
 });
 
 suite.check('state persists per user and survives a reload', () => {

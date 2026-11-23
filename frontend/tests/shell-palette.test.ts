@@ -231,7 +231,7 @@ suite.check('Go to lists reachable destinations, Settings, sections and All work
 	});
 	const ids = entries.map((e) => e.id);
 	assert(
-		ids.includes('goto:home') && ids.includes('goto:projects') && ids.includes('goto:agents'),
+		ids.includes('goto:home') && ids.includes('goto:projects') && !ids.includes('goto:agents'),
 		'destinations'
 	);
 	assert(!ids.includes('goto:flow'), 'Flow is off: not offered');

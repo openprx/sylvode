@@ -1,11 +1,10 @@
 /**
- * Lists the secondary column fetches from the existing API clients: workspaces, bots, forms of a
- * project. Each list loads and fails on its own, so one
- * failed list never blocks the rest of the column. Requests go through `ColumnApis` so tests
+ * Lists the secondary column fetches from the existing API clients: workspaces and the forms of a
+ * project. Each list loads and fails on its own, so one failed list never blocks the rest of the
+ * column. Requests go through `ColumnApis` so tests
  * can pass fakes; `defaultColumnApis` (`column-apis.ts`) calls the real clients.
  */
 import type { ApiResult, PaginatedData } from '#lib/api/client.js';
-import type { BotLike } from './lists';
 import type { WorkspaceRef } from './scope';
 
 export type LoadStatus = 'idle' | 'loading' | 'ready' | 'error' | 'forbidden';
@@ -24,7 +23,6 @@ export interface FormRef {
 
 export interface ColumnApis {
 	workspaces(): Promise<ApiResult<PaginatedData<WorkspaceRef>>>;
-	bots(workspaceId: string): Promise<ApiResult<BotLike[]>>;
 	forms(projectId: string): Promise<ApiResult<PaginatedData<FormRef>>>;
 }
 
@@ -47,7 +45,6 @@ const fromPage = <T>(page: PaginatedData<T>) => ({
 
 export class ColumnData {
 	workspaces = $state.raw<Load<WorkspaceRef>>(IDLE);
-	private bots = $state.raw<Record<string, Load<BotLike>>>({});
 	private forms = $state.raw<Record<string, Load<FormRef>>>({});
 	private apps = $state.raw<Record<string, number | null>>({});
 
@@ -83,23 +80,6 @@ export class ColumnData {
 			force,
 			(v) => (this.workspaces = v),
 			async () => loadFromResult(await this.apis.workspaces(), fromPage)
-		);
-	}
-
-	botsOf(workspaceId: string): Load<BotLike> {
-		return this.bots[workspaceId] ?? IDLE;
-	}
-	loadBots(workspaceId: string, force = false): Promise<void> {
-		return this.run(
-			`bots:${workspaceId}`,
-			this.botsOf(workspaceId),
-			force,
-			(v) => (this.bots = { ...this.bots, [workspaceId]: v }),
-			async () =>
-				loadFromResult(await this.apis.bots(workspaceId), (items) => ({
-					items: Array.isArray(items) ? items : [],
-					total: null
-				}))
 		);
 	}
 

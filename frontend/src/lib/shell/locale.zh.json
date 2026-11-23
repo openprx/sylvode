@@ -4,7 +4,6 @@
 			"home": "首页",
 			"projects": "项目",
 			"flow": "Flow",
-			"agents": "智能体",
 			"governance": "治理",
 			"settings": "设置",
 			"flowUnavailablePersonal": "你的账号暂不可使用 Flow。",
@@ -32,7 +31,6 @@
 			"projectPlugins": "插件"
 		},
 		"pageTitle": {
-			"agents": "Sylvode - 智能体",
 			"projectApps": "Sylvode - 应用"
 		},
 		"shortcuts": {

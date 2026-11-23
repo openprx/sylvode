@@ -10,7 +10,6 @@
 	import type { Destination, RouteContext } from '../route-map';
 	import type { Shortcut } from '../shortcuts.svelte';
 	import type { ShellState } from '../shell-state.svelte';
-	import AgentsColumn from './AgentsColumn.svelte';
 	import { defaultColumnApis } from './column-apis';
 	import { ColumnData } from './column-data.svelte';
 	import FlowColumn from './FlowColumn.svelte';
@@ -128,8 +127,6 @@
 				<ProjectsColumn {shell} {scope} {url} {ctx} {viewer} {data} {onpin} onfollow={follow} />
 			{:else if destination === 'flow'}
 				<FlowColumn {scope} {url} {viewer} {data} onfollow={follow} />
-			{:else if destination === 'agents'}
-				<AgentsColumn {scope} {url} {viewer} {data} onfollow={follow} />
 			{:else}
 				<GovernanceColumn {url} instanceAdmin={viewer.instanceAdmin} onfollow={follow} />
 			{/if}

@@ -53,9 +53,9 @@ const account = {
 const shortcuts = () => new RailShortcuts({ userId: 'u1', storage: new MemoryStore() });
 const noop = () => {};
 
-suite.check('four destinations in order, the current one selected', () => {
+suite.check('three destinations in order, the current one selected', () => {
 	const m = model('/workspace/w1/projects/p1/issues');
-	assertEqual(m.destinations.map((d) => d.id).join(','), 'home,projects,flow,agents', 'order');
+	assertEqual(m.destinations.map((d) => d.id).join(','), 'home,projects,flow', 'order');
 	assertEqual(
 		m.destinations
 			.filter((d) => d.selected)
@@ -185,7 +185,7 @@ await suite.checkAsync('Rail renders nav[aria-label=Primary] with the current it
 	});
 	const nav = attrs(html, /<nav[^>]*>/);
 	assert(nav.includes('aria-label="shell.rail.label"') && nav.includes('data-layout="rail"'), nav);
-	assertEqual((html.match(/data-rail-destination="/g) ?? []).length, 4, 'four destinations');
+	assertEqual((html.match(/data-rail-destination="/g) ?? []).length, 3, 'three destinations');
 	const projects = attrs(html, /<a[^>]*data-rail-destination="projects"[^>]*>/);
 	assert(
 		projects.includes('aria-current="page"') && projects.includes('aria-expanded="true"'),
@@ -257,7 +257,7 @@ await suite.checkAsync(
 			nav.includes('aria-label="shell.rail.label"') && nav.includes('data-layout="topbar"'),
 			nav
 		);
-		assertEqual((html.match(/data-rail-destination="/g) ?? []).length, 4, 'four destinations');
+		assertEqual((html.match(/data-rail-destination="/g) ?? []).length, 3, 'three destinations');
 		assert(html.includes('data-shell="rail-more"'), 'more button');
 	}
 );
@@ -274,7 +274,7 @@ await suite.checkAsync('ShortcutEditor lists locked destinations and the shortcu
 		current: null,
 		confirmRestore: async () => true
 	});
-	assertEqual((html.match(/data-editor-fixed=/g) ?? []).length, 4, 'fixed rows');
+	assertEqual((html.match(/data-editor-fixed=/g) ?? []).length, 3, 'fixed rows');
 	assert(html.includes('data-editor-shortcut="governance:governance"'), 'shortcut row');
 	assert(html.includes('shell.rail.editor.restore'), 'restore');
 });

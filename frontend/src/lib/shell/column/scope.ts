@@ -80,8 +80,6 @@ export function scopeChangeTarget(input: ScopeChangeInput): string | null {
 			if (ctx.workspaceId && ctx.workspaceId !== scope)
 				return personal ? '/workspace' : `/workspace/${ws}`;
 			return null;
-		case 'agents':
-			return ctx.workspaceId && ctx.workspaceId !== scope ? '/agents' : null;
 		default:
 			return null;
 	}

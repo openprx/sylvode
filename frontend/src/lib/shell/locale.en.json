@@ -4,7 +4,6 @@
 			"home": "Home",
 			"projects": "Projects",
 			"flow": "Flow",
-			"agents": "Agents",
 			"governance": "Governance",
 			"settings": "Settings",
 			"flowUnavailablePersonal": "Flow is not available for your account.",
@@ -32,7 +31,6 @@
 			"projectPlugins": "Plugins"
 		},
 		"pageTitle": {
-			"agents": "Sylvode - Agents",
 			"projectApps": "Sylvode - Apps"
 		},
 		"shortcuts": {

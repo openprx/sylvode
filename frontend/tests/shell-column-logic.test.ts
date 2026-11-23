@@ -26,8 +26,6 @@ import {
 } from '../src/lib/shell/column/rows';
 import { scopeChangeTarget, scopeLabel, sortWorkspaces } from '../src/lib/shell/column/scope';
 import {
-	agentsMode,
-	botRows,
 	flowList,
 	formsGroupToExpand,
 	governanceRows,
@@ -36,7 +34,6 @@ import {
 	projectsOfWorkspace,
 	recentRows,
 	shouldRefreshProjects,
-	showBots,
 	workspaceChoiceRows
 } from '../src/lib/shell/column/lists';
 import { appsCountOf } from '../src/lib/shell/column/apps-count';
@@ -299,7 +296,6 @@ suite.check('scope change: where each destination goes', () => {
 	assertEqual(go('/workspace/w0', 'w1'), '/workspace/w1', 'home with another workspace id');
 	assertEqual(go('/workspace/w0', 'personal'), '/workspace', 'home to personal');
 	assertEqual(go('/inbox', 'w1'), null, 'home without a workspace id stays');
-	assertEqual(go('/agents', 'w1'), null, 'agents root stays');
 	assertEqual(go('/governance', 'w1'), null, 'governance stays');
 	assertEqual(
 		go('/workspace/w0/members', 'w1', { adminInNewScope: true }),
@@ -426,19 +422,6 @@ suite.check('flow list: private, workspace, off, unknown and personal-unavailabl
 		list('personal', { personal: true, workspaces: {} }).rows.length,
 		1,
 		'personal available'
-	);
-});
-
-suite.check('agents: personal is empty, bots only for admins', () => {
-	assertEqual(agentsMode('personal'), 'personal', 'personal');
-	assertEqual(agentsMode(W), 'workspace', 'workspace');
-	assertEqual(showBots(W, true), true, 'admin');
-	assertEqual(showBots(W, false), false, 'member');
-	assertEqual(showBots('personal', true), false, 'personal');
-	assertEqual(
-		botRows(W, [{ id: 'b1', name: 'Deploy bot' }])[0].href,
-		'/workspace/w1/members',
-		'bot link'
 	);
 });
 

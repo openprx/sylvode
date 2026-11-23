@@ -59,13 +59,12 @@ const SEQUENCE_TARGETS: Record<string, Exclude<Destination, 'governance'> | 'set
 	h: 'home',
 	p: 'projects',
 	f: 'flow',
-	a: 'agents',
 	s: 'settings'
 };
 
 /**
  * Builds the keydown handler for the global shortcuts: Cmd/Ctrl+K (palette), Cmd/Ctrl+, and
- * G then S (settings), G then H, P, F, A (destinations), P on a focused column row (add to
+ * G then S (settings), G then H, P, F (destinations), P on a focused column row (add to
  * rail). Escape is never handled here: it belongs to the topmost layer. Returns true when the
  * event was consumed.
  */

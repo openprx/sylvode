@@ -6,12 +6,11 @@ export type { Destination };
 export type ScopeKey = string;
 export const PERSONAL_SCOPE = 'personal';
 
-/** The four default destinations: fixed, not removable. Governance is an addable shortcut. */
+/** The three default destinations: fixed, not removable. Governance is an addable shortcut. */
 export const DEFAULT_DESTINATIONS = [
 	'home',
 	'projects',
-	'flow',
-	'agents'
+	'flow'
 ] as const satisfies readonly Destination[];
 
 export interface DestinationMeta {
@@ -33,7 +32,6 @@ export const DESTINATIONS: Record<Destination, DestinationMeta> = {
 		fixed: true
 	},
 	flow: { id: 'flow', labelKey: 'shell.destinations.flow', glyph: 'workflow', fixed: true },
-	agents: { id: 'agents', labelKey: 'shell.destinations.agents', glyph: 'bot', fixed: true },
 	governance: {
 		id: 'governance',
 		labelKey: 'shell.destinations.governance',
@@ -82,8 +80,6 @@ export function destinationRoot(
 			return flow.workspaces[scope] === true
 				? { available: true, href: `/workspace/${ws}/flow` }
 				: { available: false, reasonKey: 'shell.destinations.flowUnavailableWorkspace' };
-		case 'agents':
-			return { available: true, href: '/agents' };
 		case 'governance':
 			return { available: true, href: '/governance' };
 	}

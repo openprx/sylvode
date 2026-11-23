@@ -17,9 +17,7 @@
 				"projects": "项目",
 				"workspaces": "工作区",
 				"forms": "表单",
-				"flow": "Flow",
-				"agents": "智能体",
-				"bots": "机器人"
+				"flow": "Flow"
 			},
 			"home": {
 				"overview": "概览",
@@ -36,14 +34,6 @@
 				"off": "此工作区未开启 Flow",
 				"unavailablePersonal": "你的账号暂不可使用 Flow。",
 				"settingsLink": "Flow 设置"
-			},
-			"agents": {
-				"bots": "机器人",
-				"connected": "已连接的机器人",
-				"personalEmpty": "当前版本中，智能体属于某个工作区。",
-				"noBots": "此工作区没有机器人。",
-				"noConnection": "未连接机器人",
-				"choose": "在列表中选择一个智能体。"
 			},
 			"governance": {
 				"centre": "治理中心",

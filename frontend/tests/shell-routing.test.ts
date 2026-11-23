@@ -32,7 +32,8 @@ suite.check('destinations by route', () => {
 		['/flow/package', 'flow'],
 		[`/workspace/${W}/flow/o1`, 'flow'],
 		['/shared-blocks/s1', 'flow'],
-		['/agents', 'agents'],
+		// The Agents destination is gone: /agents is no destination of its own.
+		['/agents', 'home'],
 		['/governance', 'governance'],
 		['/proposals/abc/chain', 'governance'],
 		['/trust-scores/appeals', 'governance'],
@@ -97,7 +98,7 @@ suite.check('unknown paths fall back to Home', () => {
 suite.check('destination roots by scope', () => {
 	const off = { personal: false, workspaces: {} };
 	const on = { personal: true, workspaces: { [W]: true } };
-	assertDeepEqual([...DEFAULT_DESTINATIONS], ['home', 'projects', 'flow', 'agents'], 'defaults');
+	assertDeepEqual([...DEFAULT_DESTINATIONS], ['home', 'projects', 'flow'], 'defaults');
 	assertDeepEqual(
 		destinationRoot('home', 'personal', off),
 		{ available: true, href: '/workspace' },
@@ -128,11 +129,6 @@ suite.check('destination roots by scope', () => {
 		destinationRoot('flow', W, { personal: true, workspaces: { [W]: undefined } }).available,
 		false,
 		'flow unknown'
-	);
-	assertDeepEqual(
-		destinationRoot('agents', W, off),
-		{ available: true, href: '/agents' },
-		'agents'
 	);
 	assertDeepEqual(
 		destinationRoot('governance', W, off),
@@ -270,7 +266,6 @@ suite.check('page titles', () => {
 		'settings landing'
 	);
 	assertEqual(pageTitle(`/workspace/${W}/projects/${P}`, t), 'pageTitle.projectDetail', 'project');
-	assertEqual(pageTitle('/agents', t), 'shell.pageTitle.agents', 'agents');
 	assertEqual(
 		pageTitle(`/workspace/${W}/projects/${P}/apps`, t),
 		'shell.pageTitle.projectApps',

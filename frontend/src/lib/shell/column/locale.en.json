@@ -17,9 +17,7 @@
 				"projects": "projects",
 				"workspaces": "workspaces",
 				"forms": "forms",
-				"flow": "Flow",
-				"agents": "agents",
-				"bots": "bots"
+				"flow": "Flow"
 			},
 			"home": {
 				"overview": "Overview",
@@ -36,14 +34,6 @@
 				"off": "Flow is off in this workspace",
 				"unavailablePersonal": "Flow is not available for your account.",
 				"settingsLink": "Flow settings"
-			},
-			"agents": {
-				"bots": "Bots",
-				"connected": "Connected bots",
-				"personalEmpty": "Agents belong to a workspace in this version.",
-				"noBots": "No bots in this workspace.",
-				"noConnection": "No bot connected",
-				"choose": "Choose an agent in the list."
 			},
 			"governance": {
 				"centre": "Governance centre",

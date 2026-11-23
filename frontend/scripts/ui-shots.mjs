@@ -60,7 +60,6 @@ export const ROUTES = [
 	{ name: 'settings', path: '/settings' },
 	{ name: 'plugins', path: '/plugins' },
 	{ name: 'plugins-creator', path: '/plugins/creator' },
-	{ name: 'agents', path: '/agents' },
 	{ name: 'flow-package', path: '/flow/package' },
 	{ name: 'flow-list', path: '/flow' },
 	{ name: 'governance', path: '/governance' },
