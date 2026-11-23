@@ -1008,7 +1008,6 @@ contains "delivery manifest includes release gate JSON verifier" "scripts/prepar
 contains "delivery manifest includes release gate JSON contract smoke" "scripts/prepare-universal-forms-delivery-manifest.sh" "release gate JSON contract smoke"
 contains "delivery manifest includes release gate output smoke" "scripts/prepare-universal-forms-delivery-manifest.sh" "release gate output smoke"
 contains "delivery manifest includes MCP app AGENTS guide" "scripts/prepare-universal-forms-delivery-manifest.sh" "MCP app AGENTS guide"
-contains "delivery manifest includes contributing guide" "scripts/prepare-universal-forms-delivery-manifest.sh" "contributing guide"
 contains "delivery manifest includes frontend README" "scripts/prepare-universal-forms-delivery-manifest.sh" "frontend README"
 contains "delivery manifest includes frontend quickstart" "scripts/prepare-universal-forms-delivery-manifest.sh" "frontend quickstart"
 contains "delivery manifest includes compose stack" "scripts/prepare-universal-forms-delivery-manifest.sh" "compose stack"

@@ -296,14 +296,12 @@ manual_status="$(status_for "用户侧人工验收")"
   manifest_row "project release readiness JSON schema" "$PROJECT_RELEASE_READINESS_JSON_SCHEMA_PATH"
   manifest_row "delivery manifest JSON schema" "$DELIVERY_MANIFEST_JSON_SCHEMA_PATH"
   manifest_row "universal forms guide" "$ROOT_DIR/docs/universal-forms-and-plugins.md"
-  manifest_row "acceptance guide" "$ROOT_DIR/docs/universal-forms-acceptance.md"
   manifest_row "production runbook" "$ROOT_DIR/docs/universal-forms-production.md"
   printf '\n'
 
   printf '## Contributor Docs\n\n'
   printf '| Label | Path | Bytes | SHA256 |\n'
   printf '| --- | --- | --- | --- |\n'
-  manifest_row "contributing guide" "$ROOT_DIR/CONTRIBUTING.md"
   manifest_row "CI workflow" "$ROOT_DIR/.github/workflows/ci.yml"
   manifest_row "frontend README" "$ROOT_DIR/frontend/README.md"
   manifest_row "frontend quickstart" "$ROOT_DIR/frontend/QUICKSTART.md"

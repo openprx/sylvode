@@ -569,7 +569,6 @@ verify_manifest_checksum "MCP app AGENTS guide" "$ROOT_DIR/apps/mcp-server/AGENT
 verify_manifest_checksum "MCP skill guide" "$ROOT_DIR/skills/sylvode-mcp/SKILL.md"
 verify_manifest_checksum "scenario template catalog" "$ROOT_DIR/docs/scenario-templates.md"
 verify_manifest_checksum "implementation map" "$ROOT_DIR/docs/universal-forms-implementation-map.md"
-verify_manifest_checksum "contributing guide" "$ROOT_DIR/CONTRIBUTING.md"
 verify_manifest_checksum "CI workflow" "$ROOT_DIR/.github/workflows/ci.yml"
 verify_manifest_checksum "frontend README" "$ROOT_DIR/frontend/README.md"
 verify_manifest_checksum "frontend quickstart" "$ROOT_DIR/frontend/QUICKSTART.md"

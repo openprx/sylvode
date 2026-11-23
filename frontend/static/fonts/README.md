@@ -10,4 +10,3 @@ Both faces are licensed under the SIL Open Font License 1.1 (full text in the LI
 
 The `@font-face` rules are in `src/app.css`. They declare the families `Hanken Grotesk` and
 `JetBrains Mono`, the names used by the `--rf-font-*-stack` tokens in `src/tokens.css`.
-Nothing applies them yet.

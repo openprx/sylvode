@@ -113,7 +113,7 @@ POST /api/v1/projects/:project_id/bot-connections
 Content-Type: application/json
 
 {"bot": {"name": "Build bot"}, "runner_url": "https://runner.example.net:9090",
- "cli": "claude", "working_directory": "/home/dev/work/svwl",
+ "cli": "claude", "working_directory": "/srv/projects/example",
  "channel": "tmux", "on_complete_state": "auto", "on_fail_label_id": null,
  "governance": {"max_domain_level": "voter", "can_veto_human_consensus": false,
                 "reason_min_length": 50, "domain_overrides": {}}}

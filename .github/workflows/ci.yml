@@ -73,7 +73,7 @@ jobs:
         run: bash scripts/test-nginx-oauth-locations.sh
 
       # Single-repository form only: the sibling repositories are not checked out here. The
-      # five-repository release form runs locally (see CONTRIBUTING, "Brand residue gate").
+      # five-repository release form runs locally (see scripts/verify-sylvode-brand-residue.sh --help).
       - name: Brand residue gate (this repository)
         run: |
           bash scripts/verify-sylvode-brand-residue.sh --json --strict >/dev/null

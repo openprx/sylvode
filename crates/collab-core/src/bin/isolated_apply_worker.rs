@@ -719,8 +719,8 @@ fn exit_without_response(status: i32) -> ! {
 ///
 /// # Why this cannot run in production
 /// Gated on `cfg(debug_assertions)`, which is `false` for every `--release` build -- this
-/// workspace's standard production build (`cargo build --release --all-features`, per this
-/// repository's `CLAUDE.md`) does not compile this module in at all. There is no environment
+/// workspace's standard production build (`cargo build --release --all-features`, as the
+/// repository's build instructions state) does not compile this module in at all. There is no environment
 /// variable, flag, or other runtime toggle that can make a `--release` compile of
 /// `collab-isolated-apply-worker` execute a single line of this module; it is not merely inert,
 /// its code does not exist in that binary. It is *additionally* gated on [`ENV_VAR`]'s presence,

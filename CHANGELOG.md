@@ -10,6 +10,29 @@ name.
 
 ## [Unreleased]
 
+### Changed
+
+- **Report schemas moved to `scripts/schemas/`.** The JSON schemas that the delivery, readiness
+  and Flow evidence scripts and the project release readiness endpoint read were moved from
+  `docs/schemas/` to `scripts/schemas/`; every script, test and documentation index entry that names
+  them uses the new path.
+
+### Removed
+
+- **Internal documents.** The repository now holds only licences, notices, changelogs and feature
+  descriptions. Removed: the contributor guide and the agent instruction file at the root, the
+  planning, requirement, acceptance, audit and baseline documents and the v1 stable runbook under
+  `docs/`, the design notes under `frontend/src/lib/ui/`, the OAuth end-to-end deployment notes and
+  test plan, and the spike sign-off record and evidence source copies. The OAuth acceptance record
+  template is now a TypeScript module next to its reporter, the vendored `loro-prosemirror` and
+  SeaORM notes are reduced to provenance notices, and the universal forms audits no longer check the
+  removed documents.
+
+### Fixed
+
+- **Windows build.** The thread CPU clock is read on Unix only, so every workspace binary now builds
+  for the Windows target; CI checks that target in the `windows-build` job.
+
 ## [0.5.0] - 2026-11-23
 
 ### Added

@@ -163,8 +163,7 @@ for path in \
   "$ROOT_DIR/scripts/verify-universal-forms-acceptance-signoff.sh" \
   "$ROOT_DIR/scripts/finalize-universal-forms-acceptance.sh" \
   "$ROOT_DIR/scripts/verify-universal-forms-manual-signoff-consistency.sh" \
-  "$ROOT_DIR/docs/universal-forms-and-plugins.md" \
-  "$ROOT_DIR/docs/universal-forms-acceptance.md"; do
+  "$ROOT_DIR/docs/universal-forms-and-plugins.md"; do
   require_file "$path"
 done
 
@@ -240,8 +239,6 @@ check "all automated evidence checks are PASS" equals "$pass_count" "$summary_to
 check "automated check index row count matches total" equals "$check_index_rows" "$summary_total"
 check "automated check index has no failed rows" equals "$check_index_failed_rows" "0"
 check "manual signoff table has 7 rows" equals "$manual_total" "7"
-check "acceptance script is documented" contains "scripts/acceptance-universal-forms.sh --full" "$ROOT_DIR/docs/universal-forms-acceptance.md"
-check "finalize script is documented" contains "scripts/finalize-universal-forms-acceptance.sh" "$ROOT_DIR/docs/universal-forms-acceptance.md"
 check "tracker records finalize verifier evidence" contains "scripts/finalize-universal-forms-acceptance.sh" "$TRACKER_PATH"
 check "runbook/evidence manual signoff consistency passes" "$ROOT_DIR/scripts/verify-universal-forms-manual-signoff-consistency.sh" "$RUNBOOK_PATH" "$REPORT_PATH"
 

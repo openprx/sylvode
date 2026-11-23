@@ -6,7 +6,6 @@
 - `./universal-forms-and-plugins.md` — Universal forms, WASM plugins, scenario templates, business events and webhooks, and restaurant delivery reference.
 - `./universal-forms-implementation-map.md` — Source-module, public-surface, verification-command, and status-marker map for the universal business platform.
 - `./scenario-templates.md` — Catalog of built-in scenario templates, generated forms, integrations, and usage paths.
-- `./universal-forms-acceptance.md` — Acceptance guide for the universal forms and restaurant reference workflow.
 - `./universal-forms-production.md` — Production runbook for operating Sylvode as a generic business platform.
 - `../scripts/schemas/openpr-universal-forms-readiness.schema.json` — JSON Schema for the machine-readable universal forms readiness report.
 - `../scripts/schemas/openpr-universal-forms-signoff-status.schema.json` — JSON Schema for the machine-readable manual signoff progress report.

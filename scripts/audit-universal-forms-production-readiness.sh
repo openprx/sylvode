@@ -23,7 +23,6 @@ BENCHMARK_SCRIPT="$ROOT_DIR/scripts/benchmark.sh"
 PRODUCTION_OBJECT_STORAGE_SMOKE="$ROOT_DIR/scripts/smoke-universal-forms-production-object-storage.mjs"
 PRODUCTION_ATTACHMENT_LIFECYCLE_SMOKE="$ROOT_DIR/scripts/smoke-universal-forms-production-attachment-lifecycle.mjs"
 PRODUCTION_SIGNATURE_LIFECYCLE_SMOKE="$ROOT_DIR/scripts/smoke-universal-forms-production-signature-lifecycle.mjs"
-CONTRIBUTING_DOC="$ROOT_DIR/CONTRIBUTING.md"
 ROOT_README="$ROOT_DIR/README.md"
 CI_WORKFLOW="$ROOT_DIR/.github/workflows/ci.yml"
 
@@ -176,7 +175,6 @@ for path in \
   "$PRODUCTION_OBJECT_STORAGE_SMOKE" \
   "$PRODUCTION_ATTACHMENT_LIFECYCLE_SMOKE" \
   "$PRODUCTION_SIGNATURE_LIFECYCLE_SMOKE" \
-  "$CONTRIBUTING_DOC" \
   "$ROOT_README" \
   "$CI_WORKFLOW" \
   "$ROOT_DIR/scripts/ci-universal-forms-gates.sh"; do
@@ -432,13 +430,6 @@ contains "CI uses universal forms gate wrapper" "$CI_WORKFLOW" "bash scripts/ci-
 contains "CI wrapper runs PostgreSQL-only security scope audit" "$ROOT_DIR/scripts/ci-universal-forms-gates.sh" "scripts/audit-universal-forms-security-scope.sh"
 contains "CI wrapper runs universal forms source coverage audit" "$ROOT_DIR/scripts/ci-universal-forms-gates.sh" "scripts/audit-universal-forms-source-coverage.sh"
 contains "CI wrapper runs universal forms production readiness audit" "$ROOT_DIR/scripts/ci-universal-forms-gates.sh" "scripts/audit-universal-forms-production-readiness.sh"
-contains "CONTRIBUTING uses docker compose v2" "$CONTRIBUTING_DOC" "docker compose exec postgres"
-contains "CONTRIBUTING uses dev-up for database-only startup" "$CONTRIBUTING_DOC" "bash scripts/dev-up.sh"
-contains "CONTRIBUTING explains dev-up localhost database" "$CONTRIBUTING_DOC" "temporary localhost-only port override"
-contains "CONTRIBUTING frontend checks use available scripts" "$CONTRIBUTING_DOC" "bun run check && bun run build"
-not_contains "CONTRIBUTING does not use retired docker-compose command" "$CONTRIBUTING_DOC" "docker-compose"
-not_contains "CONTRIBUTING does not suggest nonexistent frontend test script" "$CONTRIBUTING_DOC" "bun run test"
-not_contains "CONTRIBUTING does not publish PostgreSQL with default openpr password" "$CONTRIBUTING_DOC" "POSTGRES_PASSWORD=openpr"
 
 printf '\nFrontend proxy coverage:\n'
 contains "nginx resolves upstreams through the runtime nameserver" "$FRONTEND_NGINX" "include /etc/nginx/conf.d/resolver.conf"

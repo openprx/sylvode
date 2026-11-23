@@ -1,7 +1,7 @@
 
  ▐▛███▛█   Claude Code v2.1.330
 ▝▜██████▀  Sonnet 5.5 · Claude Ultra
- ▝▝   ▝▝   ~/worker/llama/ops/sylvode-webhook-loop-scratch/work-a
+ ▝▝   ▝▝   ~/projects/example/sylvode-demo-workspace/project-a-12
 
 
 

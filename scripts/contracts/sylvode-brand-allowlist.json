@@ -200,16 +200,6 @@
       "explanation": "File names of the signed 2026-05-31 Universal Forms acceptance bundle; its manifest, checksums and the report generators identify the bundle by these names."
     },
     {
-      "id": "sylvode-migration-pages",
-      "reason": "migration_page",
-      "repo": "sylvode",
-      "paths": [
-        "docs/upgrade-0.2.1.md"
-      ],
-      "pattern": "(?i:openpr)",
-      "explanation": "The upgrade guide: it exists to name every OpenPR-era identifier next to its replacement."
-    },
-    {
       "id": "sylvode-changelog",
       "reason": "historical_document",
       "repo": "sylvode",
@@ -218,17 +208,6 @@
       ],
       "pattern": "(?i:openpr)",
       "explanation": "Release history: releases up to 0.2.21 were published as OpenPR, and the rename entries name the legacy identifiers they deprecate."
-    },
-    {
-      "id": "sylvode-historical-plans",
-      "reason": "historical_document",
-      "repo": "sylvode",
-      "paths": [
-        "docs/universal-forms-huoban-alignment-plan.md",
-        "docs/universal-forms-regression-audit-2026-06-02.md"
-      ],
-      "pattern": "(?i:openpr)",
-      "explanation": "Dated plan and audit records of the OpenPR era (container names, commands as run then); kept as written, not current instructions."
     },
     {
       "id": "sylvode-spikes",
@@ -246,7 +225,6 @@
       "repo": "sylvode",
       "paths": [
         "README.md",
-        "CONTRIBUTING.md",
         "SECURITY.md",
         "CHANGELOG.md",
         "apps/mcp-server/AGENTS.md",
@@ -278,27 +256,6 @@
       ],
       "pattern": "(?i:openpr)",
       "explanation": "The brand residue gate itself: its pattern, probes, mutation controls and allow-list must spell out the names they look for."
-    },
-    {
-      "id": "sylvode-brand-residue-gate-docs",
-      "reason": "legacy_behaviour_test",
-      "repo": "sylvode",
-      "paths": [
-        "CONTRIBUTING.md"
-      ],
-      "pattern": "for `openpr` in any letter case \\(`OpenPR`, `OPENPR`, `OpenPr`|`openprx`",
-      "explanation": "CONTRIBUTING's description of the brand residue gate names the strings it searches for."
-    },
-    {
-      "id": "sylvode-webhook-checkout-name",
-      "reason": "kept_repository_url",
-      "repo": "sylvode",
-      "paths": [
-        "CONTRIBUTING.md",
-        "scripts/verify-sylvode-brand-residue.sh"
-      ],
-      "pattern": "--repo openpr-webhook=\\.\\./openpr-webhook",
-      "explanation": "The release form of the gate names the webhook checkout by its kept repository name (ADR-0020 D4)."
     },
     {
       "id": "webhook-repository-url",
@@ -663,7 +620,6 @@
         "testing/**",
         "docs/**",
         "README.md",
-        "CONTRIBUTING.md",
         "migrations/*.sql"
       ],
       "pattern": "OPENPR_[A-Z0-9_]*|\\(SYLVODE\\|OPENPR\\)_",

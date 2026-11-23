@@ -2829,7 +2829,7 @@ mod tests {
     /// `event_dispatch` row exists on this read-only loader's path, so there is nothing further to
     /// assert unchanged (`bootstrap::load` never writes on this branch either).
     #[test]
-    #[allow(clippy::panic, clippy::indexing_slicing)] // test-only: serde_json::Value field checks + the match's fallback arm; CLAUDE.md's ban is production-code-scoped
+    #[allow(clippy::panic, clippy::indexing_slicing)] // test-only: serde_json::Value field checks + the match's fallback arm; the ban on these lints is production-code-scoped
     fn bootstrap_decoded_bytes_exact_boundary_is_accepted_and_plus_one_is_rejected() {
         assert!(bootstrap::check_bootstrap_decoded_bytes(limits::BOOTSTRAP_DECODED_BYTES_MAX).is_ok());
 
@@ -2850,7 +2850,7 @@ mod tests {
     /// `check_bootstrap_response_bytes`'s exact/`+1` boundary, mirroring the decoded-bytes test
     /// above.
     #[test]
-    #[allow(clippy::panic, clippy::indexing_slicing)] // test-only: serde_json::Value field checks + the match's fallback arm; CLAUDE.md's ban is production-code-scoped
+    #[allow(clippy::panic, clippy::indexing_slicing)] // test-only: serde_json::Value field checks + the match's fallback arm; the ban on these lints is production-code-scoped
     fn bootstrap_response_bytes_exact_boundary_is_accepted_and_plus_one_is_rejected() {
         assert!(bootstrap::check_bootstrap_response_bytes(limits::BOOTSTRAP_RESPONSE_BYTES_MAX).is_ok());
 

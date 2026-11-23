@@ -533,8 +533,7 @@ All under `scripts/`.
 `cargo test --workspace --no-fail-fast` after
 `cargo build -p collab-core --bin collab-isolated-apply-worker`. Database-backed
 tests need `OPENPR_TEST_DATABASE_URL` pointing at a PostgreSQL maintenance
-connection; without it they print `skipped:` and still count as passed. See
-[CONTRIBUTING.md](CONTRIBUTING.md) for the full contract and the CI checks.
+connection; without it they print `skipped:` and still count as passed.
 
 **Playwright E2E — 10 specs** in `tests/e2e/web/`: eight cover universal forms
 (field design save, human flow, import/export, interaction/IA, mobile + dark
@@ -560,7 +559,7 @@ delivery surfaces still have concrete entrypoints. Behavior is covered by
 - `docs/universal-forms-production.md` — production runbook
 - `docs/universal-forms-implementation-map.md` — source module / verification command map
 - `docs/plugins/openpr-plugin-v1.wit` — plugin ABI v1
-- `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md` — release notes, contributor guide, security policy
+- `CHANGELOG.md`, `SECURITY.md` — release notes, security policy
 - `apps/mcp-server/AGENTS.md` — coding-agent workflow patterns and tool examples
 - `skills/sylvode-mcp/SKILL.md` — the MCP skill package (single hand-written source; generated files are checked by `sylvode-skillgen --check`)
 

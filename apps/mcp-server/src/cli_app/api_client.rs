@@ -9,7 +9,7 @@
 //! private copy, which declares no `mod cli_app;` at all. A `pub` item in a `bin` crate gets
 //! no "part of the public API" exemption from the dead-code lint the way a `lib` crate's does
 //! (a binary has no downstream consumer), so anything under `client/` that only `cli_app`
-//! calls would report as dead code in that duplicate copy — CLAUDE.md's "zero dead code"/"zero
+//! calls would report as dead code in that duplicate copy — the repository's "zero dead code"/"zero
 //! warnings" rule with no honest way to silence it locally (`#[allow(dead_code)]` is banned by
 //! the same rule). Placing the structured-error surface here instead means the `mcp-server`
 //! binary's private module tree, which never declares `cli_app`, never compiles this file at
