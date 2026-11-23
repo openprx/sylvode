@@ -101,7 +101,8 @@
 		"test:flow-route-scope": "bun tests/flow-route-scope.test.ts",
 		"test:flow-navigator-placements": "bun tests/flow-navigator-placements.test.ts",
 		"test:uuid": "bun tests/uuid.test.ts",
-		"test:flow-handshake-failure": "bun tests/flow-handshake-failure.test.ts"
+		"test:flow-handshake-failure": "bun tests/flow-handshake-failure.test.ts",
+		"test:features": "bun test tests/features"
 	},
 	"dependencies": {
 		"loro-crdt": "1.18.0",
