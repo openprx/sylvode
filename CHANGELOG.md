@@ -69,6 +69,20 @@ name.
   timestamps and so was always about zero. Migration `0116_webhook_delivery_duration.sql` adds the
   column.
 
+- **Sprint rules.** A sprint moves `planned` to `active` to `completed`, and `planned` or `active`
+  to `cancelled`; completed and cancelled are final and any other status change is a 400. A project
+  can have one active sprint (starting a second answers 409 and names the active one), a sprint
+  cannot end before it starts, and names are unique within a project ignoring case. A new sprint can
+  only be `planned` or `active`. Members can still create and edit sprints, but creating an active
+  sprint, changing the status and deleting a sprint need an owner or admin. A sprint body or update
+  with an unknown field (for example `goal`) is refused, and `start_date` and `end_date` can be
+  cleared with `null`. Migration `0117_sprint_rules.sql` repairs existing data (a second active
+  sprint is set back to planned, case-twin names get a numeric suffix, an end before the start is
+  raised to the start, unknown statuses become planned) and adds the constraints.
+- **Added: `GET /sprints/{id}`.** It reads one sprint, with the same access as the sprint list.
+- **Cycles page sends `description`.** The page sent `goal`, which the API never stored; the field
+  is now `description`, so a sprint's description is saved from the page.
+
 ### Removed
 
 - **Universal forms delivery and sign-off tooling.** The scripts and schemas that produced and

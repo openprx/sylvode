@@ -102,7 +102,7 @@ a workspace.
 |---|---|
 | **Owner** | Everything, including deleting the workspace. The creator of the workspace is its owner. |
 | **Admin** | Manage members, roles, settings, webhooks, workflows and Flow settings. |
-| **Member** | Regular collaborator: create and work on projects, issues, forms and Flow pages within the permissions set on them. |
+| **Member** | Regular collaborator: create and work on projects, issues, forms and Flow pages within the permissions set on them; create and edit sprints (starting, completing, cancelling and deleting a sprint needs Owner or Admin). |
 
 Owners and admins add existing users with **Add Internal User** (search by username or email) and
 change a member's role between **Admin** and **Member**. User accounts themselves are created by an

@@ -6,7 +6,7 @@ export interface Sprint {
 	id: string;
 	project_id: string;
 	name: string;
-	goal?: string;
+	description?: string;
 	start_date: string;
 	end_date: string;
 	status: SprintStatus;
@@ -16,7 +16,7 @@ export interface Sprint {
 
 export interface CreateSprintData {
 	name: string;
-	goal?: string;
+	description?: string;
 	start_date: string;
 	end_date: string;
 	status?: SprintStatus;
@@ -24,7 +24,7 @@ export interface CreateSprintData {
 
 export interface UpdateSprintData {
 	name?: string;
-	goal?: string;
+	description?: string;
 	start_date?: string;
 	end_date?: string;
 	status?: SprintStatus;

@@ -31,39 +31,40 @@ use uuid::Uuid;
 
 const JWT_SECRET: &str = "item-api-test-secret";
 
-struct Api {
-    scratch: Scratch,
-    db: DatabaseConnection,
-    router: Router,
-    ws: Uuid,
-    alice: Uuid,
-    bob: Uuid,
-    project: Uuid,
+pub struct Api {
+    pub(super) scratch: Scratch,
+    pub(super) db: DatabaseConnection,
+    pub(super) router: Router,
+    pub(super) ws: Uuid,
+    pub(super) alice: Uuid,
+    pub(super) bob: Uuid,
+    pub(super) carol: Uuid,
+    pub(super) project: Uuid,
 }
 
-struct Answer {
-    status: StatusCode,
-    body: Value,
+pub struct Answer {
+    pub(super) status: StatusCode,
+    pub(super) body: Value,
 }
 
 impl Answer {
-    fn code(&self) -> Option<i64> {
+    pub(super) fn code(&self) -> Option<i64> {
         self.body.get("code").and_then(Value::as_i64)
     }
 
-    fn data(&self) -> &Value {
+    pub(super) fn data(&self) -> &Value {
         &self.body["data"]
     }
 }
 
-async fn exec(db: &DatabaseConnection, sql: &str, values: Vec<sea_orm::Value>) {
+pub async fn exec(db: &DatabaseConnection, sql: &str, values: Vec<sea_orm::Value>) {
     db.execute(Statement::from_sql_and_values(DbBackend::Postgres, sql, values))
         .await
         .unwrap_or_else(|err| panic!("setup statement failed: {err}"));
 }
 
 impl Api {
-    async fn new(label: &str) -> Option<Self> {
+    pub(super) async fn new(label: &str) -> Option<Self> {
         let Some(scratch) = scratch(label).await else {
             eprintln!("skipped: OPENPR_TEST_DATABASE_URL is not set");
             return None;
@@ -132,21 +133,22 @@ impl Api {
             ws,
             alice,
             bob,
+            carol,
             project,
         })
     }
 
-    async fn finish(self) {
+    pub(super) async fn finish(self) {
         self.scratch.drop_self().await;
     }
 
-    fn token(user: Uuid) -> String {
+    pub(super) fn token(user: Uuid) -> String {
         JwtManager::new(JWT_SECRET, 900, 3600)
             .issue_access_token(&user.to_string(), &format!("{user}@items.test"))
             .expect("the token is issued")
     }
 
-    async fn call(&self, method: Method, uri: &str, user: Uuid, body: Option<Value>) -> Answer {
+    pub(super) async fn call(&self, method: Method, uri: &str, user: Uuid, body: Option<Value>) -> Answer {
         let mut request = Request::builder()
             .method(method)
             .uri(uri)
@@ -168,20 +170,20 @@ impl Api {
         }
     }
 
-    async fn get(&self, uri: &str, user: Uuid) -> Answer {
+    pub(super) async fn get(&self, uri: &str, user: Uuid) -> Answer {
         self.call(Method::GET, uri, user, None).await
     }
 
-    async fn post(&self, uri: &str, user: Uuid, body: Value) -> Answer {
+    pub(super) async fn post(&self, uri: &str, user: Uuid, body: Value) -> Answer {
         self.call(Method::POST, uri, user, Some(body)).await
     }
 
-    async fn put(&self, uri: &str, user: Uuid, body: Value) -> Answer {
+    pub(super) async fn put(&self, uri: &str, user: Uuid, body: Value) -> Answer {
         self.call(Method::PUT, uri, user, Some(body)).await
     }
 
     /// Creates an item as alice and returns its id.
-    async fn create_item(&self, title: &str, extra: Value) -> Uuid {
+    pub(super) async fn create_item(&self, title: &str, extra: Value) -> Uuid {
         let mut body = json!({"title": title});
         if let (Some(target), Some(source)) = (body.as_object_mut(), extra.as_object()) {
             for (key, value) in source {
@@ -195,7 +197,7 @@ impl Api {
         Uuid::parse_str(answer.data()["id"].as_str().expect("id")).expect("uuid")
     }
 
-    async fn create_label(&self, name: &str) -> Uuid {
+    pub(super) async fn create_label(&self, name: &str) -> Uuid {
         let id = Uuid::new_v4();
         exec(
             &self.db,
@@ -323,7 +325,7 @@ async fn every_item_answer_carries_identifier_and_labels_array() {
 }
 
 impl Api {
-    async fn create_sprint(&self, name: &str) -> Uuid {
+    pub(super) async fn create_sprint(&self, name: &str) -> Uuid {
         let id = Uuid::new_v4();
         exec(
             &self.db,
@@ -335,7 +337,7 @@ impl Api {
     }
 
     /// The `detail` of every activity of `action` on `issue`, oldest first.
-    async fn activity_details(&self, issue: Uuid, action: &str) -> Vec<Value> {
+    pub(super) async fn activity_details(&self, issue: Uuid, action: &str) -> Vec<Value> {
         let rows = self
             .db
             .query_all(Statement::from_sql_and_values(
@@ -354,7 +356,7 @@ impl Api {
     }
 
     /// The stored assignee, sprint and due date of `issue`; `true` means the column is NULL.
-    async fn stored_nulls(&self, issue: Uuid) -> (bool, bool, bool) {
+    pub(super) async fn stored_nulls(&self, issue: Uuid) -> (bool, bool, bool) {
         let row = self
             .db
             .query_one(Statement::from_sql_and_values(
@@ -580,7 +582,7 @@ const ALL_ISSUE_EVENTS: &str = r#"["issue.created","issue.updated","issue.assign
 
 impl Api {
     /// A member of the main workspace of its own.
-    async fn add_member(&self, name: &str, entity_type: &str) -> Uuid {
+    pub(super) async fn add_member(&self, name: &str, entity_type: &str) -> Uuid {
         let id = Uuid::new_v4();
         exec(
             &self.db,
@@ -606,24 +608,24 @@ impl Api {
     /// Subscribes a receiver to the issue, label and comment events of the main workspace. The
     /// address is never reached (loopback is refused by the outbound policy); the delivery log
     /// keeps the payload that would have been sent.
-    async fn add_webhook(&self) {
+    pub(super) async fn add_webhook(&self) {
+        self.add_webhook_for(ALL_ISSUE_EVENTS).await;
+    }
+
+    /// [`Self::add_webhook`] subscribed to the events in the JSON array `events`.
+    pub(super) async fn add_webhook_for(&self, events: &str) {
         exec(
             &self.db,
             "INSERT INTO webhooks (id, workspace_id, name, url, secret, events, active, created_by) \
              VALUES ($1, $2, 'receiver', 'http://127.0.0.1:9/hook', 'test-secret', $3::jsonb, true, $4)",
-            vec![
-                Uuid::new_v4().into(),
-                self.ws.into(),
-                ALL_ISSUE_EVENTS.into(),
-                self.alice.into(),
-            ],
+            vec![Uuid::new_v4().into(), self.ws.into(), events.into(), self.alice.into()],
         )
         .await;
     }
 
     /// The payloads logged for `event`, once at least `expected` are there (deliveries are sent
     /// from spawned tasks) and a moment longer so an extra one would be counted.
-    async fn payloads(&self, event: &str, expected: usize) -> Vec<Value> {
+    pub(super) async fn payloads(&self, event: &str, expected: usize) -> Vec<Value> {
         let read = || async {
             let rows = self
                 .db
@@ -655,7 +657,22 @@ impl Api {
         found
     }
 
-    async fn notifications_of(&self, user: Uuid) -> i64 {
+    /// The `n` of a `SELECT COUNT(*)::bigint AS n ... WHERE ... = $1` query with one uuid parameter.
+    pub(super) async fn db_count(&self, sql: &str, id: Uuid) -> i64 {
+        self.db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                sql,
+                vec![id.into()],
+            ))
+            .await
+            .expect("count")
+            .expect("row")
+            .try_get("", "n")
+            .expect("n")
+    }
+
+    pub(super) async fn notifications_of(&self, user: Uuid) -> i64 {
         self.db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Postgres,

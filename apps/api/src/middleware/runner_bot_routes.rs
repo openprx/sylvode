@@ -368,6 +368,7 @@ pub static RUNNER_BOT_ROUTES: &[RunnerRoute] = &[
     r("DELETE", "/api/v1/proposals/{id}/votes/mine", Class::Project(Find::Proposal("id"))),
     r("DELETE", "/api/v1/proposals/{proposal_id}/issues/{issue_id}", Class::Project(Find::Proposal("proposal_id"))),
     r("GET", "/api/v1/search", Class::Project(Find::Query("project_id"))),
+    r("GET", "/api/v1/sprints/{id}", Class::Project(Find::Table("sprints","id"))),
     r("DELETE", "/api/v1/sprints/{id}", Class::Project(Find::Table("sprints","id"))),
     r("PUT", "/api/v1/sprints/{id}", Class::Project(Find::Table("sprints","id"))),
     r("POST", "/api/v1/workspaces/{workspace_id}/flow/objects", Class::Project(Find::Body)),

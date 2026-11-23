@@ -37,14 +37,14 @@
 
 	type SprintForm = {
 		name: string;
-		goal: string;
+		description: string;
 		start_date: string;
 		end_date: string;
 	};
 
 	const emptyForm: SprintForm = {
 		name: '',
-		goal: '',
+		description: '',
 		start_date: '',
 		end_date: ''
 	};
@@ -168,7 +168,7 @@
 		editingSprint = sprint;
 		editForm = {
 			name: sprint.name,
-			goal: sprint.goal ?? '',
+			description: sprint.description ?? '',
 			start_date: toDateInputValue(sprint.start_date),
 			end_date: toDateInputValue(sprint.end_date)
 		};
@@ -178,7 +178,7 @@
 	function buildPayload(form: SprintForm): CreateSprintData {
 		return {
 			name: form.name.trim(),
-			goal: form.goal.trim() || undefined,
+			description: form.description.trim() || undefined,
 			start_date: form.start_date,
 			end_date: form.end_date
 		};
@@ -374,9 +374,9 @@
 								</span>
 							</div>
 
-							{#if sprint.goal}
+							{#if sprint.description}
 								<p class="mb-3 text-sm text-fg">
-									{$t('cycles.goal')}: {sprint.goal}
+									{$t('cycles.goal')}: {sprint.description}
 								</p>
 							{/if}
 
@@ -469,9 +469,9 @@
 								</span>
 							</div>
 
-							{#if sprint.goal}
+							{#if sprint.description}
 								<p class="mb-3 text-sm text-fg">
-									{$t('cycles.goal')}: {sprint.goal}
+									{$t('cycles.goal')}: {sprint.description}
 								</p>
 							{/if}
 							<div class="rounded-control border border-line bg-surface p-3">
@@ -649,7 +649,7 @@
 			>
 			<textarea
 				id="create-goal"
-				bind:value={createForm.goal}
+				bind:value={createForm.description}
 				rows="3"
 				placeholder={$t('cycles.goalPlaceholder')}
 				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
@@ -728,7 +728,7 @@
 			>
 			<textarea
 				id="edit-goal"
-				bind:value={editForm.goal}
+				bind:value={editForm.description}
 				rows="3"
 				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 			></textarea>

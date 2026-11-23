@@ -681,7 +681,7 @@ mod tests {
             counts,
             BTreeMap::from([
                 ("no project", 14),
-                ("project-resolved", 294),
+                ("project-resolved", 295),
                 ("own resource", 13),
                 ("admin", 86),
                 ("refused", 37),

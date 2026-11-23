@@ -352,6 +352,28 @@ body that names a field the route does not know, here and on create, is refused 
 anything is written. The activity log records an unassignment as `assigned` and a removal from a
 sprint as `sprint_changed`, each with `"to": null`.
 
+### Sprints
+
+`GET /projects/{project_id}/sprints` lists the sprints of a project, `GET /sprints/{id}` reads one,
+`POST /projects/{project_id}/sprints` creates one and `PUT /sprints/{id}` and `DELETE /sprints/{id}`
+change or delete it. A sprint has `name`, `description`, `start_date` and `end_date` (`YYYY-MM-DD` or
+`null`) and `status`.
+
+- A new sprint is `planned` (the default) or `active`; any other status is `400`.
+- `status` moves `planned` to `active`, `active` to `completed`, and `planned` or `active` to
+  `cancelled`. Completed and cancelled sprints are final, and `active` back to `planned` is
+  refused. Any other change answers `400 sprint status cannot change from <from> to <to>`. Sending
+  the current status is accepted and does nothing.
+- A project has at most one active sprint. Starting or creating a second one answers `409` with the
+  name and id of the active one.
+- `end_date` must not be before `start_date`, also when only one of them is edited (`400`).
+  `start_date` and `end_date` accept `null`, which clears them; `null` on `name`, `description` or
+  `status` is `400`.
+- Names are unique within a project ignoring case (`409`).
+- Members can create sprints and edit their name, description and dates. Creating an active sprint,
+  changing a sprint's status and deleting a sprint need an owner or admin (`403`).
+- A body with a field the route does not know is refused with HTTP 422.
+
 ### Routes open to users and bots
 
 These routes used to require a bot and answered a user token with HTTP 500. They now answer both:

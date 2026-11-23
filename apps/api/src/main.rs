@@ -1961,7 +1961,8 @@ fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::co
         )
         .route(
             "/api/v1/sprints/{id}",
-            axum::routing::put(routes::sprint::update_sprint)
+            axum::routing::get(routes::sprint::get_sprint)
+                .put(routes::sprint::update_sprint)
                 .delete(routes::sprint::delete_sprint)
                 .route_layer(axum_middleware::from_fn_with_state(
                     auth_state.clone(),
@@ -3244,6 +3245,9 @@ mod delegated_router_tests;
 mod item_api_tests;
 
 #[cfg(test)]
+mod sprint_api_tests;
+
+#[cfg(test)]
 mod legacy_auth_characterization_tests;
 
 #[cfg(test)]
@@ -3833,6 +3837,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     (
         "0116_webhook_delivery_duration.sql",
         include_str!("../../../migrations/0116_webhook_delivery_duration.sql"),
+    ),
+    (
+        "0117_sprint_rules.sql",
+        include_str!("../../../migrations/0117_sprint_rules.sql"),
     ),
 ];
 
@@ -4428,6 +4436,10 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
         "0116_webhook_delivery_duration.sql",
         SchemaProbe::Column("webhook_deliveries", "duration_ms"),
     ),
+    (
+        "0117_sprint_rules.sql",
+        SchemaProbe::Relation("sprints_one_active_per_project"),
+    ),
 ];
 
 /// One recorded migration outcome.
@@ -4998,6 +5010,7 @@ mod tests {
                 "0114_multi_bot_connections.sql",
                 "0115_flow_default_on.sql",
                 "0116_webhook_delivery_duration.sql",
+                "0117_sprint_rules.sql",
             ],
             "everything past the cutoff re-runs on an adopted database and must be idempotent"
         );
@@ -6920,6 +6933,175 @@ mod migration_runner_database_tests {
             .await
             .expect("the runner adopts the database and re-executes the post-cutoff files");
         assert_schema_complete(&scratch.db).await;
+        scratch.drop_self().await;
+    }
+
+    /// 0117 repairs data that broke the sprint rules (two active sprints, names that differ only in
+    /// case, an end before the start, an unknown status), replaces the exact-case name constraint,
+    /// and does nothing the second time. The old state is rebuilt by dropping the new rules from a
+    /// fully migrated database.
+    #[tokio::test]
+    async fn sprint_rules_migration_fixes_data_and_reruns() {
+        let scratch = scratch_or_skip!("sprint_rules_migration");
+        run_migrations_with(&scratch.db, MigrationOptions::default())
+            .await
+            .expect("a fresh database migrates cleanly");
+        let db = &scratch.db;
+        db.execute_unprepared(
+            "ALTER TABLE sprints DROP CONSTRAINT sprints_status_check; \
+             ALTER TABLE sprints DROP CONSTRAINT sprints_dates_ordered; \
+             DROP INDEX sprints_project_lower_name_key; \
+             DROP INDEX sprints_one_active_per_project; \
+             ALTER TABLE sprints ADD CONSTRAINT sprints_project_id_name_key UNIQUE (project_id, name)",
+        )
+        .await
+        .expect("the pre-0117 rules are restored");
+
+        let user = insert_user(db).await;
+        let workspace = insert_workspace(db, user).await;
+        let project = uuid::Uuid::new_v4();
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO projects (id, workspace_id, key, name, created_by, type_key) \
+             VALUES ($1, $2, 'SPR', 'sprints', $3, 'code_project')",
+            vec![project.into(), workspace.into(), user.into()],
+        ))
+        .await
+        .expect("the project is created");
+        let [older_active, newer_active, bug_upper, bug_lower, backwards, bogus] =
+            std::array::from_fn(|_| uuid::Uuid::new_v4());
+        for (id, name, status, start, end, created, updated) in [
+            (older_active, "Older", "active", None, None, "2030-01-01", "2030-01-01"),
+            (newer_active, "Newer", "active", None, None, "2030-01-02", "2030-01-02"),
+            (bug_upper, "Bug", "planned", None, None, "2030-01-03", "2030-01-03"),
+            (bug_lower, "bug", "planned", None, None, "2030-01-04", "2030-01-04"),
+            (
+                backwards,
+                "Backwards",
+                "planned",
+                Some("2030-03-10"),
+                Some("2030-03-01"),
+                "2030-01-05",
+                "2030-01-05",
+            ),
+            (bogus, "Bogus", "paused", None, None, "2030-01-06", "2030-01-06"),
+        ] {
+            db.execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "INSERT INTO sprints (id, project_id, name, status, start_date, end_date, created_at, updated_at) \
+                 VALUES ($1, $2, $3, $4, $5::date, $6::date, $7::timestamptz, $8::timestamptz)",
+                vec![
+                    id.into(),
+                    project.into(),
+                    name.into(),
+                    status.into(),
+                    start.map(str::to_string).into(),
+                    end.map(str::to_string).into(),
+                    created.into(),
+                    updated.into(),
+                ],
+            ))
+            .await
+            .expect("the old data is stored");
+        }
+
+        let sql = MIGRATIONS
+            .iter()
+            .find(|(name, _)| *name == "0117_sprint_rules.sql")
+            .map(|(_, sql)| *sql)
+            .expect("0117 is registered");
+        db.execute_unprepared(sql).await.expect("0117 first execution succeeds");
+
+        let read = |id: uuid::Uuid| async move {
+            let row = db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT name, status, end_date::text AS end_date FROM sprints WHERE id = $1",
+                    vec![id.into()],
+                ))
+                .await
+                .expect("the sprint is readable")
+                .expect("the sprint exists");
+            (
+                row.try_get::<String>("", "name").expect("name"),
+                row.try_get::<String>("", "status").expect("status"),
+                row.try_get::<Option<String>>("", "end_date").expect("end_date"),
+            )
+        };
+        assert_eq!(
+            read(older_active).await.1,
+            "planned",
+            "the older active sprint is set back"
+        );
+        assert_eq!(read(newer_active).await.1, "active", "the newest active sprint stays");
+        assert_eq!(read(bug_upper).await.0, "Bug", "the first of two names is kept");
+        assert_eq!(
+            read(bug_lower).await.0,
+            format!("bug ({})", &bug_lower.to_string()[..8])
+        );
+        assert_eq!(
+            read(backwards).await.2.as_deref(),
+            Some("2030-03-10"),
+            "end is lifted to start"
+        );
+        assert_eq!(read(bogus).await.1, "planned");
+        let rules = db
+            .query_all(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT conname FROM pg_constraint WHERE conrelid = 'sprints'::regclass ORDER BY conname",
+                vec![],
+            ))
+            .await
+            .expect("constraints are readable");
+        let names: Vec<String> = rules
+            .iter()
+            .map(|row| row.try_get("", "conname").expect("conname"))
+            .collect();
+        assert!(
+            !names.iter().any(|name| name == "sprints_project_id_name_key"),
+            "{names:?}"
+        );
+        for expected in ["sprints_status_check", "sprints_dates_ordered"] {
+            assert!(names.iter().any(|name| name == expected), "{expected} in {names:?}");
+        }
+        let indexes = db
+            .query_all(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT indexname FROM pg_indexes WHERE tablename = 'sprints' AND indexname IN \
+                 ('sprints_project_lower_name_key', 'sprints_one_active_per_project')",
+                vec![],
+            ))
+            .await
+            .expect("indexes are readable");
+        assert_eq!(indexes.len(), 2);
+
+        // The rules now hold, and running the file again changes nothing.
+        assert!(
+            db.execute_unprepared(
+                "UPDATE sprints SET status = 'active' WHERE id = (SELECT id FROM sprints WHERE name = 'Bogus')"
+            )
+            .await
+            .is_err(),
+            "a second active sprint is refused by the index"
+        );
+        let before = (
+            read(older_active).await,
+            read(newer_active).await,
+            read(bug_lower).await,
+            read(backwards).await,
+            read(bogus).await,
+        );
+        db.execute_unprepared(sql)
+            .await
+            .expect("0117 second execution succeeds");
+        let after = (
+            read(older_active).await,
+            read(newer_active).await,
+            read(bug_lower).await,
+            read(backwards).await,
+            read(bogus).await,
+        );
+        assert_eq!(before, after, "a second execution changes nothing");
         scratch.drop_self().await;
     }
 
