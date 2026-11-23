@@ -812,6 +812,9 @@ fn every_flow_route_is_registered_behind_the_typed_database_failure_boundary() {
     let outside_oauth: Vec<String> = mentions(".route(")
         .into_iter()
         .filter(|path| !path.starts_with("oauth/"))
+        // A `#[cfg(test)]` module of the binary (declared in `main.rs`) whose own fixture router is not
+        // the application router.
+        .filter(|path| path != "flow_surface_boundary_tests.rs")
         .collect();
     assert!(
         !outside_oauth.is_empty() && outside_oauth.iter().all(|path| path.starts_with("router/")),
