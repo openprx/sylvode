@@ -337,6 +337,21 @@ issue results of `/search`. The same value is the `key` of the issue object in
 identifier) also carry `labels`, an array of `{id, name, color}` sorted by name that is empty when
 the item has no label.
 
+### Listing and updating work items
+
+`GET /projects/{project_id}/issues` filters by `state`, `priority`, `assignee_id`, `label_ids`,
+`search` and `sprint_id`, and sorts with `sort_by` and `sort_order`. `sprint_id` is a sprint id, or
+`none` for the items that are in no sprint; any other value is `400`. A query parameter the route
+does not know is refused with HTTP 400.
+
+`PUT /issues/{id}` changes only the fields that are present in the body. For `assignee_id`,
+`sprint_id` and `due_at`, `null` clears the value: `{"sprint_id": null}` moves the item back to the
+backlog, `{"assignee_id": null}` unassigns it and `{"due_at": null}` removes the due date. `null` on
+`title`, `description`, `state` or `priority` is `400` with the message `<field> cannot be null`. A
+body that names a field the route does not know, here and on create, is refused with HTTP 422 before
+anything is written. The activity log records an unassignment as `assigned` and a removal from a
+sprint as `sprint_changed`, each with `"to": null`.
+
 ### Routes open to users and bots
 
 These routes used to require a bot and answered a user token with HTTP 500. They now answer both:

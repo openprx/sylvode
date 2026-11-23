@@ -23,7 +23,7 @@
 
 use platform::{app::AppState, timestamp::Timestamp};
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement, TransactionTrait};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
@@ -91,19 +91,6 @@ pub struct ConnectRequest {
     pub governance: Option<GovernanceInput>,
 }
 
-/// A key that is present with `null` clears the value; an absent key leaves it alone.
-#[allow(
-    clippy::option_option,
-    reason = "absent, null and a value are three different requests"
-)]
-fn present<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    Option::<T>::deserialize(deserializer).map(Some)
-}
-
 /// `PATCH /bot-connections/{bot_id}`.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -114,7 +101,7 @@ pub struct UpdateRequest {
     pub working_directory: Option<String>,
     pub channel: Option<String>,
     pub on_complete_state: Option<String>,
-    #[serde(default, deserialize_with = "present")]
+    #[serde(default, deserialize_with = "crate::request::nullable")]
     #[allow(
         clippy::option_option,
         reason = "absent, null and a value are three different requests"

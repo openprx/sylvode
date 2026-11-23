@@ -321,3 +321,257 @@ async fn every_item_answer_carries_identifier_and_labels_array() {
 
     api.finish().await;
 }
+
+impl Api {
+    async fn create_sprint(&self, name: &str) -> Uuid {
+        let id = Uuid::new_v4();
+        exec(
+            &self.db,
+            "INSERT INTO sprints (id, project_id, name) VALUES ($1, $2, $3)",
+            vec![id.into(), self.project.into(), name.to_string().into()],
+        )
+        .await;
+        id
+    }
+
+    /// The `detail` of every activity of `action` on `issue`, oldest first.
+    async fn activity_details(&self, issue: Uuid, action: &str) -> Vec<Value> {
+        let rows = self
+            .db
+            .query_all(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT detail::text AS detail FROM activities WHERE issue_id = $1 AND action = $2 ORDER BY created_at, id",
+                vec![issue.into(), action.to_string().into()],
+            ))
+            .await
+            .expect("activities are readable");
+        rows.iter()
+            .map(|row| {
+                let text: String = row.try_get("", "detail").expect("detail column");
+                serde_json::from_str(&text).expect("detail is json")
+            })
+            .collect()
+    }
+
+    /// The stored assignee, sprint and due date of `issue`; `true` means the column is NULL.
+    async fn stored_nulls(&self, issue: Uuid) -> (bool, bool, bool) {
+        let row = self
+            .db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT assignee_id IS NULL AS a, sprint_id IS NULL AS s, due_at IS NULL AS d FROM work_items WHERE id = $1",
+                vec![issue.into()],
+            ))
+            .await
+            .expect("row is readable")
+            .expect("the item exists");
+        (
+            row.try_get("", "a").expect("a"),
+            row.try_get("", "s").expect("s"),
+            row.try_get("", "d").expect("d"),
+        )
+    }
+}
+
+const DUE: &str = "2030-01-02T03:04:05Z";
+
+#[tokio::test]
+async fn update_with_null_clears_assignee_sprint_and_due_date() {
+    let Some(api) = Api::new("item_update_null").await else {
+        return;
+    };
+    let sprint = api.create_sprint("s1").await;
+    let full = json!({"assignee_id": api.bob, "sprint_id": sprint, "due_at": DUE});
+
+    // Each field alone.
+    for (field, nulls_after) in [
+        ("assignee_id", (true, false, false)),
+        ("sprint_id", (false, true, false)),
+        ("due_at", (false, false, true)),
+    ] {
+        let item = api.create_item(&format!("clear {field}"), full.clone()).await;
+        assert_eq!(api.stored_nulls(item).await, (false, false, false), "{field}: seeded");
+        let answer = api
+            .put(&format!("/api/v1/issues/{item}"), api.alice, json!({ field: null }))
+            .await;
+        assert_eq!(answer.code(), Some(0), "{field}: {}", answer.body);
+        assert!(answer.data()[field].is_null(), "{field}: {}", answer.body);
+        assert_eq!(api.stored_nulls(item).await, nulls_after, "{field}: stored");
+    }
+
+    // All three together, recorded in the activity log with `to: null`.
+    let item = api.create_item("clear all", full).await;
+    let answer = api
+        .put(
+            &format!("/api/v1/issues/{item}"),
+            api.alice,
+            json!({"assignee_id": null, "sprint_id": null, "due_at": null}),
+        )
+        .await;
+    assert_eq!(answer.code(), Some(0), "{}", answer.body);
+    assert_eq!(api.stored_nulls(item).await, (true, true, true));
+    let assigned = api.activity_details(item, "assigned").await;
+    assert_eq!(assigned.len(), 1, "{assigned:?}");
+    assert_eq!(assigned[0]["from"], json!(api.bob));
+    assert!(assigned[0]["to"].is_null(), "{assigned:?}");
+    let sprint_changed = api.activity_details(item, "sprint_changed").await;
+    assert_eq!(sprint_changed.len(), 1, "{sprint_changed:?}");
+    assert_eq!(sprint_changed[0]["from"], json!(sprint));
+    assert!(sprint_changed[0]["to"].is_null(), "{sprint_changed:?}");
+
+    // Clearing what is already clear is accepted and records nothing more.
+    let again = api
+        .put(
+            &format!("/api/v1/issues/{item}"),
+            api.alice,
+            json!({"assignee_id": null}),
+        )
+        .await;
+    assert_eq!(again.code(), Some(0), "{}", again.body);
+    assert_eq!(api.activity_details(item, "assigned").await.len(), 1);
+    api.finish().await;
+}
+
+#[tokio::test]
+async fn update_with_absent_fields_changes_nothing_else() {
+    let Some(api) = Api::new("item_update_absent").await else {
+        return;
+    };
+    let sprint = api.create_sprint("s1").await;
+    let item = api
+        .create_item(
+            "keep",
+            json!({"description": "body", "priority": "high", "assignee_id": api.bob, "sprint_id": sprint, "due_at": DUE}),
+        )
+        .await;
+    let before = api.get(&format!("/api/v1/issues/{item}"), api.alice).await;
+    let answer = api
+        .put(
+            &format!("/api/v1/issues/{item}"),
+            api.alice,
+            json!({"title": "kept, renamed"}),
+        )
+        .await;
+    assert_eq!(answer.code(), Some(0), "{}", answer.body);
+    let after = api.get(&format!("/api/v1/issues/{item}"), api.alice).await;
+    for field in ["description", "priority", "state", "assignee_id", "sprint_id", "due_at"] {
+        assert_eq!(after.data()[field], before.data()[field], "{field} changed");
+    }
+    assert_eq!(after.data()["title"], json!("kept, renamed"));
+    assert!(api.activity_details(item, "assigned").await.is_empty());
+    assert!(api.activity_details(item, "sprint_changed").await.is_empty());
+    api.finish().await;
+}
+
+#[tokio::test]
+async fn update_with_null_on_a_field_that_cannot_be_cleared_is_400() {
+    let Some(api) = Api::new("item_update_null_title").await else {
+        return;
+    };
+    let item = api.create_item("stay", json!({})).await;
+    for field in ["title", "description", "state", "priority"] {
+        let answer = api
+            .put(&format!("/api/v1/issues/{item}"), api.alice, json!({ field: null }))
+            .await;
+        assert_eq!(answer.code(), Some(400), "{field}: {}", answer.body);
+        assert_eq!(
+            answer.body["message"],
+            json!(format!("{field} cannot be null")),
+            "{field}: {}",
+            answer.body
+        );
+    }
+    let still = api.get(&format!("/api/v1/issues/{item}"), api.alice).await;
+    assert_eq!(still.data()["title"], json!("stay"));
+    api.finish().await;
+}
+
+#[tokio::test]
+async fn update_and_create_with_an_unknown_field_are_refused() {
+    let Some(api) = Api::new("item_unknown_field").await else {
+        return;
+    };
+    let item = api.create_item("typed", json!({})).await;
+    let refused = api
+        .put(&format!("/api/v1/issues/{item}"), api.alice, json!({"goal": "x"}))
+        .await;
+    assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", refused.body);
+    // A known field next to an unknown one changes nothing.
+    let refused = api
+        .put(
+            &format!("/api/v1/issues/{item}"),
+            api.alice,
+            json!({"title": "never written", "stat": "todo"}),
+        )
+        .await;
+    assert!(!refused.status.is_success(), "{} {}", refused.status, refused.body);
+    let still = api.get(&format!("/api/v1/issues/{item}"), api.alice).await;
+    assert_eq!(still.data()["title"], json!("typed"));
+    let refused = api
+        .post(
+            &format!("/api/v1/projects/{}/issues", api.project),
+            api.alice,
+            json!({"title": "x", "status": "todo"}),
+        )
+        .await;
+    assert!(!refused.status.is_success(), "{} {}", refused.status, refused.body);
+    api.finish().await;
+}
+
+#[tokio::test]
+async fn list_filters_by_sprint_and_by_none() {
+    let Some(api) = Api::new("item_list_sprint").await else {
+        return;
+    };
+    let (s1, s2) = (api.create_sprint("s1").await, api.create_sprint("s2").await);
+    let in_s1 = api.create_item("in s1", json!({"sprint_id": s1})).await;
+    let in_s2 = api.create_item("in s2", json!({"sprint_id": s2})).await;
+    let backlog = api.create_item("backlog", json!({})).await;
+    let ids_for = |filter: String| {
+        let uri = format!("/api/v1/projects/{}/issues?{filter}", api.project);
+        let api = &api;
+        async move {
+            let answer = api.get(&uri, api.bob).await;
+            assert_eq!(answer.code(), Some(0), "{uri}: {}", answer.body);
+            let mut ids: Vec<String> = answer.data()["items"]
+                .as_array()
+                .expect("items")
+                .iter()
+                .map(|item| item["id"].as_str().expect("id").to_string())
+                .collect();
+            ids.sort();
+            ids
+        }
+    };
+    assert_eq!(ids_for(format!("sprint_id={s1}")).await, [in_s1.to_string()]);
+    assert_eq!(ids_for(format!("sprint_id={s2}")).await, [in_s2.to_string()]);
+    assert_eq!(ids_for("sprint_id=none".to_string()).await, [backlog.to_string()]);
+    let mut all = vec![in_s1.to_string(), in_s2.to_string(), backlog.to_string()];
+    all.sort();
+    assert_eq!(ids_for(String::new()).await, all);
+    // A sprint filter combines with the others.
+    let state = api.get(&format!("/api/v1/issues/{in_s1}"), api.bob).await.data()["state"]
+        .as_str()
+        .expect("state")
+        .to_string();
+    assert_eq!(
+        ids_for(format!("sprint_id={s1}&state={state}&priority=medium")).await,
+        [in_s1.to_string()]
+    );
+    api.finish().await;
+}
+
+#[tokio::test]
+async fn list_with_an_unknown_filter_or_a_bad_sprint_id_is_refused() {
+    let Some(api) = Api::new("item_list_refused").await else {
+        return;
+    };
+    api.create_item("one", json!({})).await;
+    let base = format!("/api/v1/projects/{}/issues", api.project);
+    let unknown = api.get(&format!("{base}?foo=1"), api.bob).await;
+    assert_eq!(unknown.status, StatusCode::BAD_REQUEST, "{}", unknown.body);
+    let bogus = api.get(&format!("{base}?sprint_id=bogus"), api.bob).await;
+    assert_eq!(bogus.code(), Some(400), "{}", bogus.body);
+    assert_eq!(bogus.body["message"], json!("sprint_id must be a UUID or none"));
+    api.finish().await;
+}

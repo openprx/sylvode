@@ -9,6 +9,7 @@ pub mod middleware;
 pub mod oauth;
 pub mod outbound;
 pub mod plugins;
+pub mod request;
 pub mod response;
 pub mod routes;
 pub mod security;

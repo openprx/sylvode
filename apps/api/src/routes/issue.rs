@@ -16,6 +16,7 @@ use uuid::Uuid;
 
 use crate::{
     error::ApiError,
+    request::nullable,
     response::{ApiResponse, PaginatedData},
     services::{
         ai_task_service::{CreateAiTaskInput, DispatchOrigin, DispatchOutcome, dispatch_ai_task, runner_bot_block},
@@ -29,6 +30,7 @@ use crate::{
 };
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CreateIssueRequest {
     pub title: String,
     pub description: Option<String>,
@@ -39,24 +41,54 @@ pub struct CreateIssueRequest {
     pub sprint_id: Option<Uuid>,
 }
 
+/// `PUT /issues/{id}`: a key that is absent leaves the field alone. `assignee_id`, `sprint_id` and
+/// `due_at` also accept `null`, which clears them; `null` on any other field is refused.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(
+    clippy::option_option,
+    reason = "absent, null and a value are three different requests"
+)]
 pub struct UpdateIssueRequest {
-    pub title: Option<String>,
-    pub description: Option<String>,
-    pub state: Option<String>,
-    pub priority: Option<String>,
-    pub assignee_id: Option<Uuid>,
-    pub due_at: Option<String>,
-    pub sprint_id: Option<Uuid>,
+    #[serde(default, deserialize_with = "nullable")]
+    pub title: Option<Option<String>>,
+    #[serde(default, deserialize_with = "nullable")]
+    pub description: Option<Option<String>>,
+    #[serde(default, deserialize_with = "nullable")]
+    pub state: Option<Option<String>>,
+    #[serde(default, deserialize_with = "nullable")]
+    pub priority: Option<Option<String>>,
+    #[serde(default, deserialize_with = "nullable")]
+    pub assignee_id: Option<Option<Uuid>>,
+    #[serde(default, deserialize_with = "nullable")]
+    pub due_at: Option<Option<String>>,
+    #[serde(default, deserialize_with = "nullable")]
+    pub sprint_id: Option<Option<Uuid>>,
+}
+
+/// The value of a field that cannot be cleared: `null` is a request error, not "no change".
+#[allow(
+    clippy::option_option,
+    reason = "absent, null and a value are three different requests"
+)]
+fn not_null<T>(value: Option<Option<T>>, field: &str) -> Result<Option<T>, ApiError> {
+    match value {
+        Some(None) => Err(ApiError::BadRequest(format!("{field} cannot be null"))),
+        Some(Some(value)) => Ok(Some(value)),
+        None => Ok(None),
+    }
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ListIssuesQuery {
     pub page: Option<i64>,
     pub per_page: Option<i64>,
     pub state: Option<String>,
     pub assignee_id: Option<Uuid>,
     pub priority: Option<String>,
+    /// A sprint id, or `none` for the items that are in no sprint.
+    pub sprint_id: Option<String>,
     pub search: Option<String>,
     pub label_ids: Option<String>,
     pub sort_by: Option<String>,
@@ -455,6 +487,18 @@ pub async fn list_issues(
         param_idx += 1;
     }
 
+    if let Some(sprint) = query.sprint_id {
+        if sprint == "none" {
+            where_clauses.push("sprint_id IS NULL".to_string());
+        } else {
+            let sprint_id = Uuid::parse_str(&sprint)
+                .map_err(|_| ApiError::BadRequest("sprint_id must be a UUID or none".to_string()))?;
+            where_clauses.push(format!("sprint_id = ${param_idx}"));
+            values.push(sprint_id.into());
+            param_idx += 1;
+        }
+    }
+
     if let Some(search) = query.search {
         let search_text = search.trim();
         if !search_text.is_empty() {
@@ -640,6 +684,20 @@ pub async fn update_issue(
     let user_id = Uuid::parse_str(&claims.sub).map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))?;
     let extensions = build_auth_extensions(claims, bot);
 
+    let UpdateIssueRequest {
+        title: requested_title,
+        description: requested_description,
+        state: requested_state,
+        priority: requested_priority,
+        assignee_id: requested_assignee,
+        due_at: requested_due_at,
+        sprint_id: requested_sprint,
+    } = req;
+    let requested_title = not_null(requested_title, "title")?;
+    let requested_description = not_null(requested_description, "description")?;
+    let requested_state = not_null(requested_state, "state")?;
+    let requested_priority = not_null(requested_priority, "priority")?;
+
     // Get current issue values and verify access.
     #[derive(Debug, FromQueryResult)]
     struct CurrentIssue {
@@ -670,21 +728,21 @@ pub async fn update_issue(
     require_workspace_access(&state, &extensions, current_issue.workspace_id).await?;
 
     // A connected application may not assign a work item to an agent (nothing is written yet).
-    if let Some(assignee_id) = req.assignee_id {
+    if let Some(Some(assignee_id)) = requested_assignee {
         crate::oauth::delegated::refuse_agent_dispatch(&state.db, &[assignee_id]).await?;
     }
 
     // Validate state and priority if provided
-    if let Some(ref state_val) = req.state {
+    if let Some(ref state_val) = requested_state {
         validate_project_state(&state, current_issue.project_id, state_val).await?;
     }
 
-    if let Some(ref priority) = req.priority {
+    if let Some(ref priority) = requested_priority {
         validate_priority(priority)?;
     }
 
     // Verify assignee is workspace member if provided
-    if let Some(assignee_id) = req.assignee_id {
+    if let Some(Some(assignee_id)) = requested_assignee {
         let member_exists = state
             .db
             .query_one(Statement::from_sql_and_values(
@@ -700,21 +758,16 @@ pub async fn update_issue(
     }
 
     // Verify the sprint belongs to this issue's project (and therefore this workspace)
-    if let Some(sprint_id) = req.sprint_id {
+    if let Some(Some(sprint_id)) = requested_sprint {
         ensure_sprint_in_project(&state.db, sprint_id, current_issue.project_id).await?;
     }
 
     // Build update query
-    let requested_state = req.state.clone();
-    let requested_priority = req.priority.clone();
-    let requested_assignee = req.assignee_id;
-    let requested_sprint = req.sprint_id;
-
     let mut updates = Vec::new();
     let mut values: Vec<sea_orm::Value> = Vec::new();
     let mut param_idx = 1;
 
-    if let Some(title) = req.title.clone() {
+    if let Some(title) = requested_title.clone() {
         if title.trim().is_empty() {
             return Err(ApiError::BadRequest("title cannot be empty".to_string()));
         }
@@ -723,39 +776,43 @@ pub async fn update_issue(
         param_idx += 1;
     }
 
-    if let Some(description) = req.description.clone() {
+    if let Some(description) = requested_description.clone() {
         updates.push(format!("description = ${param_idx}"));
         values.push(description.into());
         param_idx += 1;
     }
 
-    if let Some(state_val) = req.state.clone() {
+    if let Some(state_val) = requested_state.clone() {
         updates.push(format!("state = ${param_idx}"));
         values.push(state_val.into());
         param_idx += 1;
     }
 
-    if let Some(priority) = req.priority.clone() {
+    if let Some(priority) = requested_priority.clone() {
         updates.push(format!("priority = ${param_idx}"));
         values.push(priority.into());
         param_idx += 1;
     }
 
-    if let Some(assignee) = req.assignee_id {
+    if let Some(assignee) = requested_assignee {
         updates.push(format!("assignee_id = ${param_idx}"));
         values.push(assignee.into());
         param_idx += 1;
     }
 
-    if let Some(due_str) = req.due_at.clone() {
-        let due_at = platform::timestamp::Timestamp::parse_rfc3339(&due_str)
-            .map_err(|_| ApiError::BadRequest("invalid due_at format".to_string()))?;
+    if let Some(due) = requested_due_at {
+        let due_at = due
+            .map(|due_str| {
+                platform::timestamp::Timestamp::parse_rfc3339(&due_str)
+                    .map_err(|_| ApiError::BadRequest("invalid due_at format".to_string()))
+            })
+            .transpose()?;
         updates.push(format!("due_at = ${param_idx}"));
         values.push(due_at.into());
         param_idx += 1;
     }
 
-    if let Some(sprint_id) = req.sprint_id {
+    if let Some(sprint_id) = requested_sprint {
         updates.push(format!("sprint_id = ${param_idx}"));
         values.push(sprint_id.into());
         param_idx += 1;
@@ -782,8 +839,7 @@ pub async fn update_issue(
     // Read the row back inside the transaction, so the answer is exactly what was written.
     let updated = load_issue(&tx, issue_id).await?.ok_or(ApiError::Internal)?.issue;
 
-    let assignee_changed =
-        requested_assignee.is_some_and(|new_assignee| Some(new_assignee) != current_issue.assignee_id);
+    let assignee_changed = requested_assignee.is_some_and(|new_assignee| new_assignee != current_issue.assignee_id);
     let state_changed = requested_state
         .as_ref()
         .is_some_and(|new_state| *new_state != current_issue.state);
@@ -794,7 +850,7 @@ pub async fn update_issue(
     }
 
     let mut updated_fields = Map::<String, Value>::new();
-    if let Some(new_title) = req.title.as_ref()
+    if let Some(new_title) = requested_title.as_ref()
         && new_title != &current_issue.title
     {
         updated_fields.insert(
@@ -805,7 +861,7 @@ pub async fn update_issue(
             }),
         );
     }
-    if let Some(new_description) = req.description.as_ref()
+    if let Some(new_description) = requested_description.as_ref()
         && new_description != &current_issue.description
     {
         updated_fields.insert(
@@ -816,7 +872,7 @@ pub async fn update_issue(
             }),
         );
     }
-    if let Some(new_priority) = req.priority.as_ref()
+    if let Some(new_priority) = requested_priority.as_ref()
         && new_priority != &current_issue.priority
     {
         updated_fields.insert(
@@ -831,13 +887,13 @@ pub async fn update_issue(
     let mut changes: Vec<ActivityChange> = Vec::new();
 
     if let Some(new_assignee) = requested_assignee
-        && Some(new_assignee) != current_issue.assignee_id
+        && new_assignee != current_issue.assignee_id
     {
         changes.push(ActivityChange {
             action: "assigned",
             detail: serde_json::json!({
                 "from": current_issue.assignee_id.map(|id| id.to_string()),
-                "to": new_assignee.to_string()
+                "to": new_assignee.map(|id| id.to_string())
             }),
         });
     }
@@ -867,13 +923,13 @@ pub async fn update_issue(
     }
 
     if let Some(new_sprint_id) = requested_sprint
-        && Some(new_sprint_id) != current_issue.sprint_id
+        && new_sprint_id != current_issue.sprint_id
     {
         changes.push(ActivityChange {
             action: "sprint_changed",
             detail: serde_json::json!({
                 "from": current_issue.sprint_id.map(|id| id.to_string()),
-                "to": new_sprint_id.to_string()
+                "to": new_sprint_id.map(|id| id.to_string())
             }),
         });
     }
@@ -887,8 +943,8 @@ pub async fn update_issue(
         insert_activity(&tx, &issue_ref, user_id, change.action, &change.detail, now).await?;
     }
 
-    if let Some(new_assignee) = requested_assignee
-        && Some(new_assignee) != current_issue.assignee_id
+    if let Some(Some(new_assignee)) = requested_assignee
+        && assignee_changed
     {
         let link = format!(
             "/workspace/{}/projects/{}/issues/{}",
@@ -1638,9 +1694,9 @@ mod bot_task_dispatch_tests {
         UpdateIssueRequest {
             title: None,
             description: None,
-            state: state.map(str::to_string),
+            state: state.map(|value| Some(value.to_string())),
             priority: None,
-            assignee_id: assignee,
+            assignee_id: assignee.map(Some),
             due_at: None,
             sprint_id: None,
         }

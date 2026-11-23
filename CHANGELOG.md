@@ -36,6 +36,13 @@ name.
   `GET /search` carry `identifier` too. The update answer is read inside the transaction that
   wrote it.
 
+- **Work item update and list contract.** `PUT /issues/{id}` clears `assignee_id`, `sprint_id` and
+  `due_at` when they are sent as `null` (before, `null` meant "unchanged", so an item could not be
+  unassigned, taken out of a sprint or have its due date removed); `null` on `title`, `description`,
+  `state` or `priority` is a 400. Item create and update bodies and the issue list query refuse a
+  field or parameter they do not know instead of ignoring it. `GET /projects/{id}/issues` accepts
+  `sprint_id=<uuid>|none`, which it used to ignore.
+
 ### Removed
 
 - **Universal forms delivery and sign-off tooling.** The scripts and schemas that produced and
