@@ -1438,9 +1438,14 @@ impl LoroCollabEngine {
     /// next write pays. It reads only the inline texts the block reader converts.
     #[must_use]
     pub fn first_text_over_budget(&self, blocks: &[String]) -> Option<crate::setup_guard::Fired> {
-        use crate::setup_guard::{SetupGuard, TEXT_ALLOCATION_LIMIT_BYTES, TEXT_CPU_BUDGET_NANOS};
-        let guard =
-            SetupGuard::with_limit(u64::MAX).with_text_limits(TEXT_ALLOCATION_LIMIT_BYTES, TEXT_CPU_BUDGET_NANOS);
+        self.first_text_over(blocks, crate::setup_guard::TEXT_CPU_BUDGET_NANOS)
+    }
+
+    /// [`Self::first_text_over_budget`] with the CPU budget of one text given: `u64::MAX` leaves
+    /// only the allocation budget, which does not depend on how fast the machine is.
+    pub(crate) fn first_text_over(&self, blocks: &[String], text_cpu_nanos: u64) -> Option<crate::setup_guard::Fired> {
+        use crate::setup_guard::{SetupGuard, TEXT_ALLOCATION_LIMIT_BYTES};
+        let guard = SetupGuard::with_limit(u64::MAX).with_text_limits(TEXT_ALLOCATION_LIMIT_BYTES, text_cpu_nanos);
         for id in blocks {
             let Ok(id) = loro::ContainerID::try_from(id.as_str()) else {
                 continue;

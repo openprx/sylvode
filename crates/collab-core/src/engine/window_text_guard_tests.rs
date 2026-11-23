@@ -721,9 +721,10 @@ fn r9_1_the_candidates_touched_texts_are_measured_against_the_per_text_budget() 
         Some(Fired::Text),
         "the text the window let grow is over the budget in a fresh decode"
     );
-    // The same block before the update is within the budget.
+    // The same block before the update is within the budget. Only the allocation budget is asked:
+    // how much CPU time 500 marks take depends on the machine, and a slow one passes 50 ms.
     let before = LoroCollabEngine::load(&base).unwrap();
-    assert_eq!(before.first_text_over_budget(&accepted.touched_blocks), None);
+    assert_eq!(before.first_text_over(&accepted.touched_blocks, u64::MAX), None);
     // An update that touches no text reports no text block to measure, and a malformed id is skipped.
     let title_only = super::hand_encoded::raw_edit(&base, 49_301, |raw| {
         raw.get_text("title").insert(0, "t").unwrap();

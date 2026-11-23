@@ -1077,6 +1077,12 @@ async fn marks_that_exhaust_the_text_budget(f: &Fixture) -> usize {
     high
 }
 
+/// How many times a run of the growth scenario that the machine's timing disturbed is repeated on a
+/// fresh page. A shared CI machine disturbed three runs in a row (a cost measured at 51 ms against
+/// the 50 ms ceiling); a run that the product fails still ends the test at once.
+#[cfg(target_os = "linux")]
+const TEXT_BUDGET_ATTEMPTS: usize = 6;
+
 /// How one run of the growth scenario ended.
 #[cfg(target_os = "linux")]
 enum GrowthRun {
@@ -1156,13 +1162,13 @@ fn disturbance_of(outcome: &AcceptOutcome, what: &str) -> Option<String> {
 /// accepted). The scenario depends on the machine's timing at both ends of its margins (the text at
 /// 0.8 of the budget, the push at 1.2, the window at half its ceiling), so a run that the timing
 /// disturbs (a growth step refused, a push refused by the window's own ceiling) is repeated on a
-/// fresh page, up to three times; a run that reaches the push and is answered otherwise than by the
+/// fresh page, up to `TEXT_BUDGET_ATTEMPTS` times; a run that reaches the push and is answered otherwise than by the
 /// measure's refusal is the product failing, and ends the test.
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn an_update_that_would_leave_a_text_over_its_decode_budget_is_refused_and_the_page_stays_writable() {
     let mut last = String::new();
-    for attempt in 0..3 {
+    for attempt in 0..TEXT_BUDGET_ATTEMPTS {
         let scratch = scratch_or_skip!("text-budget-refused");
         let f = fixture(&scratch).await;
         let (outcome, head_before, marks) = match grow_and_push(&f).await {
@@ -1233,7 +1239,7 @@ async fn an_update_that_would_leave_a_text_over_its_decode_budget_is_refused_and
         scratch.drop_self().await;
         return;
     }
-    panic!("three runs in a row did not end in the measure's refusal: {last}");
+    panic!("{TEXT_BUDGET_ATTEMPTS} runs in a row did not end in the measure's refusal: {last}");
 }
 
 /// The mutant without the host's measure: the same push is accepted, the text is committed over its
@@ -1244,7 +1250,7 @@ async fn an_update_that_would_leave_a_text_over_its_decode_budget_is_refused_and
 #[tokio::test]
 async fn without_the_host_measure_the_push_bricks_the_page() {
     let mut last = String::new();
-    for attempt in 0..3 {
+    for attempt in 0..TEXT_BUDGET_ATTEMPTS {
         let scratch = scratch_or_skip!("text-budget-mutant");
         let f = fixture(&scratch).await;
         crate::flow::collab::write::TEXT_BUDGET_CHECK_SKIPPED
@@ -1274,7 +1280,7 @@ async fn without_the_host_measure_the_push_bricks_the_page() {
         scratch.drop_self().await;
         return;
     }
-    panic!("three runs in a row did not brick the page without the measure: {last}");
+    panic!("{TEXT_BUDGET_ATTEMPTS} runs in a row did not brick the page without the measure: {last}");
 }
 
 /// A title update against the document's head (the snapshot row can lag the head).
