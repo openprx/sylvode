@@ -233,7 +233,7 @@ where
 
 // -------------------------------------------------------------------------------------------
 // Real-database tests (opt-in via `OPENPR_TEST_DATABASE_URL`), matching
-// `apps/api/src/events/dispatcher.rs`'s `dispatcher_database_tests` scratch-per-run convention.
+// `apps/api/src/events/dispatcher/tests` scratch-per-run convention.
 // -------------------------------------------------------------------------------------------
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
