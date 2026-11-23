@@ -11,6 +11,7 @@
 // `json|markdown|csv|package`, and `include_history` is only accepted with `package`. The panel
 // offers `csv` only for a Collection.
 
+import { randomUuid } from '#lib/utils/uuid.js';
 import type {
 	CreateObjectExportInput,
 	FlowExportJob,
@@ -21,7 +22,6 @@ import { FlowObjectRepository } from './object-repository';
 import {
 	PackageExportController,
 	downloadExport,
-	newIdempotencyKey,
 	type ExportDownloadOutcome,
 	type ExportJobView
 } from './package-export';
@@ -165,7 +165,7 @@ export class ObjectExportController {
 			commands: deps.commands ?? new FlowCommandService(),
 			reads,
 			sleep: deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
-			newKey: deps.newKey ?? newIdempotencyKey
+			newKey: deps.newKey ?? randomUuid
 		};
 		// Polling only: the workspace submit path of this controller is never used, and nothing is
 		// written to the workspace's recent-export list (`store: null`).

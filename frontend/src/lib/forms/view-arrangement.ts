@@ -10,6 +10,7 @@
  */
 
 import type { FormView } from '#lib/api/forms.js';
+import { randomUuid } from '#lib/utils/uuid.js';
 import { browserStore, type KeyValueStore } from './view-precedence.js';
 
 export interface StoredArrangement {
@@ -247,9 +248,14 @@ export function suggestViewName(
 	return suggestion.length > 80 ? suggestion.slice(0, 80).trimEnd() : suggestion;
 }
 
+/** A uniform number in [0, 1) from the secure random source (`Math.random` is not used for keys). */
+function randomFraction(): number {
+	return Number.parseInt(randomUuid().slice(0, 8), 16) / 16 ** 8;
+}
+
 /** A `form_views.key` for a new view: `^[a-z][a-z0-9_]*$`, unique per form. Names in any script
  * are fine; only ASCII letters and digits survive into the key. */
-export function generateViewKey(name: string, now = Date.now(), random = Math.random()): string {
+export function generateViewKey(name: string, now = Date.now(), random = randomFraction()): string {
 	const slug = name
 		.toLowerCase()
 		.normalize('NFKD')

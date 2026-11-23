@@ -1,4 +1,5 @@
 /** Original-Page/account-bound source publication draft. Server review and writes stay explicit. */
+import { randomUuid } from '#lib/utils/uuid.js';
 import type { ApiResult } from '#lib/api/client.js';
 import type { BlockShareReview } from './review';
 import type { CreateBlockShare, ManagedBlockShare, SharedAudience } from './contracts';
@@ -225,7 +226,7 @@ export class SourceBlockShares {
 		};
 		if (!this.value.intent)
 			this.value.intent = {
-				key: crypto.randomUUID(),
+				key: randomUuid(),
 				payload: structuredClone(payload),
 				republishId: this.value.form.republishId
 			};
@@ -295,7 +296,7 @@ export class SourceBlockShares {
 		this.value.error = null;
 		this.emit();
 		const operation = `${action}:${shareId}`;
-		const key = this.lifecycleKeys.get(operation) ?? `${operation}:${crypto.randomUUID()}`;
+		const key = this.lifecycleKeys.get(operation) ?? `${operation}:${randomUuid()}`;
 		this.lifecycleKeys.set(operation, key);
 		let result: ApiResult<ManagedBlockShare>;
 		try {

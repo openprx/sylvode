@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { randomUuid } from '#lib/utils/uuid.js';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
@@ -194,7 +195,7 @@
 		};
 		const signature = JSON.stringify([key, change]);
 		if (priorMutation?.signature !== signature)
-			priorMutation = { signature, requestId: crypto.randomUUID() };
+			priorMutation = { signature, requestId: randomUuid() };
 		const response = await pluginPackagesApi.setBinding(id, key, {
 			...change,
 			request_id: priorMutation.requestId
@@ -227,7 +228,7 @@
 		const change = { expected_generation: active.generation };
 		const signature = JSON.stringify(['reset', key, change]);
 		if (priorMutation?.signature !== signature)
-			priorMutation = { signature, requestId: crypto.randomUUID() };
+			priorMutation = { signature, requestId: randomUuid() };
 		const response = await pluginExtensionsApi.resetConfiguration(id, key, {
 			...change,
 			request_id: priorMutation.requestId

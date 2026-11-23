@@ -23,6 +23,7 @@
 //   per HTTP status and documents the collapse rather than guessing from text. Finer-grained
 //   mapping needs a backend `ApiError` change (out of this package's file ownership).
 
+import { randomUuid } from '#lib/utils/uuid.js';
 import {
 	flowApi,
 	type AcceptedChange,
@@ -66,12 +67,6 @@ import type { ApiResult } from '#lib/api/client.js';
 import { clientError, flowErrorFromEnvelope } from './errors';
 import type { FlowError } from './types';
 
-function newIdempotencyKey(): string {
-	return typeof crypto !== 'undefined' && 'randomUUID' in crypto
-		? crypto.randomUUID()
-		: `idem-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
 /**
  * Every write is sent exactly once per call under the caller's key. An `invalid_update` with
  * `details.reason = "idempotency_key_body_drift"` is thrown to the caller like any other typed
@@ -93,7 +88,7 @@ export class FlowCommandService {
 	): Promise<AcceptedChange> {
 		const result = await flowApi.createObject(scopeId, {
 			...input,
-			idempotency_key: options.idempotencyKey ?? newIdempotencyKey()
+			idempotency_key: options.idempotencyKey ?? randomUuid()
 		});
 		if (result.code !== 0 || !result.data) {
 			throw flowErrorFromResult(result);
@@ -115,7 +110,7 @@ export class FlowCommandService {
 		const result = await flowApi.executeCommand(objectId, {
 			command,
 			expected_frontier: options.expectedFrontier,
-			idempotency_key: options.idempotencyKey ?? newIdempotencyKey(),
+			idempotency_key: options.idempotencyKey ?? randomUuid(),
 			message: options.message
 		});
 		if (result.code !== 0 || !result.data) {
@@ -137,7 +132,7 @@ export class FlowCommandService {
 	): Promise<AcceptedChange> {
 		const result = await flowApi.createCollectionRecord(collectionId, {
 			...input,
-			idempotency_key: options.idempotencyKey ?? newIdempotencyKey()
+			idempotency_key: options.idempotencyKey ?? randomUuid()
 		});
 		if (result.code !== 0 || !result.data) {
 			throw flowErrorFromResult(result);
@@ -196,7 +191,7 @@ export class FlowCommandService {
 	/**
 	 * Workspace Flow settings write (`PUT .../features/flow`). The idempotency key is supplied by
 	 * the caller's intent (`FlowSettingsController`), never minted here: a retry of the same
-	 * intent must resend the same key, which a per-call `newIdempotencyKey()` would break. Returns
+	 * intent must resend the same key, which a per-call `randomUuid()` would break. Returns
 	 * the raw `ApiResult` so the caller can branch on `error_code`.
 	 */
 	async setFlowFeature(

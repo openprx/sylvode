@@ -1,3 +1,4 @@
+import { randomUuid } from '#lib/utils/uuid.js';
 import { apiClient, authSessionChanged } from '#lib/api/client.js';
 import { clearBodyClipboard } from './body/clipboard';
 import { PageBodyJobs, pageBodyJobs, disposePageBodyJobs } from './body/jobs';
@@ -979,7 +980,7 @@ export class FlowObjectRepository {
 			const result = await flowApi.executeCommand(entry.handle.objectId, {
 				command: { type: 'initialize_editor_doc', payload: { model: 'rich_page_v4' } },
 				expected_frontier: object.data.frontier,
-				idempotency_key: crypto.randomUUID()
+				idempotency_key: randomUuid()
 			});
 			if (result.code !== 0 || entry.doc !== doc || this.open_.get(entry.handle.objectId) !== entry)
 				return false;

@@ -28,6 +28,7 @@
 //   unreadable and cannot be edited, never as an empty text that a save would overwrite;
 // - archiving a record (`record_archive`) needs the user's explicit confirmation.
 
+import { randomUuid } from '#lib/utils/uuid.js';
 import { writable, type Readable } from 'svelte/store';
 import type {
 	AcceptedChange,
@@ -193,20 +194,6 @@ export type ArchiveRecordOutcome =
 
 export const SCHEMA_MODE_REQUIRED_KEY = 'flow.collection.schema.required';
 export const RECORD_STALE_KEY = 'flow.collection.record.stale';
-
-function newKey(): string {
-	return typeof crypto !== 'undefined' && 'randomUUID' in crypto
-		? crypto.randomUUID()
-		: `idem-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function newUuid(): string {
-	return typeof crypto !== 'undefined' && 'randomUUID' in crypto
-		? crypto.randomUUID()
-		: '00000000-0000-4000-8000-000000000000'.replace(/0/g, () =>
-				Math.floor(Math.random() * 16).toString(16)
-			);
-}
 
 function asFlowError(error: unknown): FlowError {
 	if (typeof error === 'object' && error !== null && 'code' in error) {
@@ -728,7 +715,7 @@ export class CollectionViewController {
 	private intentKey(scope: string, signature: string): string {
 		const existing = this.intents.get(scope);
 		if (existing && existing.signature === signature) return existing.key;
-		const key = newKey();
+		const key = randomUuid();
 		this.intents.set(scope, { signature, key });
 		return key;
 	}
@@ -1227,7 +1214,7 @@ export class CollectionViewController {
 		const config: Record<string, unknown> =
 			type === 'select' || type === 'multi_select' ? { options: [...options] } : {};
 		const scope = `field_create:${JSON.stringify([label.trim(), type, config])}`;
-		const fieldId = this.pendingIds.get(scope) ?? newUuid();
+		const fieldId = this.pendingIds.get(scope) ?? randomUuid();
 		this.pendingIds.set(scope, fieldId);
 		const outcome = await this.schemaCommand(scope, {
 			type: 'field_create',
@@ -1310,7 +1297,7 @@ export class CollectionViewController {
 		const problem = this.labelProblem(name);
 		if (problem) return problem;
 		const scope = `view_create:${JSON.stringify([name.trim(), kind])}`;
-		const viewId = this.pendingIds.get(scope) ?? newUuid();
+		const viewId = this.pendingIds.get(scope) ?? randomUuid();
 		this.pendingIds.set(scope, viewId);
 		const outcome = await this.schemaCommand(scope, {
 			type: 'view_create',

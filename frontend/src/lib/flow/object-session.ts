@@ -18,6 +18,7 @@
 // Offline pending/outbox is out of scope (`ui-surface-v1.md` "v0.5：presence/cursor、offline
 // pending...").
 
+import { randomUuid } from '#lib/utils/uuid.js';
 import type { CollabTicket } from '#lib/api/flow.js';
 import { apiClient, type ApiResult } from '#lib/api/client.js';
 import { get, writable, type Readable } from 'svelte/store';
@@ -266,10 +267,7 @@ export class LoroObjectSession implements ObjectSessionContract {
 		this.authEpoch = options.authEpoch ?? apiClient.getAuthSessionEpoch();
 		this.hooks = hooks;
 		this.commandService = commandService;
-		this.clientId =
-			typeof crypto !== 'undefined' && 'randomUUID' in crypto
-				? crypto.randomUUID()
-				: `client-${Math.random().toString(36).slice(2)}`;
+		this.clientId = randomUuid();
 		this.clock = options.clock ?? { now: () => Date.now() };
 		this.answerTimeoutMs = options.answerTimeoutMs ?? DEFAULT_ANSWER_TIMEOUT_MS;
 		this.remotePresence = new RemotePresenceMap(this.clock);
@@ -1042,11 +1040,7 @@ export class LoroObjectSession implements ObjectSessionContract {
 		}
 		// A replay passes the outbox entry's id so the retry is the SAME update to the server
 		// (`collab-protocol-v1.md` `write_state:"unknown"`: "必须复用同一 `update_id` 重试").
-		const updateId =
-			options.updateId ??
-			(typeof crypto !== 'undefined' && 'randomUUID' in crypto
-				? crypto.randomUUID()
-				: `${Date.now()}-${Math.random()}`);
+		const updateId = options.updateId ?? randomUuid();
 
 		this.setState('saving');
 		return new Promise<void>((resolve, reject) => {

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { randomUuid } from '#lib/utils/uuid.js';
 	import { resolve } from '$app/paths';
 	import { shareLevelKey } from '#lib/flow/share-panel.js';
 	import { t } from 'svelte-i18n';
@@ -118,7 +119,7 @@
 		denied = false;
 		announcement = '';
 		const signature = JSON.stringify([workspaceId, projectId, level]);
-		if (intent?.signature !== signature) intent = { signature, key: crypto.randomUUID() };
+		if (intent?.signature !== signature) intent = { signature, key: randomUuid() };
 		try {
 			const result = await flowApi.createMount(objectId, {
 				destination_workspace_id: workspaceId,
@@ -154,8 +155,7 @@
 		const current = generation;
 		const mount = changing;
 		const signature = JSON.stringify([mount.id, mount.level, nextLevel]);
-		if (updateIntent?.signature !== signature)
-			updateIntent = { signature, key: crypto.randomUUID() };
+		if (updateIntent?.signature !== signature) updateIntent = { signature, key: randomUuid() };
 		busy = true;
 		denied = false;
 		failed = false;

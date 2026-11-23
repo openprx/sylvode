@@ -1,3 +1,4 @@
+import { randomUuid } from '#lib/utils/uuid.js';
 import type { BodyErrorReason } from './labels';
 /** Uploads and pending child creation belong to their original pinned Page, not a mounted view. */
 import {
@@ -199,8 +200,8 @@ export class PageBodyJobs {
 	}
 	createChild(title: string, bookmark: BodyInsertionBookmark): ChildBodyJob {
 		const job: ChildBodyJob = {
-			id: crypto.randomUUID(),
-			key: crypto.randomUUID(),
+			id: randomUuid(),
+			key: randomUuid(),
 			title,
 			bookmark: { ...bookmark },
 			phase: 'preparing',
@@ -237,7 +238,7 @@ export class PageBodyJobs {
 			this.host.failureReason() === 'child_reservation_expired'
 		) {
 			job.reservation = null;
-			job.key = crypto.randomUUID();
+			job.key = randomUuid();
 		}
 		if (job.reservation && !job.inserted) {
 			const status = await this.host.reservationStatus(
@@ -253,7 +254,7 @@ export class PageBodyJobs {
 			}
 			if (status.data.state === 'expired' || status.data.state === 'cancelled') {
 				job.reservation = null;
-				job.key = crypto.randomUUID();
+				job.key = randomUuid();
 			} else job.reservation = status.data;
 		}
 

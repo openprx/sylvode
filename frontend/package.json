@@ -99,7 +99,8 @@
 		"format": "prettier --write .",
 		"test:flow-scope-api": "bun tests/flow-scope-api.test.ts",
 		"test:flow-route-scope": "bun tests/flow-route-scope.test.ts",
-		"test:flow-navigator-placements": "bun tests/flow-navigator-placements.test.ts"
+		"test:flow-navigator-placements": "bun tests/flow-navigator-placements.test.ts",
+		"test:uuid": "bun tests/uuid.test.ts"
 	},
 	"dependencies": {
 		"loro-crdt": "1.18.0",

@@ -41,6 +41,7 @@
 // - a refused retry re-reads the job once, so its new stored `error` is shown;
 // - errors branch on `error_code` first and the numeric code second, never on `message`.
 
+import { randomUuid } from '#lib/utils/uuid.js';
 import type { ApiResult } from '#lib/api/client.js';
 import type { FlowConversionJob, FlowObjectView } from '#lib/api/flow.js';
 import { formsApi, type FormRecord, type UniversalForm } from '#lib/api/forms.js';
@@ -54,7 +55,7 @@ import {
 	parseServerDrainingReason
 } from './errors';
 import type { FlowObjectRepository } from './object-repository';
-import { exportPollDelay, newIdempotencyKey } from './package-export';
+import { exportPollDelay } from './package-export';
 import type { FlowErrorCode } from './types';
 
 export type { FlowConversionJob };
@@ -385,7 +386,7 @@ export class ConversionJobController {
 			getForm: deps.getForm ?? ((id) => formsApi.get(id)),
 			getRecord: deps.getRecord ?? ((recordId) => formsApi.getRecord(recordId)),
 			sleep: deps.sleep ?? defaultSleep,
-			newKey: deps.newKey ?? newIdempotencyKey
+			newKey: deps.newKey ?? randomUuid
 		};
 	}
 

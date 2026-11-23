@@ -6,6 +6,7 @@
 		ISSUE_ATTACHMENT_ACCEPT,
 		ISSUE_ATTACHMENT_MAX_SIZE_BYTES
 	} from '#lib/utils/attachments.js';
+	import { randomUuid } from '#lib/utils/uuid.js';
 	import { t } from 'svelte-i18n';
 
 	interface UploadEventDetail {
@@ -117,7 +118,7 @@
 	}
 
 	async function uploadFile(file: File): Promise<void> {
-		const uploadId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+		const uploadId = randomUuid();
 		pendingUploads = [
 			...pendingUploads,
 			{ id: uploadId, filename: file.name, size: file.size, progress: 0 }

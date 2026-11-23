@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { randomUuid } from '#lib/utils/uuid.js';
 	import { onDestroy, tick } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
@@ -10,11 +11,7 @@
 		type PortableGraphReceipt
 	} from '#lib/api/flow.js';
 	import { formsApi, type UniversalForm } from '#lib/api/forms.js';
-	import {
-		listWorkspaceProjects,
-		newIdempotencyKey,
-		type WorkspaceProjectOption
-	} from '#lib/flow/package-export.js';
+	import { listWorkspaceProjects, type WorkspaceProjectOption } from '#lib/flow/package-export.js';
 	import { MAX_PORTABLE_PAGE_BYTES, portablePageFailure } from '#lib/flow/portable-page-package.js';
 
 	let {
@@ -155,7 +152,7 @@
 					: portablePageFailure(result);
 			return;
 		}
-		review = { archive, mode, preview: result.data, key: newIdempotencyKey() };
+		review = { archive, mode, preview: result.data, key: randomUuid() };
 		await tick();
 		heading?.focus();
 	}

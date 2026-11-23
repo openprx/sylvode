@@ -1,4 +1,5 @@
 /** Normalized operation model; only the wire adapter may turn an authoritative response into a decision. */
+import { randomUuid } from '#lib/utils/uuid.js';
 import type { BlockTransferKind, PrepareBlockTransfer } from './contracts';
 export interface ReviewedBlockTransfer {
 	id: string;
@@ -104,11 +105,11 @@ export class BlockTransferOperation {
 		receipt: null,
 		detailsUnavailable: false,
 		error: null,
-		commitKey: crypto.randomUUID(),
-		undoKey: crypto.randomUUID()
+		commitKey: randomUuid(),
+		undoKey: randomUuid()
 	};
 	private prepareIntent: { signature: string; key: string } | null = null;
-	private readonly cancelKey = crypto.randomUUID();
+	private readonly cancelKey = randomUuid();
 	private readonly abort = new AbortController();
 	private action: 'commit' | 'undo' = 'commit';
 	private actionStartedHere = false;
@@ -147,7 +148,7 @@ export class BlockTransferOperation {
 			this.prepareIntent?.signature !== signature ||
 			(this.value.review && this.value.review.expiresAt <= Date.now())
 		)
-			this.prepareIntent = { signature, key: crypto.randomUUID() };
+			this.prepareIntent = { signature, key: randomUuid() };
 		this.value.phase = 'preparing';
 		this.value.error = null;
 		this.emit();
@@ -169,7 +170,7 @@ export class BlockTransferOperation {
 				throw new Error('review_mismatch');
 			this.value.review = structuredClone(review);
 			this.value.phase = 'prepared';
-			this.value.commitKey = crypto.randomUUID();
+			this.value.commitKey = randomUuid();
 			this.action = 'commit';
 			this.actionStartedHere = false;
 			this.historySettled = false;
@@ -371,8 +372,8 @@ export class BlockTransferOperation {
 			receipt: null,
 			detailsUnavailable: false,
 			error: null,
-			commitKey: crypto.randomUUID(),
-			undoKey: crypto.randomUUID()
+			commitKey: randomUuid(),
+			undoKey: randomUuid()
 		};
 		this.prepareIntent = null;
 		this.action = 'commit';

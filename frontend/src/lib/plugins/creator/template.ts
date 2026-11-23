@@ -6,6 +6,7 @@ import type {
 	PluginUploadV3
 } from '../../api/plugin-packages';
 import type { CreatorTemplate } from './registry';
+import { sha256Hex } from '#lib/utils/sha256.js';
 import template from './order-amount-template.json';
 import pageHtml from './order-amount-template.html?raw';
 
@@ -96,8 +97,7 @@ function decodeBase64(value: string) {
 }
 
 export async function sha256(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
-	const digest = await crypto.subtle.digest('SHA-256', bytes);
-	return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+	return sha256Hex(bytes);
 }
 
 export interface CreatorPackage {

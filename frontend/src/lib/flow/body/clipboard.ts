@@ -1,10 +1,12 @@
+import { randomUuid } from '#lib/utils/uuid.js';
+
 /** Only this live Page's own clipboard records may reuse its owned body references. */
 const tickets = new Map<string, { owner: WeakRef<object>; blocks: string; expires: number }>();
 export function issueBodyClipboard(owner: object, blocks: unknown[]): string {
 	for (const [id, value] of tickets)
 		if (value.expires < Date.now() || !value.owner.deref()) tickets.delete(id);
 	while (tickets.size >= 20) tickets.delete(tickets.keys().next().value!);
-	const id = crypto.randomUUID();
+	const id = randomUuid();
 	tickets.set(id, {
 		owner: new WeakRef(owner),
 		blocks: JSON.stringify(blocks),
@@ -33,7 +35,7 @@ export function issueBlockCutTicket(owner: object, value: object): string {
 	for (const [id, entry] of cutTickets)
 		if (entry.expires < Date.now() || !entry.owner.deref()) cutTickets.delete(id);
 	while (cutTickets.size >= 20) cutTickets.delete(cutTickets.keys().next().value!);
-	const ticket = crypto.randomUUID();
+	const ticket = randomUuid();
 	cutTickets.set(ticket, { owner: new WeakRef(owner), value, expires: Date.now() + 300000 });
 	return ticket;
 }

@@ -1,4 +1,5 @@
 /** Recipient CAS drafts are local state, never a whole-Page CRDT/session or a hidden rebase. */
+import { randomUuid } from '#lib/utils/uuid.js';
 import type { ApiResult } from '#lib/api/client.js';
 import {
 	parseSharedRead,
@@ -78,7 +79,7 @@ function immutableRead(read: SharedRead): SharedRead {
 
 export class SharedBlockDraft {
 	private state: SharedDraftState;
-	private key = crypto.randomUUID();
+	private key = randomUuid();
 	private listeners = new Set<(state: SharedDraftState) => void>();
 	private controller: AbortController | null = null;
 	private disposed = false;
@@ -158,7 +159,7 @@ export class SharedBlockDraft {
 		this.state.commands = structuredClone(commands);
 		this.state.ack = null;
 		this.state.lastSent = [];
-		this.key = crypto.randomUUID();
+		this.key = randomUuid();
 		this.emit();
 		return true;
 	}
@@ -174,7 +175,7 @@ export class SharedBlockDraft {
 		this.state.expectedRevision = this.state.remote.projection.revision;
 		this.state.phase = 'ready';
 		this.state.error = null;
-		this.key = crypto.randomUUID();
+		this.key = randomUuid();
 		this.emit();
 		return true;
 	}
@@ -186,7 +187,7 @@ export class SharedBlockDraft {
 			this.state.phase = 'ready';
 			this.state.error = null;
 		}
-		this.key = crypto.randomUUID();
+		this.key = randomUuid();
 		this.emit();
 	}
 	async save(): Promise<boolean> {
@@ -238,7 +239,7 @@ export class SharedBlockDraft {
 					phase: 'ready',
 					error: null
 				};
-				this.key = crypto.randomUUID();
+				this.key = randomUuid();
 				this.emit();
 				return true;
 			} catch {

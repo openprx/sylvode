@@ -115,6 +115,15 @@
 		<p id="status" role="status">Connecting to Sylvode…</p>
 	</main>
 	<script>
+		// crypto.randomUUID only exists in secure contexts; getRandomValues works everywhere.
+		function newRequestId() {
+			if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+			const bytes = crypto.getRandomValues(new Uint8Array(16));
+			bytes[6] = (bytes[6] & 0x0f) | 0x40;
+			bytes[8] = (bytes[8] & 0x3f) | 0x80;
+			const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+			return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+		}
 		const copy = JSON.parse(document.getElementById('author-copy').textContent);
 		const heading = document.querySelector('#heading');
 		const description = document.querySelector('#description');
@@ -135,7 +144,7 @@
 
 		function call(method, params) {
 			return new Promise((resolve) => {
-				const id = crypto.randomUUID();
+				const id = newRequestId();
 				pending.set(id, resolve);
 				port.postMessage({ protocol: 2, type: 'request', request_id: id, method, params });
 			});

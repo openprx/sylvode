@@ -1,3 +1,4 @@
+import { sha256Hex } from '#lib/utils/sha256.js';
 import type { PluginKind, PluginSlotV3 } from '../api/plugin-packages';
 
 /** Protocol of the shell handshake on window.postMessage. The port traffic uses `bridgeProtocolV2`. */
@@ -16,11 +17,7 @@ export async function verifyPanelHtml(panel: {
 	html: string;
 	web_sha256: string;
 }): Promise<boolean> {
-	const bytes = new TextEncoder().encode(panel.html);
-	const digest = await crypto.subtle.digest('SHA-256', bytes);
-	const actual = [...new Uint8Array(digest)]
-		.map((byte) => byte.toString(16).padStart(2, '0'))
-		.join('');
+	const actual = await sha256Hex(new TextEncoder().encode(panel.html));
 	return actual === panel.web_sha256;
 }
 

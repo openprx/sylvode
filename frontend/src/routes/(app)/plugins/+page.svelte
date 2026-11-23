@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { randomUuid } from '#lib/utils/uuid.js';
 	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
@@ -110,7 +111,7 @@
 			>
 			<Button
 				variant="primary"
-				onclick={() => goto(resolve(`/(app)/plugins/creator?draft=${crypto.randomUUID()}`))}
+				onclick={() => goto(resolve(`/(app)/plugins/creator?draft=${randomUuid()}`))}
 				>{$t('plugins.creator.launch')}</Button
 			>
 			<Button
@@ -118,7 +119,7 @@
 				onclick={() =>
 					goto(
 						resolve(
-							`/(app)/plugins/creator?draft=${crypto.randomUUID()}&template=ui_view&slot=project.view`
+							`/(app)/plugins/creator?draft=${randomUuid()}&template=ui_view&slot=project.view`
 						)
 					)}>{$t('plugins.creatorV3.newUiView')}</Button
 			>

@@ -1,4 +1,5 @@
 /** Account- and original-Page-bound runtime. It pins authorized documents, never a fake DOM order. */
+import { randomUuid } from '#lib/utils/uuid.js';
 import { apiClient } from '#lib/api/client.js';
 import type { FlowObjectRepository, OpenFlowObjectResult } from '../object-repository';
 import type { FlowObjectView } from '#lib/api/flow.js';
@@ -36,7 +37,7 @@ export class TransferPageRuntime {
 			hold: async (pages, mode) => {
 				if (mode !== 'resolve' && pages.some((id) => repo.transferEditingHeld(id))) return null;
 				// Freeze writes before asynchronous outbox inspection: typing cannot race the last readiness check.
-				const operationId = crypto.randomUUID(),
+				const operationId = randomUuid(),
 					release = repo.holdTransferEditing(pages, operationId);
 				try {
 					for (const id of pages) {

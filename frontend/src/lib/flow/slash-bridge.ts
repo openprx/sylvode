@@ -1,3 +1,4 @@
+import { randomUuid } from '#lib/utils/uuid.js';
 import { editorObservation } from './editor-batch';
 // Page slash-menu insertions that reach beyond plain text: the Collection embed
 // (`ui-surface-v1.md` "后续版本 UI 派生" v0.6) and the Forms Bridge Reference / Embed / Convert
@@ -77,17 +78,11 @@ export function convertWizardPath(scopeId: string, objectId: string): string {
 	return `/flow/${objectId}/convert`;
 }
 
-export function newIdempotencyKey(): string {
-	return typeof crypto !== 'undefined' && 'randomUUID' in crypto
-		? crypto.randomUUID()
-		: `idem-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-/** Failure shown to the user. `kind` separates a retryable transport failure (no answer, or a
+export /** Failure shown to the user. `kind` separates a retryable transport failure (no answer, or a
  * 5xx without an `error_code`: the local `network_error`) from an answer the server gave
  * (`server`). `retryable` is false for permanent failures (`server_rejected` and every
  * non-recoverable typed code), which must not offer a retry. */
-export interface SlashFailure {
+interface SlashFailure {
 	readonly key: string;
 	readonly code: string;
 	readonly kind: 'transport' | 'server';
@@ -216,7 +211,7 @@ export class CollectionEmbedSession {
 		private readonly pageId: string,
 		private readonly commands: EmbedCommands,
 		private readonly onChange: (snapshot: CollectionEmbedSnapshot) => void = () => {},
-		private readonly mintId: () => string = newIdempotencyKey
+		private readonly mintId: () => string = randomUuid
 	) {}
 
 	snapshot(): CollectionEmbedSnapshot {
@@ -419,7 +414,7 @@ export function readPageBlocks(tree: PageTree): PageBlock[] {
 export class PageBlockTree {
 	constructor(
 		private readonly doc: PageDocument,
-		private readonly mintId: () => string = newIdempotencyKey
+		private readonly mintId: () => string = randomUuid
 	) {}
 
 	private tree(): PageTree {
@@ -611,7 +606,7 @@ export class BridgeReferenceSession {
 		private readonly pageId: string,
 		private readonly commands: ReferenceCommands,
 		private readonly reads: ReferenceReads,
-		private readonly mintId: () => string = newIdempotencyKey
+		private readonly mintId: () => string = randomUuid
 	) {}
 
 	/** The key a create of `target` in `mode` would send: the same target and mode reuse it

@@ -1,3 +1,4 @@
+import { randomUuid } from '#lib/utils/uuid.js';
 import type { FlowComment } from '../api/flow';
 /** Mirrors the shared comment service's author/grade rules; the server remains authoritative. */
 export function commentActions(
@@ -25,7 +26,7 @@ export function commentCreationAnchor(
 /** Component-owned retry intents, never shared between objects/accounts or stored with tokens. */
 export class FlowMutationIntents {
 	private readonly entries = new Map<string, { signature: string; key: string }>();
-	constructor(private readonly newKey: () => string = () => crypto.randomUUID()) {}
+	constructor(private readonly newKey: () => string = () => randomUuid()) {}
 	key(operation: string, payload: unknown): string {
 		const signature = JSON.stringify(payload);
 		const previous = this.entries.get(operation);

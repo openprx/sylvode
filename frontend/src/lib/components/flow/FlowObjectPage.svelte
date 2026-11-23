@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { randomUuid } from '#lib/utils/uuid.js';
 	// The Flow object route. Opens exactly one `FlowObjectRepository` entry for this `objectId`
 	// (ref-counted; closed on navigation away) and hands its `doc`/`projection`/`session.state`
 	// down to the canvas, sync indicator, and context panel -- none of which ever touch the
@@ -486,7 +487,7 @@
 			const result = await flowApi.executeCommand(id, {
 				command: { type: 'initialize_editor_doc', payload: { model: 'rich_page_v4' } },
 				expected_frontier: fresh.data.frontier,
-				idempotency_key: crypto.randomUUID()
+				idempotency_key: randomUuid()
 			});
 			if (result.code !== 0)
 				throw flowErrorFromEnvelope(result) ?? { code: 'server_rejected', recoverable: false };
@@ -513,7 +514,7 @@
 			editorIntent.objectId !== object.id ||
 			editorIntent.frontier !== object.frontier
 		)
-			editorIntent = { objectId: object.id, frontier: object.frontier, key: crypto.randomUUID() };
+			editorIntent = { objectId: object.id, frontier: object.frontier, key: randomUuid() };
 		enablingEditor = true;
 		legacyEditorError = null;
 		try {

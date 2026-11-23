@@ -41,7 +41,7 @@ import { FlowCommandService } from './command-service';
 import { flowErrorFromEnvelope, flowErrorI18nKey } from './errors';
 import { resolveWorkspaceAdmin } from './flow-settings';
 import { FlowObjectRepository } from './object-repository';
-import { newIdempotencyKey } from './package-export';
+import { randomUuid } from '#lib/utils/uuid.js';
 
 /** Health auto-refresh period (task FP-N3: "每 15s 自动刷新"). */
 export const OPS_HEALTH_REFRESH_MS = 15_000;
@@ -1275,7 +1275,7 @@ export class FlowOperationsService {
 			reads: deps.reads ?? new FlowObjectRepository(),
 			commands: deps.commands ?? new FlowCommandService(),
 			isWorkspaceAdmin: deps.isWorkspaceAdmin ?? resolveWorkspaceAdmin,
-			newKey: deps.newKey ?? newIdempotencyKey,
+			newKey: deps.newKey ?? randomUuid,
 			now: deps.now ?? Date.now,
 			schedule: deps.schedule ?? defaultScheduler
 		};

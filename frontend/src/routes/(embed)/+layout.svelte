@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { randomUuid } from '#lib/utils/uuid.js';
 	/**
 	 * Frame of an embedded surface: no rail, column, tab strip or header. It is the hosted side of
 	 * the surface contract: it receives the host's messages, applies its theme and density to the
@@ -24,7 +25,7 @@
 	const origins = embedOrigins();
 	const framed = window.parent !== window;
 	const requested = page.url.searchParams.get('frame') ?? '';
-	const frameId = FRAME_ID_PATTERN.test(requested) ? requested : crypto.randomUUID();
+	const frameId = FRAME_ID_PATTERN.test(requested) ? requested : randomUuid();
 
 	const host = new EmbedSurfaceHost({
 		parent: window.parent,

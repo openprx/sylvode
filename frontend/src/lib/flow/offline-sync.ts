@@ -45,6 +45,7 @@
 //    (`error-mapping-v1.md`: "保留 intent，不自动重放"): the server re-sources a stale authorization
 //    epoch in place, so a refusal means the level really is below `edit`.
 
+import { randomUuid } from '#lib/utils/uuid.js';
 import { writable, type Readable } from 'svelte/store';
 import type { FlowBootstrap } from '#lib/api/flow.js';
 import type { OutboxEntry, OutboxStore, RecoveryDraftEntry, RecoveryDraftReason } from './outbox';
@@ -224,12 +225,6 @@ export function classifySubmitError(error: FlowError): Classified {
 	}
 }
 
-function defaultId(): string {
-	return typeof crypto !== 'undefined' && 'randomUUID' in crypto
-		? crypto.randomUUID()
-		: `upd-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
 export class FlowOfflineSync {
 	private readonly store: OutboxStore;
 	private readonly transport: OfflineSyncTransport;
@@ -284,7 +279,7 @@ export class FlowOfflineSync {
 		this.host = host;
 		this.now = options.now ?? (() => Date.now());
 		this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
-		this.newId = options.newId ?? defaultId;
+		this.newId = options.newId ?? randomUuid;
 	}
 
 	/** How many local updates are waiting for the server. */

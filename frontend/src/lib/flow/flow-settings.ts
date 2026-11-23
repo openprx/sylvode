@@ -13,6 +13,7 @@
 // - errors branch on `error_code` (and, for the legacy string-typed envelope that carries no
 //   `error_code`, on the numeric business code) -- never on `message`.
 
+import { randomUuid } from '#lib/utils/uuid.js';
 import { authApi } from '#lib/api/auth.js';
 import type { ApiResult } from '#lib/api/client.js';
 import {
@@ -154,18 +155,6 @@ function stripEventId(update: FlowFeatureUpdate): FlowFeatureFlags {
 	};
 }
 
-/** One key per write intent. `crypto.randomUUID` only exists in secure contexts, so a page served
- * over plain http on a LAN address falls back to a v4 UUID built from `getRandomValues`, which
- * is available everywhere. */
-function newIdempotencyKey(): string {
-	if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
-	const bytes = crypto.getRandomValues(new Uint8Array(16));
-	bytes[6] = (bytes[6] & 0x0f) | 0x40;
-	bytes[8] = (bytes[8] & 0x3f) | 0x80;
-	const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
-	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
 /**
  * Whether the signed-in user is an owner/admin of `workspaceId`. Used only to HIDE the form --
  * the server's `PUT` admin check is the real guard. Fails closed on any error.
@@ -203,7 +192,7 @@ export class FlowSettingsController {
 			commands: deps.commands ?? new FlowCommandService(),
 			store: deps.store ?? flowFeatureStore,
 			isWorkspaceAdmin: deps.isWorkspaceAdmin ?? resolveWorkspaceAdmin,
-			newKey: deps.newKey ?? newIdempotencyKey
+			newKey: deps.newKey ?? randomUuid
 		};
 	}
 

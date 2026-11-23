@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { randomUuid } from '#lib/utils/uuid.js';
 	import { onDestroy, tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
@@ -6,11 +7,7 @@
 	import type { FlowConversionPreview } from '#lib/api/flow.js';
 	import type { FlowObjectRepository } from '#lib/flow/object-repository.js';
 	import type { FlowCommandService } from '#lib/flow/command-service.js';
-	import {
-		listWorkspaceProjects,
-		newIdempotencyKey,
-		type WorkspaceProjectOption
-	} from '#lib/flow/package-export.js';
+	import { listWorkspaceProjects, type WorkspaceProjectOption } from '#lib/flow/package-export.js';
 	import { classifyConvertFailure, parseConversionWarnings } from '#lib/flow/convert-wizard.js';
 
 	let {
@@ -132,8 +129,7 @@
 				return;
 			}
 			const signature = JSON.stringify([source.data.frontier, mapping]);
-			if (previewIntent?.signature !== signature)
-				previewIntent = { signature, key: newIdempotencyKey() };
+			if (previewIntent?.signature !== signature) previewIntent = { signature, key: randomUuid() };
 			const result = await commands.convertPreview({
 				source_object_id: objectId,
 				source_frontier: source.data.frontier,
@@ -160,7 +156,7 @@
 			};
 			confirmed = false;
 			previewIntent = null;
-			commitKey = newIdempotencyKey();
+			commitKey = randomUuid();
 			await tick();
 			reviewHeading?.focus();
 		} catch {

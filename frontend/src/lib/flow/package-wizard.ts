@@ -31,7 +31,7 @@ import type {
 	UploadProgress
 } from '#lib/api/flow.js';
 import { DEFAULT_FLOW_LIMITS } from './limits';
-import { newIdempotencyKey } from './package-export';
+import { randomUuid } from '#lib/utils/uuid.js';
 import {
 	FlowPackageImportSession,
 	classifyPackageThrow,
@@ -259,7 +259,7 @@ export class PackageImportWizard {
 	) {
 		this.deps = {
 			session: deps.session ?? new FlowPackageImportSession(scopeId),
-			newKey: deps.newKey ?? newIdempotencyKey,
+			newKey: deps.newKey ?? randomUuid,
 			now: deps.now ?? Date.now
 		};
 	}

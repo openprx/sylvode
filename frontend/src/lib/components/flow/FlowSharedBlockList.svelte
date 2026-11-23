@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { randomUuid } from '#lib/utils/uuid.js';
 	import { onMount, onDestroy, getContext } from 'svelte';
 	import { SvelteMap, SvelteURLSearchParams } from 'svelte/reactivity';
 	import { t } from 'svelte-i18n';
@@ -90,7 +91,7 @@
 	async function remove(item: Pick<SharedDiscovery, 'share_id' | 'placement_id'>): Promise<void> {
 		if (!admin || removing) return;
 		const epoch = apiClient.getAuthSessionEpoch(),
-			key = keys.get(item.placement_id) ?? crypto.randomUUID();
+			key = keys.get(item.placement_id) ?? randomUuid();
 		keys.set(item.placement_id, key);
 		removing = item.share_id;
 		const result = await sharedBlockApi.removePlacement(item.share_id, item.placement_id, key);

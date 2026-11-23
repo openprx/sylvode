@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { randomUuid } from '#lib/utils/uuid.js';
 	// The object page's right panel: Info (metadata, copy reference, convert, export), Share,
 	// Relations and History, as keyboard-operable tabs (`role="tablist"`, arrow keys, Home/End).
 	// Share and Relations mount the first time their tab is opened and stay mounted afterwards, so
@@ -177,7 +178,7 @@
 		restoreFailureKey = null;
 		restoreReceipt = null;
 		restoreRefreshNeeded = false;
-		const intent = restoreIntent?.seq === seq ? restoreIntent : { seq, key: crypto.randomUUID() };
+		const intent = restoreIntent?.seq === seq ? restoreIntent : { seq, key: randomUuid() };
 		restoreIntent = intent;
 		try {
 			const result = await flowApi.restoreVersion(objectId, { seq, idempotency_key: intent.key });

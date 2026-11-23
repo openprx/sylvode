@@ -3,7 +3,7 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { t } from 'svelte-i18n';
-	import { newIdempotencyKey } from '#lib/flow/package-export.js';
+	import { randomUuid } from '#lib/utils/uuid.js';
 	import { flowApi, type PortablePagePackagePreview } from '#lib/api/flow.js';
 	import { MAX_PORTABLE_PAGE_BYTES, portablePageFailure } from '#lib/flow/portable-page-package.js';
 
@@ -93,7 +93,7 @@
 				importError = portablePageFailure(result);
 				return;
 			}
-			imported = { file, preview: result.data, key: newIdempotencyKey() };
+			imported = { file, preview: result.data, key: randomUuid() };
 			await tick();
 			reviewHeading?.focus();
 		} catch {

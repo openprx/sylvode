@@ -11,6 +11,7 @@
 //   "create object then add fields" sequence;
 // - errors are classified by `error_code` only; `server_rejected` is permanent (no retry offered).
 
+import { randomUuid } from '#lib/utils/uuid.js';
 import type {
 	AcceptedChange,
 	CreateFlowObjectInput,
@@ -76,12 +77,6 @@ export function validateCollectionDraft(draft: CollectionDraft): CollectionValid
 	return 'ok';
 }
 
-function newId(): string {
-	return typeof crypto !== 'undefined' && 'randomUUID' in crypto
-		? crypto.randomUUID()
-		: `id-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
 function fingerprint(draft: CollectionDraft): string {
 	return JSON.stringify([
 		draft.title.trim(),
@@ -105,7 +100,7 @@ export class CreateCollectionSession {
 	constructor(
 		private readonly scopeId: string,
 		private readonly commands: CollectionCreator,
-		private readonly mintId: () => string = newId
+		private readonly mintId: () => string = randomUuid
 	) {}
 
 	get busy(): boolean {

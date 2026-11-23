@@ -33,11 +33,11 @@ import {
 	readRecentExports,
 	recentExportsKey,
 	rememberExport,
-	sha256Fallback,
 	sha256HexOfBlob,
 	type FlowExportJob,
 	type KeyValueStore
 } from '../src/lib/flow/package-export';
+import { sha256Fallback } from '../src/lib/utils/sha256';
 import { FLOW_PACKAGE_ERROR_KEYS } from '../src/lib/flow/package-import';
 import { flowApi } from '../src/lib/api/flow';
 import type { ApiResult } from '../src/lib/api/client';

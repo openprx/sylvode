@@ -1,3 +1,4 @@
+import { randomUuid } from '#lib/utils/uuid.js';
 import type { BodyErrorReason } from './labels';
 /** Page-owned staged uploads. Transport and insertion stay explicit, with no clipboard or public URL fallback. */
 import type { ApiResult, UploadProgress } from '#lib/api/client.js';
@@ -70,7 +71,7 @@ export function validBodyReceipt(
 	);
 }
 export class BodyAssetUpload {
-	readonly key = crypto.randomUUID();
+	readonly key = randomUuid();
 	private controller: AbortController | null = null;
 	private epoch = 0;
 	private disposed = false;

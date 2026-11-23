@@ -38,7 +38,7 @@ import { membersApi } from '#lib/api/members.js';
 import { FlowCommandService } from './command-service';
 import { flowErrorFromEnvelope, flowErrorI18nKey } from './errors';
 import { FlowObjectRepository } from './object-repository';
-import { newIdempotencyKey } from './package-export';
+import { randomUuid } from '#lib/utils/uuid.js';
 
 export const FLOW_GRANT_LEVELS = [
 	'full_access',
@@ -364,7 +364,7 @@ export class FlowSharePanelController {
 				deps.directory ??
 				(() =>
 					workspaceId ? listShareDirectory(workspaceId) : listObjectShareDirectory(objectId)),
-			newKey: deps.newKey ?? newIdempotencyKey
+			newKey: deps.newKey ?? randomUuid
 		};
 	}
 
