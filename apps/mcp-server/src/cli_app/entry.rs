@@ -8,7 +8,7 @@
 //! Flow command accepts, or local, which changes where the workspace commands accept it.
 //! Instead the line is routed on its first subcommand name to the unchanged parser that owns
 //! it, and only a line naming no known group (bare `sylvode`, `--help`, `help`, a typo) goes to
-//! [`overview_command`], which lists all fifteen groups.
+//! [`overview_command`], which lists every group.
 
 use super::command::Cli as FlowCli;
 use crate::cli::{BUSINESS_GROUPS, BusinessCommands};
@@ -48,7 +48,7 @@ pub enum Route {
     /// One of [`BUSINESS_GROUPS`]: parsed and run by the definitions and handler `mcp-server`
     /// uses.
     Business,
-    /// No known group: help, usage errors and suggestions over all fifteen groups.
+    /// No known group: help, usage errors and suggestions over every group.
     Overview,
 }
 
@@ -76,7 +76,7 @@ pub fn route(args: &[OsString]) -> Route {
 
 /// Whether `--help`/`-h` or `--version`/`-V` comes before the first subcommand name: that asks
 /// for the top-level help or version, whichever group follows, so `sylvode --help projects`
-/// lists all fifteen groups instead of handing the line to one model's parser.
+/// lists every group instead of handing the line to one model's parser.
 fn top_level_info_flag(args: &[OsString]) -> bool {
     let mut skip_value = false;
     for arg in args {
@@ -221,7 +221,7 @@ mod tests {
     }
 
     #[test]
-    fn the_overview_lists_all_fifteen_groups_and_no_serve() {
+    fn the_overview_lists_every_group_and_no_serve() {
         let names: Vec<String> = overview_command()
             .get_subcommands()
             .map(|command| command.get_name().to_string())

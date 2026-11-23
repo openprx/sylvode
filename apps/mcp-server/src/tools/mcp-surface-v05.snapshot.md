@@ -4,8 +4,8 @@ Source: `contracts/mcp-surface-v1.md` at Sylvode Flow commit
 `760df14bcf59d7d123dc16dd1c6440b90acf1c23`.
 
 This repository-owned snapshot keeps the ordinary test suite self-contained. Update it only after
-the authoritative contract changes, then run the ignored drift test documented in
-`CONTRIBUTING.md`.
+the authoritative contract changes, then run the ignored contract-drift test in
+`apps/mcp-server/src/tools/mod.rs` (it needs `SYLVODE_FLOW_CONTRACTS_ROOT`).
 
 ## Tools
 

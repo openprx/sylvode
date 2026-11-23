@@ -8,7 +8,7 @@
 //! AI participant of a project; whether it holds a token is recorded by `workspace_bots`, not by
 //! its entity type. Being a bot grants nothing by itself: what a bot may do through its token is
 //! decided by the token's permissions and workspace membership, and an AI task can only be
-//! completed or failed by its own participant (or a system administrator).
+//! completed or failed by its own participant bot: a person or a system administrator cannot end it.
 //!
 //! SQL that joins on users spells the same predicate as `u.entity_type = 'bot'`.
 

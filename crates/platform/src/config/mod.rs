@@ -89,9 +89,8 @@ pub const DEFAULT_OPERATION_LOG_RETENTION_DAYS: u32 = 30;
 
 /// Seconds an AI task may stay `processing` before the worker ends that attempt.
 ///
-/// Applies unless `[ai_tasks]` overrides it. Four times the runner's default agent run limit
-/// (`sylvode-runner` `cli.timeout_secs = 900`), so a run that is merely slow, or waits for a free
-/// executor slot, is not delivered a second time.
+/// Applies unless `[ai_tasks]` overrides it. One hour, the same as the runner's limit for one
+/// headless run (`RUN_TIMEOUT_SECS` in `apps/runner/src/runner/headless.rs`).
 pub const DEFAULT_AI_TASK_PROCESSING_TIMEOUT_SECS: u64 = 3_600;
 
 /// Accepted range of `ai_tasks.processing_timeout_secs`: one minute to seven days.

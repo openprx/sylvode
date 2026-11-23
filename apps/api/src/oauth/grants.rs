@@ -25,14 +25,36 @@
 //! revocations then lock the late tokens in opposite orders; the first draft of this module had
 //! that deadlock.)
 //!
-//!
 //! Tokens that expired more than a day ago are neither locked nor marked: they cannot be used, and
 //! the worker's daily prune deletes them (and, through `parent_id ... ON DELETE SET NULL`, touches
 //! their children) without taking a grant row, so a revocation that also locked them could meet it
 //! in opposite orders.
 //!
-//! The complete order of every transaction that touches these tables is in
-//! `docs/runbooks/oauth-authorization-server.md`.
+//! ## The complete order
+//!
+//! Revocation, consent and token issue race by design (a person disconnects while the client
+//! refreshes). A transaction takes the locks it needs in this order and none out of it:
+//!
+//! | Step | Lock | Taken by |
+//! |---|---|---|
+//! | 1 | `oauth_authorization_requests` row, `FOR UPDATE` | the consent decision |
+//! | 2 | `oauth_clients` row | consent (`FOR SHARE`); disabling the client (`FOR NO KEY UPDATE`) |
+//! | 3 | `users` row | consent (`FOR SHARE`); password change and account disable (the update) |
+//! | 4 | `workspaces` row | consent (`FOR KEY SHARE`); member removal (`FOR UPDATE`, which fences the authorization epoch) |
+//! | 5 | `workspace_members` row | consent (`FOR SHARE`); member removal (`FOR UPDATE`, then the `DELETE`) |
+//! | 6 | `workspace_delegation_settings` row | consent (`FOR SHARE`, the default row is inserted if absent); the workspace switch (the upsert) |
+//! | 7 | advisory lock per user and client | consent (one decision at a time per user and client) |
+//! | 8 | `oauth_grants` rows, by `id`, `FOR NO KEY UPDATE` | every revocation; the token endpoint (its one grant, first) |
+//! | 9 | unredeemed `oauth_authorization_codes`, by `code_hash`, `FOR UPDATE` | every revocation; the token endpoint (the code it redeems) |
+//! | 10 | `oauth_tokens` not revoked and not expired for over a day, by `id`, `FOR UPDATE` | every revocation; the token endpoint (the refresh token it rotates) |
+//!
+//! Each transaction takes a subset: consent steps 1 to 7 (and 8 and 9 while it sweeps abandoned
+//! grants), a revocation hook one of steps 2 to 6 and then 8 to 10, the token endpoint step 8 and
+//! then 9 or 10, and a person disconnecting an application steps 8 to 10. Every wait points from a
+//! lower step to a higher one, so no wait cycle exists. Besides the grant row serializing token
+//! issue and revocation, a change that ends a grant locks the state row it depends on before it
+//! sweeps, so a consent in flight either commits first (and the sweep then revokes its grant) or
+//! waits and finds the state changed.
 
 use sea_orm::{ConnectionTrait, DatabaseTransaction, DbBackend, DbErr, FromQueryResult, Statement};
 use uuid::Uuid;

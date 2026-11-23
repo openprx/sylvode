@@ -25,7 +25,8 @@
 //! code or refresh token it redeems, so the grant row serializes everything that issues or revokes
 //! tokens of one grant and no retry of a deadlock victim is needed. The consent decision and the
 //! hooks lock the state rows they depend on (client, user, workspace, member, setting) before any
-//! of that; the full order is in `docs/runbooks/oauth-authorization-server.md`.
+//! of that; the full order, step by step, is in the lock order section of the [`grants`] module
+//! documentation.
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
