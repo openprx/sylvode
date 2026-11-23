@@ -16,6 +16,7 @@ use super::{
         authz::PermissionLevel,
         frame::{Frame, RejectedCode, TailUpdate, WriteState},
         limits,
+        session::{HandshakePhase, read_handshake_frame},
     },
     scope, scope_write,
 };
@@ -285,15 +286,6 @@ fn error_rejection(document: Uuid, update: Uuid, error: &ApiError, client_model:
     reject(document, Some(update), code, false, WriteState::NotApplied, details)
 }
 
-async fn read_handshake(socket: &mut WebSocket) -> Option<Frame> {
-    let Ok(Some(Ok(Message::Text(text)))) = tokio::time::timeout(Duration::from_secs(10), socket.recv()).await else {
-        return None;
-    };
-    if text.len() > limits::WEBSOCKET_FRAME_BYTES_MAX {
-        return None;
-    }
-    serde_json::from_str(&text).ok()
-}
 pub async fn run(mut socket: WebSocket, state: AppState, context: TicketContext) {
     if let Some(workspace) = context.workspace_id {
         let consumed = collab::ticket::ConsumedTicket {
@@ -313,11 +305,14 @@ pub async fn run(mut socket: WebSocket, state: AppState, context: TicketContext)
         close(&mut socket, "connection budget exhausted").await;
         return;
     };
-    let Some(Frame::Hello {
+    let Some(hello) = read_handshake_frame(&mut socket, context.document_id, HandshakePhase::Hello).await else {
+        return;
+    };
+    let Frame::Hello {
         protocol_version: 1,
         capabilities,
         ..
-    }) = read_handshake(&mut socket).await
+    } = hello
     else {
         close(&mut socket, "expected protocol hello").await;
         return;
@@ -370,11 +365,14 @@ pub async fn run(mut socket: WebSocket, state: AppState, context: TicketContext)
     {
         return;
     }
-    let Some(Frame::Open {
+    let Some(open) = read_handshake_frame(&mut socket, context.document_id, HandshakePhase::Open).await else {
+        return;
+    };
+    let Frame::Open {
         protocol_version: 1,
         document_id,
         ..
-    }) = read_handshake(&mut socket).await
+    } = open
     else {
         close(&mut socket, "expected open").await;
         return;

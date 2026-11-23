@@ -799,7 +799,7 @@ async fn run_inner(
     let collab = runtime::runtime();
 
     // ---- hello ----
-    let Some(hello) = read_frame(&mut socket, HANDSHAKE_TIMEOUT).await else {
+    let Some(hello) = read_handshake_frame(&mut socket, document_id, HandshakePhase::Hello).await else {
         return;
     };
     let Frame::Hello {
@@ -860,7 +860,7 @@ async fn run_inner(
     // Repeated epoch churn rejects this one `open`, not the connection. The client can wait for
     // the supplied backoff and send `open` again without spending a new one-shot ticket.
     let (mut registered, ctx, boot) = loop {
-        let Some(open) = read_frame(&mut socket, HANDSHAKE_TIMEOUT).await else {
+        let Some(open) = read_handshake_frame(&mut socket, document_id, HandshakePhase::Open).await else {
             return;
         };
         let Frame::Open {
@@ -2214,13 +2214,125 @@ async fn fetch_object_workspace_id(state: &AppState, object_id: Uuid) -> Option<
     .map(|r| r.workspace_id)
 }
 
-async fn read_frame(socket: &mut WebSocket, timeout: Duration) -> Option<Frame> {
-    let message = tokio::time::timeout(timeout, socket.recv()).await.ok()??.ok()?;
-    let Message::Text(text) = message else { return None };
-    if text.len() > WEBSOCKET_FRAME_BYTES_MAX {
-        return None;
+/// The handshake step a frame is being read for. Only used to say, in the log, which step failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::flow) enum HandshakePhase {
+    Hello,
+    Open,
+}
+
+impl HandshakePhase {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Hello => "hello",
+            Self::Open => "open",
+        }
     }
-    serde_json::from_str(text.as_str()).ok()
+}
+
+/// Why no handshake frame could be read. Everything except [`Self::Disconnected`] is a peer that is
+/// still there and deserves the protocol's answer instead of a silent hang-up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HandshakeReadFailure {
+    /// The peer closed the socket or the transport failed: there is nobody to answer.
+    Disconnected,
+    /// No frame arrived within [`HANDSHAKE_TIMEOUT`].
+    TimedOut,
+    /// A binary frame: every frame of this protocol is one JSON text message.
+    NotText,
+    /// A text frame over `websocket_frame_bytes` (the byte count it had).
+    TooLarge(usize),
+    /// A text frame that is not a valid frame: not JSON, an unknown `type`, or a field of the
+    /// wrong type (for example a `session_id` that is not a UUID).
+    Malformed,
+}
+
+impl HandshakeReadFailure {
+    /// A fixed, content-free name for the log: never the frame, the ticket or a client string.
+    const fn reason(self) -> &'static str {
+        match self {
+            Self::Disconnected => "peer disconnected",
+            Self::TimedOut => "handshake timed out",
+            Self::NotText => "frame is not text",
+            Self::TooLarge(_) => "frame exceeds websocket_frame_bytes",
+            Self::Malformed => "frame is not a valid protocol frame",
+        }
+    }
+}
+
+/// Reads one frame under the handshake bound and classifies what it got. A transport-level ping or
+/// pong is not a protocol frame; it is skipped and the bound keeps running.
+async fn read_frame(socket: &mut WebSocket, timeout: Duration) -> Result<Frame, HandshakeReadFailure> {
+    let read = async {
+        loop {
+            match socket.recv().await {
+                None | Some(Err(_) | Ok(Message::Close(_))) => return Err(HandshakeReadFailure::Disconnected),
+                Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
+                Some(Ok(Message::Binary(_))) => return Err(HandshakeReadFailure::NotText),
+                Some(Ok(Message::Text(text))) => {
+                    if text.len() > WEBSOCKET_FRAME_BYTES_MAX {
+                        return Err(HandshakeReadFailure::TooLarge(text.len()));
+                    }
+                    return serde_json::from_str(text.as_str()).map_err(|_| HandshakeReadFailure::Malformed);
+                }
+            }
+        }
+    };
+    tokio::time::timeout(timeout, read)
+        .await
+        .unwrap_or(Err(HandshakeReadFailure::TimedOut))
+}
+
+/// Reads the next handshake frame. When there is none, the peer that is still connected gets the
+/// protocol's `rejected` frame and a close (a handshake that fails without a word looks to the
+/// client like a transport fault and cannot be told apart from a healthy slow server), and the
+/// reason is logged by name with the document id only.
+pub(in crate::flow) async fn read_handshake_frame(
+    socket: &mut WebSocket,
+    document_id: Uuid,
+    phase: HandshakePhase,
+) -> Option<Frame> {
+    let failure = match read_frame(socket, HANDSHAKE_TIMEOUT).await {
+        Ok(frame) => return Some(frame),
+        Err(failure) => failure,
+    };
+    let phase = phase.name();
+    let reason = failure.reason();
+    match failure {
+        HandshakeReadFailure::Disconnected => {
+            tracing::debug!(%document_id, phase, reason, "collab session: handshake ended");
+        }
+        HandshakeReadFailure::TimedOut => {
+            tracing::warn!(%document_id, phase, reason, "collab session: handshake refused");
+            reject_and_close(socket, document_id, RejectedCode::ResyncRequired, "handshake timed out").await;
+        }
+        HandshakeReadFailure::NotText | HandshakeReadFailure::Malformed => {
+            tracing::warn!(%document_id, phase, reason, "collab session: handshake refused");
+            reject_and_close(
+                socket,
+                document_id,
+                RejectedCode::UnsupportedProtocol,
+                "handshake frame is not a valid protocol frame",
+            )
+            .await;
+        }
+        HandshakeReadFailure::TooLarge(observed) => {
+            tracing::warn!(%document_id, phase, reason, "collab session: handshake refused");
+            send(
+                socket,
+                &limit_exceeded_frame(
+                    document_id,
+                    "websocket_frame_bytes",
+                    WEBSOCKET_FRAME_BYTES_MAX as u64,
+                    Some(observed as u64),
+                    None,
+                ),
+            )
+            .await;
+            close(socket, LIMIT_EXCEEDED_CLOSE_CODE, "handshake frame too large").await;
+        }
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------------------------

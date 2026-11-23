@@ -995,6 +995,211 @@ mod collab_database_tests {
         scratch.drop_self().await;
     }
 
+    /// Reads the next message and asserts it is the protocol's `rejected` frame with `code`, then
+    /// that the server closes the socket with the close code frozen for that rejection.
+    async fn expect_rejection_then_close(ws: &mut WsStream, document_id: Uuid, code: RejectedCode, close_code: u16) {
+        let frame = recv_frame(ws).await;
+        let Frame::Rejected {
+            document_id: rejected_document,
+            update_id,
+            code: rejected_code,
+            ..
+        } = frame
+        else {
+            panic!("expected a rejected frame, got {frame:?}");
+        };
+        assert_eq!(rejected_document, document_id);
+        assert_eq!(update_id, None, "a handshake refusal names no update");
+        assert_eq!(rejected_code, code);
+        let closing = tokio::time::timeout(Duration::from_secs(15), ws.next())
+            .await
+            .expect("the server closes the socket after the rejection");
+        let Some(Ok(TMessage::Close(Some(close)))) = closing else {
+            panic!("expected a close frame with a code, got {closing:?}");
+        };
+        assert_eq!(u16::from(close.code), close_code);
+    }
+
+    /// The root cause of the plain-http outage: a web client on an insecure origin sent a hello
+    /// whose `session_id` was not a UUID, the frame failed to parse, and the server dropped the
+    /// connection without a word. The handshake now ends in the protocol's rejection and a close.
+    #[tokio::test]
+    async fn a_hello_with_a_session_id_that_is_not_a_uuid_is_rejected_and_closed() {
+        let scratch = scratch_or_skip!("hello-bad-session-id");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed_workspace(&state).await;
+        let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        let token = jwt_for(owner_id);
+        let addr = spawn_server(state.clone()).await;
+
+        let client_id = "hello-bad-session-id-client";
+        let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+        let mut ws = connect(addr, &ticket, client_id).await;
+        let hello = serde_json::json!({
+            "type": "hello",
+            "protocol_version": PROTOCOL_VERSION,
+            "capabilities": ["presence"],
+            "client_id": "client-abc123",
+            "session_id": "client-abc123",
+        });
+        ws.send(TMessage::Text(hello.to_string().into()))
+            .await
+            .expect("send succeeds");
+
+        expect_rejection_then_close(
+            &mut ws,
+            document_id,
+            RejectedCode::UnsupportedProtocol,
+            ApiErrorKind::UnsupportedProtocol.ws_close_code().expect("a close code"),
+        )
+        .await;
+        scratch.drop_self().await;
+    }
+
+    /// A first frame that is not JSON, and one that is not even text, get the same answer.
+    #[tokio::test]
+    async fn a_first_frame_that_is_not_json_text_is_rejected_and_closed() {
+        let scratch = scratch_or_skip!("hello-not-json");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed_workspace(&state).await;
+        let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        let token = jwt_for(owner_id);
+        let addr = spawn_server(state.clone()).await;
+        let close_code = ApiErrorKind::UnsupportedProtocol.ws_close_code().expect("a close code");
+
+        for (label, message) in [
+            ("text", TMessage::Text("this is not json".into())),
+            ("binary", TMessage::Binary(vec![0u8, 1, 2, 3].into())),
+        ] {
+            let client_id = format!("hello-not-json-{label}");
+            let ticket = issue_ticket(addr, &token, workspace_id, document_id, &client_id).await;
+            let mut ws = connect(addr, &ticket, &client_id).await;
+            ws.send(message).await.expect("send succeeds");
+            expect_rejection_then_close(&mut ws, document_id, RejectedCode::UnsupportedProtocol, close_code).await;
+        }
+        scratch.drop_self().await;
+    }
+
+    /// The handshake's second step has the same rule: an `open` that does not parse is answered.
+    #[tokio::test]
+    async fn an_open_that_does_not_parse_is_rejected_and_closed() {
+        let scratch = scratch_or_skip!("open-not-valid");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed_workspace(&state).await;
+        let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        let token = jwt_for(owner_id);
+        let addr = spawn_server(state.clone()).await;
+
+        let client_id = "open-not-valid-client";
+        let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+        let mut ws = connect(addr, &ticket, client_id).await;
+        send_frame(
+            &mut ws,
+            &Frame::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                capabilities: vec![],
+                client_id: client_id.to_string(),
+                session_id: Uuid::new_v4(),
+            },
+        )
+        .await;
+        assert!(matches!(recv_frame(&mut ws).await, Frame::Hello { .. }));
+        let open = serde_json::json!({
+            "type": "open",
+            "protocol_version": PROTOCOL_VERSION,
+            "document_id": "not-a-uuid",
+            "known_seq": null,
+            "known_frontier": null,
+        });
+        ws.send(TMessage::Text(open.to_string().into()))
+            .await
+            .expect("send succeeds");
+        expect_rejection_then_close(
+            &mut ws,
+            document_id,
+            RejectedCode::UnsupportedProtocol,
+            ApiErrorKind::UnsupportedProtocol.ws_close_code().expect("a close code"),
+        )
+        .await;
+        scratch.drop_self().await;
+    }
+
+    /// The same handshake with a real UUID session id still gets the server hello and a snapshot.
+    #[tokio::test]
+    async fn a_hello_with_a_uuid_session_id_still_reaches_the_snapshot() {
+        let scratch = scratch_or_skip!("hello-valid");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed_workspace(&state).await;
+        let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        let token = jwt_for(owner_id);
+        let addr = spawn_server(state.clone()).await;
+
+        let client_id = Uuid::new_v4().to_string();
+        let ticket = issue_ticket(addr, &token, workspace_id, document_id, &client_id).await;
+        let mut ws = connect(addr, &ticket, &client_id).await;
+        let hello = serde_json::json!({
+            "type": "hello",
+            "protocol_version": PROTOCOL_VERSION,
+            "capabilities": ["presence"],
+            "client_id": client_id,
+            "session_id": client_id,
+        });
+        ws.send(TMessage::Text(hello.to_string().into()))
+            .await
+            .expect("send succeeds");
+        assert!(matches!(recv_frame(&mut ws).await, Frame::Hello { .. }));
+        send_frame(
+            &mut ws,
+            &Frame::Open {
+                protocol_version: PROTOCOL_VERSION,
+                document_id,
+                known_seq: None,
+                known_frontier: None,
+            },
+        )
+        .await;
+        assert!(matches!(recv_frame(&mut ws).await, Frame::Snapshot { .. }));
+        scratch.drop_self().await;
+    }
+
+    /// A client that connects and never sends a hello is answered at the handshake bound (10 s),
+    /// not left hanging until it gives up on its own. Takes the full bound in real time.
+    #[tokio::test]
+    async fn a_connection_that_never_says_hello_is_rejected_at_the_handshake_bound() {
+        let scratch = scratch_or_skip!("hello-timeout");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed_workspace(&state).await;
+        let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        let token = jwt_for(owner_id);
+        let addr = spawn_server(state.clone()).await;
+
+        let client_id = "hello-timeout-client";
+        let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+        let mut ws = connect(addr, &ticket, client_id).await;
+        let started = std::time::Instant::now();
+        let frame = tokio::time::timeout(Duration::from_secs(20), ws.next())
+            .await
+            .expect("the server answers at the handshake bound")
+            .expect("the stream is open")
+            .expect("not a transport error");
+        let TMessage::Text(text) = frame else {
+            panic!("expected a text frame, got {frame:?}");
+        };
+        let Frame::Rejected { code, .. } = serde_json::from_str(text.as_str()).expect("a frame") else {
+            panic!("expected a rejected frame");
+        };
+        assert_eq!(code, RejectedCode::ResyncRequired);
+        assert!(
+            started.elapsed() >= Duration::from_secs(9),
+            "answered only at the bound"
+        );
+        let closing = tokio::time::timeout(Duration::from_secs(5), ws.next())
+            .await
+            .expect("closes");
+        assert!(matches!(closing, Some(Ok(TMessage::Close(Some(_))))), "{closing:?}");
+        scratch.drop_self().await;
+    }
+
     #[tokio::test]
     async fn a_ticket_issued_from_a_disallowed_origin_is_rejected() {
         let scratch = scratch_or_skip!("bad-origin");
