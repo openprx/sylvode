@@ -3,7 +3,7 @@
 //! A bot that a project bot connection made (it has a `bot_runners` row) holds a token that lives
 //! on a host running command-line agents over issue text. The token is limited to the projects
 //! where the bot has an enabled connection: every route is classified in
-//! [`RUNNER_BOT_ROUTES`](super::runner_bot_routes::RUNNER_BOT_ROUTES), and a request is allowed
+//! [`RUNNER_BOT_ROUTES`](super::bot_routes::RUNNER_BOT_ROUTES), and a request is allowed
 //! only by its class.
 //!
 //! * `NoProject`: the route names no project and its handler limits the bot to what it owns (the
@@ -37,7 +37,7 @@ use crate::error::ApiError;
 use crate::oauth::delegated::parse_identifier;
 use crate::services::ai_task_service::runner_bot_block;
 
-pub use super::runner_bot_routes::RUNNER_BOT_ROUTES;
+pub use super::bot_routes::RUNNER_BOT_ROUTES;
 
 /// How the project of a request's target is found.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,17 +96,20 @@ impl Class {
 #[derive(Clone, Copy, Debug)]
 pub struct RunnerRoute {
     pub method: &'static str,
-    /// The router's matched path template, exactly as registered in `main.rs`.
+    /// The router's matched path template, exactly as registered in the router files.
     pub pattern: &'static str,
     pub class: Class,
+}
+
+/// Every classified route of every area.
+pub fn all_routes() -> impl Iterator<Item = &'static RunnerRoute> {
+    RUNNER_BOT_ROUTES.iter().flat_map(|area| area.iter())
 }
 
 /// The entry for a method and the router's matched path pattern.
 #[must_use]
 pub fn lookup(method: &str, pattern: &str) -> Option<&'static RunnerRoute> {
-    RUNNER_BOT_ROUTES
-        .iter()
-        .find(|entry| entry.method == method && entry.pattern == pattern)
+    all_routes().find(|entry| entry.method == method && entry.pattern == pattern)
 }
 
 /// What every refusal says, whether the route is closed, or the project is not connected, enabled
@@ -512,13 +515,12 @@ pub async fn authorize(
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 mod tests {
-    use super::{Class, Find, RUNNER_BOT_ROUTES, lookup};
+    use super::{Class, Find, all_routes, lookup};
     use std::collections::{BTreeMap, BTreeSet};
 
     /// Every `(method, pattern)` that the router files register behind `bot_or_user_auth_middleware`.
-    fn routes_of_main() -> BTreeSet<(String, String)> {
+    fn routes_of_router() -> BTreeSet<(String, String)> {
         let source = crate::router_source::text();
-        let source = source.as_str();
         let bytes = source.as_bytes();
         let mut found = BTreeSet::new();
         let mut from = 0;
@@ -565,19 +567,18 @@ mod tests {
         found
     }
 
-    /// A route cannot be added to `main.rs` without being classified here, and nothing in the table
-    /// is a route that no longer exists.
+    /// A route cannot be added to a router file without being classified here, and nothing in the
+    /// table is a route that no longer exists.
     #[test]
-    fn every_route_of_main_is_classified() {
-        let main = routes_of_main();
+    fn every_router_route_is_classified() {
+        let main = routes_of_router();
         assert!(main.len() > 400, "the route scan found only {} routes", main.len());
-        let table: BTreeSet<(String, String)> = RUNNER_BOT_ROUTES
-            .iter()
+        let table: BTreeSet<(String, String)> = all_routes()
             .map(|entry| (entry.method.to_string(), entry.pattern.to_string()))
             .collect();
         assert_eq!(
             table.len(),
-            RUNNER_BOT_ROUTES.len(),
+            all_routes().count(),
             "a method and pattern is listed twice"
         );
         let unclassified: Vec<_> = main.difference(&table).collect();
@@ -674,22 +675,10 @@ mod tests {
             assert!(project(class(method, pattern)), "{method} {pattern}");
         }
         let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
-        for entry in RUNNER_BOT_ROUTES {
+        for entry in all_routes() {
             *counts.entry(entry.class.name()).or_default() += 1;
         }
-        // The count per class is part of the review of a change to the table.
-        assert_eq!(
-            counts,
-            BTreeMap::from([
-                ("no project", 14),
-                ("project-resolved", 295),
-                ("own resource", 13),
-                ("admin", 86),
-                ("refused", 37),
-            ]),
-            "the classes of the {} routes changed",
-            RUNNER_BOT_ROUTES.len()
-        );
+        // The count per class of each area is asserted next to its table (`bot_routes/<area>.rs`).
         for name in ["no project", "project-resolved", "own resource", "admin", "refused"] {
             assert!(counts.get(name).copied().unwrap_or(0) > 0, "no route is {name}");
         }
@@ -707,8 +696,7 @@ mod tests {
         }
         // Every resolver the table uses is exercised by the database test; list them here so a new one
         // is noticed.
-        let finds: BTreeSet<String> = RUNNER_BOT_ROUTES
-            .iter()
+        let finds: BTreeSet<String> = all_routes()
             .filter_map(|entry| match entry.class {
                 Class::Project(find) => Some(match find {
                     Find::Table(table, _) => format!("table {table}"),
