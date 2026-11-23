@@ -85,8 +85,7 @@
       "reason": "legacy_alias_documented",
       "repo": "sylvode",
       "paths": [
-        "CHANGELOG.md",
-        "README.md"
+        "CHANGELOG.md"
       ],
       "pattern": "openpr-(?:<target>|\\*|frontend\\.tar\\.gz|\\$\\{\\{ matrix\\.suffix \\}\\}[\\w.]*|mcp-server-<target>)|`openpr-\\*`",
       "explanation": "The openpr-<target> and openpr-frontend.tar.gz release archive aliases, no longer published, and the removed openpr-mcp-server-<target> archives; only history and documentation of the removal name them."
@@ -224,11 +223,8 @@
       "reason": "formerly_note",
       "repo": "sylvode",
       "paths": [
-        "README.md",
-        "SECURITY.md",
         "CHANGELOG.md",
         "apps/mcp-server/AGENTS.md",
-        "docs/universal-forms-production.md",
         ".github/workflows/release.yml"
       ],
       "pattern": "\\(formerly OpenPR(?: Webhook)?;?\\)?|Formerly OpenPR\\.|published as OpenPR|OpenPR-era|Legacy OpenPR names|legacy OpenPR filenames|OpenPR names \\(|OpenPR compatibility names",
@@ -618,12 +614,20 @@
         "playwright.config.ts",
         "skills/**",
         "testing/**",
-        "docs/**",
-        "README.md",
         "migrations/*.sql"
       ],
       "pattern": "OPENPR_[A-Z0-9_]*|\\(SYLVODE\\|OPENPR\\)_",
       "explanation": "Environment inputs of the gate scripts, smokes, test suites and build (for example OPENPR_V10_CAPACITY_RESULT, OPENPR_FRONTEND_URL, OPENPR_BUILD_GIT_COMMIT): CI jobs, release builds and frozen gate runs set them by these names, so renaming one needs an alias."
+    },
+    {
+      "id": "sylvode-backup-drill-environment",
+      "reason": "stable_identifier",
+      "repo": "sylvode",
+      "paths": [
+        "docs/operations.md"
+      ],
+      "pattern": "OPENPR_BACKUP_(?:SOURCE_DATABASE_URL|RESTORE_ADMIN_URL|RESTORE_DATABASE_NAME)\\b",
+      "explanation": "The three environment variables that scripts/verify-flow-backup-restore.sh reads; the operations guide names them so an operator can run the backup and restore drill."
     },
     {
       "id": "sylvode-rust-client-types",
@@ -677,7 +681,6 @@
       "reason": "formerly_note",
       "repo": "sylvode",
       "paths": [
-        "apps/runner/README.md",
         "apps/runner/CHANGELOG.md"
       ],
       "pattern": "[Ff]ormerly (?:`OpenPR`|OpenPR) Webhook|called OpenPR Webhook|from OpenPR Webhook",
