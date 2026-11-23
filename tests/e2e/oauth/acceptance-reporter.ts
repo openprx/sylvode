@@ -3,7 +3,7 @@
 // onEnd turns a leaked artifact into a failed run.
 
 import type { FullResult, Reporter } from '@playwright/test/reporter';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
 	buildRecord,
@@ -13,6 +13,7 @@ import {
 } from './lib/acceptance.ts';
 import { loadConfig, secretsOf, type Config } from './config.ts';
 import { redactor, TOKEN_PREFIXES } from './lib/redact.ts';
+import { RESULTS_TEMPLATE } from './results-template.ts';
 import { scanDirectory, type Needle } from './lib/scan.ts';
 import { asRecord, dig, str } from './lib/util.ts';
 import { call } from './lib/http.ts';
@@ -121,7 +122,6 @@ export default class AcceptanceReporter implements Reporter {
 			clientActive: active,
 			scan: emptyScan
 		});
-		const template = readFileSync(join(import.meta.dirname, 'RESULTS-TEMPLATE.md'), 'utf8');
 		const write = (record: typeof draft): void => {
 			writeFileSync(
 				join(config.outDir, 'acceptance.json'),
@@ -130,7 +130,7 @@ export default class AcceptanceReporter implements Reporter {
 			);
 			writeFileSync(
 				join(config.outDir, 'acceptance.md'),
-				`${redactor.text(renderMarkdown(template, record))}\n`,
+				`${redactor.text(renderMarkdown(RESULTS_TEMPLATE, record))}\n`,
 				{ mode: 0o600 }
 			);
 		};

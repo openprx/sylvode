@@ -1,4 +1,6 @@
-# Sylvode P4 acceptance record (WP8)
+// Markdown template of the acceptance record. `renderMarkdown` fills the {{placeholders}}.
+
+export const RESULTS_TEMPLATE = `# Sylvode P4 acceptance record (WP8)
 
 Result: **{{result}}**
 
@@ -34,9 +36,10 @@ trigger named in the table to the moment the chunk carrying the message arrived.
 
 ## Notes
 
-- The per-case files under `cases/` hold the details of each case; a failed case also holds the raw
+- The per-case files under \`cases/\` hold the details of each case; a failed case also holds the raw
   requests and responses (status, relevant headers, body) with every token, code, verifier and
   password replaced.
 - No token, code, verifier or password is written to this directory. Connections are identified by the
-  grant id that `GET /api/v1/oauth/connection` returns.
-- The same record in machine form is `acceptance.json`.
+  grant id that \`GET /api/v1/oauth/connection\` returns.
+- The same record in machine form is \`acceptance.json\`.
+`;

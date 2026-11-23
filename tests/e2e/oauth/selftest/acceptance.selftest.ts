@@ -1,10 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { test } from 'node:test';
 import { buildRecord, renderMarkdown, type Environment } from '../lib/acceptance.ts';
 import { CATALOG } from '../lib/catalog.ts';
 import type { CaseResult } from '../lib/record.ts';
+import { RESULTS_TEMPLATE } from '../results-template.ts';
 
 const environment: Environment = {
 	uiOrigin: 'http://127.0.0.1:18097',
@@ -62,7 +61,6 @@ test('a clean run is passed only with all cases, a clean scan and an active clie
 });
 
 test('the template renders with every placeholder filled and the limit applied', () => {
-	const template = readFileSync(join(import.meta.dirname, '..', 'RESULTS-TEMPLATE.md'), 'utf8');
 	const record = buildRecord(
 		[
 			result('A07', 'passed', { notification_ms: 321 }),
@@ -70,7 +68,7 @@ test('the template renders with every placeholder filled and the limit applied',
 		],
 		meta
 	);
-	const markdown = renderMarkdown(template, record);
+	const markdown = renderMarkdown(RESULTS_TEMPLATE, record);
 	assert.ok(!/\{\{[a-z_]+\}\}/.test(markdown), 'a placeholder was left unfilled');
 	assert.ok(
 		markdown.includes(

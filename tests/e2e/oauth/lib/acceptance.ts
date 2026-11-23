@@ -1,5 +1,5 @@
 // The acceptance record: built from the per-case result files, rendered through
-// RESULTS-TEMPLATE.md, and written as markdown and JSON.
+// the template in ../results-template.ts, and written as markdown and JSON.
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';

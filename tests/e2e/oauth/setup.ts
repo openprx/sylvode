@@ -8,7 +8,7 @@
 // once (the worker holds a new bot's tasks until it has been used) and joins P2 by id:
 // a bot is a project's AI participant only through a connection. The runner address must pass the
 // API's outbound policy, so the suite's `sylvode.toml` lists it under `[outbound] allowed_hosts`
-// (DEPLOY-NOTES.md). Refuses a non-loopback host unless OAUTH_E2E_ALLOW_NON_LOOPBACK=1. Prints
+// (the `[outbound]` section). Refuses a non-loopback host unless OAUTH_E2E_ALLOW_NON_LOOPBACK=1. Prints
 // ids only; never a password or a token.
 
 import { loadConfig, NAME_PREFIX, type Account, type Config, ConfigError } from './config.ts';
@@ -288,9 +288,7 @@ export async function runSetup(cfg: Config): Promise<void> {
 		method: 'GET',
 		url: `${cfg.uiOrigin}/.well-known/oauth-authorization-server`
 	});
-	log(
-		`authorization server metadata at the UI origin: HTTP ${as.status}${as.status === 200 ? '' : ' (see DEPLOY-NOTES.md)'}`
-	);
+	log(`authorization server metadata at the UI origin: HTTP ${as.status}`);
 	log('');
 	log('ids (not secrets):');
 	log(`  workspace  ${workspaceId}`);
