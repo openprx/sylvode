@@ -155,7 +155,7 @@ async fn every_registered_resource_is_served_by_its_sylvode_identity_only() -> T
                 .filter_map(|row| row.get("uriTemplate").and_then(Value::as_str)),
         )
         .collect::<Vec<_>>();
-    assert_eq!(resources.len(), 5, "static resource registry cardinality drifted");
+    assert_eq!(resources.len(), 4, "static resource registry cardinality drifted");
     assert_eq!(templates.len(), 21, "template registry cardinality drifted");
     assert_eq!(
         observed.len(),
