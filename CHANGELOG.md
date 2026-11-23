@@ -16,6 +16,19 @@ name.
   and Flow evidence scripts and the project release readiness endpoint read were moved from
   `docs/schemas/` to `scripts/schemas/`; every script, test and documentation index entry that names
   them uses the new path.
+- **Documentation rewritten and reorganised.** The public documentation was rewritten against the
+  current product. It now reads: `docs/install.md`, `docs/configuration.md`, `docs/operations.md`,
+  the user guides under `docs/guide/`, the integration references under `docs/integrations/` and
+  `docs/plugins/README.md`, with `docs/README.md` as the index. The runbooks under `docs/runbooks/`
+  and the two universal forms documents were folded into these, and the API endpoint list is now
+  `docs/integrations/api.md`. The root, MCP server, runner and frontend READMEs and both security
+  policies were rewritten, and the comments of `config/sylvode.example.toml` were revised.
+- **Runner example configurations.** `apps/runner/config.example.toml` no longer carries the
+  `[tunnel]` table, which has no counterpart on the Sylvode server, and its comments follow the
+  runner README. In `config/sylvode-runner.example.toml` one route selects tasks with
+  `trigger_kinds` instead of `bot_agent_types = ["claude-code"]`.
+- **Scenario template catalogue source.** The scenario catalogue JSON reporter and verifier read the
+  template table from `docs/guide/scenario-templates.md`.
 
 ### Removed
 
@@ -26,7 +39,9 @@ name.
   test plan, and the spike sign-off record and evidence source copies. The OAuth acceptance record
   template is now a TypeScript module next to its reporter, the vendored `loro-prosemirror` and
   SeaORM notes are reduced to provenance notices, and the universal forms audits no longer check the
-  removed documents.
+  removed documents or the wording of the rewritten ones. The runbooks, `frontend/QUICKSTART.md`,
+  `docs/API_ENDPOINTS_PHASE3.md`, `docs/scenario-templates.md`, `docs/universal-forms-and-plugins.md`
+  and `docs/universal-forms-production.md` are gone; their content lives in the new layout.
 
 ### Fixed
 
