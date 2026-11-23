@@ -1723,8 +1723,7 @@ mod tests {
     /// The class of the most specific route that a request matches (a literal segment beats a
     /// parameter, and the catch-all comes last), `None` when no route matches.
     fn class_of(method: &str, path: &str) -> Option<api::middleware::runner_bot_scope::Class> {
-        api::middleware::runner_bot_scope::RUNNER_BOT_ROUTES
-            .iter()
+        api::middleware::runner_bot_scope::all_routes()
             .filter(|route| route.method == method && pattern_matches(route.pattern, path))
             .max_by_key(|route| {
                 (
