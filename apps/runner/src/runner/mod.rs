@@ -282,12 +282,20 @@ pub fn posture(config: &Config) -> Vec<PostureLine> {
         ),
     }];
     let codex = &runner.cli.codex;
+    let codex_tmux_bypass = session_report::codex_bypasses(&codex.launch_command);
+    let codex_headless_bypass = session_report::codex_bypasses(&codex.headless_args);
     lines.push(PostureLine {
-        warn: false,
+        warn: codex.enabled && (codex_tmux_bypass || codex_headless_bypass),
         text: format!(
-            "codex: {}, headless arguments {:?}",
+            "codex: {}, session launch command {:?}, headless arguments {:?}{}",
             if codex.enabled { "enabled" } else { "disabled" },
-            codex.headless_args
+            codex.launch_command,
+            codex.headless_args,
+            if codex.enabled && (codex_tmux_bypass || codex_headless_bypass) {
+                "; APPROVALS AND SANDBOX ARE OFF"
+            } else {
+                ""
+            }
         ),
     });
     if runner.cli.opencode.enabled {

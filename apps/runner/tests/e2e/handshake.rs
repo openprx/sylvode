@@ -119,7 +119,7 @@ async fn a_matching_protocol_is_reported_at_start_and_again_after_the_interval()
     // The defaults run with permission checks off, on both channels.
     assert_eq!(
         body["components"][7],
-        json!({"component": "posture", "status": "warn", "bypass": {"tmux": true, "headless": true}})
+        json!({"component": "posture", "cli": "claude", "status": "warn", "bypass": {"tmux": true, "headless": true}})
     );
     assert_eq!(
         body["components"][0],
@@ -135,6 +135,7 @@ async fn a_matching_protocol_is_reported_at_start_and_again_after_the_interval()
         all,
         [
             "bypass",
+            "cli",
             "component",
             "components",
             "generated_by",

@@ -110,13 +110,28 @@ fn runner_row(config: Option<&Config>, config_state: ConfigState, checker: &Chec
     // The posture: the launch command and headless arguments, and whether they run with
     // permission checks off (the defaults do).
     if let Some(config) = config {
-        let posture = crate::runner::session_report::posture_of(&config.runner);
+        let postures = crate::runner::session_report::postures_of(&config.runner);
         let claude = &config.runner.cli.claude;
+        let codex = &config.runner.cli.codex;
+        let bypass: serde_json::Map<String, Value> = postures
+            .iter()
+            .map(|(cli, posture)| {
+                (
+                    (*cli).to_string(),
+                    json!({"tmux": posture.tmux, "headless": posture.headless}),
+                )
+            })
+            .collect();
         row = row
             .with_detail("launch_command", json!(claude.launch_command))
             .with_detail("headless_args", json!(claude.headless_args))
-            .with_detail("bypass", json!({"tmux": posture.tmux, "headless": posture.headless}));
-        if (posture.tmux || posture.headless) && row.status == Status::Ok {
+            .with_detail("bypass", Value::Object(bypass));
+        if codex.enabled {
+            row = row
+                .with_detail("codex_launch_command", json!(codex.launch_command))
+                .with_detail("codex_headless_args", json!(codex.headless_args));
+        }
+        if postures.iter().any(|(_, posture)| posture.tmux || posture.headless) && row.status == Status::Ok {
             row.status = Status::Warn;
             row.hint = Some(
                 "permission checks are off in the launch command or the headless arguments: tasks run with every \
@@ -207,13 +222,15 @@ pub async fn api_component(config: &Config, http: &reqwest::Client) -> Option<Co
 /// The `project.<KEY>` row from what the runner itself knows (its `session.json` for the key).
 pub fn project_row(config: &Config, key: &str, show_paths: bool) -> Component {
     let runtime_state = crate::runner::state_dir(config, crate::runner::paths::service_user_home().as_deref());
-    let record = runtime_state
-        .and_then(|dir| crate::runner::files::StateDir::open(&dir).ok())
-        .and_then(|state| {
-            crate::runner::tmux::SessionName::new(key, "claude")
+    let state = runtime_state.and_then(|dir| crate::runner::files::StateDir::open(&dir).ok());
+    // The first recorded CLI of the key describes the project (claude before codex).
+    let record = state.and_then(|state| {
+        crate::runner::tmux::SESSION_CLIS.iter().find_map(|cli| {
+            crate::runner::tmux::SessionName::new(key, cli)
                 .ok()
                 .and_then(|name| state.read_session_record(&name))
-        });
+        })
+    });
     let Some(record) = record else {
         let check = ProjectCheck {
             key,
@@ -242,18 +259,87 @@ pub fn project_row(config: &Config, key: &str, show_paths: bool) -> Component {
     let check = ProjectCheck {
         key,
         directory: directory_state(&dir, &root_refs),
-        trusted: Trusted::Unknown,
+        trusted: crate::runner::paths::service_user_home()
+            .map_or(Trusted::Unknown, |home| trust_state(&home, &record.cli, &dir)),
         agent_guide: guide,
         directory_path: Some(&dir),
     };
     project_component(&check, show_paths)
 }
 
-/// The `session.<KEY>-claude` row: what the runner can see of the project's tmux session. `None`
-/// for a key that is not a project key.
-pub fn session_row(config: &Config, key: &str) -> Option<Component> {
+/// Whether the CLI trusts the directory, read (never written) from the CLI's own files under
+/// `home`: claude's `~/.claude.json` (`projects["<dir>"].hasTrustDialogAccepted`) and codex's
+/// `~/.codex/config.toml` (`projects."<dir>".trust_level`, `trusted` or not). A missing file, key
+/// or CLI is `unknown`.
+#[must_use]
+pub fn trust_state(home: &Path, cli: &str, dir: &Path) -> Trusted {
+    let Some(dir) = dir.to_str() else {
+        return Trusted::Unknown;
+    };
+    match cli {
+        "claude" => std::fs::read_to_string(home.join(".claude.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            .and_then(|value| {
+                value
+                    .pointer(&format!("/projects/{}/hasTrustDialogAccepted", pointer_escape(dir)))
+                    .cloned()
+            })
+            .and_then(|accepted| accepted.as_bool())
+            .map_or(
+                Trusted::Unknown,
+                |accepted| if accepted { Trusted::Yes } else { Trusted::No },
+            ),
+        "codex" => std::fs::read_to_string(home.join(".codex").join("config.toml"))
+            .ok()
+            .and_then(|text| text.parse::<toml::Table>().ok())
+            .and_then(|table| {
+                table
+                    .get("projects")?
+                    .get(dir)?
+                    .get("trust_level")?
+                    .as_str()
+                    .map(|level| if level == "trusted" { Trusted::Yes } else { Trusted::No })
+            })
+            .unwrap_or(Trusted::Unknown),
+        _ => Trusted::Unknown,
+    }
+}
+
+/// A JSON pointer token: `~` and `/` escaped.
+fn pointer_escape(token: &str) -> String {
+    token.replace('~', "~0").replace('/', "~1")
+}
+
+/// The `session.<KEY>-<cli>` rows: what the runner can see of the project's tmux sessions, one per
+/// CLI the runner has a record of (`claude` when it has none). Empty for a key that is not a
+/// project key.
+pub fn session_rows(config: &Config, key: &str) -> Vec<Component> {
+    let state = crate::runner::state_dir(config, crate::runner::paths::service_user_home().as_deref())
+        .and_then(|dir| crate::runner::files::StateDir::open(&dir).ok());
+    let mut clis: Vec<&str> = crate::runner::tmux::SESSION_CLIS
+        .iter()
+        .copied()
+        .filter(|cli| {
+            state.as_ref().is_some_and(|state| {
+                crate::runner::tmux::SessionName::new(key, cli)
+                    .ok()
+                    .is_some_and(|name| state.read_session_record(&name).is_some())
+            })
+        })
+        .collect();
+    if clis.is_empty() {
+        clis.push("claude");
+    }
+    clis.into_iter()
+        .filter_map(|cli| session_row(config, key, cli))
+        .collect()
+}
+
+/// The `session.<KEY>-<cli>` row. `None` for a key that is not a project key.
+pub fn session_row(config: &Config, key: &str, cli: &str) -> Option<Component> {
     use crate::runner::session_report::{SessionState, assess_named};
-    let name = crate::runner::tmux::SessionName::new(key, "claude").ok()?;
+    let name = crate::runner::tmux::SessionName::new(key, cli).ok()?;
     let component = format!("session.{}", name.as_str());
     let Some(session) = assess_named(config, &name) else {
         return Some(
@@ -298,10 +384,11 @@ pub fn session_row(config: &Config, key: &str) -> Option<Component> {
         )),
         SessionState::Absent => Some("not started: the runner starts it with the next task".to_string()),
         SessionState::Running => match (session.mcp, session.permissions) {
-            (Some(crate::runner::session_report::Mcp::Missing | crate::runner::session_report::Mcp::Other), _) => Some(
-                "the CLI has no Sylvode MCP server for this bot: run `sylvode-runner setup claude --project KEY`"
-                    .to_string(),
-            ),
+            (Some(crate::runner::session_report::Mcp::Missing | crate::runner::session_report::Mcp::Other), _) => {
+                Some(format!(
+                    "the CLI has no Sylvode MCP server for this bot: run `sylvode-runner setup {cli} --project KEY`"
+                ))
+            }
             (Some(crate::runner::session_report::Mcp::Stale), _) => {
                 Some("the credentials changed after the CLI started: restart it to load them".to_string())
             }
@@ -335,7 +422,7 @@ pub fn report(options: &Options, config: Option<&Config>, state: ConfigState, ap
     }
     if let (Some(config), Some(key)) = (config, &options.project) {
         rows.push(project_row(config, key, options.show_paths));
-        rows.extend(session_row(config, key));
+        rows.extend(session_rows(config, key));
         let dir_known = rows.last().and_then(|r| {
             r.detail
                 .get("directory_path")

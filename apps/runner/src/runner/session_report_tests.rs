@@ -7,8 +7,8 @@ use sylvode_prereq::Status;
 use super::config::RunnerConfig;
 use super::files::{CreatedBy, SessionRecord};
 use super::session_report::{
-    Assessment, Mcp, McpEntry, Observation, Permissions, ProcRow, SessionState, assess, cli_process, parse_etime,
-    parse_process_rows, permissions_of, posture_of,
+    Assessment, Mcp, McpEntry, Observation, Permissions, ProcRow, SessionState, assess, cli_process, codex_permissions,
+    parse_etime, parse_process_rows, permissions_for, postures_of,
 };
 use super::tmux::{ListedPane, PaneId, SessionName};
 
@@ -26,30 +26,40 @@ const FOOTER_PLAIN: &str = "> \n  ? for shortcuts";
 #[test]
 fn bypass_is_read_from_the_arguments_first_and_the_footer_second() {
     for args in [ARGS_BYPASS, ARGS_BYPASS_EQUALS, ARGS_SKIP] {
-        assert_eq!(permissions_of(Some(args), None), Permissions::Bypass, "{args}");
         assert_eq!(
-            permissions_of(Some(args), Some(FOOTER_PLAIN)),
+            permissions_for("claude", Some(args), None),
+            Permissions::Bypass,
+            "{args}"
+        );
+        assert_eq!(
+            permissions_for("claude", Some(args), Some(FOOTER_PLAIN)),
             Permissions::Bypass,
             "{args}"
         );
     }
     assert_eq!(
-        permissions_of(Some(ARGS_NORMAL), Some(FOOTER_PLAIN)),
+        permissions_for("claude", Some(ARGS_NORMAL), Some(FOOTER_PLAIN)),
         Permissions::Normal
     );
-    assert_eq!(permissions_of(Some(ARGS_NORMAL), None), Permissions::Normal);
+    assert_eq!(permissions_for("claude", Some(ARGS_NORMAL), None), Permissions::Normal);
     // The footer catches a CLI whose mode was switched after it started.
     assert_eq!(
-        permissions_of(Some(ARGS_NORMAL), Some(FOOTER_BYPASS)),
+        permissions_for("claude", Some(ARGS_NORMAL), Some(FOOTER_BYPASS)),
         Permissions::Bypass
     );
-    assert_eq!(permissions_of(None, Some(FOOTER_BYPASS)), Permissions::Bypass);
+    assert_eq!(
+        permissions_for("claude", None, Some(FOOTER_BYPASS)),
+        Permissions::Bypass
+    );
     // Nothing known: unknown, never "normal".
-    assert_eq!(permissions_of(None, Some(FOOTER_PLAIN)), Permissions::Unknown);
-    assert_eq!(permissions_of(None, None), Permissions::Unknown);
+    assert_eq!(
+        permissions_for("claude", None, Some(FOOTER_PLAIN)),
+        Permissions::Unknown
+    );
+    assert_eq!(permissions_for("claude", None, None), Permissions::Unknown);
     // A word that merely mentions the mode is not the flag.
     assert_eq!(
-        permissions_of(Some("claude --append-system-prompt bypassPermissions"), None),
+        permissions_for("claude", Some("claude --append-system-prompt bypassPermissions"), None),
         Permissions::Normal
     );
 }
@@ -246,34 +256,105 @@ fn elapsed_times_and_the_process_table_parse() {
     assert_eq!(cli_process(&by_path, 10, &names).map(|r| r.pid), Some(10));
 }
 
+fn posture_row(rows: &[(&'static str, super::session_report::Posture)], cli: &str) -> Option<(bool, bool)> {
+    rows.iter()
+        .find(|(name, _)| *name == cli)
+        .map(|(_, posture)| (posture.tmux, posture.headless))
+}
+
 #[test]
 fn the_posture_says_whether_each_channel_turns_permission_checks_off() {
-    // The defaults: both channels bypass.
-    let defaults = posture_of(&RunnerConfig::default());
-    assert!(defaults.tmux && defaults.headless);
+    // The defaults: claude bypasses on both channels; codex is off and has no row.
+    let defaults = postures_of(&RunnerConfig::default());
+    assert_eq!(posture_row(&defaults, "claude"), Some((true, true)));
+    assert_eq!(posture_row(&defaults, "codex"), None);
+    assert_eq!(posture_row(&defaults, "opencode"), None);
     let narrowed = toml::from_str::<RunnerConfig>(
         "[cli.claude]\nlaunch_command = [\"claude\", \"--model\", \"x\"]\nheadless_args = []\n",
     )
     .expect("runner config");
-    let posture = posture_of(&narrowed);
-    assert!(!posture.tmux && !posture.headless);
+    assert_eq!(posture_row(&postures_of(&narrowed), "claude"), Some((false, false)));
     let only_headless = toml::from_str::<RunnerConfig>(
         "[cli.claude]\nlaunch_command = [\"claude\"]\nheadless_args = [\"--dangerously-skip-permissions\"]\n",
     )
     .expect("runner config");
-    let posture = posture_of(&only_headless);
-    assert!(!posture.tmux && posture.headless);
-    // codex counts for the headless channel only while it is enabled.
+    assert_eq!(posture_row(&postures_of(&only_headless), "claude"), Some((false, true)));
+    // codex has its own row once enabled: the default launch command bypasses on tmux, the
+    // headless arguments decide the headless channel.
     let codex = toml::from_str::<RunnerConfig>(
         "[cli.claude]\nlaunch_command = [\"claude\"]\nheadless_args = []\n\
          [cli.codex]\nenabled = true\nheadless_args = [\"--dangerously-bypass-approvals-and-sandbox\"]\n",
     )
     .expect("runner config");
-    assert!(posture_of(&codex).headless);
+    assert_eq!(posture_row(&postures_of(&codex), "codex"), Some((true, true)));
+    let sandboxed = toml::from_str::<RunnerConfig>(
+        "[cli.claude]\nlaunch_command = [\"claude\"]\nheadless_args = []\n\
+         [cli.codex]\nenabled = true\nlaunch_command = [\"codex\", \"-a\", \"never\", \"-s\", \"workspace-write\"]\n",
+    )
+    .expect("runner config");
+    assert_eq!(posture_row(&postures_of(&sandboxed), "codex"), Some((false, false)));
     let off = toml::from_str::<RunnerConfig>(
         "[cli.claude]\nlaunch_command = [\"claude\"]\nheadless_args = []\n\
          [cli.codex]\nheadless_args = [\"--dangerously-bypass-approvals-and-sandbox\"]\n",
     )
     .expect("runner config");
-    assert!(!posture_of(&off).headless);
+    assert_eq!(posture_row(&postures_of(&off), "codex"), None);
+    // opencode's permissions are not controlled: headless counts as bypass while it is enabled.
+    let opencode = toml::from_str::<RunnerConfig>("[cli.opencode]\nenabled = true\n").expect("runner config");
+    assert_eq!(posture_row(&postures_of(&opencode), "opencode"), Some((false, true)));
+}
+
+/// codex's permissions from its launch words (design table), in every spelling.
+#[test]
+fn codex_permissions_are_read_from_its_words() {
+    let words = |text: &str| -> Vec<String> { text.split_whitespace().map(str::to_string).collect() };
+    for (text, want) in [
+        ("codex --dangerously-bypass-approvals-and-sandbox", Permissions::Bypass),
+        ("codex -a never -s danger-full-access", Permissions::Bypass),
+        (
+            "codex --ask-for-approval never --sandbox danger-full-access",
+            Permissions::Bypass,
+        ),
+        (
+            "codex --ask-for-approval=never --sandbox=danger-full-access",
+            Permissions::Bypass,
+        ),
+        (
+            "codex -c approval_policy=never -c sandbox_mode=danger-full-access",
+            Permissions::Bypass,
+        ),
+        (
+            "codex -c approval_policy=\"never\" -c sandbox_mode=\"danger-full-access\"",
+            Permissions::Bypass,
+        ),
+        ("codex -a never -s workspace-write", Permissions::Normal),
+        ("codex --sandbox=read-only", Permissions::Normal),
+        ("codex -a on-request", Permissions::Normal),
+        ("codex -a on-request -s danger-full-access", Permissions::Normal),
+        ("codex --no-daemon --no-alt-screen", Permissions::Unknown),
+        ("codex -a never", Permissions::Unknown),
+        ("codex -s danger-full-access", Permissions::Unknown),
+        ("codex -a", Permissions::Unknown),
+        ("codex --model never", Permissions::Unknown),
+    ] {
+        assert_eq!(codex_permissions(&words(text)), want, "{text}");
+    }
+    // The banner of the bypass mode is the secondary sign when the words say nothing.
+    let banner = "permissions: YOLO mode\n\u{203a} Ask Codex to do anything";
+    assert_eq!(
+        permissions_for("codex", Some("codex"), Some(banner)),
+        Permissions::Bypass
+    );
+    assert_eq!(permissions_for("codex", None, Some(banner)), Permissions::Bypass);
+    assert_eq!(
+        permissions_for("codex", Some("codex -a never -s workspace-write"), None),
+        Permissions::Normal
+    );
+    assert_eq!(permissions_for("codex", None, None), Permissions::Unknown);
+    // claude's footer never marks a codex pane and the other way round.
+    assert_eq!(
+        permissions_for("codex", None, Some(FOOTER_BYPASS)),
+        Permissions::Unknown
+    );
+    assert_eq!(permissions_for("claude", None, Some(banner)), Permissions::Unknown);
 }

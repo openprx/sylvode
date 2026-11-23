@@ -467,3 +467,45 @@ fn the_hook_counter_is_strictly_increasing_across_concurrent_hooks() {
         0o700
     );
 }
+
+/// codex's notify fires several times per prompt: only `agent-turn-complete` with a `client` key
+/// is the main thread's turn end; the rest, an absent or oversized or malformed payload included,
+/// is dropped. Other CLIs are never filtered.
+#[test]
+fn only_the_main_threads_codex_turn_end_is_sent() {
+    use super::hooks::{MAX_NOTIFY_PAYLOAD, event_counts};
+    let main = json!({"type": "agent-turn-complete", "client": "codex-tui", "last-assistant-message": "x"}).to_string();
+    assert!(event_counts("codex", Some(&main)));
+    for (name, payload) in [
+        ("no client", json!({"type": "agent-turn-complete"}).to_string()),
+        (
+            "other type",
+            json!({"type": "approval-requested", "client": "codex-tui"}).to_string(),
+        ),
+        ("no type", json!({"client": "codex-tui"}).to_string()),
+        ("not an object", "[1]".to_string()),
+        ("not json", "agent-turn-complete".to_string()),
+        (
+            "too large",
+            format!(
+                "{{\"type\":\"agent-turn-complete\",\"client\":\"c\",\"pad\":\"{}\"}}",
+                "x".repeat(MAX_NOTIFY_PAYLOAD)
+            ),
+        ),
+    ] {
+        assert!(!event_counts("codex", Some(&payload)), "{name}");
+    }
+    assert!(!event_counts("codex", None));
+    assert!(event_counts("claude", None) && event_counts("claude", Some("anything")));
+}
+
+/// A hook message applies only to the session of its own CLI.
+#[test]
+fn a_hook_message_applies_only_to_the_session_of_its_cli() {
+    use super::session::hook_is_for_session;
+    assert!(hook_is_for_session("QLB-codex", "codex"));
+    assert!(hook_is_for_session("QLB-claude", "claude"));
+    assert!(!hook_is_for_session("QLB-claude", "codex"));
+    assert!(!hook_is_for_session("QLB-codex", "claude"));
+    assert!(!hook_is_for_session("not a name", "codex"));
+}

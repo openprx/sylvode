@@ -273,7 +273,12 @@ pub fn hook_words(files: &LaunchFiles<'_>, cli: &str, event: &str) -> Result<Vec
     hook_words_for(files.runner_exe, files.hook_socket, cli, event)
 }
 
-fn hook_words_for(runner_exe: &Path, hook_socket: &Path, cli: &str, event: &str) -> Result<Vec<String>, LaunchError> {
+pub fn hook_words_for(
+    runner_exe: &Path,
+    hook_socket: &Path,
+    cli: &str,
+    event: &str,
+) -> Result<Vec<String>, LaunchError> {
     let text = |p: &Path| -> Result<String, LaunchError> {
         p.to_str()
             .filter(|t| !t.chars().any(char::is_control))

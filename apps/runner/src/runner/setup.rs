@@ -1,6 +1,8 @@
-//! `sylvode-runner setup claude --project KEY [--config P] [--dir D] [--bot ID] [--apply]`
+//! `sylvode-runner setup <claude|codex> --project KEY [--config P] [--dir D] [--bot ID] [--apply]`
 //! (design 3.4): gives a CLI the operator started the same Sylvode MCP entry and hooks that a
-//! session the runner creates gets.
+//! session the runner creates gets. The text below describes claude; codex is at the end of the
+//! file (`setup codex`: the same command line printed, `codex mcp add` with `--apply`, no hooks
+//! written because codex has one `notify` program).
 //!
 //! - Without `--apply` it only prints: the session name, the `tmux` line that creates it, the full
 //!   launch line, the MCP entry and the hooks. It writes nothing and shows no token, only the
@@ -21,13 +23,18 @@ use sylvode_prereq::{Checker, InstallKind};
 
 use super::checks::valid_project_key;
 use super::files::{RUNNER_MARK, StateDir, claude_hooks, mcp_server_entry};
-use super::launch::{LaunchFiles, SEARCH_MODE_TOOLS, SERVER_NAME, WRITE_TOOL, mcp_tool, session_argv, shell_quote};
+use super::launch::{
+    CodexLaunchFiles, LaunchFiles, SEARCH_MODE_TOOLS, SERVER_NAME, WRITE_TOOL, codex_session_argv, hook_words_for,
+    mcp_tool, session_argv, shell_quote, toml_array, toml_string,
+};
 use super::tmux::{SessionName, WorkDir};
 use crate::config::Config;
 
 /// What the command line asked for.
 #[derive(Debug, PartialEq, Eq)]
 pub struct SetupArgs {
+    /// `claude` or `codex`.
+    pub cli: String,
     pub project: String,
     pub config_path: String,
     pub dir: Option<PathBuf>,
@@ -317,9 +324,17 @@ pub fn apply(plan: &Plan, claude: &Path) -> Result<Applied, String> {
     Ok(Applied { text, code: 0 })
 }
 
-/// Loads what the plan needs from the configuration and the machine.
-fn gather(args: &SetupArgs, config: &Config) -> Result<(Plan, PathBuf), String> {
-    let name = SessionName::new(&args.project, "claude").map_err(|e| e.to_string())?;
+/// What both CLIs' setup resolve first: the session, the bot, the directory and the programs both
+/// need.
+struct Resolved {
+    state_dir: PathBuf,
+    bot_id: String,
+    dir: PathBuf,
+    mcp_server: PathBuf,
+    runner_exe: PathBuf,
+}
+
+fn resolve(args: &SetupArgs, config: &Config, name: &SessionName) -> Result<Resolved, String> {
     let home = super::paths::service_user_home();
     let state_dir = super::state_dir(config, home.as_deref())
         .ok_or_else(|| "no state directory: set [runner] state_dir (no home directory is known)".to_string())?;
@@ -328,7 +343,7 @@ fn gather(args: &SetupArgs, config: &Config) -> Result<(Plan, PathBuf), String> 
         .is_dir()
         .then(|| StateDir::open(&state_dir).ok())
         .flatten()
-        .and_then(|state| state.read_session_record(&name));
+        .and_then(|state| state.read_session_record(name));
     let targets = crate::handshake::targets(config);
     let bot_id = match (&args.bot, &record) {
         (Some(bot), _) => bot.clone(),
@@ -348,6 +363,26 @@ fn gather(args: &SetupArgs, config: &Config) -> Result<(Plan, PathBuf), String> 
         _ => return Err("the directory is not known yet: give it with --dir D".to_string()),
     };
     let dir = std::fs::canonicalize(&dir).map_err(|_| "the directory does not exist".to_string())?;
+    let mcp_server = Checker::new(InstallKind::RunnerTmux)
+        .locate(&config.runner.mcp.server_binary)
+        .ok_or_else(|| "the MCP server (mcp-server) was not found".to_string())?;
+    let runner_exe = std::env::current_exe()
+        .ok()
+        .and_then(|raw| super::session::stable_exe(&raw))
+        .ok_or_else(|| "the path of this executable cannot be used".to_string())?;
+    Ok(Resolved {
+        state_dir,
+        bot_id,
+        dir,
+        mcp_server,
+        runner_exe,
+    })
+}
+
+/// Loads what the plan needs from the configuration and the machine.
+fn gather(args: &SetupArgs, config: &Config) -> Result<(Plan, PathBuf), String> {
+    let name = SessionName::new(&args.project, "claude").map_err(|e| e.to_string())?;
+    let resolved = resolve(args, config, &name)?;
     let checker = Checker::new(InstallKind::RunnerTmux);
     let claude = checker
         .locate(&config.runner.cli.claude.binary)
@@ -360,22 +395,15 @@ fn gather(args: &SetupArgs, config: &Config) -> Result<(Plan, PathBuf), String> 
         .first()
         .and_then(|word| checker.locate(word))
         .ok_or_else(|| "the launch command of the CLI was not found".to_string())?;
-    let mcp_server = checker
-        .locate(&config.runner.mcp.server_binary)
-        .ok_or_else(|| "the MCP server (mcp-server) was not found".to_string())?;
-    let exe = std::env::current_exe()
-        .ok()
-        .and_then(|raw| super::session::stable_exe(&raw))
-        .ok_or_else(|| "the path of this executable cannot be used".to_string())?;
     let plan = plan(
         config,
         &Inputs {
             key: &args.project,
-            dir,
-            bot_id: &bot_id,
-            state_dir: &state_dir,
-            runner_exe: &exe,
-            mcp_server: &mcp_server,
+            dir: resolved.dir,
+            bot_id: &resolved.bot_id,
+            state_dir: &resolved.state_dir,
+            runner_exe: &resolved.runner_exe,
+            mcp_server: &resolved.mcp_server,
             launch_program: &launch_program,
             allow_write_call: config.runner.mcp.allow_write_call,
         },
@@ -390,6 +418,9 @@ fn gather(args: &SetupArgs, config: &Config) -> Result<(Plan, PathBuf), String> 
 /// A message for the operator.
 pub fn execute(args: &SetupArgs) -> Result<Applied, String> {
     let config = Config::load(&args.config_path)?;
+    if args.cli == "codex" {
+        return execute_codex(args, &config);
+    }
     let (plan, claude) = gather(args, &config)?;
     if args.apply {
         apply(&plan, &claude)
@@ -413,5 +444,250 @@ pub fn run_setup(args: &SetupArgs) -> ExitCode {
             let _ = writeln!(std::io::stderr().lock(), "error: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+// ----- codex ---------------------------------------------------------------------------------
+
+/// Everything `setup codex` prints or applies, worked out before anything is done.
+#[derive(Debug)]
+pub struct CodexPlan {
+    pub name: SessionName,
+    pub dir: PathBuf,
+    /// The full launch line, `codex` program first.
+    pub launch: Vec<String>,
+    pub mcp_server: PathBuf,
+    pub mcp_toml: PathBuf,
+    /// The words of the notify program.
+    pub notify: Vec<String>,
+}
+
+/// What the codex plan needs from the machine.
+#[derive(Debug)]
+pub struct CodexInputs<'a> {
+    pub key: &'a str,
+    pub dir: PathBuf,
+    pub bot_id: &'a str,
+    pub state_dir: &'a Path,
+    pub runner_exe: &'a Path,
+    pub mcp_server: &'a Path,
+    pub launch_program: &'a Path,
+}
+
+/// Works out codex's launch line and MCP entry.
+///
+/// # Errors
+///
+/// A message for a key, directory or path that cannot be used.
+pub fn codex_plan(config: &Config, inputs: &CodexInputs<'_>) -> Result<CodexPlan, String> {
+    if !valid_project_key(inputs.key) {
+        return Err("the project key must match ^[A-Z0-9]{1,32}$".to_string());
+    }
+    let name = SessionName::new(inputs.key, "codex").map_err(|e| e.to_string())?;
+    WorkDir::new(&inputs.dir).map_err(|e| e.to_string())?;
+    let mcp_toml = inputs.state_dir.join("mcp").join(format!("{}.toml", inputs.bot_id));
+    let hook_socket = inputs.state_dir.join("hook.sock");
+    let files = CodexLaunchFiles {
+        mcp_server: inputs.mcp_server,
+        mcp_toml: &mcp_toml,
+        runner_exe: inputs.runner_exe,
+        hook_socket: &hook_socket,
+    };
+    let launch =
+        codex_session_argv(inputs.launch_program, &config.runner.cli.codex, &files).map_err(|e| e.to_string())?;
+    let notify = hook_words_for(inputs.runner_exe, &hook_socket, "codex", "turn-ended").map_err(|e| e.to_string())?;
+    Ok(CodexPlan {
+        name,
+        dir: inputs.dir.clone(),
+        launch,
+        mcp_server: inputs.mcp_server.to_path_buf(),
+        mcp_toml,
+        notify,
+    })
+}
+
+/// The server's command and arguments as TOML, shared by the printed entry and `codex mcp add`.
+fn codex_server_words(plan: &CodexPlan) -> Result<Vec<String>, String> {
+    let server = plan
+        .mcp_server
+        .to_str()
+        .ok_or_else(|| "the MCP server path is not UTF-8".to_string())?;
+    let toml = plan
+        .mcp_toml
+        .to_str()
+        .ok_or_else(|| "the MCP config path is not UTF-8".to_string())?;
+    Ok(vec![
+        server.to_string(),
+        "serve".to_string(),
+        "--transport".to_string(),
+        "stdio".to_string(),
+        "--config".to_string(),
+        toml.to_string(),
+    ])
+}
+
+/// The text `setup codex` prints without `--apply`.
+///
+/// # Errors
+///
+/// A message for a path that is not UTF-8.
+pub fn render_codex(plan: &CodexPlan) -> Result<String, String> {
+    let dir = plan.dir.to_string_lossy();
+    let line = plan
+        .launch
+        .iter()
+        .map(|word| shell_quote(word))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let words = codex_server_words(plan)?;
+    let (command, args) = words
+        .split_first()
+        .ok_or_else(|| "the MCP server words are empty".to_string())?;
+    let mut out = String::new();
+    let name = plan.name.as_str();
+    let _ = writeln!(out, "Session name: {name}");
+    let _ = writeln!(
+        out,
+        "\nCreate the session yourself (or let the runner create it when it is absent):\n  tmux new-session -d -s {name} -c {}",
+        shell_quote(&dir)
+    );
+    let _ = writeln!(
+        out,
+        "\nStart codex in it with this command (one line; nothing is written to your codex configuration):\n  {line}"
+    );
+    let _ = writeln!(
+        out,
+        "\nTrust the folder once: attach and choose 1 when codex asks (the runner never answers that dialog)."
+    );
+    let _ = writeln!(
+        out,
+        "\nOr add the Sylvode MCP server to your own codex configuration with `setup codex --project {} --apply` \
+         (the turn hook is not added: start codex with the line above to get it).",
+        plan.name.key()
+    );
+    let _ = writeln!(
+        out,
+        "\nMCP server entry for ~/.codex/config.toml (names the file {}, which holds the bot's token; the token is \
+         not shown):\n[mcp_servers.{SERVER_NAME}]\ncommand = {}\nargs = {}",
+        plan.mcp_toml.display(),
+        toml_string(command),
+        toml_array(args)
+    );
+    let _ = writeln!(
+        out,
+        "\nTurn hook (replaces any notify you have; optional):\nnotify = {}",
+        toml_array(&plan.notify)
+    );
+    Ok(out)
+}
+
+/// `codex mcp get sylvode --json` in `dir`.
+fn codex_mcp_state(codex: &Path, dir: &Path, toml: &Path) -> Result<McpState, String> {
+    let output = Command::new(codex)
+        .args(["mcp", "get", SERVER_NAME, "--json"])
+        .current_dir(dir)
+        .env_clear()
+        .envs(super::tmux::agent_environment())
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("could not run codex: {}", e.kind()))?;
+    if !output.status.success() {
+        return Ok(McpState::Absent);
+    }
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let ours = toml.to_str().is_some_and(|path| text.contains(path));
+    Ok(if ours { McpState::Ours } else { McpState::Elsewhere })
+}
+
+/// Applies the codex plan: `codex mcp add` when the entry is absent. The turn hook is never
+/// written (codex has one `notify` program, and the operator's own would be lost).
+///
+/// # Errors
+///
+/// A message for a failed `codex` call.
+pub fn apply_codex(plan: &CodexPlan, codex: &Path) -> Result<Applied, String> {
+    let mut text = String::new();
+    match codex_mcp_state(codex, &plan.dir, &plan.mcp_toml)? {
+        McpState::Elsewhere => {
+            return Ok(Applied {
+                text: format!(
+                    "A `{SERVER_NAME}` MCP server is already configured for codex and points elsewhere; it was left \
+                     alone and nothing was changed. Remove it (`codex mcp remove {SERVER_NAME}`) and run setup again \
+                     if it should serve this bot.\n"
+                ),
+                code: 2,
+            });
+        }
+        McpState::Ours => {
+            let _ = writeln!(text, "MCP server `{SERVER_NAME}`: already set for this bot.");
+        }
+        McpState::Absent => {
+            let output = Command::new(codex)
+                .args(["mcp", "add", SERVER_NAME, "--"])
+                .args(codex_server_words(plan)?)
+                .current_dir(&plan.dir)
+                .env_clear()
+                .envs(super::tmux::agent_environment())
+                .stdin(Stdio::null())
+                .output()
+                .map_err(|e| format!("could not run codex: {}", e.kind()))?;
+            if !output.status.success() {
+                return Err("`codex mcp add` failed".to_string());
+            }
+            let _ = writeln!(
+                text,
+                "MCP server `{SERVER_NAME}`: added to your codex configuration (user scope)."
+            );
+        }
+    }
+    let _ = writeln!(
+        text,
+        "Turn hook: not written; start codex with the printed line to get it, otherwise turns are read from the screen."
+    );
+    let _ = writeln!(text, "Restart your codex: MCP servers are read when it starts.");
+    Ok(Applied { text, code: 0 })
+}
+
+fn execute_codex(args: &SetupArgs, config: &Config) -> Result<Applied, String> {
+    let name = SessionName::new(&args.project, "codex").map_err(|e| e.to_string())?;
+    let resolved = resolve(args, config, &name)?;
+    if !config.runner.cli.codex.enabled {
+        return Err("codex is not enabled on this runner ([runner.cli.codex] enabled)".to_string());
+    }
+    let checker = Checker::new(InstallKind::RunnerTmux);
+    let codex = checker
+        .locate(&config.runner.cli.codex.binary)
+        .ok_or_else(|| "the codex CLI was not found".to_string())?;
+    let launch_program = config
+        .runner
+        .cli
+        .codex
+        .launch_command
+        .first()
+        .and_then(|word| checker.locate(word))
+        .ok_or_else(|| "the launch command of the CLI was not found".to_string())?;
+    let plan = codex_plan(
+        config,
+        &CodexInputs {
+            key: &args.project,
+            dir: resolved.dir,
+            bot_id: &resolved.bot_id,
+            state_dir: &resolved.state_dir,
+            runner_exe: &resolved.runner_exe,
+            mcp_server: &resolved.mcp_server,
+            launch_program: &launch_program,
+        },
+    )?;
+    if args.apply {
+        apply_codex(&plan, &codex)
+    } else {
+        Ok(Applied {
+            text: render_codex(&plan)?,
+            code: 0,
+        })
     }
 }

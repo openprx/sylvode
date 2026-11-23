@@ -333,6 +333,9 @@ impl SessionManager {
             .lock()
             .get(&(message.tmux.clone(), message.pane.clone()))
             .cloned();
+        // codex may import claude's hooks (and the reverse): a message applies only to the
+        // session of its own CLI.
+        let name = name.filter(|name| hook_is_for_session(name, &message.cli));
         let sender = name.and_then(|name| self.workers.lock().get(&name).cloned());
         if let Some(sender) = sender {
             let _ = sender
@@ -424,6 +427,9 @@ struct Worker {
     last_screen: Option<String>,
     still_ticks: u32,
     screen_working: bool,
+    /// A codex turn end (notify) was admitted and waits for the screen to show the idle, empty
+    /// composer before the turn closes.
+    pending_turn_end: Option<Instant>,
     /// The newest hook event applied, by the sender's clock: an older one is ignored.
     seq_gate: super::hooks::SeqGate,
     /// Closes a turn the hooks never closed (an interrupt runs no `Stop`).
@@ -519,6 +525,10 @@ impl Worker {
             &attach,
             Instant::now(),
         );
+        let mut machine = machine;
+        if name.cli() == "codex" {
+            machine.set_enter_policy(CODEX_ENTER_RETRIES, CODEX_ENTER_SPACING);
+        }
         Self {
             shared,
             name,
@@ -530,6 +540,7 @@ impl Worker {
             last_screen: None,
             still_ticks: 0,
             screen_working: false,
+            pending_turn_end: None,
             seq_gate: super::hooks::SeqGate::default(),
             turn_watch: TurnWatch::new(3, TURN_QUIET, Instant::now()),
             ticks: 0,
@@ -563,6 +574,7 @@ impl Worker {
                 _ = ticker.tick() => {
                     let mut actions = self.read_screen_signals().await;
                     actions.extend(self.confirm_turn_by_screen().await);
+                    actions.extend(self.confirm_turn_end_by_screen().await);
                     actions.extend(self.close_stale_turn().await);
                     actions.extend(self.machine.on_tick(Instant::now()));
                     actions
@@ -660,6 +672,12 @@ impl Worker {
                 }
                 self.turn_watch.event(now);
                 self.screen_mode = false;
+                if event == HookEvent::TurnEnded {
+                    // codex's notify can come before the screen is calm (and more than once per
+                    // prompt): the turn closes when a screen poll shows the idle composer.
+                    self.pending_turn_end = Some(now);
+                    return Vec::new();
+                }
                 self.machine.on_hook(event, now)
             }
             Cmd::View {
@@ -907,6 +925,32 @@ impl Worker {
         self.machine.on_hook(HookEvent::UserPromptSubmit, now)
     }
 
+    /// Closes the turn a codex notification announced once the screen shows the CLI idle with an
+    /// empty composer. A notification that finds no open turn (the screen already closed it, or a
+    /// stray one) is dropped.
+    async fn confirm_turn_end_by_screen(&mut self) -> Vec<Action<TmuxTask>> {
+        if self.pending_turn_end.is_none() || self.pane.is_none() || !self.ticks.is_multiple_of(2) {
+            return Vec::new();
+        }
+        if !self.machine.turn_open() && !matches!(self.machine.state, State::Pushing { .. }) {
+            self.pending_turn_end = None;
+            return Vec::new();
+        }
+        let Some(cli) = self.recorded_cli() else {
+            return Vec::new();
+        };
+        let Some(screen) = self.capture().await else {
+            return Vec::new();
+        };
+        if !turn_end_confirmed(&cli, &screen) {
+            return Vec::new();
+        }
+        self.pending_turn_end = None;
+        let now = Instant::now();
+        self.turn_watch.event(now);
+        self.machine.on_hook(HookEvent::TurnEnded, now)
+    }
+
     /// A turn the hooks opened and never closed (claude runs no `Stop` when a person interrupts) is
     /// closed when the screen has been calm long enough: no busy marker, an empty visible input
     /// line, and no hook event for a minute.
@@ -971,6 +1015,7 @@ impl Worker {
     /// A launch began: the order counter starts over.
     fn launched(&mut self) {
         self.seq_gate = super::hooks::SeqGate::default();
+        self.pending_turn_end = None;
     }
 
     fn settings_job(&self, task: &TmuxTask) -> SettingsJob {
@@ -1000,22 +1045,37 @@ impl Worker {
     /// The launch of a session the runner creates: the working directory and the argument vector.
     fn launch_plan(&self, task: &TmuxTask) -> Create {
         let state = &self.shared.state;
-        let claude_json = state.claude_mcp_json(&task.bot.bot_id);
-        let settings = state.claude_settings(&self.name);
         let socket = state.hook_socket();
-        let files = LaunchFiles {
-            claude_mcp_json: &claude_json,
-            claude_settings: &settings,
-            runner_exe: &self.shared.runner_exe,
-            hook_socket: &socket,
+        let config = &self.shared.config.runner;
+        let Some(settings) = config.cli_settings(&task.cli) else {
+            return Err("the CLI cannot run in a tmux session".to_string());
         };
-        let claude = &self.shared.config.runner.cli.claude;
-        let program = claude
+        let program = settings
             .launch_command
             .first()
             .and_then(|word| sylvode_prereq::Checker::new(sylvode_prereq::InstallKind::RunnerTmux).locate(word))
             .ok_or_else(|| "the launch command of the CLI was not found on this runner".to_string())?;
-        let argv = launch::session_argv(&program, claude, &files).map_err(|e| {
+        let argv = if task.cli == "codex" {
+            let toml = state.mcp_toml(&task.bot.bot_id);
+            let files = launch::CodexLaunchFiles {
+                mcp_server: &task.mcp_server,
+                mcp_toml: &toml,
+                runner_exe: &self.shared.runner_exe,
+                hook_socket: &socket,
+            };
+            launch::codex_session_argv(&program, &config.cli.codex, &files)
+        } else {
+            let claude_json = state.claude_mcp_json(&task.bot.bot_id);
+            let claude_settings = state.claude_settings(&self.name);
+            let files = LaunchFiles {
+                claude_mcp_json: &claude_json,
+                claude_settings: &claude_settings,
+                runner_exe: &self.shared.runner_exe,
+                hook_socket: &socket,
+            };
+            launch::session_argv(&program, &config.cli.claude, &files)
+        }
+        .map_err(|e| {
             tracing::error!("launch refused for session {}: {e}", self.name.as_str());
             "the runner's launch command for this CLI cannot be used".to_string()
         })?;
@@ -1111,7 +1171,7 @@ impl Worker {
         let names = process_names(&self.shared.config, &task.cli);
         let cli = task.cli.clone();
         let user_idle = self.shared.config.runner.tmux.user_idle_secs;
-        let settle = Duration::from_millis(self.shared.config.runner.tmux.push_settle_ms);
+        let settle = Duration::from_millis(self.shared.config.runner.push_settle_ms(&task.cli));
         let task_id = Uuid::parse_str(&task.task_id).unwrap_or_else(|_| Uuid::new_v4());
         let message = task.message.clone();
         // Sylvode must still show the task active: a task swept or answered while it waited in the
@@ -1163,7 +1223,7 @@ impl Worker {
         let names = process_names(&self.shared.config, &task.cli);
         let cli = task.cli.clone();
         let user_idle = self.shared.config.runner.tmux.user_idle_secs;
-        let settle = Duration::from_millis(self.shared.config.runner.tmux.push_settle_ms);
+        let settle = Duration::from_millis(self.shared.config.runner.push_settle_ms(&task.cli));
         // A reminder is a push of its own: the same preconditions, a buffer of its own.
         let result = tokio::task::spawn_blocking(move || {
             push_blocking(&tmux, &pane, &cli, &names, user_idle, settle, &Uuid::new_v4(), &text)
@@ -1218,6 +1278,22 @@ fn process_names(config: &Config, cli: &str) -> Vec<String> {
         .runner
         .cli_settings(cli)
         .map_or_else(|| vec![cli.to_string()], |settings| settings.process_names.to_vec())
+}
+
+/// codex takes a submitted paste a moment late: up to two Enter retries, never closer than one
+/// second to the previous Enter (an Enter within about 10 ms of input inserts a newline).
+const CODEX_ENTER_RETRIES: u8 = 2;
+const CODEX_ENTER_SPACING: Duration = Duration::from_secs(1);
+
+/// Whether a screen shows the CLI idle with an empty composer: no busy line, no choice waiting,
+/// and an input line with nothing on it.
+pub fn turn_end_confirmed(cli: &str, screen: &str) -> bool {
+    !looks_busy(cli, screen) && !awaits_choice(cli, screen) && input_is_empty(cli, screen) == Some(true)
+}
+
+/// Whether a hook message of CLI `cli` belongs to the session called `session`.
+pub fn hook_is_for_session(session: &str, cli: &str) -> bool {
+    SessionName::parse(session).is_ok_and(|name| name.cli() == cli)
 }
 
 /// What Sylvode says about a task view.

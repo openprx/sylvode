@@ -52,13 +52,14 @@ Commands:
 
 /// Help text of `setup`.
 const SETUP_HELP: &str = "\
-Print (or with --apply write) the Sylvode MCP entry and hooks for a claude you start yourself.
+Print (or with --apply write) the Sylvode MCP entry (and, for claude, the hooks) for a CLI you start yourself.
 
 Usage: sylvode-runner setup claude --project KEY [--dir D] [--bot ID] [--apply] [--config PATH]
+       sylvode-runner setup codex --project KEY [--dir D] [--bot ID] [--apply] [--config PATH]
 
 Options:
   --project KEY  The Sylvode project key (required)
-  --dir D        The working directory of the claude whose settings are changed
+  --dir D        The working directory of the CLI whose settings are changed
   --bot ID       The bot identity to use
   --apply        Write the entries; without it they are only printed
   --config PATH  Path to the TOML configuration file [default: config.toml]
@@ -97,6 +98,8 @@ enum Command {
         cli: String,
         event: String,
         socket: String,
+        /// The argument after the flag pairs, if any (codex's notify appends its JSON there).
+        payload: Option<String>,
     },
 }
 
@@ -146,11 +149,12 @@ fn parse_setup(rest: &[OsString]) -> Result<Command, String> {
         return Ok(Command::SetupHelp);
     }
     let mut items = rest.iter();
-    match items.next().and_then(|item| item.to_str()) {
-        Some("claude") => {}
-        _ => return Err("`setup` supports claude only: setup claude --project KEY".to_string()),
-    }
+    let cli = match items.next().and_then(|item| item.to_str()) {
+        Some(cli @ ("claude" | "codex")) => cli.to_string(),
+        _ => return Err("`setup` supports claude and codex: setup <claude|codex> --project KEY".to_string()),
+    };
     let mut args = crate::runner::setup::SetupArgs {
+        cli,
         project: String::new(),
         config_path: DEFAULT_CONFIG_PATH.to_string(),
         dir: None,
@@ -261,6 +265,11 @@ fn parse_command(args: &[OsString]) -> Result<Command, String> {
             cli: flag_value(rest, "--cli"),
             event: flag_value(rest, "--event"),
             socket: flag_value(rest, "--socket"),
+            // The flags come in pairs: an odd count means one trailing argument.
+            payload: (rest.len() % 2 == 1)
+                .then(|| rest.last())
+                .flatten()
+                .map(|value| value.to_string_lossy().into_owned()),
         });
     }
     if let Some(word) = args
@@ -330,10 +339,15 @@ pub fn run() -> ExitCode {
         Command::Sessions { config_path } => crate::runner::cli::run_sessions(&config_path),
         Command::Release { config_path, key } => crate::runner::cli::run_release(&config_path, &key),
         Command::Setup(args) => crate::runner::setup::run_setup(&args),
-        Command::Hook { cli, event, socket } => {
+        Command::Hook {
+            cli,
+            event,
+            socket,
+            payload,
+        } => {
             // Never reads stdin, never fails: a hook must not block or break the CLI that runs it.
             // Outside tmux there is nothing to report.
-            if !socket.is_empty() {
+            if !socket.is_empty() && crate::runner::hooks::event_counts(&cli, payload.as_deref()) {
                 let who = crate::runner::hooks::PaneIdentity::from_env(
                     std::env::var("TMUX").ok().as_deref(),
                     std::env::var("TMUX_PANE").ok().as_deref(),
@@ -704,6 +718,7 @@ mod tests {
         assert_eq!(
             parsed,
             Ok(Command::Setup(crate::runner::setup::SetupArgs {
+                cli: "claude".to_string(),
                 project: "QLA".to_string(),
                 config_path: "c.toml".to_string(),
                 dir: Some(std::path::PathBuf::from("/w")),
@@ -711,9 +726,13 @@ mod tests {
                 apply: true,
             }))
         );
+        assert!(matches!(
+            parse_command(&args(&["setup", "codex", "--project", "QLB", "--apply"])),
+            Ok(Command::Setup(setup)) if setup.cli == "codex" && setup.apply && setup.project == "QLB"
+        ));
         for bad in [
             &["setup"][..],
-            &["setup", "codex", "--project", "A"],
+            &["setup", "opencode", "--project", "A"],
             &["setup", "claude"],
             &["setup", "claude", "--project"],
             &["setup", "claude", "--project", "A", "--bogus"],

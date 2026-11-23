@@ -249,9 +249,9 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
     };
     let cli = str_at(execution, &["cli"]).unwrap_or_default().to_string();
     let tmux = if channel == Channel::Tmux {
-        // codex and opencode have no verified tmux behaviour (readiness, dialogs, permissions):
-        // refused whatever else is set.
-        if cli != "claude" {
+        // opencode has no verified tmux behaviour (readiness, dialogs, permissions): refused
+        // whatever else is set.
+        if !super::profile::profile(&cli).is_some_and(|p| p.tmux) {
             return refuse(
                 "cli_unverified",
                 format!("the {cli} CLI is not verified for the tmux channel; use the headless channel"),

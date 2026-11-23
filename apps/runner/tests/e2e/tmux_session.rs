@@ -77,6 +77,8 @@ struct Fixture {
     project: PathBuf,
     bin: TempDir,
     log: PathBuf,
+    /// The CLI of the project's connection: `claude`, or `codex` (which also enables codex).
+    cli: &'static str,
 }
 
 /// The stand-in CLI, compiled once per test run with `rustc` (`standin_cli.rs`).
@@ -146,6 +148,8 @@ impl Fixture {
         // The stand-in is a real executable called `claude`: the pane's foreground process has
         // the CLI's name, so the runner's foreground check is exercised, not bypassed.
         std::fs::copy(standin_binary(), bin.file("claude")).expect("install the stand-in");
+        // The same program under codex's name is codex's stand-in (the name selects its flavour).
+        std::fs::copy(standin_binary(), bin.file("codex")).expect("install the codex stand-in");
         write_script(bin.path(), "mcp-server", "exit 0");
         Self {
             api,
@@ -154,7 +158,15 @@ impl Fixture {
             project,
             bin,
             log,
+            cli: "claude",
         }
+    }
+
+    /// A fixture whose project connection uses codex (enabled on the runner).
+    async fn codex(tmux_program: PathBuf, standin: Standin) -> Self {
+        let mut fx = Self::new(tmux_program, standin).await;
+        fx.cli = "codex";
+        fx
     }
 
     fn config(&self) -> String {
@@ -170,6 +182,9 @@ impl Fixture {
              [runner]\nstate_dir = \"{}\"\nallowed_roots = [\"{}\"]\nreport_interval_secs = 600\ndelivery_check_timeout_secs = 3\n\
              [runner.tmux]\nbinary = \"{}\"\nsocket_name = \"{}\"\npush_settle_ms = 100\nready_timeout_secs = 20\n\
              [runner.cli.claude]\nbinary = \"{standin}\"\nlaunch_command = [\"{standin}\", \"--permission-mode\", \"bypassPermissions\"]\n\
+             [runner.cli.codex]\nenabled = {codex}\nbinary = \"{codex_bin}\"\n\
+             launch_command = [\"{codex_bin}\", \"--no-daemon\", \"--no-alt-screen\", \"--dangerously-bypass-approvals-and-sandbox\"]\n\
+             push_settle_ms = 500\n\
              [runner.mcp]\nserver_binary = \"{}\"\n\
              [[agents]]\nid = \"{BOT}\"\nname = \"Bot\"\nagent_type = \"runner\"\n[agents.route]\nbot_ids = [\"{BOT}\"]\n",
             self.api.url(),
@@ -179,6 +194,8 @@ impl Fixture {
             self.tmux.socket,
             self.bin.file("mcp-server").display(),
             standin = self.bin.file("claude").display(),
+            codex = self.cli == "codex",
+            codex_bin = self.bin.file("codex").display(),
         )
     }
 
@@ -192,12 +209,16 @@ impl Fixture {
     }
 
     fn view(&self, task: &str, active: bool, acked: bool) -> Value {
+        self.view_for(self.cli, task, active, acked)
+    }
+
+    fn view_for(&self, cli: &str, task: &str, active: bool, acked: bool) -> Value {
         json!({
             "task_id": task, "attempt": 1, "active": active,
             "acknowledged_at": if acked { json!("2026-11-22T10:00:00Z") } else { Value::Null },
             "source": {"kind": "issue_assignment", "issue": {"id": "33333333-3333-4333-8333-333333333333", "identifier": "SVWL-7", "title": "Fix the login"}},
             "project": {"id": PROJECT, "key": "SVWL", "name": "n", "workspace_id": PROJECT},
-            "execution": {"enabled": true, "channel": "tmux", "cli": "claude",
+            "execution": {"enabled": true, "channel": "tmux", "cli": cli,
                           "working_directory": self.project.to_string_lossy(), "approval_gate": "none", "version": 1},
         })
     }
@@ -1192,6 +1213,11 @@ async fn a_directory_outside_the_roots_matters_only_when_the_runner_would_create
 impl Fixture {
     /// `doctor --json --project SVWL` and its `session.SVWL-claude` row.
     fn session_row(&self) -> Value {
+        self.row("session.SVWL-claude")
+    }
+
+    /// One row of `doctor --json --project SVWL`.
+    fn row(&self, component: &str) -> Value {
         let output = Command::new(RUNNER)
             .args(["doctor", "--json", "--project", "SVWL", "--config"])
             .arg(self.config_file())
@@ -1202,9 +1228,9 @@ impl Fixture {
         let report: Value = serde_json::from_slice(&output.stdout).expect("doctor json");
         report["components"]
             .as_array()
-            .and_then(|rows| rows.iter().find(|row| row["component"] == "session.SVWL-claude"))
+            .and_then(|rows| rows.iter().find(|row| row["component"] == component))
             .cloned()
-            .unwrap_or_else(|| panic!("no session row: {report}"))
+            .unwrap_or_else(|| panic!("no {component} row: {report}"))
     }
 }
 
@@ -1338,4 +1364,227 @@ async fn the_session_the_runner_creates_is_reported_without_waiting_for_the_inte
         .filter(|r| r.path().ends_with("/runner/report"))
         .count();
     assert!(reports <= 3, "{reports} reports in a few seconds");
+}
+
+const T3: &str = "55555555-5555-4555-8555-555555555555";
+
+fn pane_counters(state: &std::path::Path) -> Vec<String> {
+    std::fs::read_dir(state.join("panes"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| std::fs::read_to_string(entry.path()).ok())
+        .map(|text| text.trim().to_string())
+        .collect()
+}
+
+/// codex on the tmux channel with a stand-in codex: the session `SVWL-codex` is created with the
+/// default no-sandbox launch command and the MCP server and notify hook as `-c` overrides (no
+/// settings file, no token), the task is typed as one paste, only the main thread's notification
+/// is sent by the hook, and the next task goes in once the first is over.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn a_codex_task_is_typed_with_overrides_and_only_the_main_turn_end_is_reported() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::codex(program, Standin::Normal).await;
+    fx.set_view(T1, true, true);
+    fx.set_view(T2, true, false);
+    let server = fx.serve();
+    let first = Fixture::deliver(server.url("/webhook"), T1).await;
+    assert_eq!(first["status"], "dispatched", "{first}");
+    assert_eq!(first["session"], "SVWL-codex", "{first}");
+    let typed = fx.wait_typed(1, 40).await;
+    assert_eq!(typed.len(), 1, "{typed:?}");
+    assert!(typed[0].contains(&format!("id={T1}")), "{typed:?}");
+    let argv = std::fs::read_to_string(&fx.log)
+        .expect("log")
+        .lines()
+        .find(|l| l.starts_with("argv: "))
+        .map(str::to_string)
+        .expect("argv");
+    for wanted in [
+        "--no-daemon",
+        "--no-alt-screen",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "-c mcp_servers.sylvode.command=",
+        "-c mcp_servers.sylvode.args=",
+        "-c notify=",
+    ] {
+        assert!(argv.contains(wanted), "{wanted}: {argv}");
+    }
+    assert!(
+        !argv.contains("--settings") && !argv.contains("opr_") && !argv.contains(TOKEN),
+        "{argv}"
+    );
+    assert!(
+        !fx.tmux
+            .state()
+            .join("sessions/SVWL-codex/claude-settings.json")
+            .exists()
+    );
+    // The stand-in sends three notifications at the end of every turn (a sub-thread without
+    // `client`, another type, the main one); the hook sends only the one with `type =
+    // agent-turn-complete` and a `client` key, so the pane's counter reads the number of turns
+    // (the runner may type a reminder, which is a turn of its own).
+    let turns = |log: &PathBuf| {
+        std::fs::read_to_string(log)
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| l.starts_with("TEXT: "))
+            .count()
+    };
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while pane_counters(&fx.tmux.state()).is_empty() && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let counters = pane_counters(&fx.tmux.state());
+    assert_eq!(counters.len(), 1, "{counters:?}");
+    let sent: usize = counters[0].parse().expect("a counter");
+    assert!(
+        sent >= 1 && sent <= turns(&fx.log),
+        "{counters:?} of {} turns",
+        turns(&fx.log)
+    );
+    // The next task waits for the first, then goes in.
+    assert_eq!(Fixture::deliver(server.url("/webhook"), T2).await["queue_position"], 1);
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(fx.typed().len(), 1, "{:?}", fx.typed());
+    fx.set_view(T1, false, true);
+    let typed = fx.wait_typed(2, 40).await;
+    assert_eq!(typed.len(), 2, "{typed:?}");
+    assert!(typed[1].contains(&format!("id={T2}")), "{typed:?}");
+    // Doctor describes the codex session: the runner started it, hooks seen, bypass, MCP in args.
+    let row = fx.row("session.SVWL-codex");
+    assert_eq!(row["detail"]["state"], "running", "{row}");
+    assert_eq!(row["detail"]["created_by"], "runner", "{row}");
+    assert_eq!(row["detail"]["permissions"], "bypass", "{row}");
+    assert_eq!(row["detail"]["mcp"], "ok", "{row}");
+    assert_eq!(row["detail"]["foreground"], "codex", "{row}");
+    drop(server);
+}
+
+/// A trust dialog on codex's first start fails the task as retryable with the attach hint of the
+/// codex session; nothing is typed into it and the runner never answers it.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn a_codex_trust_dialog_fails_the_task_with_the_attach_hint_and_the_next_one_is_typed() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::codex(program, Standin::Untrusted).await;
+    fx.set_view(T1, true, false);
+    fx.set_view(T2, true, false);
+    let server = fx.serve();
+    assert_eq!(
+        Fixture::deliver(server.url("/webhook"), T1).await["status"],
+        "dispatched"
+    );
+    let fails = fx.api.wait_for("POST", "/fail", 1, Duration::from_secs(40)).await;
+    assert_eq!(fails.len(), 1, "{fails:?}");
+    assert!(
+        fails[0].body["reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("tmux attach -t SVWL-codex"),
+        "{fails:?}"
+    );
+    assert_eq!(fails[0].body["retryable"], true);
+    assert!(fx.typed().is_empty(), "{:?}", fx.typed());
+    // The operator attaches and answers.
+    assert!(
+        fx.tmux
+            .raw(&["send-keys", "-t", "=SVWL-codex:", "1", "Enter"])
+            .status
+            .success()
+    );
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(
+        Fixture::deliver(server.url("/webhook"), T2).await["status"],
+        "dispatched"
+    );
+    let typed = fx.wait_typed(1, 40).await;
+    assert_eq!(typed.len(), 1, "{typed:?}");
+    assert!(typed[0].contains(T2));
+    drop(server);
+}
+
+/// A claude session and a codex session of the same project run side by side, each with its own
+/// CLI and tasks, and `doctor` has a row for each.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn a_claude_and_a_codex_session_of_one_project_run_side_by_side() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::codex(program, Standin::Normal).await;
+    for (task, cli) in [(T1, "claude"), (T3, "codex")] {
+        let view = fx.view_for(cli, task, true, true);
+        fx.api.script(|s| {
+            s.views.insert(task.to_string(), vec![(200, view)]);
+        });
+    }
+    let server = fx.serve();
+    for task in [T1, T3] {
+        assert_eq!(
+            Fixture::deliver(server.url("/webhook"), task).await["status"],
+            "dispatched"
+        );
+    }
+    let typed = fx.wait_typed(2, 60).await;
+    assert_eq!(typed.len(), 2, "{typed:?}");
+    for name in ["=SVWL-claude", "=SVWL-codex"] {
+        assert!(fx.tmux.raw(&["has-session", "-t", name]).status.success(), "{name}");
+    }
+    assert_eq!(fx.row("session.SVWL-claude")["detail"]["foreground"], "claude");
+    assert_eq!(fx.row("session.SVWL-codex")["detail"]["foreground"], "codex");
+    drop(server);
+}
+
+/// Restart recovery groups a project's tasks by session, which is `(key, cli)`: a pushed codex task
+/// is supervised again in `SVWL-codex` (the claude session of the key is not looked at), not typed
+/// a second time, and the next one follows when it ends.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn after_a_restart_a_pushed_codex_task_is_supervised_again_in_its_own_session() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::codex(program, Standin::Normal).await;
+    fx.set_view(T1, true, true);
+    fx.set_view(T2, true, false);
+    let mut first = fx.serve();
+    assert_eq!(
+        Fixture::deliver(first.url("/webhook"), T1).await["status"],
+        "dispatched"
+    );
+    assert_eq!(fx.wait_typed(1, 40).await.len(), 1);
+    first.terminate();
+    assert!(first.wait_exit(Duration::from_secs(20)).is_some());
+    assert!(fx.tmux.raw(&["has-session", "-t", "=SVWL-codex"]).status.success());
+    assert!(!fx.tmux.raw(&["has-session", "-t", "=SVWL-claude"]).status.success());
+    let listed = fx.active_view(T1, Some("queued"), true);
+    fx.api.script(|s| s.active = vec![listed]);
+    let second = fx.serve();
+    assert_eq!(Fixture::deliver(second.url("/webhook"), T2).await["queue_position"], 1);
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    assert_eq!(fx.typed().len(), 1, "{:?}", fx.typed());
+    fx.set_view(T1, false, true);
+    let typed = fx.wait_typed(2, 40).await;
+    assert_eq!(typed.len(), 2, "{typed:?}");
+    assert!(typed[1].contains(&format!("id={T2}")), "{typed:?}");
+    assert!(
+        fx.api
+            .requests_to("POST", "/api/v1/ai/tasks/")
+            .iter()
+            .all(|r| !r.path().ends_with("/fail"))
+    );
+    assert!(!fx.tmux.raw(&["has-session", "-t", "=SVWL-claude"]).status.success());
+    drop(second);
 }

@@ -271,3 +271,24 @@ fn report_needed_on_first_record_new_pane_and_first_since_start() {
         assert_eq!(report_needed(previous, new, requested), expected, "{label}");
     }
 }
+
+/// A codex turn end closes the turn only on a screen that shows the idle, empty composer.
+#[test]
+fn a_codex_turn_end_is_confirmed_only_by_an_idle_empty_composer() {
+    use super::session::turn_end_confirmed;
+    let idle = include_str!("fixtures/codex-after-turn.ansi");
+    let busy = include_str!("fixtures/codex-busy.ansi");
+    let draft = include_str!("fixtures/codex-draft.ansi");
+    let pasted = include_str!("fixtures/codex-pasted.ansi");
+    let approval = include_str!("fixtures/codex-permission.ansi");
+    assert!(turn_end_confirmed("codex", idle));
+    for (name, screen) in [
+        ("busy", busy),
+        ("draft", draft),
+        ("pasted", pasted),
+        ("approval", approval),
+    ] {
+        assert!(!turn_end_confirmed("codex", screen), "{name}");
+    }
+    assert!(!turn_end_confirmed("codex", "no prompt on this screen"));
+}

@@ -69,3 +69,68 @@ fn a_git_worktree_gets_the_not_excluded_warning() {
     assert!(super::doctor::worktree_warning(&dir).is_none(), "a plain checkout");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+fn temp_home() -> std::path::PathBuf {
+    let home = std::env::temp_dir().join(format!("sylvode-trust-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&home).expect("home");
+    home
+}
+
+/// claude's trust is read from `~/.claude.json`, per directory.
+#[test]
+fn claude_trust_is_read_from_the_dialog_flag_of_the_project() {
+    use super::doctor::trust_state;
+    use std::path::Path;
+    use sylvode_prereq::Trusted;
+    let home = temp_home();
+    // No file, and a file without the project: unknown.
+    assert_eq!(trust_state(&home, "claude", Path::new("/w/a")), Trusted::Unknown);
+    std::fs::write(
+        home.join(".claude.json"),
+        r#"{"projects":{"/w/a":{"hasTrustDialogAccepted":true},"/w/b":{"hasTrustDialogAccepted":false},"/w/c":{"other":1}}}"#,
+    )
+    .expect("write");
+    assert_eq!(trust_state(&home, "claude", Path::new("/w/a")), Trusted::Yes);
+    assert_eq!(trust_state(&home, "claude", Path::new("/w/b")), Trusted::No);
+    assert_eq!(trust_state(&home, "claude", Path::new("/w/c")), Trusted::Unknown);
+    assert_eq!(trust_state(&home, "claude", Path::new("/w/missing")), Trusted::Unknown);
+    // A file that is not JSON, and an unknown CLI, are unknown too; nothing is written.
+    std::fs::write(home.join(".claude.json"), "not json").expect("write");
+    assert_eq!(trust_state(&home, "claude", Path::new("/w/a")), Trusted::Unknown);
+    assert_eq!(trust_state(&home, "opencode", Path::new("/w/a")), Trusted::Unknown);
+    assert_eq!(
+        std::fs::read_to_string(home.join(".claude.json")).expect("read"),
+        "not json"
+    );
+    std::fs::remove_dir_all(&home).expect("clean");
+}
+
+/// codex's trust is `projects."<dir>".trust_level` in `~/.codex/config.toml`.
+#[test]
+fn codex_trust_is_read_from_the_trust_level_of_the_project() {
+    use super::doctor::trust_state;
+    use std::path::Path;
+    use sylvode_prereq::Trusted;
+    let home = temp_home();
+    assert_eq!(trust_state(&home, "codex", Path::new("/w/a")), Trusted::Unknown);
+    std::fs::create_dir_all(home.join(".codex")).expect("mkdir");
+    std::fs::write(
+        home.join(".codex/config.toml"),
+        "model = \"x\"\n[projects.\"/w/a\"]\ntrust_level = \"trusted\"\n[projects.\"/w/b\"]\ntrust_level = \"untrusted\"\n[projects.\"/w/c\"]\nnote = 1\n",
+    )
+    .expect("write");
+    assert_eq!(trust_state(&home, "codex", Path::new("/w/a")), Trusted::Yes);
+    assert_eq!(trust_state(&home, "codex", Path::new("/w/b")), Trusted::No);
+    assert_eq!(trust_state(&home, "codex", Path::new("/w/c")), Trusted::Unknown);
+    assert_eq!(trust_state(&home, "codex", Path::new("/w/missing")), Trusted::Unknown);
+    std::fs::write(home.join(".codex/config.toml"), "= broken").expect("write");
+    assert_eq!(trust_state(&home, "codex", Path::new("/w/a")), Trusted::Unknown);
+    // The claude file does not answer for codex.
+    std::fs::write(
+        home.join(".claude.json"),
+        r#"{"projects":{"/w/a":{"hasTrustDialogAccepted":true}}}"#,
+    )
+    .expect("write");
+    assert_eq!(trust_state(&home, "codex", Path::new("/w/a")), Trusted::Unknown);
+    std::fs::remove_dir_all(&home).expect("clean");
+}

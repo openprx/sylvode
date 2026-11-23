@@ -83,7 +83,7 @@ pub enum State {
     /// The CLI is idle and no task of the runner is current.
     Idle,
     /// A task was typed in; waiting to see the turn start.
-    Pushing { since: Instant, enter_retried: bool },
+    Pushing { since: Instant, enter_retries: u8 },
     /// The current task is being worked on, or is open after a turn.
     Busy,
     /// A person's own turn.
@@ -214,6 +214,10 @@ pub struct Machine<T> {
     last_liveness: Instant,
     /// The CLI is known to be working although no task of the runner is current.
     cli_working: bool,
+    /// How many times Enter may be pressed again for a pasted task whose turn did not start.
+    enter_retries_max: u8,
+    /// The least time between a push or an Enter and the next Enter.
+    enter_spacing: Duration,
 }
 
 impl<T: Task> Machine<T> {
@@ -235,7 +239,16 @@ impl<T: Task> Machine<T> {
             last_queue_beat: now,
             last_liveness: now,
             cli_working: false,
+            enter_retries_max: 1,
+            enter_spacing: Duration::ZERO,
         }
+    }
+
+    /// The Enter retry rules of a CLI: how many retries and the least spacing (claude: one retry,
+    /// no extra spacing).
+    pub const fn set_enter_policy(&mut self, retries: u8, spacing: Duration) {
+        self.enter_retries_max = retries;
+        self.enter_spacing = spacing;
     }
 
     /// The session is known to run the CLI and needs no creation (a recovered session).
@@ -566,7 +579,7 @@ impl<T: Task> Machine<T> {
                     // pasted a second time. The one Enter retry of the confirmation stays available.
                     self.state = State::Pushing {
                         since: now,
-                        enter_retried: false,
+                        enter_retries: 0,
                     };
                     if outcome != PushOutcome::Pushed {
                         actions.push(Action::EnterRetry);
@@ -775,13 +788,15 @@ impl<T: Task> Machine<T> {
     pub fn on_tick(&mut self, now: Instant) -> Vec<Action<T>> {
         let mut actions = Vec::new();
         match self.state {
-            State::Pushing { since, enter_retried } if now.duration_since(since) >= self.timers.push_confirm => {
-                if enter_retried {
+            State::Pushing { since, enter_retries }
+                if now.duration_since(since) >= self.timers.push_confirm.max(self.enter_spacing) =>
+            {
+                if enter_retries >= self.enter_retries_max {
                     actions.extend(self.block(now));
                 } else {
                     self.state = State::Pushing {
                         since: now,
-                        enter_retried: true,
+                        enter_retries: enter_retries + 1,
                     };
                     actions.push(Action::EnterRetry);
                 }

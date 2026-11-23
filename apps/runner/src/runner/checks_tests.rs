@@ -636,9 +636,9 @@ async fn a_refused_delivery_never_binds_a_key() {
 }
 
 /// There is no operator switch for the tmux channel: a project that asks for it is served, while
-/// codex and opencode are refused on tmux whatever else is set (only claude is verified there).
+/// opencode is refused on tmux whatever else is set (claude and codex are verified there).
 #[tokio::test]
-async fn the_tmux_channel_has_no_switch_and_only_claude_is_verified() {
+async fn the_tmux_channel_has_no_switch_and_claude_and_codex_are_verified() {
     let fx = Fixture::new();
     let m = ok_mock(task_view(&fx.project_dir, "tmux", "claude"));
     let (addr, _server) = serve(m.clone()).await;
@@ -652,15 +652,35 @@ async fn the_tmux_channel_has_no_switch_and_only_claude_is_verified() {
         matches!(fx.run(&config, m, addr, &delivery()).await, Verdict::Run(_)),
         "no switch is needed"
     );
-    // codex and opencode on tmux: refused entirely, enabled or not.
-    for cli in ["codex", "opencode"] {
-        let m = ok_mock(task_view(&fx.project_dir, "tmux", cli));
+    // opencode on tmux: refused entirely, enabled or not.
+    let m = ok_mock(task_view(&fx.project_dir, "tmux", "opencode"));
+    let (addr, _server) = serve(m.clone()).await;
+    let mut config = fx.config(addr);
+    config.runner.cli.opencode.enabled = true;
+    config.runner.tmux.binary = path.to_string_lossy().into_owned();
+    let (code, _) = refused(&fx.run(&config, m, addr, &delivery()).await);
+    assert_eq!(code, "cli_unverified");
+    // codex on tmux follows its own switch: off by default, and its binary must exist.
+    for (enabled, binary_exists, want) in [
+        (false, true, Some("cli_disabled")),
+        (true, false, Some("cli_unavailable")),
+        (true, true, None),
+    ] {
+        let m = ok_mock(task_view(&fx.project_dir, "tmux", "codex"));
         let (addr, _server) = serve(m.clone()).await;
         let mut config = fx.config(addr);
-        config.runner.cli.codex.enabled = true;
-        config.runner.cli.opencode.enabled = true;
-        let (code, _) = refused(&fx.run(&config, m, addr, &delivery()).await);
-        assert_eq!(code, "cli_unverified", "{cli}");
+        config.runner.tmux.binary = path.to_string_lossy().into_owned();
+        config.runner.cli.codex.enabled = enabled;
+        if binary_exists {
+            config.runner.cli.codex.binary = path.to_string_lossy().into_owned();
+        } else {
+            config.runner.cli.codex.binary = fx.base.path().join("no-such-codex").to_string_lossy().into_owned();
+        }
+        let verdict = fx.run(&config, m, addr, &delivery()).await;
+        match want {
+            Some(code) => assert_eq!(refused(&verdict).0, code),
+            None => assert!(matches!(verdict, Verdict::Run(_)), "codex is accepted on tmux"),
+        }
     }
 }
 

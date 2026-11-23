@@ -1,7 +1,15 @@
-// A stand-in for the CLI, compiled by the e2e tests with `rustc` and installed as `claude`, so the
-// pane's foreground process really is called `claude`. It does what the CLI does that the runner
+// A stand-in for the CLI, compiled by the e2e tests with `rustc` and installed as `claude` (and, as a
+// copy, as `codex`: the program name selects the flavour), so the pane's foreground process really
+// is called what the runner expects. It does what the CLI does that the runner
 // depends on: it turns bracketed paste on, reads its hook commands from the settings file named by
 // `--settings` and runs them at the right moments, and draws screens on command.
+//
+// The codex flavour has no settings file: it reads the notify program from `-c notify=[...]` (the
+// runner's state directory is the parent of the `--socket` path in it), draws codex's screens
+// (`›` composer with a faint placeholder, `[Pasted Content N chars]`, `• Working (Ns • esc to
+// interrupt)`) and at the end of a turn runs the notify program with one JSON argument the way
+// codex does: first a notification without `client` (a sub-thread), then the main one. An Enter
+// within 400 ms of a paste does not submit (codex inserts a newline).
 //
 // Control files live in the runner's state directory (three levels above the settings file):
 //   standin.cfg   `turn=forever` (a turn never ends), `trust=dialog` (a trust dialog first)
@@ -58,22 +66,65 @@ fn hook_command(settings: &str, event: &str) -> Option<String> {
     None
 }
 
+/// The words of `-c notify=[...]`, a TOML array of strings.
+fn codex_notify(args: &[String]) -> Vec<String> {
+    let Some(value) = args
+        .windows(2)
+        .find(|pair| pair[0] == "-c" && pair[1].starts_with("notify="))
+        .map(|pair| pair[1]["notify=".len()..].to_string())
+    else {
+        return Vec::new();
+    };
+    let mut words = Vec::new();
+    let mut chars = value.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '"' || c == '\'' {
+            let mut word = String::new();
+            while let Some(d) = chars.next() {
+                if d == c {
+                    break;
+                }
+                if d == '\\' && c == '"' {
+                    if let Some(e) = chars.next() {
+                        word.push(e);
+                    }
+                } else {
+                    word.push(d);
+                }
+            }
+            words.push(word);
+        }
+    }
+    words
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    let codex = Path::new(&args[0]).file_name().and_then(|n| n.to_str()) == Some("codex");
+    let notify = if codex { codex_notify(&args) } else { Vec::new() };
     let settings_path = args
         .iter()
         .position(|a| a == "--settings")
         .and_then(|i| args.get(i + 1))
         .cloned()
         .unwrap_or_default();
-    let state: PathBuf = Path::new(&settings_path)
-        .parent()
-        .and_then(Path::parent)
-        .and_then(Path::parent)
-        .map(Path::to_path_buf)
-        .unwrap_or_default();
+    let state: PathBuf = if codex {
+        notify
+            .iter()
+            .position(|w| w == "--socket")
+            .and_then(|at| notify.get(at + 1))
+            .and_then(|socket| Path::new(socket).parent().map(Path::to_path_buf))
+            .unwrap_or_default()
+    } else {
+        Path::new(&settings_path)
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .unwrap_or_default()
+    };
     if args.iter().any(|a| a == "--version") {
-        println!("2.1.330 (Claude Code)");
+        println!("{}", if codex { "codex-cli 0.171.0" } else { "2.1.330 (Claude Code)" });
         return;
     }
     // Without a settings file there is no state directory to write to: write nothing.
@@ -105,6 +156,22 @@ fn main() {
             if mode(&state) == "deaf" && event != "SessionStart" {
                 return;
             }
+            if codex {
+                // Only the end of a turn is reported, as codex's notify does.
+                if event == "Stop" && !notify.is_empty() {
+                    let run = |payload: &str| {
+                        let _ = Command::new(&notify[0])
+                            .args(&notify[1..])
+                            .arg(payload)
+                            .stdin(Stdio::null())
+                            .status();
+                    };
+                    run("{\"type\":\"agent-turn-complete\",\"thread-id\":\"sub\",\"last-assistant-message\":\"x\"}");
+                    run("{\"type\":\"approval-requested\",\"client\":\"codex-tui\"}");
+                    run("{\"type\":\"agent-turn-complete\",\"thread-id\":\"main\",\"client\":\"codex-tui\",\"last-assistant-message\":\"x\"}");
+                }
+                return;
+            }
             if let Some(command) = hook_command(&settings, event) {
                 let _ = Command::new("/bin/sh")
                     .arg("-c")
@@ -118,7 +185,12 @@ fn main() {
     let _ = std::io::stdout().flush();
     let stdin = std::io::stdin();
     let mut lines = stdin.lock().lines();
-    if cfg.contains("trust=dialog") {
+    if cfg.contains("trust=dialog") && codex {
+        print!("\x1b[2J\x1b[H  Folder access\r\n  Trust this folder? Codex can read, edit, and run files here.\r\n\u{203a} 1. Trust and continue\r\n  2. Back to Agent Command Center\r\n  enter continue \u{b7} esc back\r\n");
+        let _ = std::io::stdout().flush();
+        let _ = lines.next();
+        append(&log, "TRUST answered");
+    } else if cfg.contains("trust=dialog") {
         print!("\x1b[2J\x1b[HIs this a project you created or one you trust?\r\n  Yes, I trust this folder\r\n");
         let _ = std::io::stdout().flush();
         let _ = lines.next();
@@ -128,6 +200,7 @@ fn main() {
     let pasted: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     {
         let (state, turn_active, pasted) = (state.clone(), Arc::clone(&turn_active), Arc::clone(&pasted));
+        let codex = codex;
         std::thread::spawn(move || {
             let mut last = String::new();
             loop {
@@ -135,7 +208,25 @@ fn main() {
                 if wanted == "shell" {
                     let _ = Command::new("/bin/cat").exec();
                 }
-                let screen = match wanted.as_str() {
+                let composer = "\x1b[1m\u{203a}\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m";
+                let working = "\u{2022} Working (2s \u{2022} esc to interrupt)";
+                let screen = if codex {
+                    match wanted.as_str() {
+                        "busy" => format!("{working}\r\n{composer}"),
+                        "permission" => "  Would you like to run the following command?\r\n  $ ls\r\n\u{203a} 1. Yes, proceed (y)\r\n  2. No, and tell Codex what to do differently (esc)\r\n  Press enter to confirm or esc to cancel".to_string(),
+                        "draft" => "\u{203a} half written".to_string(),
+                        _ => {
+                            if let Some(text) = pasted.lock().ok().and_then(|p| p.clone()) {
+                                format!("\u{203a} [Pasted Content {} chars]", text.len())
+                            } else if turn_active.load(Ordering::SeqCst) {
+                                format!("{working}\r\n{composer}")
+                            } else {
+                                composer.to_string()
+                            }
+                        }
+                    }
+                } else {
+                    match wanted.as_str() {
                     "busy" => "\u{273b} Working\u{2026} (esc to interrupt)\r\n> ".to_string(),
                     "placeholder" => "> Try \"fix lint errors\"".to_string(),
                     "permission" => "Do you want to proceed?\r\n \u{276f} 1. Yes\r\n   2. No\r\n Esc to cancel".to_string(),
@@ -151,6 +242,7 @@ fn main() {
                         } else {
                             "> ".to_string()
                         }
+                    }
                     }
                 };
                 if screen != last {

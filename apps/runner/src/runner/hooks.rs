@@ -10,7 +10,8 @@
 //! mode 0600. No secret travels: the runner admits a message by who sent it (same user), where it
 //! says it ran (a pane a worker recorded) and whether the sender is below that pane's process.
 //!
-//! The `hook` subcommand ([`send`]) never reads stdin, ignores extra arguments, does nothing
+//! The `hook` subcommand ([`send`]) never reads stdin, reads only codex's trailing notification
+//! argument ([`event_counts`]), does nothing
 //! outside tmux, and gives up within [`CLIENT_BUDGET`]: it must never block the CLI that runs it.
 
 use std::io::Write;
@@ -500,6 +501,32 @@ async fn read_line(stream: &mut tokio::net::UnixStream) -> Option<Vec<u8>> {
         line.pop();
     }
     (line.len() < MAX_LINE).then_some(line)
+}
+
+/// The longest notify payload read, in bytes.
+pub const MAX_NOTIFY_PAYLOAD: usize = 64 * 1024;
+
+/// Whether the event of a `hook` call is sent to the runner at all. Everything but codex always
+/// is. codex's notify appends one JSON argument and fires more than once per prompt (a sub-thread,
+/// an extra first-prompt thread): only a notification whose `type` is `agent-turn-complete` and
+/// that carries a `client` key is the main thread's turn end, the others are dropped. Only those
+/// two keys are read; nothing else of the payload is logged or kept.
+#[must_use]
+pub fn event_counts(cli: &str, payload: Option<&str>) -> bool {
+    if cli != "codex" {
+        return true;
+    }
+    let Some(payload) = payload.filter(|text| text.len() <= MAX_NOTIFY_PAYLOAD) else {
+        tracing::debug!("codex notification dropped: no payload or too large");
+        return false;
+    };
+    let counts = serde_json::from_str::<Value>(payload).ok().is_some_and(|value| {
+        value.get("type").and_then(Value::as_str) == Some("agent-turn-complete") && value.get("client").is_some()
+    });
+    if !counts {
+        tracing::debug!("codex notification dropped: not a main-thread turn end");
+    }
+    counts
 }
 
 /// The `hook` subcommand: sends one message to `socket` and returns. Never reads stdin, never

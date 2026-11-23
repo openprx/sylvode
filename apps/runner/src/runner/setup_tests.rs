@@ -7,7 +7,10 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use super::files::RUNNER_MARK;
-use super::setup::{Applied, Inputs, Plan, apply, merge_settings, plan, render};
+use super::setup::{
+    Applied, CodexInputs, CodexPlan, Inputs, Plan, apply, apply_codex, codex_plan, merge_settings, plan, render,
+    render_codex,
+};
 use crate::config::Config;
 
 const BOT: &str = "00000000-0000-4000-8000-000000000001";
@@ -399,4 +402,163 @@ fn a_failing_claude_is_an_error_and_writes_no_settings() {
     assert!(apply(&plan_in(&base, &project), &script).is_err());
     assert!(!project.join(".claude").exists());
     assert!(apply(&plan_in(&base, &project), &base.0.join("absent")).is_err());
+}
+
+fn codex_plan_in(base: &Dir, project: &Path) -> CodexPlan {
+    let state = base.0.join("state");
+    codex_plan(
+        &config(),
+        &CodexInputs {
+            key: "QLB",
+            dir: project.to_path_buf(),
+            bot_id: BOT,
+            state_dir: &state,
+            runner_exe: Path::new("/opt/sylvode/bin/sylvode-runner"),
+            mcp_server: Path::new("/opt/sylvode/bin/mcp-server"),
+            launch_program: Path::new("/usr/local/bin/codex"),
+        },
+    )
+    .expect("codex plan")
+}
+
+/// A stand-in for `codex`: records its calls, keeps the MCP entry in a file.
+fn fake_codex(base: &Dir) -> (PathBuf, PathBuf, PathBuf) {
+    let log = base.0.join("codex.log");
+    let added = base.0.join("codex.added");
+    let script = base.0.join("codex");
+    fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\necho \"$PWD|$*\" >> '{log}'\n\
+             if [ \"$1 $2\" = \"mcp get\" ]; then [ -f '{added}' ] && {{ cat '{added}'; exit 0; }}; exit 1; fi\n\
+             if [ \"$1 $2\" = \"mcp add\" ]; then echo \"$*\" > '{added}'; exit 0; fi\nexit 1\n",
+            log = log.display(),
+            added = added.display()
+        ),
+    )
+    .expect("script");
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("chmod");
+    (script, log, added)
+}
+
+#[test]
+fn the_codex_plan_prints_the_default_line_the_entry_and_the_notify_and_no_token() {
+    let base = Dir::new();
+    let project = base.sub("qlb");
+    let plan = codex_plan_in(&base, &project);
+    assert_eq!(plan.name.as_str(), "QLB-codex");
+    assert_eq!(
+        plan.launch[..4],
+        [
+            "/usr/local/bin/codex",
+            "--no-daemon",
+            "--no-alt-screen",
+            "--dangerously-bypass-approvals-and-sandbox"
+        ]
+    );
+    let text = render_codex(&plan).expect("render");
+    for wanted in [
+        "Session name: QLB-codex",
+        "tmux new-session -d -s QLB-codex",
+        "'--no-daemon' '--no-alt-screen' '--dangerously-bypass-approvals-and-sandbox'",
+        "'-c' 'mcp_servers.sylvode.command=",
+        "Trust the folder once: attach and choose 1",
+        "[mcp_servers.sylvode]",
+        "command = \"/opt/sylvode/bin/mcp-server\"",
+        "notify = [\"/opt/sylvode/bin/sylvode-runner\", \"hook\", \"--cli\", \"codex\"",
+        "setup codex --project QLB --apply",
+    ] {
+        assert!(text.contains(wanted), "{wanted}: {text}");
+    }
+    // The file that holds the token is named, never read: no token shows.
+    assert!(text.contains(&format!("{BOT}.toml")));
+    assert!(!text.to_lowercase().contains("bearer") && !text.contains("token ="));
+    assert!(
+        base.listing().iter().all(|entry| !entry.contains("state")),
+        "nothing is written"
+    );
+}
+
+#[test]
+fn the_codex_plan_refuses_a_bad_key() {
+    let base = Dir::new();
+    let project = base.sub("qlb");
+    let state = base.0.join("state");
+    let result = codex_plan(
+        &config(),
+        &CodexInputs {
+            key: "bad key",
+            dir: project,
+            bot_id: BOT,
+            state_dir: &state,
+            runner_exe: Path::new("/r"),
+            mcp_server: Path::new("/m"),
+            launch_program: Path::new("/c"),
+        },
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn codex_apply_adds_the_entry_once_and_never_writes_the_hook_or_touches_files() {
+    let base = Dir::new();
+    let project = base.sub("qlb");
+    let plan = codex_plan_in(&base, &project);
+    let (codex, log, _added) = fake_codex(&base);
+    let before = base.listing();
+    let first = apply_codex(&plan, &codex).expect("apply");
+    assert_eq!(first.code, 0);
+    assert!(
+        first.text.contains("added to your codex configuration"),
+        "{}",
+        first.text
+    );
+    assert!(first.text.contains("Turn hook: not written"), "{}", first.text);
+    assert!(first.text.contains("Restart your codex"), "{}", first.text);
+    let second = apply_codex(&plan, &codex).expect("apply again");
+    assert!(second.text.contains("already set for this bot"), "{}", second.text);
+    let recorded = calls(&log);
+    let adds: Vec<&String> = recorded
+        .iter()
+        .filter(|call| call.contains("|mcp add sylvode -- "))
+        .collect();
+    assert_eq!(adds.len(), 1, "{recorded:?}");
+    assert!(
+        adds[0].contains("/opt/sylvode/bin/mcp-server serve --transport stdio --config"),
+        "{adds:?}"
+    );
+    assert!(recorded.iter().any(|call| call.contains("|mcp get sylvode --json")));
+    // Only the fake's own files appeared: no settings file anywhere in the project.
+    let after = base.listing();
+    assert!(
+        after
+            .iter()
+            .all(|entry| !entry.contains(".codex") && !entry.contains("settings")),
+        "{after:?}"
+    );
+    assert!(before.len() + 3 >= after.len());
+}
+
+#[test]
+fn codex_apply_leaves_a_foreign_entry_alone_with_code_two() {
+    let base = Dir::new();
+    let project = base.sub("qlb");
+    let plan = codex_plan_in(&base, &project);
+    let (codex, log, added) = fake_codex(&base);
+    fs::write(&added, "sylvode: command /somewhere/else").expect("foreign");
+    let done = apply_codex(&plan, &codex).expect("apply");
+    assert_eq!(done.code, 2);
+    assert!(done.text.contains("points elsewhere") && done.text.contains("codex mcp remove sylvode"));
+    assert!(calls(&log).iter().all(|call| !call.contains("|mcp add")));
+}
+
+#[test]
+fn a_failing_codex_is_an_error() {
+    let base = Dir::new();
+    let project = base.sub("qlb");
+    let plan = codex_plan_in(&base, &project);
+    let script = base.0.join("codex-bad");
+    fs::write(&script, "#!/bin/sh\nexit 1\n").expect("script");
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("chmod");
+    assert!(apply_codex(&plan, &script).is_err());
 }

@@ -194,7 +194,7 @@ impl Handshake {
 pub fn report_body(
     rows: &[Component],
     sessions: &[crate::runner::session_report::Assessment],
-    posture: crate::runner::session_report::Posture,
+    postures: &[(&'static str, crate::runner::session_report::Posture)],
 ) -> Value {
     let components: Vec<Value> = rows
         .iter()
@@ -214,7 +214,7 @@ pub fn report_body(
         })
         .collect();
     let mut components = components;
-    components.push(posture_row(posture));
+    components.extend(postures.iter().map(|(cli, posture)| posture_row(cli, *posture)));
     components.extend(sessions.iter().map(session_row));
     json!({
         "generated_by": {"version": env!("CARGO_PKG_VERSION"), "task_protocol": TASK_PROTOCOL},
@@ -222,10 +222,12 @@ pub fn report_body(
     })
 }
 
-/// The `posture` row: whether the launch settings of each channel run with permission checks off.
-fn posture_row(posture: crate::runner::session_report::Posture) -> Value {
+/// A `posture` row, one per CLI: whether the launch settings of each channel run with permission
+/// checks off.
+fn posture_row(cli: &str, posture: crate::runner::session_report::Posture) -> Value {
     json!({
         "component": "posture",
+        "cli": cli,
         "status": if posture.tmux || posture.headless { "warn" } else { "ok" },
         "bypass": {"tmux": posture.tmux, "headless": posture.headless},
     })
@@ -285,7 +287,7 @@ pub async fn run_once(config: &Config, http: &reqwest::Client, handshake: &Hands
             .await
             .unwrap_or_default()
     };
-    let posture = crate::runner::session_report::posture_of(&config.runner);
+    let postures = crate::runner::session_report::postures_of(&config.runner);
     for target in targets(config) {
         let client = SvClient::new(http.clone(), &target.api_url, &target.token, &target.surface);
         let data = match client.protocol(CALL_TIMEOUT).await {
@@ -319,7 +321,7 @@ pub async fn run_once(config: &Config, http: &reqwest::Client, handshake: &Hands
             .cloned()
             .collect();
         match client
-            .put_report(&report_body(&rows, &own, posture), CALL_TIMEOUT)
+            .put_report(&report_body(&rows, &own, &postures), CALL_TIMEOUT)
             .await
         {
             Ok(()) => {}
@@ -471,10 +473,13 @@ mod tests {
         let body = report_body(
             &[tmux, warn, fail],
             &[],
-            crate::runner::session_report::Posture {
-                tmux: false,
-                headless: false,
-            },
+            &[(
+                "claude",
+                crate::runner::session_report::Posture {
+                    tmux: false,
+                    headless: false,
+                },
+            )],
         );
         assert_eq!(
             body["components"],
@@ -482,7 +487,7 @@ mod tests {
                 {"component": "tmux", "status": "ok", "version": "3.7b"},
                 {"component": "cli.claude", "status": "warn"},
                 {"component": "mcp_server", "status": "fail"},
-                {"component": "posture", "status": "ok", "bypass": {"tmux": false, "headless": false}},
+                {"component": "posture", "cli": "claude", "status": "ok", "bypass": {"tmux": false, "headless": false}},
             ])
         );
         assert_eq!(
@@ -532,15 +537,28 @@ mod tests {
         let body = report_body(
             &[],
             &[running, absent],
-            Posture {
-                tmux: true,
-                headless: false,
-            },
+            &[
+                (
+                    "claude",
+                    Posture {
+                        tmux: true,
+                        headless: false,
+                    },
+                ),
+                (
+                    "codex",
+                    Posture {
+                        tmux: false,
+                        headless: false,
+                    },
+                ),
+            ],
         );
         assert_eq!(
             body["components"],
             json!([
-                {"component": "posture", "status": "warn", "bypass": {"tmux": true, "headless": false}},
+                {"component": "posture", "cli": "claude", "status": "warn", "bypass": {"tmux": true, "headless": false}},
+                {"component": "posture", "cli": "codex", "status": "ok", "bypass": {"tmux": false, "headless": false}},
                 {"component": "tmux_session", "project_key": "QLA", "cli": "claude", "status": "warn",
                  "state": "running", "created_by": "operator", "hooks": "seen", "permissions": "bypass",
                  "mcp": "stale"},

@@ -16,12 +16,10 @@ use sylvode_prereq::Status;
 use super::config::RunnerConfig;
 use super::detect::classify_bottom;
 use super::files::{CreatedBy, SessionRecord, StateDir};
+use super::profile::{McpProbe, profile};
 use super::session::{EnsureDecision, EnsureFacts, decide_ensure};
 use super::tmux::{ListedPane, Pane, SessionName, Tmux};
 use super::words_bypass_permissions;
-
-/// The footer claude shows while permission checks are off.
-const BYPASS_FOOTER: &str = "bypass permissions on";
 
 /// `state` of a session row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -135,22 +133,76 @@ pub struct Assessment {
     pub status: Status,
 }
 
-/// Whether the CLI runs with permission checks off: its arguments say so, or (secondary) its
-/// footer does. Without arguments and without the footer nothing is known.
+/// Whether the CLI `cli` runs with permission checks off: its arguments say so, or (secondary)
+/// its footer or banner does. Without arguments and without the footer nothing is known.
 #[must_use]
-pub fn permissions_of(cli_args: Option<&str>, screen: Option<&str>) -> Permissions {
-    let footer = screen.is_some_and(|screen| screen.to_lowercase().contains(BYPASS_FOOTER));
+pub fn permissions_for(cli: &str, cli_args: Option<&str>, screen: Option<&str>) -> Permissions {
+    let footer = profile(cli)
+        .and_then(|p| p.footer_bypass)
+        .zip(screen)
+        .is_some_and(|(text, screen)| screen.to_lowercase().contains(text));
     match cli_args {
         Some(args) => {
             let words: Vec<String> = args.split_whitespace().map(str::to_string).collect();
-            if words_bypass_permissions(&words) || footer {
-                Permissions::Bypass
-            } else {
-                Permissions::Normal
+            match cli {
+                "codex" => match codex_permissions(&words) {
+                    Permissions::Unknown | Permissions::Normal if footer => Permissions::Bypass,
+                    other => other,
+                },
+                _ => {
+                    if words_bypass_permissions(&words) || footer {
+                        Permissions::Bypass
+                    } else {
+                        Permissions::Normal
+                    }
+                }
             }
         }
         None if footer => Permissions::Bypass,
         None => Permissions::Unknown,
+    }
+}
+
+/// What codex's launch words say about approvals and the sandbox: the bypass flag, or approval
+/// `never` with sandbox `danger-full-access`, is `Bypass`; a sandbox `read-only` or
+/// `workspace-write`, or approval `on-request`, is `Normal`; anything else (the user's own
+/// configuration decides) is `Unknown`. Reads `-a v`, `--ask-for-approval v` and `--x=v`, the same
+/// for `-s`/`--sandbox`, and the `-c approval_policy=v` / `-c sandbox_mode=v` forms.
+#[must_use]
+pub fn codex_permissions(words: &[String]) -> Permissions {
+    if words.iter().any(|word| word == CODEX_BYPASS) {
+        return Permissions::Bypass;
+    }
+    let value_of = |names: &[&str], config_key: &str| -> Option<String> {
+        let unquote = |text: &str| text.trim_matches(|c| c == '"' || c == '\'').to_string();
+        words.iter().enumerate().find_map(|(at, word)| {
+            if let Some(name) = names.iter().find(|name| *word == **name) {
+                let _ = name;
+                return words.get(at + 1).map(|next| unquote(next));
+            }
+            if let Some(value) = names
+                .iter()
+                .filter(|name| name.starts_with("--"))
+                .find_map(|name| word.strip_prefix(&format!("{name}=")))
+            {
+                return Some(unquote(value));
+            }
+            let config = if word == "-c" || word == "--config" {
+                words.get(at + 1).map(String::as_str)
+            } else {
+                None
+            };
+            config
+                .and_then(|text| text.strip_prefix(&format!("{config_key}=")))
+                .map(unquote)
+        })
+    };
+    let approval = value_of(&["-a", "--ask-for-approval"], "approval_policy");
+    let sandbox = value_of(&["-s", "--sandbox"], "sandbox_mode");
+    match (approval.as_deref(), sandbox.as_deref()) {
+        (Some("never"), Some("danger-full-access")) => Permissions::Bypass,
+        (_, Some("read-only" | "workspace-write")) | (Some("on-request"), _) => Permissions::Normal,
+        _ => Permissions::Unknown,
     }
 }
 
@@ -208,7 +260,7 @@ pub fn assess(obs: &Observation) -> Assessment {
     let dialog = obs
         .screen
         .as_deref()
-        .is_some_and(|screen| classify_bottom("claude", screen).is_some());
+        .is_some_and(|screen| classify_bottom(obs.name.cli(), screen).is_some());
     row.state = if dialog {
         SessionState::Dialog
     } else {
@@ -216,7 +268,11 @@ pub fn assess(obs: &Observation) -> Assessment {
     };
     row.hooks_seen = obs.hooks_seen;
     row.hooks = Some(obs.hooks_seen.is_some());
-    row.permissions = Some(permissions_of(obs.cli_args.as_deref(), obs.screen.as_deref()));
+    row.permissions = Some(permissions_for(
+        obs.name.cli(),
+        obs.cli_args.as_deref(),
+        obs.screen.as_deref(),
+    ));
     let mcp = if obs.mcp_in_args {
         Some(Mcp::Ok)
     } else {
@@ -328,10 +384,10 @@ pub fn cli_process<'a>(table: &'a [ProcRow], root: u32, names: &[String]) -> Opt
     })
 }
 
-/// `claude mcp get sylvode` in `dir`: absent, this bot's file, or another.
-fn mcp_entry(claude: &Path, dir: &Path, toml: &Path) -> Option<McpEntry> {
-    let output = Command::new(claude)
-        .args(["mcp", "get", super::launch::SERVER_NAME])
+/// The CLI's own report of its `sylvode` MCP server in `dir`: absent, this bot's file, or another.
+fn mcp_entry(program: &Path, probe: McpProbe, dir: &Path, toml: &Path) -> Option<McpEntry> {
+    let output = Command::new(program)
+        .args(probe.command())
         .current_dir(dir)
         .env_clear()
         .envs(super::tmux::agent_environment())
@@ -370,10 +426,13 @@ pub fn observe(
     tmux: &Tmux,
     state: &StateDir,
     state_path: &Path,
-    claude: Option<&Path>,
+    program: Option<&Path>,
     name: &SessionName,
 ) -> Observation {
-    let process_names = config.runner.cli.claude.process_names.clone();
+    let process_names = config.runner.cli_settings(name.cli()).map_or_else(
+        || vec![name.cli().to_string()],
+        |settings| settings.process_names.to_vec(),
+    );
     let record = state.read_session_record(name);
     let exists = tmux.has_session(name).unwrap_or(false);
     let panes = if exists {
@@ -426,20 +485,20 @@ pub fn observe(
     let table = process_table();
     let process = cli_process(&table, listed.pid, &obs.process_names);
     obs.cli_args = process.map(|row| row.args.clone());
-    let (mcp_json, mcp_toml) = (
-        state_path.join("mcp").join(format!("{bot}.claude.json")),
-        state_path.join("mcp").join(format!("{bot}.toml")),
-    );
+    let probe = profile(name.cli()).and_then(|p| p.mcp_probe);
+    let mcp_toml = state_path.join("mcp").join(format!("{bot}.toml"));
+    let mcp_file = probe.map(|probe| state_path.join("mcp").join(probe.args_file(bot)));
     obs.mcp_in_args = !bot.is_empty()
-        && mcp_json
-            .to_str()
+        && mcp_file
+            .as_deref()
+            .and_then(Path::to_str)
             .zip(obs.cli_args.as_deref())
             .is_some_and(|(path, args)| args.contains(path));
     if !obs.mcp_in_args
         && !bot.is_empty()
-        && let (Some(claude), Ok(info)) = (claude, tmux.pane_info(&pane))
+        && let (Some(program), Some(probe), Ok(info)) = (program, probe, tmux.pane_info(&pane))
     {
-        obs.mcp_entry = mcp_entry(claude, Path::new(&info.current_path), &mcp_toml);
+        obs.mcp_entry = mcp_entry(program, probe, Path::new(&info.current_path), &mcp_toml);
     }
     obs.credentials_newer = process
         .and_then(|row| SystemTime::now().checked_sub(row.elapsed))
@@ -450,12 +509,23 @@ pub fn observe(
     obs
 }
 
-/// What looking at sessions needs: tmux, the state directory and the claude program.
+/// What looking at sessions needs: tmux, the state directory and the CLI programs.
 struct Context {
     tmux: Tmux,
     state: StateDir,
     path: std::path::PathBuf,
     claude: Option<std::path::PathBuf>,
+    codex: Option<std::path::PathBuf>,
+}
+
+impl Context {
+    fn program_of(&self, cli: &str) -> Option<&Path> {
+        match cli {
+            "claude" => self.claude.as_deref(),
+            "codex" => self.codex.as_deref(),
+            _ => None,
+        }
+    }
 }
 
 fn context(config: &crate::config::Config) -> Option<Context> {
@@ -469,6 +539,7 @@ fn context(config: &crate::config::Config) -> Option<Context> {
         state,
         path,
         claude: checker.locate(&config.runner.cli.claude.binary),
+        codex: checker.locate(&config.runner.cli.codex.binary),
     })
 }
 
@@ -489,7 +560,7 @@ pub fn assess_recorded(config: &crate::config::Config) -> Vec<Assessment> {
                 &context.tmux,
                 &context.state,
                 &context.path,
-                context.claude.as_deref(),
+                context.program_of(name.cli()),
                 &name,
             );
             assess(&obs)
@@ -506,7 +577,7 @@ pub fn assess_named(config: &crate::config::Config, name: &SessionName) -> Optio
         &context.tmux,
         &context.state,
         &context.path,
-        context.claude.as_deref(),
+        context.program_of(name.cli()),
         name,
     );
     Some(assess(&obs))
@@ -519,16 +590,46 @@ pub struct Posture {
     pub headless: bool,
 }
 
+/// Whether codex command words turn its approvals and sandbox off.
+#[must_use]
+pub fn codex_bypasses(words: &[String]) -> bool {
+    codex_permissions(words) == Permissions::Bypass
+}
+
 /// The codex flag that turns its approvals and sandbox off.
 const CODEX_BYPASS: &str = "--dangerously-bypass-approvals-and-sandbox";
 
-/// The posture of the configured commands.
+/// The posture of the configured commands: one row per CLI that can run (claude always, codex and
+/// opencode when enabled). opencode's permissions are not controlled, so its headless channel
+/// counts as bypass.
 #[must_use]
-pub fn posture_of(runner: &RunnerConfig) -> Posture {
+pub fn postures_of(runner: &RunnerConfig) -> Vec<(&'static str, Posture)> {
     let claude = &runner.cli.claude;
-    let codex_bypass = runner.cli.codex.headless_args.iter().any(|word| word == CODEX_BYPASS);
-    Posture {
-        tmux: words_bypass_permissions(&claude.launch_command),
-        headless: words_bypass_permissions(&claude.headless_args) || (runner.cli.codex.enabled && codex_bypass),
+    let mut rows = vec![(
+        "claude",
+        Posture {
+            tmux: words_bypass_permissions(&claude.launch_command),
+            headless: words_bypass_permissions(&claude.headless_args),
+        },
+    )];
+    let codex = &runner.cli.codex;
+    if codex.enabled {
+        rows.push((
+            "codex",
+            Posture {
+                tmux: codex_bypasses(&codex.launch_command),
+                headless: codex_bypasses(&codex.headless_args),
+            },
+        ));
     }
+    if runner.cli.opencode.enabled {
+        rows.push((
+            "opencode",
+            Posture {
+                tmux: false,
+                headless: true,
+            },
+        ));
+    }
+    rows
 }

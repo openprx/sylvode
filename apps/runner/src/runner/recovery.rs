@@ -121,7 +121,7 @@ async fn recover_bot(
     views: Vec<Value>,
     timeout: Duration,
 ) {
-    let mut keys: Vec<(String, PerKey)> = Vec::new();
+    let mut keys: Vec<((String, String), PerKey)> = Vec::new();
     for view in views {
         let (Some(task_id), Some(key_text)) = (str_at(&view, &["task_id"]), str_at(&view, &["project", "key"])) else {
             continue;
@@ -129,7 +129,8 @@ async fn recover_bot(
         if str_at(&view, &["execution", "channel"]) != Some("tmux") || !checks::valid_project_key(key_text) {
             continue;
         }
-        let Ok(name) = SessionName::new(key_text, "claude") else {
+        let cli = str_at(&view, &["execution", "cli"]).unwrap_or("claude");
+        let Ok(name) = SessionName::new(key_text, cli) else {
             continue;
         };
         let attempt = view.get("attempt").and_then(Value::as_i64).unwrap_or(0);
@@ -155,10 +156,13 @@ async fn recover_bot(
         let Some(task) = rebuild_task(state, client, bot, &view).await else {
             continue;
         };
-        let at = keys.iter().position(|(k, _)| k == key_text).unwrap_or_else(|| {
-            keys.push((key_text.to_string(), PerKey::default()));
-            keys.len() - 1
-        });
+        let at = keys
+            .iter()
+            .position(|((key, key_cli), _)| key == key_text && key_cli == cli)
+            .unwrap_or_else(|| {
+                keys.push(((key_text.to_string(), cli.to_string()), PerKey::default()));
+                keys.len() - 1
+            });
         let Some((_, entry)) = keys.get_mut(at) else { continue };
         match step {
             Step::Adopt { acknowledged } if entry.adopt.is_none() => {
@@ -186,9 +190,9 @@ async fn recover_bot(
             _ => entry.requeue.push(task),
         }
     }
-    let mut by_key: HashMap<String, PerKey> = keys.into_iter().collect();
-    for (key_text, entry) in by_key.drain() {
-        if let Ok(name) = SessionName::new(&key_text, "claude") {
+    let mut by_key: HashMap<(String, String), PerKey> = keys.into_iter().collect();
+    for ((key_text, cli), entry) in by_key.drain() {
+        if let Ok(name) = SessionName::new(&key_text, &cli) {
             tracing::info!(session = %name.as_str(), adopted = entry.adopt.is_some(), requeued = entry.requeue.len(), "restart recovery");
             sessions.recover(name, entry.adopt, entry.requeue).await;
         }

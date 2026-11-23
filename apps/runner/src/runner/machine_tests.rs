@@ -927,3 +927,42 @@ fn an_acknowledged_task_is_busy_whatever_the_hooks_said() {
     h.view(ACTIVE);
     assert!(matches!(h.m.state, State::Blocked { .. }));
 }
+
+/// codex's Enter retries: at most two, and never closer than one second to the previous Enter,
+/// whatever the confirmation wait is; claude keeps its one retry.
+#[test]
+fn codex_gets_two_enter_retries_at_least_a_second_apart() {
+    let now = Instant::now();
+    let mut quick = timers();
+    quick.push_confirm = Duration::from_millis(200);
+    let mut m: Machine<T> = Machine::new(quick, "SVWL", "tmux attach -t =SVWL", now);
+    m.set_enter_policy(2, Duration::from_secs(1));
+    m.adopt_running(now);
+    let task = T("a", 1);
+    m.enqueue(task, now);
+    m.on_push(PushOutcome::Pushed, now);
+    // Too early for any retry: the confirmation wait is over but the spacing is not.
+    assert!(m.on_tick(now + Duration::from_millis(500)).is_empty());
+    assert!(m.on_tick(now + Duration::from_millis(999)).is_empty());
+    let first = now + Duration::from_secs(1);
+    assert_eq!(kinds(&m.on_tick(first)), ["enter"]);
+    // The spacing counts from the previous Enter.
+    assert!(m.on_tick(first + Duration::from_millis(900)).is_empty());
+    let second = first + Duration::from_secs(1);
+    assert_eq!(kinds(&m.on_tick(second)), ["enter"]);
+    // No third retry: the session is blocked instead.
+    let third = second + Duration::from_secs(1);
+    assert!(!kinds(&m.on_tick(third)).contains(&"enter"));
+    assert!(matches!(m.state, State::Blocked { .. }));
+}
+
+#[test]
+fn claude_keeps_its_single_enter_retry() {
+    let mut h = H::idle();
+    h.enqueue(T("a", 1));
+    h.push(PushOutcome::Pushed);
+    assert!(!kinds(&h.tick(9)).contains(&"enter"));
+    assert!(kinds(&h.tick(1)).contains(&"enter"));
+    assert!(!kinds(&h.tick(10)).contains(&"enter"));
+    assert!(matches!(h.m.state, State::Blocked { .. }));
+}
