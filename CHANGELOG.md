@@ -31,6 +31,15 @@ name.
 
 ### Removed
 
+- **Universal forms delivery and sign-off tooling.** The scripts and schemas that produced and
+  checked delivery manifests, readiness, sign-off, completion and implementation map reports,
+  acceptance packets and delivery bundles were removed, together with
+  `docs/universal-forms-implementation-map.md`. The universal forms test suites, the smokes that run
+  the product, the security scope audit and the source coverage and production readiness audits
+  remain, and the Universal Forms Gates CI job runs them.
+- **MCP contributor guide resource.** `apps/mcp-server/AGENTS.md`, the `sylvode://guides/agents`
+  resource that served its build and test notes, and the `sylvode-skillgen` output for that file
+  were removed. The skill, the tool reference and the workflow recipes are unchanged.
 - **Internal documents.** The repository now holds only licences, notices, changelogs and feature
   descriptions. Removed: the contributor guide and the agent instruction file at the root, the
   planning, requirement, acceptance, audit and baseline documents and the v1 stable runbook under
