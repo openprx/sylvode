@@ -1005,6 +1005,13 @@ async fn issue_deleted_payload_lists_labels_and_identifier() {
     api.finish().await;
 }
 
+/// An RFC 3339 UTC timestamp as `YYYY-MM-DDTHH:MM:SS.ffffff` (microseconds, as PostgreSQL stores).
+fn micros(rfc3339: &str) -> String {
+    let bare = rfc3339.trim_end_matches('Z').trim_end_matches("+00:00");
+    let (whole, fraction) = bare.split_once('.').unwrap_or((bare, ""));
+    format!("{whole}.{fraction:0<6}")
+}
+
 #[tokio::test]
 async fn comment_deleted_payload_keeps_author_and_original_timestamps() {
     let Some(api) = Api::new("item_event_comment_deleted").await else {
@@ -1021,6 +1028,30 @@ async fn comment_deleted_payload_keeps_author_and_original_timestamps() {
         .await;
     assert_eq!(created.code(), Some(0), "{}", created.body);
     let comment = created.data()["id"].as_str().expect("comment id").to_string();
+    // What the database stores for the comment, read back before the delete: the payload must
+    // carry exactly these (a clock value captured in the test has nanoseconds PostgreSQL drops).
+    let stored = api
+        .db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US') AS c, \
+                    to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US') AS u \
+             FROM comments WHERE id = $1::uuid",
+            vec![comment.clone().into()],
+        ))
+        .await
+        .expect("the comment is readable")
+        .expect("the comment is stored");
+    let stored_created: String = stored.try_get("", "c").expect("created_at");
+    let stored_updated: String = stored.try_get("", "u").expect("updated_at");
+    // The create answer is the stored value too, not an in-memory clock reading.
+    for (answer, stored) in [("created_at", &stored_created), ("updated_at", &stored_updated)] {
+        let shown = created.data()[answer].as_str().expect("timestamp");
+        assert!(
+            shown.starts_with(stored.as_str()),
+            "{answer}: answer {shown} vs stored {stored}"
+        );
+    }
     // Deleted by the workspace owner, so the author is not the actor.
     tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
     let deleted = api
@@ -1033,18 +1064,10 @@ async fn comment_deleted_payload_keeps_author_and_original_timestamps() {
     assert_eq!(data["comment"]["author_name"], json!("bob"), "{}", payloads[0]);
     assert_eq!(data["comment"]["author_id"], json!(api.bob), "{}", payloads[0]);
     assert_eq!(data["comment"]["content"], json!("to be deleted"));
-    assert_eq!(
-        data["comment"]["created_at"],
-        created.data()["created_at"],
-        "{}",
-        payloads[0]
-    );
-    assert_eq!(
-        data["comment"]["updated_at"],
-        created.data()["updated_at"],
-        "{}",
-        payloads[0]
-    );
+    for (field, stored) in [("created_at", &stored_created), ("updated_at", &stored_updated)] {
+        let shown = data["comment"][field].as_str().expect("timestamp");
+        assert_eq!(micros(shown), *stored, "{field}: payload {shown}");
+    }
     assert_eq!(data["issue"]["key"], json!("QLB-1"), "{}", payloads[0]);
     assert_eq!(data["issue"]["title"], json!("discussed"));
     assert_eq!(data["issue"]["id"], json!(item));

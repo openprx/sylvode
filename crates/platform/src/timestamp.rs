@@ -15,8 +15,12 @@ pub struct Timestamp(OffsetDateTime);
 impl Timestamp {
     pub const UNIX_EPOCH: Self = Self(OffsetDateTime::UNIX_EPOCH);
 
+    /// The current instant, at the microsecond precision `PostgreSQL` stores: what is written and
+    /// what is read back are the same value, on every platform (Linux clocks tick in nanoseconds).
     pub fn now() -> Self {
-        Self(OffsetDateTime::now_utc())
+        let now = OffsetDateTime::now_utc();
+        let micros = now.nanosecond() / 1_000 * 1_000;
+        Self(now.replace_nanosecond(micros).unwrap_or(now))
     }
 
     pub const fn from_utc(value: OffsetDateTime) -> Self {
@@ -230,6 +234,15 @@ impl Sub for Timestamp {
 mod tests {
     use super::Timestamp;
     use serde_json::{from_value, json};
+
+    /// What `now` returns survives a `PostgreSQL` round trip unchanged: no sub-microsecond part.
+    #[test]
+    fn now_has_the_microsecond_precision_the_database_stores() {
+        for _ in 0..100 {
+            let now = Timestamp::now();
+            assert_eq!(now.unix_timestamp_nanos() % 1_000, 0, "{now}");
+        }
+    }
 
     #[test]
     fn fixed_offset_wire_adapter_retains_offsets_and_optional_values() {
