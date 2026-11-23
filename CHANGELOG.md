@@ -29,6 +29,13 @@ name.
 - **Scenario template catalogue source.** The scenario catalogue JSON reporter and verifier read the
   template table from `docs/guide/scenario-templates.md`.
 
+- **Work item answers carry an identifier and labels.** A single work item (read, create, update,
+  by identifier) and the project issue list answer `identifier` (`WEB-12`) and `labels`, which is
+  always an array, empty when the item has no label; before, the single-item answers had
+  `labels: null` and none had an identifier. The board, `GET /my/issues` and the issue results of
+  `GET /search` carry `identifier` too. The update answer is read inside the transaction that
+  wrote it.
+
 ### Removed
 
 - **Universal forms delivery and sign-off tooling.** The scripts and schemas that produced and

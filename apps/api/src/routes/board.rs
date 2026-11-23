@@ -14,7 +14,9 @@ use uuid::Uuid;
 
 use crate::middleware::bot_auth::{BotAuthContext, require_workspace_access};
 use crate::{
-    error::ApiError, response::ApiResponse, services::workflow_service::resolve_effective_workflow_for_project,
+    error::ApiError,
+    response::ApiResponse,
+    services::{issue_view::identifier, workflow_service::resolve_effective_workflow_for_project},
 };
 
 #[derive(Debug, Serialize)]
@@ -26,6 +28,8 @@ pub struct BoardColumn {
 #[derive(Debug, Serialize)]
 pub struct BoardIssue {
     pub id: Uuid,
+    /// The short identifier, `{project key}-{sequence number}`.
+    pub identifier: String,
     pub title: String,
     pub priority: String,
     pub assignee_id: Option<Uuid>,
@@ -57,11 +61,12 @@ pub async fn get_project_board(
     #[derive(Debug, FromQueryResult)]
     struct ProjectWorkspace {
         workspace_id: Uuid,
+        key: String,
     }
 
     let project = ProjectWorkspace::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT workspace_id FROM projects WHERE id = $1",
+        "SELECT workspace_id, key FROM projects WHERE id = $1",
         vec![project_id.into()],
     ))
     .one(&state.db)
@@ -74,6 +79,7 @@ pub async fn get_project_board(
     #[derive(Debug, FromQueryResult)]
     struct IssueRow {
         id: Uuid,
+        sequence_number: i32,
         title: String,
         state: String,
         priority: String,
@@ -85,7 +91,7 @@ pub async fn get_project_board(
     let issues = IssueRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
-            SELECT wi.id, wi.title, wi.state, wi.priority, wi.assignee_id,
+            SELECT wi.id, wi.sequence_number, wi.title, wi.state, wi.priority, wi.assignee_id,
                    u.name as assignee_name, wi.updated_at
             FROM work_items wi
             LEFT JOIN users u ON wi.assignee_id = u.id
@@ -129,6 +135,7 @@ pub async fn get_project_board(
         let labels = label_map.get(&issue.id).cloned().unwrap_or_default();
         let board_issue = BoardIssue {
             id: issue.id,
+            identifier: identifier(&project.key, issue.sequence_number),
             title: issue.title,
             priority: issue.priority,
             assignee_id: issue.assignee_id,

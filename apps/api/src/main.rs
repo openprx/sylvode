@@ -3241,6 +3241,9 @@ fn embedded_git_dirty(value: &str) -> Option<bool> {
 mod delegated_router_tests;
 
 #[cfg(test)]
+mod item_api_tests;
+
+#[cfg(test)]
 mod legacy_auth_characterization_tests;
 
 #[cfg(test)]

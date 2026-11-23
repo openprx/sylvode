@@ -8,7 +8,9 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, S
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{error::ApiError, middleware::bot_auth::BotAuthContext, response::ApiResponse};
+use crate::{
+    error::ApiError, middleware::bot_auth::BotAuthContext, response::ApiResponse, services::issue_view::identifier,
+};
 
 #[derive(Debug, Deserialize)]
 pub struct SearchQuery {
@@ -21,9 +23,11 @@ pub struct SearchQuery {
     pub limit: Option<u32>,
 }
 
-#[derive(Debug, Serialize, FromQueryResult)]
+#[derive(Debug, Serialize)]
 pub struct IssueSearchResult {
     pub id: Uuid,
+    /// The short identifier, `{project key}-{sequence number}`.
+    pub identifier: String,
     pub title: String,
     pub description: Option<String>,
     pub state: String,
@@ -215,6 +219,18 @@ async fn ensure_project_in_scope(db: &DatabaseConnection, scope: SearchScope) ->
     Ok(())
 }
 
+#[derive(Debug, FromQueryResult)]
+struct IssueSearchRow {
+    id: Uuid,
+    project_key: String,
+    sequence_number: i32,
+    title: String,
+    description: Option<String>,
+    state: String,
+    project_id: Uuid,
+    workspace_id: Uuid,
+}
+
 async fn search_issues(
     db: &DatabaseConnection,
     scope: SearchScope,
@@ -224,7 +240,8 @@ async fn search_issues(
     let pattern = format!("%{query}%");
     let sql = format!(
         r"
-        SELECT wi.id, wi.title, wi.description, wi.state, wi.project_id, p.workspace_id
+        SELECT wi.id, p.key AS project_key, wi.sequence_number, wi.title, wi.description, wi.state,
+               wi.project_id, p.workspace_id
         FROM work_items wi
         INNER JOIN projects p ON wi.project_id = p.id
         WHERE {SCOPE_FILTER_SQL}
@@ -243,8 +260,19 @@ async fn search_issues(
         .await?;
 
     rows.iter()
-        .map(|r| IssueSearchResult::from_query_result(r, ""))
-        .collect::<Result<Vec<_>, _>>()
+        .map(|r| {
+            let row = IssueSearchRow::from_query_result(r, "")?;
+            Ok(IssueSearchResult {
+                id: row.id,
+                identifier: identifier(&row.project_key, row.sequence_number),
+                title: row.title,
+                description: row.description,
+                state: row.state,
+                project_id: row.project_id,
+                workspace_id: row.workspace_id,
+            })
+        })
+        .collect::<Result<Vec<_>, sea_orm::DbErr>>()
         .map_err(Into::into)
 }
 
@@ -381,6 +409,7 @@ mod tests {
         let results = [
             SearchResult::Issue(IssueSearchResult {
                 id,
+                identifier: "LEG-1".to_string(),
                 title: "issue".to_string(),
                 description: None,
                 state: "open".to_string(),

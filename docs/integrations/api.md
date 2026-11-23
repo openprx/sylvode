@@ -327,6 +327,18 @@ Work items, sprints and labels are reached with a user token, a bot token or, fo
 connected-application allow-list, a connected application. Every route checks that the caller can
 reach the workspace that owns the object: a non-member gets `404`.
 
+### Work item fields
+
+Every answer that describes a work item carries `identifier`, the short identifier
+`{project key}-{sequence number}` such as `WEB-12`. This covers a single item (read, create, update,
+by identifier), the project issue list, the board (`columns[].issues[]`), `/my/issues` and the
+issue results of `/search`. The same value is the `key` of the issue object in
+[webhook payloads](webhooks.md). The full item answers (single item, create, update, list and by
+identifier) also carry `labels`, an array of `{id, name, color}` sorted by name that is empty when
+the item has no label.
+
+### Routes open to users and bots
+
 These routes used to require a bot and answered a user token with HTTP 500. They now answer both:
 
 | Method | Path | Notes |

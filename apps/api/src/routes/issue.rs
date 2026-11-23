@@ -10,9 +10,8 @@ use axum::{
 };
 use platform::{app::AppState, auth::JwtClaims};
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement, TransactionTrait};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Map, Value, json};
-use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::{
@@ -21,39 +20,13 @@ use crate::{
     services::{
         ai_task_service::{CreateAiTaskInput, DispatchOrigin, DispatchOutcome, dispatch_ai_task, runner_bot_block},
         bot_identity::is_bot_user,
+        issue_view::{IssueResponse, identifier, issue_labels, load_issue},
         issues::{IssueRef, insert_activity},
         work_item_service::{NewWorkItem, insert_work_item},
         workflow_service::{allowed_state_values, default_project_state, resolve_effective_workflow_for_project},
     },
     webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks, trigger_webhooks_after_ai_tasks},
 };
-
-#[derive(Debug, Serialize)]
-pub struct IssueResponse {
-    pub id: Uuid,
-    pub project_id: Uuid,
-    pub sprint_id: Option<Uuid>,
-    pub title: String,
-    pub description: String,
-    pub state: String,
-    pub priority: String,
-    pub assignee_id: Option<Uuid>,
-    pub due_at: Option<String>,
-    pub created_by: Option<Uuid>,
-    pub created_at: String,
-    pub updated_at: String,
-    pub proposal_id: Option<String>,
-    pub governance_exempt: bool,
-    pub governance_exempt_reason: Option<String>,
-    pub labels: Option<Vec<IssueLabelSummary>>,
-}
-
-#[derive(Debug, Serialize, Clone)]
-pub struct IssueLabelSummary {
-    pub id: Uuid,
-    pub name: String,
-    pub color: String,
-}
 
 #[derive(Debug, Deserialize)]
 pub struct CreateIssueRequest {
@@ -422,24 +395,8 @@ pub async fn create_issue(
         );
     }
 
-    Ok(ApiResponse::success(IssueResponse {
-        id: issue_id,
-        project_id,
-        sprint_id: req.sprint_id,
-        title: req.title,
-        description,
-        state: issue_state,
-        priority: issue_priority,
-        assignee_id: req.assignee_id,
-        due_at: due_at.map(platform::timestamp::Timestamp::to_rfc3339),
-        created_by: Some(user_id),
-        created_at: now.to_rfc3339(),
-        updated_at: now.to_rfc3339(),
-        proposal_id: None,
-        governance_exempt: false,
-        governance_exempt_reason: None,
-        labels: None,
-    }))
+    let created = load_issue(&state.db, issue_id).await?.ok_or(ApiError::Internal)?;
+    Ok(ApiResponse::success(created.issue))
 }
 
 /// GET /`api/v1/projects/:project_id/issues` - List issues in project
@@ -455,11 +412,12 @@ pub async fn list_issues(
     #[derive(Debug, FromQueryResult)]
     struct ProjectWorkspace {
         workspace_id: Uuid,
+        key: String,
     }
 
     let project = ProjectWorkspace::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT workspace_id FROM projects WHERE id = $1",
+        "SELECT workspace_id, key FROM projects WHERE id = $1",
         vec![project_id.into()],
     ))
     .one(&state.db)
@@ -579,7 +537,7 @@ pub async fn list_issues(
     let total: i64 = count_result.try_get("", "count")?;
 
     let sql = format!(
-        "SELECT id, project_id, sprint_id, title, description, state, priority, assignee_id, due_at, created_by, created_at, updated_at, proposal_id, governance_exempt, governance_exempt_reason FROM work_items WHERE {} ORDER BY {} LIMIT ${} OFFSET ${}",
+        "SELECT id, project_id, sequence_number, sprint_id, title, description, state, priority, assignee_id, due_at, created_by, created_at, updated_at, proposal_id, governance_exempt, governance_exempt_reason FROM work_items WHERE {} ORDER BY {} LIMIT ${} OFFSET ${}",
         where_sql,
         order_by,
         param_idx,
@@ -592,6 +550,7 @@ pub async fn list_issues(
     struct IssueRow {
         id: Uuid,
         project_id: Uuid,
+        sequence_number: i32,
         sprint_id: Option<Uuid>,
         title: String,
         description: String,
@@ -611,57 +570,14 @@ pub async fn list_issues(
         .all(&state.db)
         .await?;
 
-    #[derive(Debug, FromQueryResult)]
-    struct IssueLabelRow {
-        work_item_id: Uuid,
-        label_id: Uuid,
-        label_name: String,
-        label_color: String,
-    }
-
     let issue_ids: Vec<Uuid> = issues.iter().map(|issue| issue.id).collect();
-    let mut label_map: HashMap<Uuid, Vec<IssueLabelSummary>> = HashMap::new();
-
-    if !issue_ids.is_empty() {
-        let placeholders = (1..=issue_ids.len())
-            .map(|idx| format!("${idx}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let label_sql = format!(
-            r"
-                SELECT wil.work_item_id, l.id AS label_id, l.name AS label_name, l.color AS label_color
-                FROM work_item_labels wil
-                INNER JOIN labels l ON wil.label_id = l.id
-                WHERE wil.work_item_id IN ({placeholders})
-                ORDER BY l.name ASC
-            "
-        );
-        let label_values: Vec<sea_orm::Value> = issue_ids.into_iter().map(Into::into).collect();
-
-        let issue_labels = IssueLabelRow::find_by_statement(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            &label_sql,
-            label_values,
-        ))
-        .all(&state.db)
-        .await?;
-
-        for issue_label in issue_labels {
-            label_map
-                .entry(issue_label.work_item_id)
-                .or_default()
-                .push(IssueLabelSummary {
-                    id: issue_label.label_id,
-                    name: issue_label.label_name,
-                    color: issue_label.label_color,
-                });
-        }
-    }
+    let mut label_map = issue_labels(&state.db, &issue_ids).await?;
 
     let response: Vec<IssueResponse> = issues
         .into_iter()
         .map(|i| IssueResponse {
             id: i.id,
+            identifier: identifier(&project.key, i.sequence_number),
             project_id: i.project_id,
             sprint_id: i.sprint_id,
             title: i.title,
@@ -676,7 +592,7 @@ pub async fn list_issues(
             proposal_id: i.proposal_id,
             governance_exempt: i.governance_exempt,
             governance_exempt_reason: i.governance_exempt_reason,
-            labels: label_map.remove(&i.id),
+            labels: label_map.remove(&i.id).unwrap_or_default(),
         })
         .collect();
 
@@ -704,62 +620,13 @@ pub async fn get_issue(
 ) -> Result<impl IntoResponse, ApiError> {
     let extensions = build_auth_extensions(claims, bot);
 
-    #[derive(Debug, FromQueryResult)]
-    struct IssueRow {
-        id: Uuid,
-        project_id: Uuid,
-        workspace_id: Uuid,
-        sprint_id: Option<Uuid>,
-        title: String,
-        description: String,
-        state: String,
-        priority: String,
-        assignee_id: Option<Uuid>,
-        due_at: Option<platform::timestamp::Timestamp>,
-        created_by: Option<Uuid>,
-        created_at: platform::timestamp::Timestamp,
-        updated_at: platform::timestamp::Timestamp,
-        proposal_id: Option<String>,
-        governance_exempt: bool,
-        governance_exempt_reason: Option<String>,
-    }
+    let loaded = load_issue(&state.db, issue_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("issue not found".to_string()))?;
 
-    let issue = IssueRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        r"
-            SELECT wi.id, wi.project_id, p.workspace_id, wi.sprint_id, wi.title, wi.description, wi.state, wi.priority,
-                   wi.assignee_id, wi.due_at, wi.created_by, wi.created_at, wi.updated_at,
-                   wi.proposal_id, wi.governance_exempt, wi.governance_exempt_reason
-            FROM work_items wi
-            INNER JOIN projects p ON wi.project_id = p.id
-            WHERE wi.id = $1
-        ",
-        vec![issue_id.into()],
-    ))
-    .one(&state.db)
-    .await?
-    .ok_or_else(|| ApiError::NotFound("issue not found".to_string()))?;
+    require_workspace_access(&state, &extensions, loaded.workspace_id).await?;
 
-    require_workspace_access(&state, &extensions, issue.workspace_id).await?;
-
-    Ok(ApiResponse::success(IssueResponse {
-        id: issue.id,
-        project_id: issue.project_id,
-        sprint_id: issue.sprint_id,
-        title: issue.title,
-        description: issue.description,
-        state: issue.state,
-        priority: issue.priority,
-        assignee_id: issue.assignee_id,
-        due_at: issue.due_at.map(platform::timestamp::Timestamp::to_rfc3339),
-        created_by: issue.created_by,
-        created_at: issue.created_at.to_rfc3339(),
-        updated_at: issue.updated_at.to_rfc3339(),
-        proposal_id: issue.proposal_id,
-        governance_exempt: issue.governance_exempt,
-        governance_exempt_reason: issue.governance_exempt_reason,
-        labels: None,
-    }))
+    Ok(ApiResponse::success(loaded.issue))
 }
 
 /// PUT /api/v1/issues/:id - Update issue
@@ -912,34 +779,8 @@ pub async fn update_issue(
     tx.execute(Statement::from_sql_and_values(DbBackend::Postgres, &query, values))
         .await?;
 
-    // Fetch updated issue
-    #[derive(Debug, FromQueryResult)]
-    struct IssueRow {
-        id: Uuid,
-        project_id: Uuid,
-        sprint_id: Option<Uuid>,
-        title: String,
-        description: String,
-        state: String,
-        priority: String,
-        assignee_id: Option<Uuid>,
-        due_at: Option<platform::timestamp::Timestamp>,
-        created_by: Option<Uuid>,
-        created_at: platform::timestamp::Timestamp,
-        updated_at: platform::timestamp::Timestamp,
-        proposal_id: Option<String>,
-        governance_exempt: bool,
-        governance_exempt_reason: Option<String>,
-    }
-
-    let updated = IssueRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT id, project_id, sprint_id, title, description, state, priority, assignee_id, due_at, created_by, created_at, updated_at, proposal_id, governance_exempt, governance_exempt_reason FROM work_items WHERE id = $1",
-        vec![issue_id.into()],
-    ))
-    .one(&tx)
-    .await?
-    .ok_or_else(|| ApiError::Internal)?;
+    // Read the row back inside the transaction, so the answer is exactly what was written.
+    let updated = load_issue(&tx, issue_id).await?.ok_or(ApiError::Internal)?.issue;
 
     let assignee_changed =
         requested_assignee.is_some_and(|new_assignee| Some(new_assignee) != current_issue.assignee_id);
@@ -1179,24 +1020,7 @@ pub async fn update_issue(
         );
     }
 
-    Ok(ApiResponse::success(IssueResponse {
-        id: updated.id,
-        project_id: updated.project_id,
-        sprint_id: updated.sprint_id,
-        title: updated.title,
-        description: updated.description,
-        state: updated.state,
-        priority: updated.priority,
-        assignee_id: updated.assignee_id,
-        due_at: updated.due_at.map(platform::timestamp::Timestamp::to_rfc3339),
-        created_by: updated.created_by,
-        created_at: updated.created_at.to_rfc3339(),
-        updated_at: updated.updated_at.to_rfc3339(),
-        proposal_id: updated.proposal_id,
-        governance_exempt: updated.governance_exempt,
-        governance_exempt_reason: updated.governance_exempt_reason,
-        labels: None,
-    }))
+    Ok(ApiResponse::success(updated))
 }
 
 /// DELETE /api/v1/issues/:id - Delete issue
@@ -1387,60 +1211,9 @@ pub async fn get_issue_by_identifier(
     let extensions = build_auth_extensions(claims, bot);
     require_workspace_access(&state, &extensions, located.workspace_id).await?;
 
-    #[derive(Debug, FromQueryResult)]
-    struct IssueRow {
-        id: Uuid,
-        project_id: Uuid,
-        sprint_id: Option<Uuid>,
-        title: String,
-        description: String,
-        state: String,
-        priority: String,
-        assignee_id: Option<Uuid>,
-        due_at: Option<platform::timestamp::Timestamp>,
-        created_by: Option<Uuid>,
-        created_at: platform::timestamp::Timestamp,
-        updated_at: platform::timestamp::Timestamp,
-        proposal_id: Option<String>,
-        governance_exempt: bool,
-        governance_exempt_reason: Option<String>,
-    }
+    let loaded = load_issue(&state.db, located.id).await?.ok_or_else(not_found)?;
 
-    let issue = IssueRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        r"
-            SELECT wi.id, wi.project_id, wi.sprint_id, wi.title, wi.description,
-                   wi.state, wi.priority, wi.assignee_id, wi.due_at, wi.created_by,
-                   wi.created_at, wi.updated_at,
-                   wi.proposal_id, wi.governance_exempt, wi.governance_exempt_reason
-            FROM work_items wi
-            INNER JOIN projects p ON wi.project_id = p.id
-            WHERE wi.id = $1
-        ",
-        vec![located.id.into()],
-    ))
-    .one(&state.db)
-    .await?
-    .ok_or_else(not_found)?;
-
-    Ok(ApiResponse::success(IssueResponse {
-        id: issue.id,
-        project_id: issue.project_id,
-        sprint_id: issue.sprint_id,
-        title: issue.title,
-        description: issue.description,
-        state: issue.state,
-        priority: issue.priority,
-        assignee_id: issue.assignee_id,
-        due_at: issue.due_at.map(platform::timestamp::Timestamp::to_rfc3339),
-        created_by: issue.created_by,
-        created_at: issue.created_at.to_rfc3339(),
-        updated_at: issue.updated_at.to_rfc3339(),
-        proposal_id: issue.proposal_id,
-        governance_exempt: issue.governance_exempt,
-        governance_exempt_reason: issue.governance_exempt_reason,
-        labels: None,
-    }))
+    Ok(ApiResponse::success(loaded.issue))
 }
 
 /// POST /`api/v1/issues/:issue_id/labels/batch`

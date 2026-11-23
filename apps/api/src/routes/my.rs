@@ -14,6 +14,7 @@ use uuid::Uuid;
 use crate::{
     error::ApiError,
     response::{ApiResponse, PaginatedData},
+    services::issue_view::identifier,
 };
 
 #[derive(Debug, Deserialize)]
@@ -35,6 +36,8 @@ const fn default_per_page() -> i64 {
 #[derive(Debug, Serialize)]
 pub struct MyIssueResponse {
     pub id: Uuid,
+    /// The short identifier, `{project key}-{sequence number}`.
+    pub identifier: String,
     pub project_id: Uuid,
     pub workspace_id: Uuid,
     pub project_name: String,
@@ -77,6 +80,8 @@ pub async fn get_my_issues(
         id: Uuid,
         project_id: Uuid,
         workspace_id: Uuid,
+        project_key: String,
+        sequence_number: i32,
         project_name: String,
         title: String,
         state: String,
@@ -126,6 +131,8 @@ pub async fn get_my_issues(
                    wi.project_id,
                    p.workspace_id,
                    p.name AS project_name,
+                   p.key AS project_key,
+                   wi.sequence_number,
                    wi.title,
                    wi.state,
                    wi.priority,
@@ -160,6 +167,7 @@ pub async fn get_my_issues(
         .into_iter()
         .map(|issue| MyIssueResponse {
             id: issue.id,
+            identifier: identifier(&issue.project_key, issue.sequence_number),
             project_id: issue.project_id,
             workspace_id: issue.workspace_id,
             project_name: issue.project_name,
