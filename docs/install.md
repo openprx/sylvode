@@ -110,7 +110,7 @@ Then restart the API: `docker compose restart api`.
 ### Serving the web UI over plain HTTP
 
 HTTPS is recommended for every deployment that is reached from another machine. If you serve the web
-UI over plain `http://` on an address other than `localhost` (for example `http://10.0.0.5:3000`
+UI over plain `http://` on an address other than `localhost` (for example `http://sylvode.example.com:3000`
 on a trusted LAN), browsers treat the page as an insecure context and hide a few features that
 exist only on HTTPS and on `localhost`. What that means:
 
