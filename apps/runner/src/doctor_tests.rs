@@ -143,7 +143,7 @@ fn an_acknowledged_plain_http_server_address_is_a_warning() {
     let plain = crate::config::Config::from_toml(block).expect("block");
     let insecure = crate::config::Config::from_toml(&block.replace(
         "api_url = \"https://sylvode.example.net\"",
-        "api_url = \"http://10.72.0.1:8080\"\nallow_insecure_transport = true",
+        "api_url = \"http://192.0.2.10:8080\"\nallow_insecure_transport = true",
     ))
     .expect("acknowledged block");
     let row = || Component::new("runner", true, Status::Ok, false);

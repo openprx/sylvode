@@ -1718,7 +1718,7 @@ url = "http://127.0.0.1:9000/hook"
             )
         };
         for url in [
-            "http://10.72.0.1:8080",
+            "http://192.0.2.10:8080",
             "http://sylvode.example.net",
             "http://[2001:db8::1]:8080",
         ] {
