@@ -75,6 +75,11 @@ export const authApi = {
 		return apiClient.post<{ user: User }>('/api/v1/auth/register', data);
 	},
 
+	/** Whether the instance has no account yet; answered without credentials. */
+	setupStatus(): Promise<ApiResult<{ needs_setup: boolean }>> {
+		return apiClient.get<{ needs_setup: boolean }>('/api/v1/auth/setup-status');
+	},
+
 	me(): Promise<ApiResult<{ user: User }>> {
 		return apiClient.get<{ user: User }>('/api/v1/auth/me');
 	},

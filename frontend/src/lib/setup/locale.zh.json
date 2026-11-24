@@ -1,0 +1,24 @@
+{
+	"setup": {
+		"pageTitle": "Sylvode - 初始化服务器",
+		"title": "创建管理员账号",
+		"subtitle": "此服务器还没有任何账号。第一个账号将成为实例管理员。",
+		"name": "姓名",
+		"email": "邮箱",
+		"password": "密码",
+		"passwordHint": "至少 8 个字符。",
+		"confirm": "再次输入密码",
+		"submit": "创建管理员",
+		"submitting": "正在创建...",
+		"checking": "正在检查服务器...",
+		"created": "管理员账号已创建，请登录。",
+		"loginLink": "初始化此服务器",
+		"backToLogin": "返回登录",
+		"errors": {
+			"nameRequired": "请输入姓名。",
+			"emailInvalid": "请输入有效的邮箱地址。",
+			"passwordShort": "密码至少需要 8 个字符。",
+			"passwordMismatch": "两次输入的密码不一致。"
+		}
+	}
+}

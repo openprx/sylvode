@@ -1,0 +1,24 @@
+{
+	"setup": {
+		"pageTitle": "Sylvode - Set up this server",
+		"title": "Create the administrator account",
+		"subtitle": "This server has no accounts yet. The first account becomes the instance administrator.",
+		"name": "Name",
+		"email": "Email",
+		"password": "Password",
+		"passwordHint": "At least 8 characters.",
+		"confirm": "Repeat the password",
+		"submit": "Create administrator",
+		"submitting": "Creating...",
+		"checking": "Checking the server...",
+		"created": "Administrator account created. Sign in to continue.",
+		"loginLink": "Set up this server",
+		"backToLogin": "Back to sign in",
+		"errors": {
+			"nameRequired": "Enter a name.",
+			"emailInvalid": "Enter a valid email address.",
+			"passwordShort": "The password needs at least 8 characters.",
+			"passwordMismatch": "The two passwords are not the same."
+		}
+	}
+}

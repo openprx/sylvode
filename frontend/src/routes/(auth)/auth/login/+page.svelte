@@ -9,12 +9,21 @@
 	import { authStore } from '#lib/stores/auth.js';
 	import { toast } from '#lib/stores/toast.js';
 	import { safeReturnTo } from '#lib/oauth/return-to.js';
+	import { onMount } from 'svelte';
 	import { t } from 'svelte-i18n';
 	import BrandMark from '#lib/shell/brand/BrandMark.svelte';
 
 	let email = '';
 	let password = '';
 	let loading = false;
+	let needsSetup = false;
+
+	// The link to the first-run page shows only while the instance has no account; a failed check
+	// shows nothing.
+	onMount(async () => {
+		const status = await authApi.setupStatus();
+		needsSetup = status.code === 0 && status.data?.needs_setup === true;
+	});
 
 	async function handleLogin() {
 		if (!email || !password) {
@@ -99,5 +108,14 @@
 				{loading ? $t('auth.loginLoading') : $t('auth.login')}
 			</button>
 		</form>
+
+		{#if needsSetup}
+			<p class="text-center">
+				<a
+					class="inline-flex min-h-11 items-center text-sm text-fg underline"
+					href={resolve('/(auth)/auth/setup')}>{$t('setup.loginLink')}</a
+				>
+			</p>
+		{/if}
 	</div>
 </div>
