@@ -4,7 +4,8 @@
 use axum::{
     Extension,
     extract::{Path, Query, State},
-    response::IntoResponse,
+    http::{HeaderValue, header},
+    response::{IntoResponse, Response},
 };
 use platform::{app::AppState, auth::JwtClaims, timestamp::Timestamp};
 use sea_orm::{DbBackend, FromQueryResult, Statement};
@@ -15,7 +16,6 @@ use uuid::Uuid;
 use crate::{
     error::ApiError,
     middleware::bot_auth::{BotAuthContext, require_workspace_access},
-    response::ApiResponse,
     services::issue_view::identifier,
 };
 
@@ -64,13 +64,6 @@ struct ProjectExport {
     project: ProjectInfo,
     issues: Vec<IssueExport>,
     comments: Vec<CommentExport>,
-}
-
-#[derive(Debug, Serialize)]
-struct ExportResponse {
-    format: String,
-    filename: String,
-    content: String,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -129,14 +122,16 @@ fn csv_of(export: &ProjectExport) -> String {
     csv
 }
 
-/// GET /api/v1/export/project/:id
+/// `GET /api/v1/projects/{project_id}/export`
+///
+/// Answers the file itself (`Content-Disposition: attachment`); errors stay JSON envelopes.
 pub async fn export_project(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
     Path(project_id): Path<Uuid>,
     Query(query): Query<ExportQuery>,
-) -> Result<impl IntoResponse, ApiError> {
+) -> Result<Response, ApiError> {
     let mut extensions = axum::http::Extensions::new();
     extensions.insert(claims);
     if let Some(Extension(bot_ctx)) = bot {
@@ -221,19 +216,28 @@ pub async fn export_project(
             .collect(),
     };
 
-    let (content, extension) = if format == "csv" {
-        (csv_of(&export), "csv")
+    let (content, extension, content_type) = if format == "csv" {
+        (csv_of(&export), "csv", "text/csv; charset=utf-8")
     } else {
         (
             serde_json::to_string_pretty(&export).map_err(|_| ApiError::Internal)?,
             "json",
+            "application/json; charset=utf-8",
         )
     };
-    Ok(ApiResponse::success(ExportResponse {
-        format: format.to_string(),
-        filename: format!("project_{key}_export.{extension}"),
+    // The project key is validated on creation; a value that cannot be a header is refused rather
+    // than sent with a broken filename.
+    let disposition = HeaderValue::from_str(&format!("attachment; filename=\"project_{key}_export.{extension}\""))
+        .map_err(|_| ApiError::Internal)?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, HeaderValue::from_static(content_type)),
+            (header::CONTENT_DISPOSITION, disposition),
+            (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
+        ],
         content,
-    }))
+    )
+        .into_response())
 }
 
 #[cfg(test)]

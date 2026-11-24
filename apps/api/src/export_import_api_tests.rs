@@ -11,8 +11,26 @@
 )]
 
 use super::item_api_tests::{Api, exec};
+use axum::{
+    body::Body,
+    http::{HeaderMap, Request, StatusCode, header},
+};
 use serde_json::{Value, json};
+use tower::ServiceExt as _;
 use uuid::Uuid;
+
+/// A raw answer: the export is a file, not an envelope.
+struct Download {
+    status: StatusCode,
+    headers: HeaderMap,
+    body: String,
+}
+
+impl Download {
+    fn header(&self, name: header::HeaderName) -> &str {
+        self.headers.get(name).and_then(|v| v.to_str().ok()).unwrap_or_default()
+    }
+}
 
 impl Api {
     pub(super) fn import_uri(&self) -> String {
@@ -45,14 +63,32 @@ impl Api {
         project
     }
 
+    async fn download(&self, uri: &str, user: Uuid) -> Download {
+        let request = Request::builder()
+            .uri(uri)
+            .header(header::AUTHORIZATION, format!("Bearer {}", Self::token(user)))
+            .body(Body::empty())
+            .expect("the request is well formed");
+        let response = self.router.clone().oneshot(request).await.expect("the router answers");
+        let status = response.status();
+        let headers = response.headers().clone();
+        let bytes = axum::body::to_bytes(response.into_body(), 8 * 1024 * 1024)
+            .await
+            .expect("the body is readable");
+        Download {
+            status,
+            headers,
+            body: String::from_utf8(bytes.to_vec()).expect("utf-8 body"),
+        }
+    }
+
     /// The exported JSON document of `project`.
     pub(super) async fn export_document(&self, project: Uuid) -> Value {
         let answer = self
-            .get(&format!("/api/v1/export/project/{project}?format=json"), self.alice)
+            .download(&format!("/api/v1/projects/{project}/export?format=json"), self.alice)
             .await;
-        assert_eq!(answer.code(), Some(0), "{}", answer.body);
-        assert_eq!(answer.data()["format"], json!("json"));
-        serde_json::from_str(answer.data()["content"].as_str().expect("content")).expect("a json document")
+        assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+        serde_json::from_str(&answer.body).expect("a json document")
     }
 
     /// `(title, state, priority, due_at)` of every item of `project`, by sequence.
@@ -231,12 +267,19 @@ async fn export_csv_escapes_quotes_in_every_field() {
     };
     populated(&api).await;
     let answer = api
-        .get(&format!("/api/v1/export/project/{}?format=csv", api.project), api.alice)
+        .download(
+            &format!("/api/v1/projects/{}/export?format=csv", api.project),
+            api.alice,
+        )
         .await;
-    assert_eq!(answer.code(), Some(0), "{}", answer.body);
-    assert_eq!(answer.data()["format"], json!("csv"));
-    assert_eq!(answer.data()["filename"], json!("project_QLB_export.csv"));
-    let content = answer.data()["content"].as_str().expect("content");
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+    assert_eq!(answer.header(header::CONTENT_TYPE), "text/csv; charset=utf-8");
+    assert_eq!(
+        answer.header(header::CONTENT_DISPOSITION),
+        "attachment; filename=\"project_QLB_export.csv\""
+    );
+    assert_eq!(answer.header(header::CACHE_CONTROL), "no-store");
+    let content = answer.body.as_str();
     let mut lines = content.lines();
     assert_eq!(
         lines.next(),
@@ -262,9 +305,42 @@ async fn export_csv_escapes_quotes_in_every_field() {
         "{content}"
     );
     let bad = api
-        .get(&format!("/api/v1/export/project/{}?format=xml", api.project), api.alice)
+        .get(
+            &format!("/api/v1/projects/{}/export?format=xml", api.project),
+            api.alice,
+        )
         .await;
     assert_eq!(bad.code(), Some(400), "{}", bad.body);
+    api.finish().await;
+}
+
+#[tokio::test]
+async fn export_json_is_a_downloadable_document() {
+    let Some(api) = Api::new("export_json_file").await else {
+        return;
+    };
+    populated(&api).await;
+    let answer = api
+        .download(&format!("/api/v1/projects/{}/export", api.project), api.alice)
+        .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+    assert_eq!(answer.header(header::CONTENT_TYPE), "application/json; charset=utf-8");
+    assert_eq!(
+        answer.header(header::CONTENT_DISPOSITION),
+        "attachment; filename=\"project_QLB_export.json\""
+    );
+    assert_eq!(answer.header(header::CACHE_CONTROL), "no-store");
+    let document: Value = serde_json::from_str(&answer.body).expect("a json document");
+    assert_eq!(document["format"], json!("sylvode.project_export"));
+    assert_eq!(document["version"], json!(1));
+    // The retired envelope route is gone.
+    let old = api
+        .get(
+            &format!("/api/v1/export/project/{}?format=json", api.project),
+            api.alice,
+        )
+        .await;
+    assert_eq!(old.status, StatusCode::NOT_FOUND, "{}", old.body);
     api.finish().await;
 }
 
@@ -275,20 +351,24 @@ async fn export_is_for_members_of_the_workspace() {
     };
     api.create_item("secret", json!({})).await;
     let outsider = api
-        .get(
-            &format!("/api/v1/export/project/{}?format=json", api.project),
+        .download(
+            &format!("/api/v1/projects/{}/export?format=json", api.project),
             api.carol,
         )
         .await;
-    assert_ne!(outsider.code(), Some(0), "{}", outsider.body);
-    assert!(!outsider.body.to_string().contains("secret"));
+    // Refusals stay JSON envelopes (HTTP 200 with a code), never a file.
+    let refusal: Value = serde_json::from_str(&outsider.body).expect("an envelope");
+    assert_eq!(refusal["code"], json!(404), "{}", outsider.body);
+    assert!(!outsider.headers.contains_key(header::CONTENT_DISPOSITION));
+    assert!(!outsider.body.contains("secret"));
     let member = api
-        .get(&format!("/api/v1/export/project/{}?format=json", api.project), api.bob)
+        .download(&format!("/api/v1/projects/{}/export?format=json", api.project), api.bob)
         .await;
-    assert_eq!(member.code(), Some(0), "{}", member.body);
+    assert_eq!(member.status, StatusCode::OK, "{}", member.body);
+    assert!(member.body.contains("secret"));
     let missing = api
         .get(
-            &format!("/api/v1/export/project/{}?format=json", Uuid::new_v4()),
+            &format!("/api/v1/projects/{}/export?format=json", Uuid::new_v4()),
             api.alice,
         )
         .await;

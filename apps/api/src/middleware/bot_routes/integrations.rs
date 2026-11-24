@@ -26,7 +26,7 @@ pub static ROUTES: &[RunnerRoute] = &[
     r("GET", "/api/v1/workspaces/{workspace_id}/webhooks/{webhook_id}/deliveries", Class::Admin),
     r("GET", "/api/v1/workspaces/{workspace_id}/webhooks/{webhook_id}/deliveries/{delivery_id}", Class::Admin),
     r("POST", "/api/v1/workspaces/{workspace_id}/webhooks/{webhook_id}/rotate-secret", Class::Admin),
-    r("GET", "/api/v1/export/project/{id}", Class::Project(Find::Project("id"))),
+    r("GET", "/api/v1/projects/{project_id}/export", Class::Project(Find::Project("project_id"))),
     r("GET", "/api/v1/search", Class::Project(Find::Query("project_id"))),
 ];
 

@@ -134,7 +134,7 @@ pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
         )
         // Export route (protected)
         .route(
-            "/api/v1/export/project/{id}",
+            "/api/v1/projects/{project_id}/export",
             get(routes::export::export_project).route_layer(axum_middleware::from_fn_with_state(
                 auth_state.clone(),
                 middleware::bot_auth::bot_or_user_auth_middleware,

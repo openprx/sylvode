@@ -248,7 +248,7 @@ The project **Overview** has **Export JSON** and **Import JSON**.
 
 Importing never creates a project: create the project first, then import into it.
 
-The same operations are available as `GET /api/v1/export/project/{id}` and
+The same operations are available as `GET /api/v1/projects/{project_id}/export` and
 `POST /api/v1/workspaces/{workspace_id}/import/project`; see the [API reference](../integrations/api.md).
 
 ## Home, notifications and your work

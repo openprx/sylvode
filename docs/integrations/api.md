@@ -51,6 +51,7 @@ for how codes are carried).
 
 | Method | Path | Body | Notes |
 |---|---|---|---|
+| GET | `/api/v1/auth/setup-status` | none | No credentials needed. `{"needs_setup": true}` while the instance has no human account yet, so a first-run page can be offered; `false` afterwards. |
 | POST | `/api/v1/auth/register` | `{"email", "password", "name"}` | Password at least 8 characters. The first account of an empty instance becomes the instance administrator. Every later registration must be made by an instance administrator (their token in the request). |
 | POST | `/api/v1/auth/login` | `{"email", "password"}` | Bot users cannot log in with a password. |
 | POST | `/api/v1/auth/refresh` | `{"refresh_token"}` (optional) | Without a body field the `refresh_token` cookie is used. |
@@ -458,11 +459,14 @@ curl -s "https://sylvode.example.com/api/v1/search?q=login&type=issue" \
 
 | Method | Path | Who | Notes |
 |---|---|---|---|
-| GET | `/api/v1/export/project/{id}` | Workspace member or a bot of the workspace | `format=json` (default) or `csv`. |
+| GET | `/api/v1/projects/{project_id}/export` | Workspace member or a bot of the workspace | `format=json` (default) or `csv`. Answers the file. |
 | POST | `/api/v1/workspaces/{workspace_id}/import/project` | Workspace owner or admin (or a bot with the `admin` permission) | Adds the work items and comments of an export document to an existing project. |
 
-The export answers in the envelope with `{"format", "filename", "content"}`; `content` is the
-exported text. For `json` it is this document, which is also what the import reads:
+The export answers the file itself, not an envelope: `Content-Type` is `application/json;
+charset=utf-8` or `text/csv; charset=utf-8`, `Content-Disposition` is `attachment;
+filename="project_<KEY>_export.<json|csv>"` and `Cache-Control` is `no-store`. Errors (an unknown
+format, a missing project, no access) are still the usual JSON envelope. For `json` the body is this
+document, which is also what the import reads, so a downloaded file can be uploaded as it is:
 
 ```json
 {
@@ -482,7 +486,7 @@ exported text. For `json` it is this document, which is also what the import rea
 }
 ```
 
-Assignees, labels and sprints are not exported. For `csv` the content has the work items only, with
+Assignees, labels and sprints are not exported. For `csv` the body has the work items only, with
 the columns `Identifier`, `Title`, `State`, `Priority`, `Due`, `Description`, `Created At` and
 `Updated At`; every field is quoted and a quote inside a field is doubled.
 
