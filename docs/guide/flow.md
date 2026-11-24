@@ -95,7 +95,11 @@ The panel beside a page has five tabs:
 ### Comments
 
 Comment on the whole page, or select a block and choose **Comment on this block**. Mention people
-in a comment; reply in a thread; **Resolve** and **Reopen** a thread.
+in a comment: type `@` and pick them from the list, or type `@Name` with their exact name (case does
+not matter; a name that two people share has to be picked). Only the people the saved comment
+mentions are highlighted, shown with their current name, and "Removed user" when they have left; a
+plain `@word` is just text. Reply in a thread; **Resolve** and **Reopen** a thread; a resolved thread
+says who resolved it.
 
 ### History
 
