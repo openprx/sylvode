@@ -10,6 +10,7 @@ import { Suite, assert, assertDeepEqual, assertEqual, finish } from './support/h
 import {
 	createAuthorizationRequest,
 	failureKey,
+	isNotEnabled,
 	oauthApi,
 	parseTooManyGrants,
 	submitDecision
@@ -372,6 +373,46 @@ suite.check('English and Chinese locale files have the same keys (plural groups 
 		}
 	}
 });
+
+await suite.checkAsync(
+	'a server without OAuth answers feature_disabled and every list shows the not-enabled state',
+	async () => {
+		// The API sends typed refusals as HTTP 200 with the status in the envelope `code`.
+		globalThis.fetch = (async (input: RequestInfo | URL) => {
+			seen.push({ url: String(input), method: 'GET', headers: new Headers(), body: '' });
+			return new Response(
+				JSON.stringify({
+					code: 403,
+					message: 'connected applications are not enabled on this server',
+					data: null,
+					error_code: 'feature_disabled'
+				}),
+				{ status: 200, headers: { 'Content-Type': 'application/json' } }
+			);
+		}) as typeof fetch;
+		seen.length = 0;
+		const own = await oauthApi.listOwn();
+		const workspace = await oauthApi.listWorkspace('w1');
+		const setting = await oauthApi.getWorkspaceSetting('w1');
+		for (const [name, result, listCall] of [
+			['own list', own, true],
+			['workspace list', workspace, true],
+			['workspace setting', setting, false]
+		] as const) {
+			assert(!result.ok, `${name} fails`);
+			if (!result.ok) {
+				assertEqual(result.failure.status, 403, `${name}: status`);
+				assertEqual(result.failure.errorCode, 'feature_disabled', `${name}: error code`);
+				assert(isNotEnabled(result.failure, listCall), `${name}: shows the not-enabled state`);
+			}
+		}
+		// An ordinary refusal of a person without access is not "not enabled".
+		assert(
+			!isNotEnabled({ status: 403, errorCode: 'forbidden', details: null }, true),
+			'a plain forbidden is not the not-enabled state'
+		);
+	}
+);
 
 suite.check('the section 14 strings are present in both languages', () => {
 	const read = (lang: string) =>
