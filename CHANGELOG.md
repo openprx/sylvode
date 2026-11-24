@@ -171,6 +171,24 @@ name.
   that were still English are translated, and the view type names of the view setup, the Flow editor's
   link controls and a few other labels now come from the locale files in both languages.
 
+- **Runner runs codex on the tmux channel.** codex runs in the session `<KEY>-codex` with the MCP
+  server and the turn hook passed as `-c` overrides, and `sylvode-runner setup codex` prints or
+  applies the same. The runner report carries one posture row per CLI.
+- **codex on the tmux channel in the API and the connection settings.** The API and the connection
+  settings accept codex on the tmux channel (migration `0130` widens `pbc_tmux_cli_check`), and a
+  connection's permission status follows the posture row of its own CLI.
+- **MCP resolves sprint, comment and attachment owners through the API.** `sprints.update` and
+  `sprints.delete` resolve the owning project through `GET /api/v1/sprints/{id}`; the comment and
+  attachment tools through the new `GET /api/v1/comments/{id}` and
+  `GET /api/v1/form-attachments/{attachment_id}`, which return the project the comment or attachment
+  belongs to (attachments also when archived).
+- **Sprint list reports progress.** `GET /api/v1/projects/{project_id}/sprints` reports
+  `progress: {total, done}` for each sprint.
+- **Client errors are shown in the user's language.** Transport and Flow client errors (network,
+  cancelled, session changed, download, shared block) are shown in the user's language.
+- **Source layout.** The API router, the runner bot route tables and the event dispatcher are split
+  into one file per area, and the migration registry is generated from `migrations/*.sql`.
+
 ### Removed
 
 - **Universal forms delivery and sign-off tooling.** The scripts and schemas that produced and
@@ -192,6 +210,8 @@ name.
   removed documents or the wording of the rewritten ones. The runbooks, `frontend/QUICKSTART.md`,
   `docs/API_ENDPOINTS_PHASE3.md`, `docs/scenario-templates.md`, `docs/universal-forms-and-plugins.md`
   and `docs/universal-forms-production.md` are gone; their content lives in the new layout.
+- **Unused trigger reasons.** The `completed` and `failed` trigger reasons and runner trigger kinds,
+  which no event could produce, were removed.
 
 ### Fixed
 
@@ -237,6 +257,21 @@ name.
   in more than one of them.
 - **Windows build.** The thread CPU clock is read on Unix only, so every workspace binary now builds
   for the Windows target; CI checks that target in the `windows-build` job.
+- **Workflow state positions.** Creating or moving a workflow state to an already taken position no
+  longer fails with an internal error: later states shift down by one, a position past the end
+  appends, and a negative position is a 400.
+- **Connected applications without OAuth.** The connected-applications endpoints answer
+  `feature_disabled` instead of a bare 404 when the server has no OAuth configuration, and the web
+  panel says the feature is not enabled.
+- **Cycles page load.** The page no longer loads up to 1000 work items in one request: progress comes
+  from the server and a sprint's items load 50 at a time.
+- **Small web fixes.** "1 unfinished issue moved" uses the singular in English; the not-found page
+  title is a real heading; a duplicate sprint name is reported under the name field of the create
+  dialog; the browser tab icon is linked.
+- **Flow page object opened twice.** Opening the same Flow page object from two places at once no
+  longer opens extra collaboration connections.
+- **Timing-sensitive tests.** The tests of the text decode budget and the import CPU ceiling no
+  longer depend on machine speed.
 
 ## [0.5.0] - 2026-11-23
 
