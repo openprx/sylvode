@@ -183,7 +183,10 @@ Every issue has an identifier made of the project key and a running number, such
 lists, the board and the issue page show it. An issue has a title, a Markdown description, a state,
 a priority (**Urgent**, **High**, **Medium**, **Low**), an assignee, labels, a sprint, attachments
 and comments. The issue page also shows its
-activity. Assigning someone else, or mentioning them in a comment, sends them a notification. When
+activity. Assigning someone else, or mentioning them in a comment, sends them a notification. To
+mention a member, type `@` and pick them from the list, or type `@` and their exact name (case does
+not matter); a name that two members share has to be picked. A mention is stored with the comment and
+shown with the person's current name, and "Removed user" when they have left. When
 someone else changes the state or the priority of an issue assigned to you, you are notified too;
 your own actions never notify you.
 

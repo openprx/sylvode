@@ -74,9 +74,12 @@ pub fn headline(lang: Language, kind: &str, content: &str) -> String {
             Language::En => format!("You were assigned: {argument}"),
             Language::Zh => format!("你被指派了工作项：{argument}"),
         },
-        "mentioned" => match lang {
-            Language::En => format!("{argument} mentioned you"),
-            Language::Zh => format!("{argument} 提到了你"),
+        "mentioned" => match (lang, argument.is_empty()) {
+            (Language::En, false) => format!("{argument} mentioned you"),
+            (Language::Zh, false) => format!("{argument} 提到了你"),
+            // The actor has no name to show: say so, never name an id.
+            (Language::En, true) => "Someone mentioned you".to_string(),
+            (Language::Zh, true) => "有人提到了你".to_string(),
         },
         "issue_state_changed" | "issue_priority_changed" => {
             let (title, old, new) = split_change(&argument);
@@ -269,6 +272,14 @@ mod tests {
         );
         assert!(mail.body.contains("e-mail notifications are on"));
         assert!(absolute_link("https://sv.example.com", "https://evil.example/x").is_none());
+    }
+
+    #[test]
+    fn a_mention_without_an_actor_name_says_someone() {
+        let en = notification_email(Language::En, "mentioned", "mentioned_by:", None);
+        assert_eq!(en.subject, "[Sylvode] Someone mentioned you");
+        let zh = notification_email(Language::Zh, "mentioned", "mentioned_by:", None);
+        assert_eq!(zh.subject, "[Sylvode] 有人提到了你");
     }
 
     #[test]

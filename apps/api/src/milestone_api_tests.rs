@@ -380,9 +380,15 @@ async fn assigning_records_activity_and_event() {
         .iter()
         .filter_map(|e| e["data"]["changes"].get("milestone_id").cloned())
         .collect();
+    // The deliveries are sent from spawned tasks, so their arrival order is not defined.
     assert_eq!(changes.len(), 3, "{events:?}");
-    assert_eq!(changes[0], json!({"old": null, "new": first.to_string()}));
-    assert_eq!(changes[2], json!({"old": second.to_string(), "new": null}));
+    for expected in [
+        json!({"old": null, "new": first.to_string()}),
+        json!({"old": first.to_string(), "new": second.to_string()}),
+        json!({"old": second.to_string(), "new": null}),
+    ] {
+        assert!(changes.contains(&expected), "{expected} missing in {events:?}");
+    }
     // Item payloads carry the milestone.
     assert!(
         events.iter().all(|e| e["data"]["issue"].get("milestone_id").is_some()),

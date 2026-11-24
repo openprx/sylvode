@@ -4202,3 +4202,105 @@ async fn real_mount_permission_changes_and_revocation_fence_existing_readers() {
     assert!(scope::object_view(db, object, source_owner).await.is_ok());
     scratch.close().await;
 }
+
+#[tokio::test]
+async fn typed_names_in_personal_comments_become_mentions_with_people_to_show() {
+    let scratch = Scratch::new().await;
+    let db = &scratch.db;
+    let owner = user(db).await;
+    let commenter = user(db).await;
+    for (id, name) in [(owner, "Olive Owner"), (commenter, "Cass Commenter")] {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE users SET name=$2 WHERE id=$1",
+            vec![id.into(), name.into()],
+        ))
+        .await
+        .unwrap();
+    }
+    let (scope, _) = scope::personal_home(db, owner).await.unwrap();
+    let created = scope::create_personal(db, owner, create(scope.id, None, "typed-mention-page"))
+        .await
+        .unwrap();
+    let object = Uuid::parse_str(created.field("object").field("id").as_str().unwrap()).unwrap();
+    db.execute(Statement::from_sql_and_values(DbBackend::Postgres,"INSERT INTO flow_object_grants(scope_id,workspace_id,object_id,principal_kind,principal_id,level,granted_by) VALUES($1,NULL,$2,'user',$3,'comment',$4)",vec![scope.id.into(),object.into(),commenter.into(),owner.into()])).await.unwrap();
+    let new = |body: &str| api::flow::comments::NewComment {
+        body: body.into(),
+        block_id: None,
+        parent_id: None,
+        mentions: vec![],
+    };
+    // The owner is named by typing; nothing was picked.
+    let comment = api::flow::scope_social::create_comment(db, object, commenter, new("over to @olive owner"), None)
+        .await
+        .unwrap();
+    let shown = serde_json::to_value(&comment).unwrap();
+    assert_eq!(
+        shown.pointer("/mentions"),
+        Some(&serde_json::json!([{"id": owner, "name": "Olive Owner", "is_bot": false, "state": "active"}])),
+        "{shown}"
+    );
+    assert_eq!(
+        shown.pointer("/author"),
+        Some(&serde_json::json!({"id": commenter, "name": "Cass Commenter", "is_bot": false, "state": "active"}))
+    );
+    let note = db
+        .query_one(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT user_id, content FROM notifications".to_string(),
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(note.try_get::<Uuid>("", "user_id").unwrap(), owner);
+    assert_eq!(
+        note.try_get::<String>("", "content").unwrap(),
+        "mentioned_by:Cass Commenter"
+    );
+    // Stored as {id, label}; a rename shows in the list, the label stays.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE users SET name='Olive Renamed' WHERE id=$1",
+        vec![owner.into()],
+    ))
+    .await
+    .unwrap();
+    let listed = serde_json::to_value(api::flow::comments::list_comments(db, object).await.unwrap()).unwrap();
+    assert_eq!(
+        listed.pointer("/items/0/mentions/0/name"),
+        Some(&serde_json::json!("Olive Renamed")),
+        "{listed}"
+    );
+    let stored: serde_json::Value = db
+        .query_one(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT mentions FROM flow_comments".to_string(),
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "mentions")
+        .unwrap();
+    assert_eq!(stored, serde_json::json!([{"id": owner, "label": "Olive Owner"}]));
+    // Someone who is not enabled is shown as removed, still with the name that is known.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE users SET is_active=false WHERE id=$1",
+        vec![owner.into()],
+    ))
+    .await
+    .unwrap();
+    let listed = serde_json::to_value(api::flow::comments::list_comments(db, object).await.unwrap()).unwrap();
+    assert_eq!(
+        listed.pointer("/items/0/mentions/0/state"),
+        Some(&serde_json::json!("removed")),
+        "{listed}"
+    );
+    // An unknown name mentions nobody; an edit without a list keeps what was mentioned.
+    let edited =
+        api::flow::scope_social::update_comment(db, object, comment.id, commenter, "no names here", None, None)
+            .await
+            .unwrap();
+    assert_eq!(edited.mentions.len(), 1);
+    scratch.close().await;
+}

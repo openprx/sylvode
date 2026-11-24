@@ -133,6 +133,7 @@ fn the_adoption_cutoff_names_a_registered_migration() {
             "0121_milestones.sql",
             "0122_bot_project_access.sql",
             "0123_work_item_page_links.sql",
+            "0124_comment_mentions.sql",
             "0125_oauth_client_scopes.sql",
             "0126_retire_unused_columns.sql",
             "0127_retire_legacy_objects.sql",

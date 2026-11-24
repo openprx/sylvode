@@ -471,22 +471,11 @@ async fn build_event_data(
                 fetch_comment_payload(state, comment_id, project_key).await?
             };
 
-            let data = if matches!(ctx.event, WebhookEvent::CommentCreated) {
-                json!({
-                    "comment": comment,
-                    "issue": issue_summary,
-                    "mentions": ctx
-                        .mentions
-                        .iter()
-                        .map(Uuid::to_string)
-                        .collect::<Vec<_>>(),
-                })
-            } else {
-                json!({
-                    "comment": comment,
-                    "issue": issue_summary,
-                })
-            };
+            let data = json!({
+                "comment": comment,
+                "issue": issue_summary,
+                "mentions": comment_mention_pairs(state, ctx).await?,
+            });
 
             Ok(BuiltEventData {
                 data,
@@ -740,6 +729,30 @@ pub(crate) async fn issue_snapshot(
         }),
         assignee_ids,
     )))
+}
+
+/// `[{id, name}]` of the people a comment event mentions: the current name, else the label stored
+/// with the comment, else null; never an id.
+async fn comment_mention_pairs(state: &AppState, ctx: &TriggerContext) -> Result<Vec<Value>, sea_orm::DbErr> {
+    let stored = match ctx.comment_id {
+        Some(comment_id) => state
+            .db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT mentions FROM comments WHERE id = $1",
+                vec![comment_id.into()],
+            ))
+            .await?
+            .map(|row| row.try_get::<Value>("", "mentions"))
+            .transpose()?,
+        None => None,
+    };
+    let hints = stored.map_or_else(std::collections::HashMap::new, |stored| {
+        crate::services::mentions::hints(&crate::services::mentions::from_json(&stored))
+    });
+    crate::services::mentions::webhook_pairs(&state.db, ctx.workspace_id, &ctx.mentions, &hints)
+        .await
+        .map_err(|err| sea_orm::DbErr::Custom(format!("mention names: {err}")))
 }
 
 async fn fetch_comment_payload(

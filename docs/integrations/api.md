@@ -504,12 +504,51 @@ rename shows at once. A page can be linked to many items and an item to at most 
 - A change of the links sends `issue.updated` with `changes.page_links: {added: [object_id],
   removed: [object_id]}`; see [webhooks](webhooks.md).
 
-### Comments
+### Comments and mentions
 
 `GET /comments/{id}` reads one comment: `{id, work_item_id, project_id, author_id, author_name,
-content, created_at, updated_at}`. It needs access to the workspace of the comment's project, like
-the list at `GET /issues/{issue_id}/comments`; an unknown id or a caller outside the workspace gets
-`404`. The route tells a caller which project owns a comment id.
+author, mentions, content, created_at, updated_at}`. It needs access to the workspace of the
+comment's project, like the list at `GET /issues/{issue_id}/comments`; an unknown id or a caller
+outside the workspace gets `404`. The route tells a caller which project owns a comment id.
+
+Every comment answer (create, edit, read, list; the list rows use `body` where the single read uses
+`content`) carries two people fields:
+
+- `author`: `{id, name, is_bot, state}`, or `null` when the account is gone and no author id is left.
+- `mentions`: the people the comment mentions, in the order stored, each `{id, name, is_bot, state}`.
+
+`state` is `active` while the person is a member of the workspace and `removed` otherwise. `name` is
+the person's current name; for someone who has left it is the name the mention was written with (a
+connected application never sees the current name of a person who has left), and `null` when there
+is none. A name is never an id: a client shows `name`, a badge for `is_bot`, and its own wording for
+`removed` without a name.
+
+`POST /issues/{issue_id}/comments` and `PUT /comments/{id}` take `body` (or `content`) and an
+optional `mentions`, a list of user ids picked in a composer. Names typed in the text are resolved
+by the server: `@Name` mentions the workspace member (human or bot) with exactly that name, ignoring
+case, longest name first (`@Ann Lee` before `@Ann`). The `@` must start the text or follow a
+character that is not a letter or digit (an e-mail address is not a mention) and, after a name that
+ends in a letter or digit, the next character must not continue the word. A name two members share
+mentions nobody: pick the person with `mentions`. Ids that are not workspace members are ignored,
+and a comment mentions at most 20 people (`400` beyond that). On `PUT` the mentions are derived
+again from the new text and `mentions`, and only people who were not mentioned before are notified.
+The author is shown among the mentions when named but is never notified.
+
+A mention notifies the person (`mentioned`, `content` `mentioned_by:<name of the author>`; the name
+is empty when the author has none, and the client shows "Someone"; the e-mail says "Someone
+mentioned you"). Mentioning a bot of the project starts its task as before.
+
+Comments on a proposal (`POST /proposals/{id}/comments`, which also takes `mentions`, and the list)
+and on a Flow page (v1 and v2 comment routes) work the same way: `author` and `mentions` in the
+answers, typed `@Name` resolved by the server, `mentioned` notifications. For a proposal the people
+are the members of its workspace and the notification link is `/proposals/{id}`. For a Flow page
+they are the members of the workspace and the guests of the page (a personal page: the people who
+already take part in it); picked ids are accepted as before, and `state` is `active` for an enabled
+account. A Flow comment's `mentions` are the same person objects (they were ids before).
+
+The activity of a work item (`GET /issues/{issue_id}/activities`) adds `people` to the paged answer:
+an object keyed by user id with `{id, name, is_bot, state}` for every person an entry names (its
+actor, and the assignee before and after in `assigned` entries).
 
 ### Labels
 

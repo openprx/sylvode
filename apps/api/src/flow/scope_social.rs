@@ -7,7 +7,10 @@ use super::{
 };
 use crate::{
     error::{ApiError, ApiErrorKind},
-    services::notifications::{self, NewNotification},
+    services::{
+        mentions::{self, Member},
+        notifications::{self, NewNotification},
+    },
 };
 use sea_orm::{ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, Statement, TransactionTrait};
 use serde_json::json;
@@ -73,7 +76,7 @@ async fn notify_mentions(
     recipients: &[scope::AuthorizationProof],
     event: Uuid,
 ) -> Result<(), ApiError> {
-    let actor_name = comments::actor_label(tx, actor).await?;
+    let actor_name = mentions::actor_display_name(tx, actor).await?;
     let link = identity.workspace_id.map_or_else(
         || format!("/flow/{}", identity.id),
         |workspace| format!("/workspace/{workspace}/flow/{}", identity.id),
@@ -89,7 +92,7 @@ async fn notify_mentions(
                 workspace_id: identity.workspace_id,
                 kind: notifications::MENTIONED,
                 title_key: "notification.mentionedTitle",
-                content: format!("mentioned_by:{actor_name}"),
+                content: mentions::notification_content(&actor_name),
                 link: Some(link.clone()),
                 related_issue_id: None,
                 related_comment_id: None,
@@ -101,6 +104,65 @@ async fn notify_mentions(
     }
     Ok(())
 }
+/// The people `@Name` can name in a comment on `object`. A workspace page: its members and the
+/// guests of the page. A personal page: the people already taking part in it (the picker's list,
+/// without its size limit; a full manager's roster counts only for a full manager).
+async fn name_pool(
+    db: &DatabaseConnection,
+    identity: &scope::ObjectIdentity,
+    object: Uuid,
+    proof: &scope::AuthorizationProof,
+) -> Result<Vec<Member>, ApiError> {
+    if let Some(workspace) = identity.workspace_id {
+        return comments::workspace_name_pool(db, workspace, object).await;
+    }
+    let owner = scope::get(db, proof.scope_id).await?.owner_user_id;
+    let rows = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT DISTINCT u.id, COALESCE(u.name, '') AS name FROM users u \
+             WHERE u.is_active AND (u.id = $2 \
+               OR u.id IN (SELECT author_id FROM flow_comments WHERE object_id = $1 AND deleted_at IS NULL) \
+               OR u.id IN (SELECT cu.actor_id FROM collab_updates cu \
+                           JOIN collab_documents d ON d.id = cu.document_id WHERE d.object_id = $1) \
+               OR ($3 AND u.id IN (SELECT principal_id FROM flow_object_grants \
+                                   WHERE object_id = $1 AND principal_kind = 'user'))) \
+             ORDER BY u.id LIMIT 500",
+            vec![
+                object.into(),
+                owner.into(),
+                (proof.level >= PermissionLevel::FullAccess).into(),
+            ],
+        ))
+        .await?;
+    rows.iter()
+        .map(|row| {
+            Ok(Member {
+                id: row.try_get("", "id")?,
+                name: row.try_get("", "name")?,
+            })
+        })
+        .collect()
+}
+
+/// The ids a comment mentions: the ones picked plus the `@Name` typed in `body`, without
+/// duplicates. A name nobody or two people carry is not resolved.
+async fn mention_ids(
+    db: &DatabaseConnection,
+    identity: &scope::ObjectIdentity,
+    object: Uuid,
+    proof: &scope::AuthorizationProof,
+    body: &str,
+    picked: &[Uuid],
+) -> Result<Vec<Uuid>, ApiError> {
+    let mut ids = comments::normalize_mentions(picked)?;
+    if body.contains('@') {
+        let pool = name_pool(db, identity, object, proof).await?;
+        ids.extend(mentions::ids(&mentions::resolve(body, &[], &pool)?));
+    }
+    comments::normalize_mentions(&ids)
+}
+
 pub async fn create_comment(
     db: &DatabaseConnection,
     object: Uuid,
@@ -109,13 +171,13 @@ pub async fn create_comment(
     idempotency: Option<&str>,
 ) -> Result<FlowCommentView, ApiError> {
     input.body = comments::normalize_body(&input.body)?;
-    input.mentions = comments::normalize_mentions(&input.mentions)?;
     input.block_id = comments::normalize_block_id(input.block_id)?;
     let actor = actor_proof(db, object, user, PermissionLevel::Comment).await?;
+    let identity = scope::identity(db, object).await?;
+    input.mentions = mention_ids(db, &identity, object, &actor, &input.body, &input.mentions).await?;
     let recipients = recipient_proofs(db, object, &input.mentions).await?;
     let mut proofs = vec![actor.clone()];
     proofs.extend(recipients.clone());
-    let identity = scope::identity(db, object).await?;
     if input.block_id.is_some() {
         super::block_anchors::complete_registration(db, object).await?;
     }
@@ -181,13 +243,21 @@ pub async fn update_comment(
     idempotency: Option<&str>,
 ) -> Result<FlowCommentView, ApiError> {
     let actor = actor_proof(db, object, user, PermissionLevel::Comment).await?;
-    let mentioned = mentions.as_deref().unwrap_or(&[]);
-    let recipients = recipient_proofs(db, object, mentioned).await?;
+    let identity = scope::identity(db, object).await?;
+    let body = comments::normalize_body(body)?;
+    // Without a list the comment keeps the people it already mentions; names typed in the new text
+    // are added either way.
+    let picked = match mentions {
+        Some(ids) => ids,
+        None => comments::stored_mention_ids(db, object, comment).await?,
+    };
+    let mentions = Some(mention_ids(db, &identity, object, &actor, &body, &picked).await?);
+    let recipients = recipient_proofs(db, object, mentions.as_deref().unwrap_or(&[])).await?;
     let mut proofs = vec![actor.clone()];
     proofs.extend(recipients.clone());
-    let identity = scope::identity(db, object).await?;
     let operation = key(idempotency, "comment_update");
-    let request = json!({"operation":"comment_update","object_id":object,"comment_id":comment,"body":comments::normalize_body(body)?,"mentions":mentions});
+    let request =
+        json!({"operation":"comment_update","object_id":object,"comment_id":comment,"body":body,"mentions":mentions});
     let tx = begin_write(db, &proofs).await?;
     if let Some(result) =
         super::scope_commands::lock_and_replay(&tx, identity.scope_id, user, &operation, &request).await?
@@ -195,7 +265,9 @@ pub async fn update_comment(
         tx.commit().await?;
         return serde_json::from_value(result).map_err(|_| ApiError::internal());
     }
-    let previous = comments::parse_mentions(&comments::load_visible(&tx, object, comment).await?.mentions);
+    let previous = mentions::ids(&mentions::from_json(
+        &comments::load_visible(&tx, object, comment).await?.mentions,
+    ));
     let fresh = recipients
         .into_iter()
         .filter(|proof| !previous.contains(&proof.principal_id))
@@ -208,7 +280,7 @@ pub async fn update_comment(
             user_id: user,
             level: actor.level,
         },
-        body,
+        &body,
         mentions,
     )
     .await?;

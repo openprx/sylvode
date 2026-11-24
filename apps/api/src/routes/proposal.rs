@@ -1,6 +1,8 @@
 // Explicit branches preserve the established evaluation order and mutation points.
 #![allow(clippy::useless_let_if_seq)]
 
+use std::collections::HashMap;
+
 use axum::{
     Extension, Json,
     extract::{Path, Query, State},
@@ -18,10 +20,11 @@ use crate::{
     entities::trust_score::ParticipantType,
     error::ApiError,
     response::{ApiResponse, PaginatedData},
-    routes::check_result::sync_check_result_after_proposal_decision,
+    routes::{check_result::sync_check_result_after_proposal_decision, proposal_mentions},
     services::ai_task_service::{DispatchOrigin, queue_vote_requested_tasks_for_project},
     services::governance_audit_service::{GovernanceAuditLogInput, write_governance_audit_log},
     services::impact_review_service::ImpactReviewService,
+    services::mentions,
     services::permission_service::PermissionService,
     services::proposals::{VoteActor, cast_vote},
     services::trust_score_service::{
@@ -75,6 +78,9 @@ pub struct VoteRequest {
 pub struct CreateProposalCommentRequest {
     pub comment_type: Option<String>,
     pub content: String,
+    /// People picked in the composer; `@Name` typed in `content` is resolved by the server.
+    #[serde(default)]
+    pub mentions: Vec<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2382,13 +2388,15 @@ pub async fn create_proposal_comment(
         return Err(ApiError::BadRequest("invalid comment_type".to_string()));
     }
 
+    let resolved = proposal_mentions::resolve(&state.db, proposal.workspace_id, content, &req.mentions).await?;
+
     let comment = ProposalCommentRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
 
             WITH inserted AS (
-                INSERT INTO proposal_comments (proposal_id, author_id, author_type, comment_type, content, created_at)
-                VALUES ($1, $2, $3::author_type, $4, $5, $6)
+                INSERT INTO proposal_comments (proposal_id, author_id, author_type, comment_type, content, created_at, mentions)
+                VALUES ($1, $2, $3::author_type, $4, $5, $6, $7::jsonb)
                 RETURNING id, proposal_id, author_id, author_type, comment_type, content, created_at
             )
             SELECT c.id,
@@ -2410,11 +2418,14 @@ pub async fn create_proposal_comment(
             comment_type.into(),
             content.into(),
             Timestamp::now().into(),
+            mentions::to_json(&resolved).into(),
         ],
     ))
     .one(&state.db)
     .await?
     .ok_or_else(|| ApiError::Internal)?;
+
+    proposal_mentions::notify(&state.db, proposal.workspace_id, &proposal.id, actor.user_id, &resolved).await?;
 
     if let Some(project_id) = resolve_project_id_for_proposal(&state, &proposal.id, &proposal.author_id).await?
         && let Some(workspace_id) = resolve_workspace_id_for_project(&state, project_id).await?
@@ -2440,7 +2451,9 @@ pub async fn create_proposal_comment(
         );
     }
 
-    Ok(ApiResponse::success(comment))
+    let stored = HashMap::from([(comment.id, resolved)]);
+    let mut shown = proposal_mentions::show(&state.db, proposal.workspace_id, vec![comment], &stored).await?;
+    Ok(ApiResponse::success(shown.pop().ok_or(ApiError::Internal)?))
 }
 
 pub async fn list_proposal_comments(
@@ -2448,9 +2461,9 @@ pub async fn list_proposal_comments(
     Extension(claims): Extension<JwtClaims>,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
-    find_proposal_for_caller(&state, &claims, &id).await?;
+    let proposal = find_proposal_for_caller(&state, &claims, &id).await?;
 
-    let items = ProposalCommentRow::find_by_statement(Statement::from_sql_and_values(
+    let rows = ProposalCommentRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
             SELECT pc.id,
@@ -2472,6 +2485,8 @@ pub async fn list_proposal_comments(
     .all(&state.db)
     .await?;
 
+    let stored = proposal_mentions::stored_for_proposal(&state.db, &proposal.id).await?;
+    let items = proposal_mentions::show(&state.db, proposal.workspace_id, rows, &stored).await?;
     Ok(ApiResponse::success(PaginatedData::from_items(items)))
 }
 

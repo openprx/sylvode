@@ -640,6 +640,7 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
         "0123_work_item_page_links.sql",
         SchemaProbe::Relation("work_item_page_links_object"),
     ),
+    ("0124_comment_mentions.sql", SchemaProbe::Column("comments", "mentions")),
     ("0125_oauth_client_scopes.sql", SchemaProbe::Rerunnable),
     (
         "0126_retire_unused_columns.sql",

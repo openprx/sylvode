@@ -339,6 +339,31 @@ async fn comments_and_public_links_follow_object_permissions() {
     let comment_id = created["data"]["id"].as_str().expect("comment id").to_string();
     assert_eq!(notification_count(db, editor).await, 1);
     assert_eq!(notification_count(db, outsider).await, 0);
+    // A name typed in the text is a mention without picking anyone.
+    exec(
+        db,
+        "UPDATE users SET name = 'Edith Editor' WHERE id = $1",
+        vec![editor.into()],
+    )
+    .await;
+    let typed = into_json(
+        post_flow_comment(
+            State(state.clone()),
+            claims(commenter),
+            None,
+            Path(page_id),
+            Json(body_json(json!({"body": "over to @edith editor"}))),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(typed["code"], 0, "{typed}");
+    assert_eq!(
+        typed["data"]["mentions"],
+        json!([{"id": editor, "name": "Edith Editor", "is_bot": false, "state": "active"}]),
+        "{typed}"
+    );
+    assert_eq!(notification_count(db, editor).await, 2);
 
     let reply = into_json(
         post_flow_comment(
