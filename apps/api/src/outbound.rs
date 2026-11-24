@@ -322,7 +322,7 @@ mod tests {
         use super::{OutboundHostError, resolve_outbound_host};
         let refused = resolve_outbound_host("127.0.0.1", 25, "", false).await;
         assert_eq!(refused, Err(OutboundHostError::Refused));
-        let private = resolve_outbound_host("10.1.2.3", 587, "", false).await;
+        let private = resolve_outbound_host("169.254.169.254", 587, "", false).await;
         assert_eq!(private, Err(OutboundHostError::Refused));
         let public = resolve_outbound_host("93.184.216.34", 587, "", false).await;
         assert_eq!(public.map(|found| found.len()), Ok(1));

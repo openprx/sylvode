@@ -200,7 +200,11 @@ suite.check('allow-list: lines trimmed, blanks dropped, at most 64', () => {
 });
 
 suite.check('create states every field and never sends a format', () => {
-	const body = createBody({ ...defaultDraft(), name: '  prx-waf edge-01 ', allowlist: '10.0.0.1' });
+	const body = createBody({
+		...defaultDraft(),
+		name: '  prx-waf edge-01 ',
+		allowlist: '192.0.2.1'
+	});
 	assertDeepEqual(
 		body,
 		{
@@ -208,7 +212,7 @@ suite.check('create states every field and never sends a format', () => {
 			require_signature: true,
 			rate_per_minute: 120,
 			daily_cap: 20000,
-			ip_allowlist: ['10.0.0.1']
+			ip_allowlist: ['192.0.2.1']
 		},
 		'full create body'
 	);

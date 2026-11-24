@@ -1158,8 +1158,8 @@ mod tests {
         let issuer = endpoint_url(None, Some("https://issuer.example.com/"), Some("http://o.test"));
         assert_eq!(issuer, Some(format!("https://issuer.example.com{path}")));
         assert_eq!(
-            endpoint_url(Some(" "), Some(""), Some("http://10.0.0.5:8080")),
-            Some(format!("http://10.0.0.5:8080{path}"))
+            endpoint_url(Some(" "), Some(""), Some("http://192.0.2.5:8080")),
+            Some(format!("http://192.0.2.5:8080{path}"))
         );
         // An origin with a path or a default port is reduced to its origin.
         assert_eq!(
