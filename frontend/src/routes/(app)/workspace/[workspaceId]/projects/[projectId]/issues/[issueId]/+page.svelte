@@ -1029,7 +1029,6 @@
 		const detail = activity.detail || {};
 		const from = typeof detail.from === 'string' ? detail.from : '';
 		const to = typeof detail.to === 'string' ? detail.to : '';
-		const toName = typeof detail.to_name === 'string' ? detail.to_name : '';
 		const labelName = typeof detail.label_name === 'string' ? detail.label_name : '';
 
 		switch (activity.action) {
@@ -1049,7 +1048,7 @@
 			case 'sprint_changed':
 				if (to) {
 					return get(t)('activity.sprintChanged', {
-						values: { name: toName || getSprintDisplay(to) }
+						values: { name: getSprintDisplay(to) }
 					});
 				}
 				return get(t)('activity.sprintRemoved');

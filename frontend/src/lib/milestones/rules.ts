@@ -197,8 +197,8 @@ export async function loadAllMilestones(
 
 /**
  * The line of a `milestone_changed` activity (`detail {from, to}`: milestone ids or null). The name
- * is the one the activity carries (`to_name`) or the one in a loaded list; a milestone that is in
- * neither (deleted, or not loaded) is described without a name, never by its id.
+ * is the one in a loaded list; a milestone that is not in it (deleted, or not loaded) is described
+ * without a name, never by its id.
  */
 export function milestoneActivityText(
 	translate: Translate,
@@ -207,8 +207,7 @@ export function milestoneActivityText(
 ): string {
 	const to = typeof detail?.to === 'string' && detail.to ? detail.to : '';
 	if (!to) return translate('milestones.activity.removed');
-	const carried = typeof detail?.to_name === 'string' ? detail.to_name.trim() : '';
-	const name = carried || nameOf(to);
+	const name = nameOf(to);
 	return name
 		? translate('milestones.activity.set', { values: { name } })
 		: translate('milestones.activity.setUnnamed');
