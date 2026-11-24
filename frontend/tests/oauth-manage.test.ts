@@ -394,21 +394,21 @@ await suite.checkAsync(
 		const own = await oauthApi.listOwn();
 		const workspace = await oauthApi.listWorkspace('w1');
 		const setting = await oauthApi.getWorkspaceSetting('w1');
-		for (const [name, result, listCall] of [
-			['own list', own, true],
-			['workspace list', workspace, true],
-			['workspace setting', setting, false]
+		for (const [name, result] of [
+			['own list', own],
+			['workspace list', workspace],
+			['workspace setting', setting]
 		] as const) {
 			assert(!result.ok, `${name} fails`);
 			if (!result.ok) {
 				assertEqual(result.failure.status, 403, `${name}: status`);
 				assertEqual(result.failure.errorCode, 'feature_disabled', `${name}: error code`);
-				assert(isNotEnabled(result.failure, listCall), `${name}: shows the not-enabled state`);
+				assert(isNotEnabled(result.failure), `${name}: shows the not-enabled state`);
 			}
 		}
 		// An ordinary refusal of a person without access is not "not enabled".
 		assert(
-			!isNotEnabled({ status: 403, errorCode: 'forbidden', details: null }, true),
+			!isNotEnabled({ status: 403, errorCode: 'forbidden', details: null }),
 			'a plain forbidden is not the not-enabled state'
 		);
 	}

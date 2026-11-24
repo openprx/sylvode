@@ -8,19 +8,17 @@ const LIB = join(new URL('../..', import.meta.url).pathname, 'src/lib');
 const failure = (status: number, errorCode: string) => ({ status, errorCode, details: null });
 
 test('feature_disabled means the server has no authorization server', () => {
-	assert.equal(isNotEnabled(failure(403, 'feature_disabled'), true), true);
-	assert.equal(isNotEnabled(failure(403, 'feature_disabled'), false), true);
+	assert.equal(isNotEnabled(failure(403, 'feature_disabled')), true);
 });
 
-test('a plain 404 from a list call is treated the same (a server without the answer)', () => {
-	assert.equal(isNotEnabled(failure(404, ''), true), true);
-	assert.equal(isNotEnabled(failure(404, ''), false), false);
+test('a bare 404 is not the not-enabled state: the server answers the typed error', () => {
+	assert.equal(isNotEnabled(failure(404, '')), false);
 });
 
 test('other failures stay failures', () => {
-	assert.equal(isNotEnabled(failure(403, 'forbidden'), true), false);
-	assert.equal(isNotEnabled(failure(500, ''), true), false);
-	assert.equal(isNotEnabled(failure(429, 'rate_limited'), true), false);
+	assert.equal(isNotEnabled(failure(403, 'forbidden')), false);
+	assert.equal(isNotEnabled(failure(500, '')), false);
+	assert.equal(isNotEnabled(failure(429, 'rate_limited')), false);
 });
 
 test('the three panels show the not-enabled state and the text exists in both languages', () => {

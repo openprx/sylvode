@@ -30,7 +30,7 @@
 		errorKey = null;
 		const listed = await oauthApi.listOwn();
 		if (!listed.ok) {
-			if (isNotEnabled(listed.failure, true)) {
+			if (isNotEnabled(listed.failure)) {
 				status = 'disabled';
 				return;
 			}

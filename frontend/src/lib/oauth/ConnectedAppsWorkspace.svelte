@@ -43,7 +43,7 @@
 		errorKey = null;
 		const setting = await oauthApi.getWorkspaceSetting(workspaceId);
 		if (!setting.ok) {
-			if (isNotEnabled(setting.failure, false)) {
+			if (isNotEnabled(setting.failure)) {
 				status = 'disabled';
 				return;
 			}
@@ -59,7 +59,7 @@
 		switchValue = allow;
 		const listed = await oauthApi.listWorkspace(workspaceId);
 		if (!listed.ok) {
-			if (isNotEnabled(listed.failure, true)) {
+			if (isNotEnabled(listed.failure)) {
 				status = 'disabled';
 				return;
 			}
