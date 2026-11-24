@@ -145,6 +145,11 @@ pub struct AiTaskCallbackConfig {
     /// Delay before the first retry, doubled after each further failed attempt (up to 60000).
     #[serde(default = "default_ai_task_retry_delay_ms")]
     pub retry_delay_ms: u64,
+    /// Acknowledges an `http://` `api_url` to a host other than loopback, which sends the bot
+    /// tokens and every task in clear text unless the network itself is encrypted (for example a
+    /// `WireGuard` intranet). Without it that is refused for a `runner` agent.
+    #[serde(default)]
+    pub allow_insecure_transport: bool,
 }
 
 impl Default for AiTaskCallbackConfig {
@@ -158,6 +163,7 @@ impl Default for AiTaskCallbackConfig {
             surface: default_ai_task_surface(),
             max_attempts: default_ai_task_max_attempts(),
             retry_delay_ms: default_ai_task_retry_delay_ms(),
+            allow_insecure_transport: false,
         }
     }
 }
@@ -200,6 +206,7 @@ impl std::fmt::Debug for AiTaskCallbackConfig {
             .field("surface", &self.surface)
             .field("max_attempts", &self.max_attempts)
             .field("retry_delay_ms", &self.retry_delay_ms)
+            .field("allow_insecure_transport", &self.allow_insecure_transport)
             .finish()
     }
 }
@@ -587,16 +594,13 @@ impl Config {
             return Ok(());
         }
         let cfg = &self.ai_task_callback;
-        // The bearer token goes to this URL: in clear text only to a loopback host.
-        if cfg.enabled
-            && let Some(api_url) = cfg.api_url.as_deref()
-            && let Ok(parsed) = url::Url::parse(api_url.trim())
-            && parsed.scheme() == "http"
-            && !is_loopback_url(&parsed)
-        {
+        // The bearer token goes to this URL: in clear text only to a loopback host, unless the
+        // operator acknowledges that the network path is encrypted.
+        if cfg.enabled && !cfg.allow_insecure_transport && self.api_url_is_remote_plain_http() {
             return Err(
                 "ai_task_callback.api_url uses http:// to a host other than loopback, which would send bot \
-                 tokens in clear text; use https://"
+                 tokens in clear text; use https://, or set ai_task_callback.allow_insecure_transport = true \
+                 if the network path is encrypted (for example a WireGuard intranet)"
                     .to_string(),
             );
         }
@@ -970,6 +974,26 @@ impl Config {
         }
     }
 
+    /// Whether `ai_task_callback.api_url` is `http://` to a host other than loopback.
+    #[must_use]
+    pub fn api_url_is_remote_plain_http(&self) -> bool {
+        self.ai_task_callback
+            .api_url
+            .as_deref()
+            .and_then(|api_url| url::Url::parse(api_url.trim()).ok())
+            .is_some_and(|parsed| parsed.scheme() == "http" && !is_loopback_url(&parsed))
+    }
+
+    /// Whether the operator acknowledged a plain-http server address outside loopback and the
+    /// configuration uses it with a `runner` agent.
+    #[must_use]
+    pub fn insecure_transport_acknowledged(&self) -> bool {
+        self.ai_task_callback.enabled
+            && self.ai_task_callback.allow_insecure_transport
+            && self.agents.iter().any(|agent| agent.agent_type == "runner")
+            && self.api_url_is_remote_plain_http()
+    }
+
     /// Configurations that start but deserve a prominent warning in the log.
     pub fn startup_warnings(&self) -> Vec<String> {
         let mut warnings: Vec<String> = self
@@ -999,6 +1023,14 @@ impl Config {
             );
         }
         let callback = &self.ai_task_callback;
+        if self.insecure_transport_acknowledged() {
+            warnings.push(
+                "ai_task_callback.allow_insecure_transport = true: the server address is http:// to a host \
+                 other than loopback, so bot tokens and every task cross the network in clear text unless \
+                 the network itself is encrypted"
+                    .to_string(),
+            );
+        }
         if callback.enabled && callback.bot_id.is_none() && callback.token.as_deref().is_some_and(usable_token) {
             warnings.push(
                 "ai_task_callback.token works only for the tasks of the bot that owns it, and it is used for \
@@ -1674,6 +1706,64 @@ url = "http://127.0.0.1:9000/hook"
     const GOLDEN_BLOCK: &str = include_str!("../../api/tests/fixtures/runner-config-block.toml");
 
     const GOLDEN_BOT: &str = "00000000-0000-0000-0000-000000000000";
+
+    /// A `runner` agent sends the bot tokens to `api_url`: `http://` to a host other than loopback
+    /// is refused unless the operator acknowledges it, and the refusal names the key.
+    #[test]
+    fn plain_http_to_a_remote_server_needs_the_acknowledgement() {
+        let with_url = |url: &str, extra: &str| {
+            GOLDEN_BLOCK.replace(
+                "api_url = \"https://sylvode.example.net\"",
+                &format!("api_url = \"{url}\"\n{extra}"),
+            )
+        };
+        for url in [
+            "http://10.72.0.1:8080",
+            "http://sylvode.example.net",
+            "http://[2001:db8::1]:8080",
+        ] {
+            let err = Config::from_toml(&with_url(url, "")).expect_err("plain http to a remote host is refused");
+            assert!(
+                err.contains("ai_task_callback.allow_insecure_transport"),
+                "{url}: {err}"
+            );
+            let cfg = Config::from_toml(&with_url(url, "allow_insecure_transport = true")).expect("acknowledged");
+            assert!(cfg.insecure_transport_acknowledged(), "{url}");
+            let warnings = cfg.startup_warnings();
+            assert_eq!(
+                warnings
+                    .iter()
+                    .filter(|w| w.contains("ai_task_callback.allow_insecure_transport"))
+                    .count(),
+                1,
+                "one warning line: {warnings:?}"
+            );
+        }
+        for url in [
+            "https://sylvode.example.net",
+            "http://127.0.0.1:8080",
+            "http://localhost:8080",
+        ] {
+            let cfg = Config::from_toml(&with_url(url, "")).expect("https and loopback http are accepted");
+            assert!(!cfg.insecure_transport_acknowledged(), "{url}");
+            // The key set on a safe address is not a warning.
+            let cfg = Config::from_toml(&with_url(url, "allow_insecure_transport = true")).expect("accepted");
+            assert!(!cfg.insecure_transport_acknowledged(), "{url}");
+            assert!(
+                !cfg.startup_warnings()
+                    .iter()
+                    .any(|w| w.contains("allow_insecure_transport")),
+                "{url}"
+            );
+        }
+        assert!(
+            !Config::from_toml(&with_url("https://sylvode.example.net", ""))
+                .expect("loads")
+                .ai_task_callback
+                .allow_insecure_transport,
+            "the default is false"
+        );
+    }
 
     /// Two blocks Sylvode issued for two bots, merged the way the block's header says: the shared
     /// sections once, the second bot's `[[ai_task_callback.bots]]` and `[[agents]]` tables appended.

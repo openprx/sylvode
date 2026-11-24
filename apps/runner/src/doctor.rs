@@ -140,11 +140,33 @@ fn runner_row(config: Option<&Config>, config_state: ConfigState, checker: &Chec
             );
         }
     }
+    row = mark_insecure_transport(row, config);
     row.version = Some(env!("CARGO_PKG_VERSION").to_string());
     row.path = std::env::current_exe().ok().map(|p| p.to_string_lossy().into_owned());
     if config_state == ConfigState::Invalid {
         row.hint = Some("the configuration does not load; run `sylvode-runner config check`".to_string());
     }
+    row
+}
+
+/// An acknowledged plain-http server address outside loopback is a warning on the `runner` row:
+/// the bot tokens and every task cross the network in clear text unless the network is encrypted.
+pub fn mark_insecure_transport(mut row: Component, config: Option<&Config>) -> Component {
+    if !config.is_some_and(Config::insecure_transport_acknowledged) {
+        return row;
+    }
+    row = row.with_detail("insecure_transport", json!(true));
+    if row.status == Status::Ok {
+        row.status = Status::Warn;
+    }
+    let note = "the server address is http:// outside loopback (acknowledged with \
+                ai_task_callback.allow_insecure_transport): bot tokens and tasks are in clear text unless the \
+                network is encrypted";
+    row.hint = Some(
+        row.hint
+            .take()
+            .map_or_else(|| note.to_string(), |existing| format!("{existing}; {note}")),
+    );
     row
 }
 

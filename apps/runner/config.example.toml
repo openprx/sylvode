@@ -59,8 +59,11 @@ require_inbound_sig = false
 [ai_task_callback]
 enabled = false
 # Base URL of the Sylvode API (no path, query or credentials). Required when enabled. With a
-# `runner` agent it must be https:// unless the host is loopback.
+# `runner` agent it must be https:// unless the host is loopback or allow_insecure_transport is set.
 api_url = "http://127.0.0.1:8080"
+# Acknowledges an http:// api_url to a host other than loopback: bot tokens and every task are sent
+# in clear text unless the network itself is encrypted (for example a WireGuard intranet).
+# allow_insecure_transport = false
 # The opr_ token of the bot that is the tasks' AI participant. A token works ONLY for the tasks
 # of the bot that owns it. Required when enabled, here or per bot below.
 token = "replace-with-the-bot-token-of-the-ai-participant"

@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use sylvode_prereq::{Component, InstallKind, Mode, Status};
 
-use super::doctor::{CACHE_FOR, Prereq, install_kind};
+use super::doctor::{CACHE_FOR, Prereq, install_kind, mark_insecure_transport};
 
 fn rows() -> Vec<Component> {
     vec![Component::new("tmux", true, Status::Ok, true)]
@@ -133,4 +133,41 @@ fn codex_trust_is_read_from_the_trust_level_of_the_project() {
     .expect("write");
     assert_eq!(trust_state(&home, "codex", Path::new("/w/a")), Trusted::Unknown);
     std::fs::remove_dir_all(&home).expect("clean");
+}
+
+/// An acknowledged plain-http server address outside loopback shows as a warning on the `runner`
+/// row; nothing changes without it, and an existing hint is kept.
+#[test]
+fn an_acknowledged_plain_http_server_address_is_a_warning() {
+    let block = include_str!("../../api/tests/fixtures/runner-config-block.toml");
+    let plain = crate::config::Config::from_toml(block).expect("block");
+    let insecure = crate::config::Config::from_toml(&block.replace(
+        "api_url = \"https://sylvode.example.net\"",
+        "api_url = \"http://10.72.0.1:8080\"\nallow_insecure_transport = true",
+    ))
+    .expect("acknowledged block");
+    let row = || Component::new("runner", true, Status::Ok, false);
+
+    let untouched = mark_insecure_transport(row(), Some(&plain));
+    assert_eq!(untouched, row());
+    assert_eq!(mark_insecure_transport(row(), None), row());
+
+    let warned = mark_insecure_transport(row(), Some(&insecure));
+    assert_eq!(warned.status, Status::Warn);
+    assert_eq!(warned.detail.get("insecure_transport"), Some(&serde_json::json!(true)));
+    assert!(
+        warned
+            .hint
+            .as_deref()
+            .is_some_and(|h| h.contains("allow_insecure_transport"))
+    );
+
+    let mut hinted = row();
+    hinted.hint = Some("permission checks are off".to_string());
+    let both = mark_insecure_transport(hinted, Some(&insecure));
+    let hint = both.hint.expect("hint");
+    assert!(
+        hint.starts_with("permission checks are off; ") && hint.contains("clear text"),
+        "{hint}"
+    );
 }

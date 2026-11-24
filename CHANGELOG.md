@@ -22,6 +22,12 @@ name.
   stays `sessions/<KEY>-<cli>/`. A project renamed in Sylvode is refused with `session_config_stale`
   while an entry names its old key.
 
+- **Runner: a plain-http server address outside loopback can be acknowledged.**
+  `[ai_task_callback] allow_insecure_transport = true` (default `false`) lets a `runner` agent use an
+  `http://` `api_url` to a host other than loopback, for a runner that reaches Sylvode over an
+  encrypted intranet such as WireGuard. Without it the start-up refusal now names the key. With it
+  the start-up log and `doctor` show a warning.
+
 - **Milestones.** Workspace milestones with a target date, open/closed status and progress per
   project (`GET|POST /api/v1/workspaces/{id}/milestones`, `GET|PUT|DELETE /api/v1/milestones/{id}`);
   work items carry `milestone_id` (create, update, list filter `milestone_id=<uuid>|none`); activity

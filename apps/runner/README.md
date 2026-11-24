@@ -526,7 +526,7 @@ through the `sylvode` tools is done as the connection's bot.
 A configuration with a `runner` agent is refused, with a message naming the agent or bot, unless:
 
 - `[ai_task_callback] enabled = true`, and an `api_url` that is `https://` (or `http://` to a
-  loopback host);
+  loopback host, or to any host with `allow_insecure_transport = true`);
 - every bot the agent serves (its `route.bot_ids`, else its `id`) is a UUID and has an
   `[[ai_task_callback.bots]]` entry with a token registered for `mcp_stdio`
   (`bot <id>: runner bots need a token registered for mcp_stdio`) and a `workspace_id`, the UUID
@@ -1028,6 +1028,7 @@ A secret counts as a placeholder when it is one of the example values or contain
 | `surface` | `rest` | the transport the token is registered with: `rest`, `mcp_http`, `mcp_sse`, `mcp_stdio`, `cli`, `cli_tools_call`; any value but `rest` is sent as `X-Sylvode-MCP-Surface` |
 | `max_attempts` | `3` | attempts per report, 1 to 10 |
 | `retry_delay_ms` | `1000` | delay before the first retry, at most 60000 |
+| `allow_insecure_transport` | `false` | `true` acknowledges an `http://` `api_url` to a host other than loopback, which sends the bot tokens and every task in clear text unless the network itself is encrypted (for example a WireGuard intranet); without it a `runner` agent is refused at start-up. With it the start-up log and `doctor` show a warning |
 | `bots[].bot_id` | required | the bot's user id (UUID); one token per bot |
 | `bots[].workspace_id` | none | the bot's workspace (UUID); required for a `runner` bot |
 | `bots[].token` | required | the bot's `opr_` token |
