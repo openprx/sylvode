@@ -117,6 +117,11 @@ pub const WITHHELD_TOOLS: &[&str] = &[
     "sprints.list",
     "sprints.update",
     "sprints.delete",
+    "milestones.list",
+    "milestones.get",
+    "milestones.create",
+    "milestones.update",
+    "milestones.delete",
     "labels.create",
     "labels.list",
     "labels.update",
@@ -279,11 +284,11 @@ mod tests {
     #[test]
     fn the_first_release_exposes_exactly_these_totals() {
         assert_eq!(SCOPED_TOOLS.len(), 8);
-        assert_eq!(WITHHELD_TOOLS.len(), 151);
-        // The main registry (153 tools) and the four search mode entry tools are fully covered; the two
+        assert_eq!(WITHHELD_TOOLS.len(), 156);
+        // The main registry (158 tools) and the four search mode entry tools are fully covered; the two
         // extra names are Flow-only.
-        assert_eq!(crate::tools::get_all_tool_definitions().len(), 153);
-        assert_eq!(SCOPED_TOOLS.len() + WITHHELD_TOOLS.len(), 153 + 4 + 2);
+        assert_eq!(crate::tools::get_all_tool_definitions().len(), 158);
+        assert_eq!(SCOPED_TOOLS.len() + WITHHELD_TOOLS.len(), 158 + 4 + 2);
     }
 
     /// The five task tools are closed to every connected application, whatever its scopes, and

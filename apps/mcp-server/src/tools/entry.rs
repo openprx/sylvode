@@ -625,7 +625,7 @@ mod tests {
             );
         }
         assert_eq!(search_names.len(), 9);
-        assert_eq!(registry_names.len(), 153);
+        assert_eq!(registry_names.len(), 158);
     }
 
     #[test]
@@ -869,9 +869,9 @@ mod tests {
     fn the_overview_counts_the_whole_catalogue_by_category() {
         let overview = overview(None, None);
         let categories = overview["categories"].as_array().cloned().unwrap_or_default();
-        assert_eq!(categories.len(), 19);
+        assert_eq!(categories.len(), 20);
         let total = categories.iter().map(|c| c["count"].as_u64().unwrap_or(0)).sum::<u64>();
-        assert_eq!(total, 153);
+        assert_eq!(total, 158);
         for category in &categories {
             let (count, read, write) = (
                 category["count"].as_u64().unwrap_or(0),

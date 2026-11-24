@@ -2,7 +2,7 @@
 name: sylvode-mcp
 description: Work on Sylvode tasks and data through the Sylvode MCP server. Use when a message starts with "[Sylvode task]" or "[Sylvode reminder]", or when you need to read or change Sylvode projects, issues, comments, forms, proposals or Flow objects.
 ---
-<!-- sylvode-skill v=0.5.0 h=3a4e25e93ca1 -->
+<!-- sylvode-skill v=0.5.0 h=61d047bc8b2b -->
 
 # Sylvode MCP
 
@@ -58,6 +58,7 @@ Search mode is the default. The tool list holds only `sylvode_overview`, `sylvod
 - The arguments are checked against the tool's schema before anything runs. Send exactly what the schema allows.
 - If a write answers that writes are disabled (from `sylvode_write`, or from the write tool itself in full mode), do not retry. Finish with what you can do, and say so in the summary. The task tools are not affected.
 - A refusal that names the project agent policy is final for this project. Do not try another tool to get around it.
+- A token can be limited per project. A call answered `this bot may not do this in this project` is refused for that project: the token may read it only, or not reach it at all. Do not retry, and do not try another tool to get around it. Say in your summary which project and which step was refused.
 
 Full mode is an explicit choice of whoever configured the server. Then the tool list holds every tool by its own name, and `sylvode_overview`, `sylvode_search`, `sylvode_read` and `sylvode_write` are not offered: call each tool directly by name with its own arguments. The task tools and the procedure above are the same in both modes. Use whichever mode the tool list in front of you shows.
 
@@ -104,7 +105,7 @@ Full mode is an explicit choice of whoever configured the server. Then the tool 
 ## Tools
 
 <!-- BEGIN GENERATED: tool-overview (sylvode-skillgen; do not edit) -->
-Sylvode has 153 tools in 19 categories. In search mode (the default) the tool list holds only `sylvode_overview`, `sylvode_search`, `sylvode_read`, `sylvode_write` and the task tools. Find a tool with `sylvode_search`, call a `read` tool with `sylvode_read` and a `write` tool with `sylvode_write`. The five task tools are called directly.
+Sylvode has 158 tools in 20 categories. In search mode (the default) the tool list holds only `sylvode_overview`, `sylvode_search`, `sylvode_read`, `sylvode_write` and the task tools. Find a tool with `sylvode_search`, call a `read` tool with `sylvode_read` and a `write` tool with `sylvode_write`. The five task tools are called directly.
 
 | Category | Tools | Read | Write | Covers |
 |---|---:|---:|---:|---|
@@ -119,6 +120,7 @@ Sylvode has 153 tools in 19 categories. In search mode (the default) the tool li
 | `files`: Files | 1 | 0 | 1 | Upload files and get their URLs |
 | `labels`: Labels | 5 | 2 | 3 | Workspace and project labels |
 | `sprints`: Sprints | 4 | 1 | 3 | Plan iterations of a project |
+| `milestones`: Milestones | 5 | 2 | 3 | Workspace milestones that span projects |
 | `proposals`: Proposals | 5 | 2 | 3 | Governance proposals and check results |
 | `release`: Release | 1 | 1 | 0 | Release readiness gates and blockers |
 | `code`: Code | 2 | 1 | 1 | Context and governed proposals for code tasks |

@@ -60,6 +60,10 @@ pub fn list_work_items_tool() -> ToolDefinition {
                     "type": "string",
                     "description": "Filter by sprint UUID, or \"none\" for the work items that are in no sprint (optional)"
                 },
+                "milestone_id": {
+                    "type": "string",
+                    "description": "Filter by milestone UUID, or \"none\" for the work items that are in no milestone (optional)"
+                },
                 "search": {
                     "type": "string",
                     "description": "Filter by title/description text (optional)"
@@ -92,6 +96,7 @@ struct ListWorkItemsInput {
     assignee_id: Option<String>,
     priority: Option<String>,
     sprint_id: Option<String>,
+    milestone_id: Option<String>,
     search: Option<String>,
     label_ids: Option<String>,
     sort_by: Option<String>,
@@ -116,6 +121,7 @@ pub async fn list_work_items(client: &OpenPrClient, args: serde_json::Value) -> 
         assignee_id: input.assignee_id.as_deref(),
         priority: input.priority.as_deref(),
         sprint_id: input.sprint_id.as_deref(),
+        milestone_id: input.milestone_id.as_deref(),
         search: input.search.as_deref(),
         label_ids: input.label_ids.as_deref(),
         sort_by: input.sort_by.as_deref(),
@@ -359,6 +365,11 @@ pub fn create_work_item_tool() -> ToolDefinition {
                     "description": "UUID of the assignee (optional)",
                     "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
                 },
+                "milestone_id": {
+                    "type": "string",
+                    "description": "UUID of an open milestone of the project's workspace to place the work item in (optional)",
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                },
                 "due_at": {
                     "type": "string",
                     "description": "Due date in RFC3339 format (optional)"
@@ -379,6 +390,7 @@ struct CreateWorkItemInput {
     priority: Option<String>,
     sprint_id: Option<String>,
     assignee_id: Option<String>,
+    milestone_id: Option<String>,
     due_at: Option<String>,
 }
 
@@ -398,7 +410,7 @@ pub async fn create_work_item(client: &OpenPrClient, args: serde_json::Value) ->
 
     let description = append_attachments_to_text(input.description, input.attachments);
 
-    let body = json!({
+    let mut body = json!({
         "title": input.title,
         "description": description,
         "state": input.state,
@@ -407,6 +419,12 @@ pub async fn create_work_item(client: &OpenPrClient, args: serde_json::Value) ->
         "assignee_id": input.assignee_id,
         "due_at": input.due_at
     });
+    // A new work item has no milestone to clear: an empty value is the same as none.
+    if let Some(milestone_id) = input.milestone_id.filter(|id| !id.is_empty() && id != "null")
+        && let Some(object) = body.as_object_mut()
+    {
+        object.insert("milestone_id".to_string(), json!(milestone_id));
+    }
 
     match client.create_work_item(&input.project_id, body).await {
         Ok(item) => {
@@ -464,6 +482,11 @@ pub fn update_work_item_tool() -> ToolDefinition {
                     "description": "New assignee UUID (optional). Send null or an empty string to unassign",
                     "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
                 },
+                "milestone_id": {
+                    "type": "string",
+                    "description": "New milestone UUID (optional); it must be an open milestone of the work item's workspace. Send null or an empty string to take the work item out of its milestone",
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                },
                 "due_at": {
                     "type": "string",
                     "description": "New due date in RFC3339 format (optional). Send null or an empty string to remove the due date"
@@ -484,6 +507,7 @@ struct UpdateWorkItemInput {
     priority: Option<String>,
     sprint_id: Option<String>,
     assignee_id: Option<String>,
+    milestone_id: Option<String>,
     due_at: Option<String>,
 }
 
@@ -524,6 +548,7 @@ pub async fn update_work_item(client: &OpenPrClient, args: serde_json::Value) ->
     for (field, value) in [
         ("sprint_id", input.sprint_id.as_deref()),
         ("assignee_id", input.assignee_id.as_deref()),
+        ("milestone_id", input.milestone_id.as_deref()),
         ("due_at", input.due_at.as_deref()),
     ] {
         if let Some(value) = clearable(args_obj.as_ref(), field, value) {
@@ -834,6 +859,57 @@ mod tests {
     async fn update_clears_assignee_and_due_date_the_same_way() {
         let body = last_put_body(json!({ "work_item_id": UUID, "assignee_id": "", "due_at": null })).await;
         assert_eq!(body, json!({ "assignee_id": null, "due_at": null }));
+    }
+
+    #[tokio::test]
+    async fn update_sets_and_clears_the_milestone() {
+        for cleared in [json!(""), json!("null"), Value::Null] {
+            let body = last_put_body(json!({ "work_item_id": UUID, "milestone_id": cleared })).await;
+            assert_eq!(body, json!({ "milestone_id": null }), "for {cleared}");
+        }
+        let body = last_put_body(json!({ "work_item_id": UUID, "milestone_id": UUID })).await;
+        assert_eq!(body, json!({ "milestone_id": UUID }));
+    }
+
+    #[tokio::test]
+    async fn create_carries_the_milestone_only_when_one_is_named() {
+        let post_body = |args: Value| async move {
+            let api = Api::spawn(Policy::Permissive).await.expect("stand-in api");
+            let client = api.client().expect("client");
+            let result = super::create_work_item(&client, args).await;
+            assert_ne!(result.is_error, Some(true), "{result:?}");
+            api.seen()
+                .into_iter()
+                .find(|seen| seen.method == "POST")
+                .expect("a create was sent")
+                .body
+        };
+        let body = post_body(json!({ "project_id": UUID, "title": "t", "milestone_id": UUID })).await;
+        assert_eq!(body.get("milestone_id"), Some(&json!(UUID)));
+        for none in [
+            json!({ "project_id": UUID, "title": "t" }),
+            json!({ "project_id": UUID, "title": "t", "milestone_id": "" }),
+        ] {
+            let body = post_body(none).await;
+            assert!(body.get("milestone_id").is_none(), "{body}");
+        }
+    }
+
+    #[tokio::test]
+    async fn list_passes_the_milestone_filter() {
+        for value in [UUID, "none"] {
+            let api = Api::spawn(Policy::Permissive).await.expect("stand-in api");
+            let client = api.client().expect("client");
+            let result = list_work_items(&client, json!({ "project_id": UUID, "milestone_id": value })).await;
+            assert_ne!(result.is_error, Some(true), "{result:?}");
+            let seen = api.seen();
+            let request = seen.iter().find(|seen| seen.method == "GET").expect("a list was sent");
+            assert!(
+                request.query.contains(&format!("milestone_id={value}")),
+                "{}",
+                request.query
+            );
+        }
     }
 
     #[tokio::test]

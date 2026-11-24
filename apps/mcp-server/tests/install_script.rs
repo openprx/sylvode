@@ -84,7 +84,7 @@ impl Sandbox {
         let source = write_config(&McpSettings {
             api_url: "http://localhost:1",
             bot_token: None,
-            workspace_id: WORKSPACE,
+            workspace_id: Some(WORKSPACE),
             transport: Some("http"),
             bind_addr: None,
         })

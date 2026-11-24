@@ -60,7 +60,7 @@ fn config(api_url: &str) -> Result<ConfigFile, Box<dyn Error>> {
     write_config(&McpSettings {
         api_url,
         bot_token: Some(TOKEN),
-        workspace_id: WORKSPACE,
+        workspace_id: Some(WORKSPACE),
         transport: Some("stdio"),
         bind_addr: None,
     })

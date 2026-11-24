@@ -46,7 +46,7 @@ pub fn build_client(global: &GlobalArgs) -> Result<OpenPrClient, CliError> {
     OpenPrClient::new(ClientConfig {
         base_url: api_url,
         credential: Some(bot_token),
-        workspace_id: mcp.workspace_id.to_string(),
+        workspace_id: mcp.workspace_id.map(|id| id.to_string()),
         transport_label: TRANSPORT_LABEL_CLI,
     })
     .map_err(CliError::usage)

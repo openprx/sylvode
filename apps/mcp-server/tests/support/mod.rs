@@ -39,7 +39,9 @@ pub struct McpSettings<'a> {
     /// which is what an `http`/`sse` deployment looks like: it holds no identity of its own
     /// and serves every request as the caller that presented one.
     pub bot_token: Option<&'a str>,
-    pub workspace_id: &'a str,
+    /// The configured workspace. `None` writes no key, which is valid for `http`/`sse`: a
+    /// networked caller acts in the workspace of its own bot token.
+    pub workspace_id: Option<&'a str>,
     /// `None` leaves the file's own default, `stdio`.
     pub transport: Option<&'a str>,
     /// `None` leaves the file's own default, `127.0.0.1:8090`.
@@ -101,7 +103,9 @@ pub fn write_config_with_extra_mcp_keys(
     if let Some(bot_token) = settings.bot_token {
         writeln!(source, "bot_token = \"{bot_token}\"")?;
     }
-    writeln!(source, "workspace_id = \"{}\"", settings.workspace_id)?;
+    if let Some(workspace_id) = settings.workspace_id {
+        writeln!(source, "workspace_id = \"{workspace_id}\"")?;
+    }
     if let Some(transport) = settings.transport {
         writeln!(source, "transport = \"{transport}\"")?;
     }

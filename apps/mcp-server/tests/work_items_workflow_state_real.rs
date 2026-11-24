@@ -315,7 +315,7 @@ async fn work_items_create_applies_the_project_workflows_initial_state() -> Test
     let config = write_config(&McpSettings {
         api_url: &api_url,
         bot_token: Some(TOKEN),
-        workspace_id: &workspace,
+        workspace_id: Some(&workspace),
         transport: Some("stdio"),
         bind_addr: None,
     })?;

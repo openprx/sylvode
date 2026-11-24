@@ -3,6 +3,10 @@ use reqwest::{Client, RequestBuilder, multipart};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
+use std::sync::Arc;
+
+mod workspace;
+use workspace::{WORKSPACE_CACHE_CAPACITY, WORKSPACE_CACHE_TTL, WorkspaceCache, workspace_of_me};
 
 /// The Sylvode API always answers with HTTP 200 and carries the real status in the
 /// response envelope (`{ "code": 0, "message": "...", "data": ... }`): every handler
@@ -24,6 +28,10 @@ fn check_response_envelope(payload: &Value, path: &str) -> Result<(), String> {
     };
     match envelope.get("code").and_then(Value::as_i64) {
         Some(0) => Ok(()),
+        Some(403) if envelope.get("message").and_then(Value::as_str) == Some(SCOPED_BOT_REFUSAL) => Err(format!(
+            "API error 403 from {path}: {SCOPED_BOT_REFUSAL}; the token's project access does not allow this call, so \
+             retrying it or using another tool will not help"
+        )),
         Some(code) => Err(refusal_reason(code).map_or_else(
             || {
                 let message = envelope
@@ -39,6 +47,11 @@ fn check_response_envelope(payload: &Value, path: &str) -> Result<(), String> {
         )),
     }
 }
+
+/// What the API answers (code `403`) when a bot token limited to some projects acts in a project
+/// whose level for it is too low, or in none it may reach. One text for every case, so it never
+/// says which part failed.
+const SCOPED_BOT_REFUSAL: &str = "this bot may not do this in this project";
 
 /// The fixed wording an *authentication* failure is reported with, or `None` for every other
 /// status, whose own message is relayed.
@@ -159,7 +172,11 @@ pub struct ClientConfig {
     /// handed the caller's through [`OpenPrClient::acting_as`] once per request.
     pub credential: Option<Secret>,
     /// Workspace the caller acts in, from `mcp.workspace_id` or `--workspace-id`.
-    pub workspace_id: String,
+    ///
+    /// `None` lets the client take it from the credential's bot (`GET /api/v1/auth/me`) when a
+    /// tool needs one. A networked caller's client never uses it either way: see
+    /// [`OpenPrClient::acting_as`].
+    pub workspace_id: Option<String>,
     /// Label the operation log reports this process's transport under.
     pub transport_label: &'static str,
 }
@@ -173,7 +190,12 @@ pub struct OpenPrClient {
     pub(crate) base_url: String,
     /// The bearer credential every outbound request carries. See [`ClientConfig::credential`].
     credential: Option<Secret>,
-    pub workspace_id: String,
+    /// The workspace workspace-scoped tools act in, when it is fixed: configured for `stdio` and
+    /// the command line, the grant's for a delegated caller. `None` means the credential's bot
+    /// names it, through `workspace_cache`.
+    workspace_id: Option<String>,
+    /// Workspace by token hash, shared by every client made from one another.
+    workspace_cache: Arc<WorkspaceCache>,
     transport_label: &'static str,
     operation_tool_name: Option<String>,
     flow_only: bool,
@@ -227,6 +249,16 @@ pub struct ListWorkItemsQuery<'a> {
     pub label_ids: Option<&'a str>,
     pub sort_by: Option<&'a str>,
     pub sort_order: Option<&'a str>,
+    /// A milestone id, or `none` for the items in no milestone.
+    pub milestone_id: Option<&'a str>,
+}
+
+/// Query parameters supported by `GET /api/v1/workspaces/{id}/milestones`.
+#[derive(Debug, Default)]
+pub struct ListMilestonesQuery<'a> {
+    pub status: Option<&'a str>,
+    pub page: Option<u64>,
+    pub per_page: Option<u64>,
 }
 
 /// Query parameters supported by `GET /api/v1/proposals`
@@ -284,6 +316,7 @@ impl OpenPrClient {
             base_url: config.base_url,
             credential: config.credential,
             workspace_id: config.workspace_id,
+            workspace_cache: Arc::new(WorkspaceCache::new(WORKSPACE_CACHE_TTL, WORKSPACE_CACHE_CAPACITY)),
             transport_label: config.transport_label,
             operation_tool_name: None,
             flow_only: false,
@@ -314,14 +347,18 @@ impl OpenPrClient {
     /// credential through every one of them: the request scoped client *is* the identity, so
     /// a tool cannot pick a different one, and neither can the policy gate or the audit
     /// report that run around it. The HTTP connection pool is shared because [`Client`] is
-    /// an `Arc` inside; nothing else is.
+    /// an `Arc` inside, and so is the workspace cache, which is keyed by token hash.
+    ///
+    /// The workspace is the credential's own: a configured one is deliberately not carried over,
+    /// so a caller cannot act in a workspace its token does not belong to.
     #[must_use]
     pub fn acting_as(&self, credential: Secret) -> Self {
         Self {
             client: self.client.clone(),
             base_url: self.base_url.clone(),
             credential: Some(credential),
-            workspace_id: self.workspace_id.clone(),
+            workspace_id: None,
+            workspace_cache: Arc::clone(&self.workspace_cache),
             transport_label: self.transport_label,
             operation_tool_name: self.operation_tool_name.clone(),
             flow_only: self.flow_only,
@@ -345,7 +382,8 @@ impl OpenPrClient {
             client: self.no_redirect_client.clone(),
             base_url: self.base_url.clone(),
             credential: Some(token),
-            workspace_id: workspace_id.to_string(),
+            workspace_id: Some(workspace_id.to_string()),
+            workspace_cache: Arc::clone(&self.workspace_cache),
             transport_label: self.transport_label,
             operation_tool_name: self.operation_tool_name.clone(),
             flow_only: self.flow_only,
@@ -362,6 +400,7 @@ impl OpenPrClient {
             base_url: self.base_url.clone(),
             credential: self.credential.clone(),
             workspace_id: self.workspace_id.clone(),
+            workspace_cache: Arc::clone(&self.workspace_cache),
             transport_label,
             operation_tool_name: self.operation_tool_name.clone(),
             flow_only: self.flow_only,
@@ -378,6 +417,31 @@ impl OpenPrClient {
         let mut scoped = self.clone();
         scoped.operation_tool_name = Some(crate::tools::entry::attribution_name(tool_name).to_string());
         scoped
+    }
+
+    /// The workspace this client's workspace-scoped calls act in.
+    ///
+    /// A fixed workspace is returned as is. Otherwise it is the workspace of the bot the
+    /// credential belongs to, asked of `GET /api/v1/auth/me` once per token per
+    /// [`WORKSPACE_CACHE_TTL`]. A credential that belongs to no bot is refused with `401`, and a
+    /// failed lookup is not remembered.
+    pub async fn workspace(&self) -> Result<String, String> {
+        if let Some(workspace_id) = &self.workspace_id {
+            return Ok(workspace_id.clone());
+        }
+        let credential = self
+            .credential
+            .as_ref()
+            .ok_or_else(|| NO_OUTBOUND_CREDENTIAL.to_string())?;
+        if let Some(cached) = self.workspace_cache.get(credential.expose()).await {
+            return Ok(cached);
+        }
+        let me: Value = self.get("/api/v1/auth/me").await?;
+        let workspace_id = workspace_of_me(&me)?;
+        self.workspace_cache
+            .put(credential.expose(), workspace_id.clone())
+            .await;
+        Ok(workspace_id)
     }
 
     /// The `Authorization` header value for one outbound request, or the refusal that stands
@@ -479,7 +543,7 @@ impl OpenPrClient {
     pub async fn list_projects(&self) -> Result<Value, String> {
         self.get(&format!(
             "/api/v1/workspaces/{}/projects",
-            urlencoding::encode(&self.workspace_id)
+            urlencoding::encode(&self.workspace().await?)
         ))
         .await
     }
@@ -493,7 +557,7 @@ impl OpenPrClient {
         self.post(
             &format!(
                 "/api/v1/workspaces/{}/projects",
-                urlencoding::encode(&self.workspace_id)
+                urlencoding::encode(&self.workspace().await?)
             ),
             &body,
         )
@@ -515,7 +579,7 @@ impl OpenPrClient {
     pub async fn list_project_types(&self) -> Result<Value, String> {
         self.get(&format!(
             "/api/v1/workspaces/{}/project-types",
-            urlencoding::encode(&self.workspace_id)
+            urlencoding::encode(&self.workspace().await?)
         ))
         .await
     }
@@ -1246,6 +1310,9 @@ impl OpenPrClient {
         if let Some(sort_order) = query.sort_order {
             params.push(format!("sort_order={}", urlencoding::encode(sort_order)));
         }
+        if let Some(milestone_id) = query.milestone_id {
+            params.push(format!("milestone_id={}", urlencoding::encode(milestone_id)));
+        }
         self.get(&format!(
             "/api/v1/projects/{}/issues{}",
             urlencoding::encode(project_id),
@@ -1474,7 +1541,7 @@ impl OpenPrClient {
     pub async fn list_members(&self) -> Result<Value, String> {
         self.get(&format!(
             "/api/v1/workspaces/{}/members",
-            urlencoding::encode(&self.workspace_id)
+            urlencoding::encode(&self.workspace().await?)
         ))
         .await
     }
@@ -1482,7 +1549,7 @@ impl OpenPrClient {
     pub async fn list_bot_operation_logs(&self, query: &str) -> Result<Value, String> {
         self.get(&format!(
             "/api/v1/workspaces/{}/bot-operation-logs{query}",
-            urlencoding::encode(&self.workspace_id)
+            urlencoding::encode(&self.workspace().await?)
         ))
         .await
     }
@@ -1536,11 +1603,64 @@ impl OpenPrClient {
             .await
     }
 
+    // ---- Milestones ----
+
+    pub async fn list_milestones(&self, query: &ListMilestonesQuery<'_>) -> Result<Value, String> {
+        let mut params = Vec::new();
+        if let Some(status) = query.status {
+            params.push(format!("status={}", urlencoding::encode(status)));
+        }
+        if let Some(page) = query.page {
+            params.push(format!("page={page}"));
+        }
+        if let Some(per_page) = query.per_page {
+            params.push(format!("per_page={per_page}"));
+        }
+        self.get(&format!(
+            "/api/v1/workspaces/{}/milestones{}",
+            urlencoding::encode(&self.workspace().await?),
+            join_query(&params)
+        ))
+        .await
+    }
+
+    pub async fn get_milestone(&self, milestone_id: &str) -> Result<Value, String> {
+        self.get(&format!("/api/v1/milestones/{}", urlencoding::encode(milestone_id)))
+            .await
+    }
+
+    pub async fn create_milestone(&self, body: Value) -> Result<Value, String> {
+        self.post(
+            &format!(
+                "/api/v1/workspaces/{}/milestones",
+                urlencoding::encode(&self.workspace().await?)
+            ),
+            &body,
+        )
+        .await
+    }
+
+    pub async fn update_milestone(&self, milestone_id: &str, body: Value) -> Result<Value, String> {
+        self.put(
+            &format!("/api/v1/milestones/{}", urlencoding::encode(milestone_id)),
+            &body,
+        )
+        .await
+    }
+
+    pub async fn delete_milestone(&self, milestone_id: &str) -> Result<Value, String> {
+        self.delete(&format!("/api/v1/milestones/{}", urlencoding::encode(milestone_id)))
+            .await
+    }
+
     // ---- Labels ----
 
     pub async fn create_label(&self, body: Value) -> Result<Value, String> {
         self.post(
-            &format!("/api/v1/workspaces/{}/labels", urlencoding::encode(&self.workspace_id)),
+            &format!(
+                "/api/v1/workspaces/{}/labels",
+                urlencoding::encode(&self.workspace().await?)
+            ),
             &body,
         )
         .await
@@ -1549,7 +1669,7 @@ impl OpenPrClient {
     pub async fn list_labels(&self) -> Result<Value, String> {
         self.get(&format!(
             "/api/v1/workspaces/{}/labels",
-            urlencoding::encode(&self.workspace_id)
+            urlencoding::encode(&self.workspace().await?)
         ))
         .await
     }
@@ -1868,7 +1988,7 @@ pub mod test_api {
         OpenPrClient::new(ClientConfig {
             base_url,
             credential: Some(Secret::new("opr_test_token")),
-            workspace_id: "workspace-1".to_string(),
+            workspace_id: Some("workspace-1".to_string()),
             transport_label: TRANSPORT_LABEL_STDIO,
         })
     }
@@ -1968,6 +2088,22 @@ mod tests {
 
     /// The same rule, applied to a real HTTP status — which, since the API answers 200 with an
     /// envelope, means something in front of it answered, with a body written for nobody here.
+    #[test]
+    fn a_scoped_bot_refusal_says_that_retrying_will_not_help() {
+        let refusal = json!({"code": 403, "message": "this bot may not do this in this project", "data": null});
+        let text = check_response_envelope(&refusal, "/api/v1/issues/1")
+            .err()
+            .unwrap_or_default();
+        assert!(text.contains("this bot may not do this in this project"), "{text}");
+        assert!(text.contains("will not help"), "{text}");
+        // Any other 403 keeps the API's own words.
+        let other = json!({"code": 403, "message": "not a member of this workspace", "data": null});
+        assert_eq!(
+            check_response_envelope(&other, "/x"),
+            Err("API error 403 from /x: not a member of this workspace".to_string())
+        );
+    }
+
     #[test]
     fn a_refusal_from_in_front_of_the_api_is_reported_without_its_body() {
         let error = rejected_request_error(

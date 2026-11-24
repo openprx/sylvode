@@ -284,7 +284,7 @@ async fn mcp_object_export_of_a_secret_record_is_redacted_and_its_package_refuse
         OpenPrClient::new(ClientConfig {
             base_url: format!("http://{address}"),
             credential: Some(Secret::new(BOT_TOKEN)),
-            workspace_id: workspace_id.to_string(),
+            workspace_id: Some(workspace_id.to_string()),
             transport_label: TRANSPORT_LABEL_STDIO,
         })?,
         McpToolMode::Full,

@@ -219,7 +219,7 @@ impl StdioClient {
             &McpSettings {
                 api_url,
                 bot_token: Some(BOT_TOKEN),
-                workspace_id: WORKSPACE,
+                workspace_id: Some(WORKSPACE),
                 transport: Some("stdio"),
                 bind_addr: None,
             },
@@ -334,7 +334,7 @@ impl NetworkedServer {
             &McpSettings {
                 api_url,
                 bot_token: None,
-                workspace_id: WORKSPACE,
+                workspace_id: Some(WORKSPACE),
                 transport: Some(transport),
                 bind_addr: Some(&bind_addr),
             },

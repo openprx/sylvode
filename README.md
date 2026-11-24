@@ -42,7 +42,7 @@ Rust (axum, SeaORM) with a SvelteKit web interface and stores everything in Post
   handlers, and form plugin packages. See [plugins](docs/plugins/README.md).
 
 <!-- BEGIN GENERATED: tool-count (sylvode-skillgen; do not edit) -->
-The MCP server registers 153 tools in 19 categories. By default it lists nine of them (search mode) and reaches the rest through `sylvode_search`, `sylvode_read` and `sylvode_write`. Every tool, with its category and access, is in [reference/tools.md](skills/sylvode-mcp/reference/tools.md).
+The MCP server registers 158 tools in 20 categories. By default it lists nine of them (search mode) and reaches the rest through `sylvode_search`, `sylvode_read` and `sylvode_write`. Every tool, with its category and access, is in [reference/tools.md](skills/sylvode-mcp/reference/tools.md).
 <!-- END GENERATED: tool-count -->
 
 ## Quick start

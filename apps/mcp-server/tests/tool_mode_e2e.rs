@@ -58,7 +58,7 @@ async fn stdio(extra_keys: &str, args: &[&str], requests: &[Value]) -> Result<Ve
         &McpSettings {
             api_url: API_URL,
             bot_token: Some(BOT_TOKEN),
-            workspace_id: WORKSPACE,
+            workspace_id: Some(WORKSPACE),
             transport: Some("stdio"),
             bind_addr: None,
         },
@@ -98,7 +98,7 @@ async fn stdio_lists_search_mode_by_default_and_the_registry_when_configured() -
     assert_eq!(stdio_listing("", &[]).await?.len(), 9);
     assert_eq!(stdio_listing("tool_mode = \"search\"\n", &[]).await?.len(), 9);
     let full = stdio_listing("tool_mode = \"full\"\n", &[]).await?;
-    assert_eq!(full.len(), 153);
+    assert_eq!(full.len(), 158);
     assert!(!full.contains(&"sylvode_search".to_string()));
     Ok(())
 }
@@ -111,12 +111,12 @@ async fn the_tools_flag_overrides_the_configured_mode_in_both_directions() -> Te
             .len(),
         9
     );
-    assert_eq!(stdio_listing("", &["--tools", "full"]).await?.len(), 153);
+    assert_eq!(stdio_listing("", &["--tools", "full"]).await?.len(), 158);
     assert_eq!(
         stdio_listing("tool_mode = \"search\"\n", &["--tools", "full"])
             .await?
             .len(),
-        153
+        158
     );
     Ok(())
 }
@@ -187,7 +187,7 @@ async fn failing_serve(args: &[&str]) -> Result<(bool, String), Box<dyn Error>> 
         &McpSettings {
             api_url: API_URL,
             bot_token: Some(BOT_TOKEN),
-            workspace_id: WORKSPACE,
+            workspace_id: Some(WORKSPACE),
             transport: Some("stdio"),
             bind_addr: None,
         },
@@ -224,7 +224,7 @@ async fn an_invalid_configured_mode_refuses_to_start() -> TestResult {
         &McpSettings {
             api_url: API_URL,
             bot_token: Some(BOT_TOKEN),
-            workspace_id: WORKSPACE,
+            workspace_id: Some(WORKSPACE),
             transport: Some("stdio"),
             bind_addr: None,
         },
@@ -258,7 +258,7 @@ impl Http {
             &McpSettings {
                 api_url: API_URL,
                 bot_token: None,
-                workspace_id: WORKSPACE,
+                workspace_id: Some(WORKSPACE),
                 transport: Some("http"),
                 bind_addr: Some(&bind),
             },
@@ -328,17 +328,17 @@ async fn http_lists_search_mode_unless_the_connection_asks_for_the_registry() ->
     let server = Http::spawn("").await?;
     assert_eq!(server.listing("", None).await?, 9);
     assert_eq!(server.listing("?tools=search", None).await?, 9);
-    assert_eq!(server.listing("?tools=full", None).await?, 153);
-    assert_eq!(server.listing("", Some("full")).await?, 153);
+    assert_eq!(server.listing("?tools=full", None).await?, 158);
+    assert_eq!(server.listing("", Some("full")).await?, 158);
     assert_eq!(server.listing("", Some("search")).await?, 9);
-    assert_eq!(server.listing("?tools=full", Some("full")).await?, 153);
+    assert_eq!(server.listing("?tools=full", Some("full")).await?, 158);
     Ok(())
 }
 
 #[tokio::test]
 async fn the_configured_mode_is_the_http_default_and_a_connection_can_still_choose() -> TestResult {
     let server = Http::spawn("tool_mode = \"full\"\n").await?;
-    assert_eq!(server.listing("", None).await?, 153);
+    assert_eq!(server.listing("", None).await?, 158);
     assert_eq!(server.listing("?tools=search", None).await?, 9);
     assert_eq!(server.listing("", Some("search")).await?, 9);
     Ok(())
@@ -446,7 +446,7 @@ async fn cli(extra_keys: &str, arguments: &[&str]) -> Result<(bool, String, Stri
         &McpSettings {
             api_url: API_URL,
             bot_token: Some(BOT_TOKEN),
-            workspace_id: WORKSPACE,
+            workspace_id: Some(WORKSPACE),
             transport: Some("stdio"),
             bind_addr: None,
         },
@@ -527,12 +527,12 @@ async fn http_mode_spellings_and_repeats() -> TestResult {
     let ok = reqwest::StatusCode::OK;
     let bad = reqwest::StatusCode::BAD_REQUEST;
     for (query, lines, expected) in [
-        ("?tools=FULL", vec![], (ok, 153)),
-        ("?tools=%20full%20", vec![], (ok, 153)),
-        ("?tools=full&tools=full", vec![], (ok, 153)),
+        ("?tools=FULL", vec![], (ok, 158)),
+        ("?tools=%20full%20", vec![], (ok, 158)),
+        ("?tools=full&tools=full", vec![], (ok, 158)),
         ("?other=1&tools=search&x=2", vec![], (ok, 9)),
-        ("", vec!["full", "FULL"], (ok, 153)),
-        ("?tools=full", vec!["full", "full"], (ok, 153)),
+        ("", vec!["full", "FULL"], (ok, 158)),
+        ("?tools=full", vec!["full", "full"], (ok, 158)),
         ("?tools=search&tools=full", vec![], (bad, 0)),
         ("?tools=full&tools=search", vec![], (bad, 0)),
         ("?tools=", vec![], (bad, 0)),
