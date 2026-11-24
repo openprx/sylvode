@@ -75,7 +75,7 @@ pub struct Refusal {
 }
 
 impl Refusal {
-    fn new(code: &'static str, reason: impl Into<String>) -> Self {
+    pub(super) fn new(code: &'static str, reason: impl Into<String>) -> Self {
         Self {
             code,
             reason: reason.into(),
@@ -100,6 +100,9 @@ pub struct Accepted {
     #[allow(dead_code, reason = "the session manager reads it")]
     pub max_attempts: i64,
     pub project_key: String,
+    /// The tmux session of a tmux task, and where its name came from (derived for a headless one).
+    pub tmux: super::tmux::TmuxName,
+    pub name_source: super::tmux::NameSource,
     #[allow(dead_code, reason = "the session manager reads it")]
     pub project_id: String,
     /// The task message of design section 4.9, built from the task view.
@@ -266,26 +269,37 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
     };
     // 7. The working directory. A session that exists is used as it is, wherever its CLI runs, so
     // the allowed roots decide only when the runner would have to create the session (and always
-    // for a headless run). A directory that cannot be used for an existing session is carried on
+    // for a headless run); a session with a configured name is never created, so it is the same.
+    // A directory that cannot be used for an existing session is carried on
     // as the path given, and marked as not checked: should the session be gone when the task is
     // served, the runner declines to create it.
     let raw_dir = str_at(execution, &["working_directory"]).unwrap_or_default();
+    let mut resolved = None;
     let session_exists = match &tmux {
         Some(tmux) => {
-            let Ok(name) = super::tmux::SessionName::new(project_key, &cli) else {
-                return refuse("invalid_project_key", "the project key is not a valid session name");
+            let found = match super::naming::resolve(runner, project_key, &cli, None) {
+                Ok(found) => found,
+                Err(refusal) => return Verdict::Refused(refusal),
             };
+            if let Err(refusal) = super::naming::check_stale(runner, ctx.registry, project_id, project_key) {
+                return Verdict::Refused(refusal);
+            }
             let tmux = tmux.clone();
-            match tokio::task::spawn_blocking(move || tmux.has_session(&name)).await {
+            let target = found.tmux.clone();
+            resolved = Some(found);
+            match tokio::task::spawn_blocking(move || tmux.has_session(&target)).await {
                 Ok(Ok(exists)) => exists,
                 _ => return refuse("tmux_unavailable", "the tmux session could not be looked up"),
             }
         }
         None => false,
     };
+    let never_created = resolved
+        .as_ref()
+        .is_some_and(|found| found.source != super::tmux::NameSource::Derived);
     let (dir, dir_checked) = match roots.check_directory(raw_dir) {
         Ok(dir) => (dir, true),
-        Err(_) if session_exists => (PathBuf::from(raw_dir), false),
+        Err(_) if session_exists || never_created => (PathBuf::from(raw_dir), false),
         Err(refusal) => {
             tracing::info!(code = refusal.code, directory = ?raw_dir, "working directory declined");
             return refuse(refusal.code, refusal.reason);
@@ -311,6 +325,13 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
             "the MCP server (mcp-server) was not found on this runner",
         );
     };
+    let (tmux_name, name_source) = match resolved {
+        Some(found) => (found.tmux, found.source),
+        None => match super::tmux::SessionName::new(project_key, &cli) {
+            Ok(slot) => (super::tmux::TmuxName::derived(&slot), super::tmux::NameSource::Derived),
+            Err(_) => return refuse("cli_unavailable", "the project's CLI is not known to this runner"),
+        },
+    };
     let Some(message) = task_message(&view, task_id, attempt, max_attempts) else {
         return refuse(
             "delivery_mismatch",
@@ -331,6 +352,8 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
         attempt,
         max_attempts,
         project_key: project_key.to_string(),
+        tmux: tmux_name,
+        name_source,
         project_id: project_id.to_string(),
         message,
         dir,

@@ -562,3 +562,88 @@ fn a_failing_codex_is_an_error() {
     fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("chmod");
     assert!(apply_codex(&plan, &script).is_err());
 }
+
+fn named_config(cli: &str) -> Config {
+    Config::from_toml(&format!(
+        "{}\n[[runner.tmux.sessions]]\nproject = \"QLA\"\ncli = \"{cli}\"\nname = \"lead\"\n",
+        include_str!("../../../api/tests/fixtures/runner-config-block.toml")
+    ))
+    .expect("block with a session entry")
+}
+
+/// A project with a configured session: the plan names it, says where the name comes from, never
+/// offers to let the runner create it, and keeps the hook settings under the slot's directory.
+#[test]
+fn a_configured_session_is_named_and_never_offered_to_the_runner_to_create() {
+    let base = Dir::new();
+    let project = base.sub("project");
+    let state = base.0.join("state");
+    let named = plan(
+        &named_config("claude"),
+        &Inputs {
+            key: "QLA",
+            dir: project.clone(),
+            bot_id: BOT,
+            state_dir: &state,
+            runner_exe: Path::new("/opt/sylvode/bin/sylvode-runner"),
+            mcp_server: Path::new("/opt/sylvode/bin/mcp-server"),
+            launch_program: Path::new("/usr/local/bin/claude"),
+            allow_write_call: false,
+        },
+    )
+    .expect("plan");
+    assert_eq!((named.name.as_str(), named.tmux.as_str()), ("QLA-claude", "lead"));
+    assert_eq!(named.source, super::tmux::NameSource::Local);
+    let text = render(&named);
+    for wanted in [
+        "Session name: lead (named in runner.tmux.sessions",
+        "the runner will not create it",
+        "tmux new-session -d -s lead -c",
+    ] {
+        assert!(text.contains(wanted), "{wanted}: {text}");
+    }
+    assert!(!text.contains("let the runner create it"), "{text}");
+    assert!(
+        named
+            .launch
+            .iter()
+            .any(|w| w.contains("sessions/QLA-claude/claude-settings.json")),
+        "{:?}",
+        named.launch
+    );
+    // Without an entry the text is the one it always was.
+    let derived = render(&plan_in(&base, &project));
+    assert!(
+        derived.contains("Session name: QLA-claude\n")
+            && derived.contains("or let the runner create it when it is absent"),
+        "{derived}"
+    );
+}
+
+#[test]
+fn a_configured_codex_session_is_named_in_the_codex_plan() {
+    let base = Dir::new();
+    let project = base.sub("qla");
+    let state = base.0.join("state");
+    let plan = codex_plan(
+        &named_config("codex"),
+        &CodexInputs {
+            key: "QLA",
+            dir: project,
+            bot_id: BOT,
+            state_dir: &state,
+            runner_exe: Path::new("/opt/sylvode/bin/sylvode-runner"),
+            mcp_server: Path::new("/opt/sylvode/bin/mcp-server"),
+            launch_program: Path::new("/usr/local/bin/codex"),
+        },
+    )
+    .expect("plan");
+    assert_eq!((plan.name.as_str(), plan.tmux.as_str()), ("QLA-codex", "lead"));
+    let text = render_codex(&plan).expect("render");
+    assert!(
+        text.contains("Session name: lead (named in runner.tmux.sessions")
+            && text.contains("the runner will not create it")
+            && text.contains("tmux new-session -d -s lead"),
+        "{text}"
+    );
+}

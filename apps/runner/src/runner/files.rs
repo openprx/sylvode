@@ -30,7 +30,7 @@ use serde_json::json;
 
 use super::guide::{Entry, Read_, classify, create_file, open_dir, open_root, read_regular, replace_file};
 use super::launch::{LaunchError, LaunchFiles, SERVER_NAME, claude_hook_command};
-use super::tmux::SessionName;
+use super::tmux::{NameSource, SessionName, TmuxName};
 
 /// The most bytes of one of these files that are read back.
 const MAX_FILE_BYTES: u64 = 64 * 1024;
@@ -149,6 +149,29 @@ pub struct SessionRecord {
     /// BEFORE the paste, consulted by restart recovery only to prevent a second paste.
     #[serde(default)]
     pub pushed: Option<PushedTask>,
+    /// The tmux session the CLI runs in; empty in a record written before the name could differ
+    /// from `name` (then it is the derived name).
+    #[serde(default)]
+    pub tmux_name: String,
+    /// `local`, `server` or `derived`; empty means `derived`.
+    #[serde(default)]
+    pub name_source: String,
+}
+
+impl SessionRecord {
+    /// The where-from of the tmux name.
+    pub fn source(&self) -> NameSource {
+        NameSource::from_record(&self.name_source)
+    }
+
+    /// The tmux session this record says the CLI runs in: the derived name for a derived (or
+    /// old) record, else the recorded name. `None` when it cannot be read.
+    pub fn tmux(&self) -> Option<TmuxName> {
+        match self.source() {
+            NameSource::Derived => SessionName::parse(&self.name).ok().map(|slot| TmuxName::derived(&slot)),
+            NameSource::Local | NameSource::Server => TmuxName::new(&self.tmux_name).ok(),
+        }
+    }
 }
 
 /// A task typed into a session.

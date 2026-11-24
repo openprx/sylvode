@@ -30,6 +30,7 @@ pub mod hooks;
 pub mod launch;
 #[allow(dead_code, reason = "used by the session worker")]
 pub mod machine;
+pub mod naming;
 pub mod paths;
 pub mod profile;
 #[allow(dead_code, reason = "used by the session worker")]
@@ -72,6 +73,8 @@ mod launch_tests;
 mod machine_tests;
 #[cfg(test)]
 mod message_tests;
+#[cfg(test)]
+mod naming_tests;
 #[cfg(test)]
 mod paths_tests;
 #[cfg(test)]
@@ -462,8 +465,7 @@ pub async fn accept(state: &Arc<AppState>, agent: &AgentConfig, payload: &Value)
             if let Ok(files) = &state.runner.state {
                 install_guide(config, files, &accepted).await;
             }
-            let session = tmux::SessionName::new(&accepted.project_key, &accepted.cli)
-                .map_or_else(|_| accepted.project_key.clone(), |name| name.as_str().to_string());
+            let session = accepted.tmux.as_str().to_string();
             let queued = sessions.enqueue(session::TmuxTask::from_accepted(&accepted)).await;
             Ok(queued.map_or_else(
                 || {

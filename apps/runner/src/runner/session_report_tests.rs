@@ -10,7 +10,7 @@ use super::session_report::{
     Assessment, Mcp, McpEntry, Observation, Permissions, ProcRow, SessionState, assess, cli_process, codex_permissions,
     parse_etime, parse_process_rows, permissions_for, postures_of,
 };
-use super::tmux::{ListedPane, PaneId, SessionName};
+use super::tmux::{ListedPane, NameSource, PaneId, SessionName, TmuxName};
 
 /// What the CLI's process arguments look like: the default launch command, an operator's own
 /// start, and a start with the older flag.
@@ -84,6 +84,8 @@ fn record(created_by: CreatedBy) -> SessionRecord {
         dir: "/x".to_string(),
         created_by,
         pushed: None,
+        tmux_name: "QLA-claude".to_string(),
+        name_source: "derived".to_string(),
     }
 }
 
@@ -91,6 +93,8 @@ fn record(created_by: CreatedBy) -> SessionRecord {
 fn healthy() -> Observation {
     Observation {
         name: SessionName::new("QLA", "claude").expect("name"),
+        tmux: TmuxName::derived(&SessionName::new("QLA", "claude").expect("name")),
+        source: NameSource::Derived,
         exists: true,
         panes: vec![pane("%0", 99, "zsh", false), pane("%1", 100, "claude", false)],
         process_names: vec!["claude".to_string(), "claude.exe".to_string()],
@@ -357,4 +361,38 @@ fn codex_permissions_are_read_from_its_words() {
         Permissions::Unknown
     );
     assert_eq!(permissions_for("claude", None, Some(banner)), Permissions::Unknown);
+}
+
+/// A session with a configured name is looked at under that name; an absent one is a warning
+/// (its tasks fail until the operator starts it), a derived absent one is fine.
+#[test]
+fn an_absent_configured_session_is_a_warning() {
+    let mut obs = healthy();
+    obs.exists = false;
+    obs.panes.clear();
+    obs.tmux = TmuxName::new("sv").expect("name");
+    obs.source = NameSource::Local;
+    let absent = row(&obs);
+    assert_eq!((absent.state, absent.status), (SessionState::Absent, Status::Warn));
+    assert_eq!((absent.tmux.as_str(), absent.source), ("sv", NameSource::Local));
+    obs.source = NameSource::Derived;
+    assert_eq!(row(&obs).status, Status::Ok);
+}
+
+/// A foreign `sylvode` entry fails a session the runner may start, and only warns for a configured
+/// one (the operator's own session holds its own entry, which must hold this bot's token).
+#[test]
+fn a_foreign_mcp_entry_is_a_warning_for_a_configured_session() {
+    let mut obs = healthy();
+    obs.mcp_in_args = false;
+    obs.mcp_entry = Some(McpEntry::Elsewhere);
+    let derived = row(&obs);
+    assert_eq!((derived.mcp, derived.status), (Some(Mcp::Other), Status::Fail));
+    obs.tmux = TmuxName::new("sv").expect("name");
+    obs.source = NameSource::Local;
+    let named = row(&obs);
+    assert_eq!((named.mcp, named.status), (Some(Mcp::Other), Status::Warn));
+    // A missing entry still fails a configured session: the CLI cannot reach Sylvode at all.
+    obs.mcp_entry = Some(McpEntry::Absent);
+    assert_eq!(row(&obs).status, Status::Fail);
 }

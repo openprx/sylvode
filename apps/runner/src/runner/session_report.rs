@@ -18,7 +18,7 @@ use super::detect::classify_bottom;
 use super::files::{CreatedBy, SessionRecord, StateDir};
 use super::profile::{McpProbe, profile};
 use super::session::{EnsureDecision, EnsureFacts, decide_ensure};
-use super::tmux::{ListedPane, Pane, SessionName, Tmux};
+use super::tmux::{ListedPane, NameSource, Pane, SessionName, Tmux, TmuxName};
 use super::words_bypass_permissions;
 
 /// `state` of a session row.
@@ -94,7 +94,11 @@ pub enum McpEntry {
 /// What was seen of one session.
 #[derive(Clone, Debug)]
 pub struct Observation {
+    /// The slot, `<KEY>-<cli>`.
     pub name: SessionName,
+    /// The tmux session looked at, and where its name came from.
+    pub tmux: TmuxName,
+    pub source: NameSource,
     pub exists: bool,
     pub panes: Vec<ListedPane>,
     pub process_names: Vec<String>,
@@ -119,6 +123,9 @@ pub struct Observation {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Assessment {
     pub name: SessionName,
+    /// The tmux session looked at; shown by `doctor` and `sessions`, never reported to Sylvode.
+    pub tmux: TmuxName,
+    pub source: NameSource,
     /// The bot of the connection that serves the session, as recorded (empty when unknown).
     pub bot_id: String,
     pub state: SessionState,
@@ -212,6 +219,8 @@ pub fn assess(obs: &Observation) -> Assessment {
     let created_by_record = obs.record.as_ref().map(|record| record.created_by);
     let mut row = Assessment {
         name: obs.name.clone(),
+        tmux: obs.tmux.clone(),
+        source: obs.source,
         bot_id: obs
             .record
             .as_ref()
@@ -228,7 +237,11 @@ pub fn assess(obs: &Observation) -> Assessment {
         status: Status::Ok,
     };
     if !obs.exists {
-        // The session starts with the next task.
+        // A derived session starts with the next task; a configured one is never created, so its
+        // tasks fail until the operator starts it.
+        if obs.source != NameSource::Derived {
+            row.status = Status::Warn;
+        }
         return row;
     }
     let bot = obs.record.as_ref().map_or("", |record| record.bot_id.as_str());
@@ -236,6 +249,7 @@ pub fn assess(obs: &Observation) -> Assessment {
         session_exists: true,
         panes: &obs.panes,
         process_names: &obs.process_names,
+        allow_create: obs.source == NameSource::Derived,
         record: obs.record.as_ref(),
         task_bot_id: bot,
     });
@@ -250,7 +264,7 @@ pub fn assess(obs: &Observation) -> Assessment {
             row.status = Status::Fail;
             return row;
         }
-        EnsureDecision::Create | EnsureDecision::BotMismatch => return row,
+        EnsureDecision::Create | EnsureDecision::Absent | EnsureDecision::BotMismatch => return row,
         EnsureDecision::Use { pane, created_by } => {
             row.created_by = Some(created_by);
             row.pane_id = Some(pane.id.as_str().to_string());
@@ -286,8 +300,12 @@ pub fn assess(obs: &Observation) -> Assessment {
         (Some(Mcp::Ok), Some(true)) => Some(Mcp::Stale),
         (other, _) => other,
     };
-    let failing = matches!(row.mcp, Some(Mcp::Missing | Mcp::Other));
-    let warning = dialog
+    // A session with a configured name has its own `sylvode` entry; it must hold this bot's token,
+    // which the runner cannot see: a warning, not a failure.
+    let own_entry = row.mcp == Some(Mcp::Other) && obs.source != NameSource::Derived;
+    let failing = matches!(row.mcp, Some(Mcp::Missing | Mcp::Other)) && !own_entry;
+    let warning = own_entry
+        || dialog
         || row.permissions == Some(Permissions::Bypass)
         || row.hooks == Some(false)
         || row.mcp == Some(Mcp::Stale);
@@ -419,6 +437,19 @@ pub fn open_state(config: &crate::config::Config) -> Option<(StateDir, std::path
     StateDir::open(&path).ok().map(|state| (state, path))
 }
 
+/// The tmux session a slot is looked for in: the configured one when there is an entry, else the
+/// one its record names, else the derived name.
+fn target_of(runner: &RunnerConfig, slot: &SessionName, record: Option<&SessionRecord>) -> (TmuxName, NameSource) {
+    if let Some(entry) = runner.session_override(slot.key(), slot.cli())
+        && let Ok(name) = TmuxName::new(&entry.name)
+    {
+        return (name, NameSource::Local);
+    }
+    record
+        .and_then(|record| record.tmux().map(|name| (name, record.source())))
+        .unwrap_or_else(|| (TmuxName::derived(slot), NameSource::Derived))
+}
+
 /// Looks at one session with read-only calls.
 #[must_use]
 pub fn observe(
@@ -434,14 +465,17 @@ pub fn observe(
         |settings| settings.process_names.to_vec(),
     );
     let record = state.read_session_record(name);
-    let exists = tmux.has_session(name).unwrap_or(false);
+    let (target, source) = target_of(&config.runner, name, record.as_ref());
+    let exists = tmux.has_session(&target).unwrap_or(false);
     let panes = if exists {
-        tmux.list_panes(name).unwrap_or_default()
+        tmux.list_panes(&target).unwrap_or_default()
     } else {
         Vec::new()
     };
     let mut obs = Observation {
         name: name.clone(),
+        tmux: target.clone(),
+        source,
         exists,
         panes,
         process_names,
@@ -463,6 +497,7 @@ pub fn observe(
         session_exists: true,
         panes: &obs.panes,
         process_names: &obs.process_names,
+        allow_create: source == NameSource::Derived,
         record: record.as_ref(),
         task_bot_id: bot,
     });
@@ -470,7 +505,7 @@ pub fn observe(
         return obs;
     };
     let pane = Pane {
-        name: name.clone(),
+        name: target,
         id: listed.id.clone(),
         pid: listed.pid,
     };
@@ -543,17 +578,27 @@ fn context(config: &crate::config::Config) -> Option<Context> {
     })
 }
 
-/// The assessments of every session the runner has a record of.
+/// The assessments of every session the runner has a record of, and of every configured one.
 #[must_use]
 pub fn assess_recorded(config: &crate::config::Config) -> Vec<Assessment> {
     let Some(context) = context(config) else {
         return Vec::new();
     };
-    context
+    let mut names: Vec<SessionName> = context
         .state
         .recorded_names()
         .iter()
         .filter_map(|name| SessionName::parse(name).ok())
+        .collect();
+    for entry in &config.runner.tmux.sessions {
+        if let Ok(name) = SessionName::new(&entry.project, &entry.cli)
+            && !names.contains(&name)
+        {
+            names.push(name);
+        }
+    }
+    names
+        .into_iter()
         .map(|name| {
             let obs = observe(
                 config,

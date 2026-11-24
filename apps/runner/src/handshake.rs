@@ -233,8 +233,8 @@ fn posture_row(cli: &str, posture: crate::runner::session_report::Posture) -> Va
     })
 }
 
-/// A `tmux_session` row: the project key, the CLI type and fields of fixed vocabularies; no session
-/// name, path or pane id.
+/// A `tmux_session` row: the project key, the CLI type and fields of fixed vocabularies (including
+/// where the tmux name came from, never the name); no session name, path or pane id.
 fn session_row(session: &crate::runner::session_report::Assessment) -> Value {
     let status = match session.status {
         Status::Ok | Status::Info => "ok",
@@ -247,6 +247,7 @@ fn session_row(session: &crate::runner::session_report::Assessment) -> Value {
     row.insert("cli".to_string(), json!(session.name.cli()));
     row.insert("status".to_string(), json!(status));
     row.insert("state".to_string(), json!(session.state.word()));
+    row.insert("session_source".to_string(), json!(session.source.as_str()));
     if let Some(created_by) = session.created_by {
         row.insert("created_by".to_string(), json!(created_by.word()));
     }
@@ -508,9 +509,11 @@ mod tests {
     fn the_posture_and_session_rows_have_exactly_the_shape_the_api_keeps() {
         use crate::runner::files::CreatedBy;
         use crate::runner::session_report::{Assessment, Mcp, Permissions, Posture, SessionState};
-        use crate::runner::tmux::SessionName;
+        use crate::runner::tmux::{NameSource, SessionName, TmuxName};
         let name = SessionName::new("QLA", "claude").expect("name");
         let running = Assessment {
+            tmux: TmuxName::new("lead").expect("tmux name"),
+            source: NameSource::Local,
             name,
             bot_id: "b".to_string(),
             state: SessionState::Running,
@@ -524,6 +527,8 @@ mod tests {
             status: Status::Warn,
         };
         let absent = Assessment {
+            tmux: TmuxName::derived(&running.name),
+            source: NameSource::Derived,
             state: SessionState::Absent,
             created_by: None,
             hooks: None,
@@ -560,15 +565,15 @@ mod tests {
                 {"component": "posture", "cli": "claude", "status": "warn", "bypass": {"tmux": true, "headless": false}},
                 {"component": "posture", "cli": "codex", "status": "ok", "bypass": {"tmux": false, "headless": false}},
                 {"component": "tmux_session", "project_key": "QLA", "cli": "claude", "status": "warn",
-                 "state": "running", "created_by": "operator", "hooks": "seen", "permissions": "bypass",
-                 "mcp": "stale"},
+                 "state": "running", "session_source": "local", "created_by": "operator", "hooks": "seen",
+                 "permissions": "bypass", "mcp": "stale"},
                 {"component": "tmux_session", "project_key": "QLA", "cli": "claude", "status": "ok",
-                 "state": "absent"},
+                 "state": "absent", "session_source": "derived"},
             ])
         );
         // No session name, pane id or foreground command leaves the process.
         let text = body.to_string();
-        for leaked in ["QLA-claude", "%3", "pane", "foreground", "\"b\""] {
+        for leaked in ["QLA-claude", "lead", "%3", "pane", "foreground", "\"b\""] {
             assert!(!text.contains(leaked), "{leaked}: {text}");
         }
     }

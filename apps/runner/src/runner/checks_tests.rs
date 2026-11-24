@@ -738,3 +738,82 @@ async fn the_roots_are_checked_only_when_the_session_is_absent() {
     // A headless run has no session: the roots always apply.
     assert_eq!(refused(&run(outside, "headless").await).0, "path_outside_allowlist");
 }
+
+/// A fake tmux that answers its version, logs the arguments of `has-session` and says the session
+/// does not exist.
+fn logging_tmux(fx: &Fixture) -> (PathBuf, PathBuf) {
+    let log = fx.base.path().join("has-session.log");
+    let tmux = fx.base.path().join("tmux");
+    fs::write(
+        &tmux,
+        format!(
+            "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = -V ] && {{ echo 'tmux 3.7b'; exit 0; }}; done\n\
+             for a in \"$@\"; do [ \"$a\" = has-session ] && {{ echo \"$@\" >> '{}'; exit 1; }}; done\nexit 0\n",
+            log.display()
+        ),
+    )
+    .expect("tmux");
+    fs::set_permissions(&tmux, fs::Permissions::from_mode(0o755)).expect("chmod");
+    (tmux, log)
+}
+
+/// Without a `[[runner.tmux.sessions]]` entry the session is the derived one and the delivery is
+/// checked as before.
+#[tokio::test]
+async fn without_an_entry_the_session_is_the_derived_one() {
+    let fx = Fixture::new();
+    let (tmux, log) = logging_tmux(&fx);
+    let m = ok_mock(task_view(&fx.project_dir, "tmux", "claude"));
+    let (addr, _server) = serve(m.clone()).await;
+    let mut config = fx.config(addr);
+    config.runner.tmux.binary = tmux.to_string_lossy().into_owned();
+    let Verdict::Run(accepted) = fx.run(&config, m, addr, &delivery()).await else {
+        panic!("accepted")
+    };
+    assert_eq!(accepted.tmux.as_str(), "SVWL-claude");
+    assert_eq!(accepted.name_source, super::tmux::NameSource::Derived);
+    assert!(accepted.dir_checked);
+    assert!(fs::read_to_string(log).expect("log").contains("=SVWL-claude"));
+}
+
+/// A configured session is looked up under its own name, and because the runner never creates it
+/// the allowed roots do not decide, even when it is absent.
+#[tokio::test]
+async fn a_configured_session_is_looked_up_by_name_and_its_directory_is_not_checked() {
+    let fx = Fixture::new();
+    let (tmux, log) = logging_tmux(&fx);
+    let outside = fx.base.sub("elsewhere");
+    let m = ok_mock(task_view(&outside, "tmux", "claude"));
+    let (addr, _server) = serve(m.clone()).await;
+    let extra = "[[runner.tmux.sessions]]\nproject = \"SVWL\"\ncli = \"claude\"\nname = \"sv\"\n";
+    let mut config = fx.config_with(addr, &format!("[runner.tmux]\nwindow_width = 200\n{extra}"));
+    config.runner.tmux.binary = tmux.to_string_lossy().into_owned();
+    let Verdict::Run(accepted) = fx.run(&config, m, addr, &delivery()).await else {
+        panic!("accepted")
+    };
+    assert_eq!(accepted.tmux.as_str(), "sv");
+    assert_eq!(accepted.name_source, super::tmux::NameSource::Local);
+    assert!(!accepted.dir_checked);
+    assert_eq!(accepted.dir, outside);
+    let seen = fs::read_to_string(log).expect("log");
+    assert!(seen.contains("=sv") && !seen.contains("SVWL-claude"), "{seen}");
+}
+
+/// A local entry is keyed by project key: when the project of a delivery owns another key that has
+/// entries, the project was renamed and the delivery is refused.
+#[tokio::test]
+async fn a_renamed_project_is_refused_while_the_old_key_has_an_entry() {
+    let fx = Fixture::new();
+    let (tmux, _log) = logging_tmux(&fx);
+    fx.registry.bind(PROJECT, "OLD").expect("bind");
+    let m = ok_mock(task_view(&fx.project_dir, "tmux", "claude"));
+    let (addr, _server) = serve(m.clone()).await;
+    let extra = "[[runner.tmux.sessions]]\nproject = \"OLD\"\ncli = \"claude\"\nname = \"sv\"\n";
+    let mut config = fx.config_with(addr, &format!("[runner.tmux]\nwindow_width = 200\n{extra}"));
+    config.runner.tmux.binary = tmux.to_string_lossy().into_owned();
+    let (code, reason) = refused(&fx.run(&config, m, addr, &delivery()).await);
+    assert_eq!(code, "session_config_stale");
+    assert!(reason.contains("OLD") && reason.contains("SVWL"), "{reason}");
+    // Nothing was bound for the new key.
+    assert!(fx.registry.owner("SVWL").is_none());
+}

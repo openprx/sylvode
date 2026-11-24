@@ -27,7 +27,7 @@ use super::launch::{
     CodexLaunchFiles, LaunchFiles, SEARCH_MODE_TOOLS, SERVER_NAME, WRITE_TOOL, codex_session_argv, hook_words_for,
     mcp_tool, session_argv, shell_quote, toml_array, toml_string,
 };
-use super::tmux::{SessionName, WorkDir};
+use super::tmux::{NameSource, SessionName, TmuxName, WorkDir};
 use crate::config::Config;
 
 /// What the command line asked for.
@@ -45,7 +45,11 @@ pub struct SetupArgs {
 /// Everything `setup` prints or applies, worked out before anything is done.
 #[derive(Debug)]
 pub struct Plan {
+    /// The slot, `<KEY>-claude`: the state directory of the session.
     pub name: SessionName,
+    /// The tmux session the runner uses for the project, and where its name comes from.
+    pub tmux: TmuxName,
+    pub source: NameSource,
     pub dir: PathBuf,
     pub launch: Vec<String>,
     pub mcp_entry: Value,
@@ -76,7 +80,8 @@ pub fn plan(config: &Config, inputs: &Inputs<'_>) -> Result<Plan, String> {
     if !valid_project_key(inputs.key) {
         return Err("the project key must match ^[A-Z0-9]{1,32}$".to_string());
     }
-    let name = SessionName::new(inputs.key, "claude").map_err(|e| e.to_string())?;
+    let resolved = super::naming::resolve(&config.runner, inputs.key, "claude", None).map_err(|r| r.reason)?;
+    let name = resolved.slot;
     WorkDir::new(&inputs.dir).map_err(|e| e.to_string())?;
     let mcp_json = inputs
         .state_dir
@@ -109,6 +114,8 @@ pub fn plan(config: &Config, inputs: &Inputs<'_>) -> Result<Plan, String> {
     }
     Ok(Plan {
         name,
+        tmux: resolved.tmux,
+        source: resolved.source,
         dir: inputs.dir.clone(),
         launch,
         mcp_entry: mcp_server_entry(server, toml_text),
@@ -116,6 +123,23 @@ pub fn plan(config: &Config, inputs: &Inputs<'_>) -> Result<Plan, String> {
         hooks: claude_hooks(&files, true)?,
         allow,
     })
+}
+
+/// The session name and how to create the session. A session named in the configuration is never
+/// created by the runner.
+fn session_intro(slot: &SessionName, tmux: &TmuxName, source: NameSource, dir: &str) -> String {
+    let name = tmux.as_str();
+    let create = format!("tmux new-session -d -s {name} -c {}", shell_quote(dir));
+    match source {
+        NameSource::Derived => format!(
+            "Session name: {name}\n\nCreate the session yourself (or let the runner create it when it is absent):\n  {create}\n"
+        ),
+        NameSource::Local | NameSource::Server => format!(
+            "Session name: {name} (named in runner.tmux.sessions; the runner keeps its files under {})\n\n\
+             Create the session yourself (the runner will not create it):\n  {create}\n",
+            slot.as_str()
+        ),
+    }
 }
 
 /// The text `setup` prints without `--apply`.
@@ -128,13 +152,7 @@ pub fn render(plan: &Plan) -> String {
         .collect::<Vec<_>>()
         .join(" ");
     let mut out = String::new();
-    let name = plan.name.as_str();
-    let _ = writeln!(out, "Session name: {name}");
-    let _ = writeln!(
-        out,
-        "\nCreate the session yourself (or let the runner create it when it is absent):\n  tmux new-session -d -s {name} -c {}",
-        shell_quote(&dir)
-    );
+    let _ = out.write_str(&session_intro(&plan.name, &plan.tmux, plan.source, &dir));
     let _ = writeln!(
         out,
         "\nStart claude in it with this command (one line; the settings file is written when the runner \
@@ -452,7 +470,11 @@ pub fn run_setup(args: &SetupArgs) -> ExitCode {
 /// Everything `setup codex` prints or applies, worked out before anything is done.
 #[derive(Debug)]
 pub struct CodexPlan {
+    /// The slot, `<KEY>-codex`.
     pub name: SessionName,
+    /// The tmux session the runner uses for the project, and where its name comes from.
+    pub tmux: TmuxName,
+    pub source: NameSource,
     pub dir: PathBuf,
     /// The full launch line, `codex` program first.
     pub launch: Vec<String>,
@@ -483,7 +505,8 @@ pub fn codex_plan(config: &Config, inputs: &CodexInputs<'_>) -> Result<CodexPlan
     if !valid_project_key(inputs.key) {
         return Err("the project key must match ^[A-Z0-9]{1,32}$".to_string());
     }
-    let name = SessionName::new(inputs.key, "codex").map_err(|e| e.to_string())?;
+    let resolved = super::naming::resolve(&config.runner, inputs.key, "codex", None).map_err(|r| r.reason)?;
+    let name = resolved.slot;
     WorkDir::new(&inputs.dir).map_err(|e| e.to_string())?;
     let mcp_toml = inputs.state_dir.join("mcp").join(format!("{}.toml", inputs.bot_id));
     let hook_socket = inputs.state_dir.join("hook.sock");
@@ -498,6 +521,8 @@ pub fn codex_plan(config: &Config, inputs: &CodexInputs<'_>) -> Result<CodexPlan
     let notify = hook_words_for(inputs.runner_exe, &hook_socket, "codex", "turn-ended").map_err(|e| e.to_string())?;
     Ok(CodexPlan {
         name,
+        tmux: resolved.tmux,
+        source: resolved.source,
         dir: inputs.dir.clone(),
         launch,
         mcp_server: inputs.mcp_server.to_path_buf(),
@@ -544,13 +569,7 @@ pub fn render_codex(plan: &CodexPlan) -> Result<String, String> {
         .split_first()
         .ok_or_else(|| "the MCP server words are empty".to_string())?;
     let mut out = String::new();
-    let name = plan.name.as_str();
-    let _ = writeln!(out, "Session name: {name}");
-    let _ = writeln!(
-        out,
-        "\nCreate the session yourself (or let the runner create it when it is absent):\n  tmux new-session -d -s {name} -c {}",
-        shell_quote(&dir)
-    );
+    let _ = out.write_str(&session_intro(&plan.name, &plan.tmux, plan.source, &dir));
     let _ = writeln!(
         out,
         "\nStart codex in it with this command (one line; nothing is written to your codex configuration):\n  {line}"

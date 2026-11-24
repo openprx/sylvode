@@ -42,8 +42,8 @@ use super::message::{reminder_not_acknowledged, reminder_still_open};
 use super::profile::profile;
 use super::sv_client::SvClient;
 use super::tmux::{
-    BracketedPasteConfirmed, ListedPane, Pane, PaneId, PasteGuard, Refusal, SessionName, SocketName, Tmux, TmuxError,
-    WorkDir,
+    BracketedPasteConfirmed, ListedPane, NameSource, Pane, PaneId, PasteGuard, Refusal, SessionName, SocketName, Tmux,
+    TmuxError, TmuxName, WorkDir,
 };
 use crate::background::Background;
 use crate::config::Config;
@@ -59,6 +59,9 @@ pub struct TmuxTask {
     pub bot: BotCreds,
     pub project_id: String,
     pub project_key: String,
+    /// The tmux session the task is typed into, and where its name came from.
+    pub tmux: TmuxName,
+    pub name_source: NameSource,
     pub dir: PathBuf,
     /// The directory passed the allowed roots at delivery (it did not when the session existed
     /// then, and the runner must not create one in it).
@@ -90,6 +93,8 @@ impl TmuxTask {
             bot: accepted.bot.clone(),
             project_id: accepted.project_id.clone(),
             project_key: accepted.project_key.clone(),
+            tmux: accepted.tmux.clone(),
+            name_source: accepted.name_source,
             dir: accepted.dir.clone(),
             dir_checked: accepted.dir_checked,
             cli: accepted.cli.clone(),
@@ -110,6 +115,8 @@ pub struct EnsureFacts<'a> {
     pub panes: &'a [ListedPane],
     /// The CLI's `process_names`.
     pub process_names: &'a [String],
+    /// The runner may create the session when it is absent (a derived name only).
+    pub allow_create: bool,
     /// What the runner recorded about the session, if anything.
     pub record: Option<&'a SessionRecord>,
     /// The bot of the task's connection.
@@ -119,8 +126,10 @@ pub struct EnsureFacts<'a> {
 /// What to do with the session of a task (design 1.3, E1 to E3, and T4).
 #[derive(Debug, PartialEq, Eq)]
 pub enum EnsureDecision {
-    /// E1: no such session; the runner creates it.
+    /// E1: no such session; the runner creates it (a derived name only).
     Create,
+    /// No such session, and its name is a configured one: the runner never creates it.
+    Absent,
     /// E2: use this pane as it is.
     Use { pane: ListedPane, created_by: CreatedBy },
     /// E3: the session has no pane running the CLI (a leftover shell, or a dead pane).
@@ -141,7 +150,11 @@ fn recorded_pane<'a>(record: &SessionRecord, panes: &'a [ListedPane]) -> Option<
 /// Design 1.3: which pane a task goes to, or what is wrong. Pure.
 pub fn decide_ensure(facts: &EnsureFacts<'_>) -> EnsureDecision {
     if !facts.session_exists {
-        return EnsureDecision::Create;
+        return if facts.allow_create {
+            EnsureDecision::Create
+        } else {
+            EnsureDecision::Absent
+        };
     }
     // A record whose pane is still there belongs to a live session; one whose pane is gone is stale
     // and says nothing about who serves the session now.
@@ -174,12 +187,23 @@ pub fn decide_ensure(facts: &EnsureFacts<'_>) -> EnsureDecision {
 }
 
 /// The failure text of a decision that cannot be served; it names the session and never a path.
-pub fn decline_for(decision: &EnsureDecision, name: &str) -> Option<(String, bool)> {
+pub fn decline_for(decision: &EnsureDecision, name: &str, cli: &str, source: NameSource) -> Option<(String, bool)> {
     match decision {
         EnsureDecision::NotRunning => Some((
+            if source == NameSource::Derived {
+                format!(
+                    "the CLI is not running in tmux session {name}; attach with tmux attach -t {name} and start it, \
+                     or end the session so the runner starts it"
+                )
+            } else {
+                format!("the CLI is not running in tmux session {name}; attach with tmux attach -t {name} and start it")
+            },
+            true,
+        )),
+        EnsureDecision::Absent => Some((
             format!(
-                "the CLI is not running in tmux session {name}; attach with tmux attach -t {name} and start it, \
-                 or end the session so the runner starts it"
+                "tmux session {name} does not exist; start it and run {cli} in it (tmux new-session -s {name}); \
+                 the runner does not create sessions with a configured name"
             ),
             true,
         )),
@@ -365,8 +389,7 @@ impl SessionManager {
                 .as_ref()
                 .is_some_and(|pushed| pushed.task_id == task_id && pushed.attempt == attempt)
         });
-        let pane = record.as_ref().and_then(|record| pane_of(name, record));
-        let name = name.clone();
+        let pane = record.as_ref().and_then(pane_of);
         let needle = format!("id={task_id}");
         tokio::task::spawn_blocking(move || {
             let gone = Probe {
@@ -374,7 +397,7 @@ impl SessionManager {
                 ..Probe::default()
             };
             let Some(pane) = pane else { return gone };
-            if !tmux.has_session(&name).unwrap_or(false) || !pane_alive(&tmux, &pane) {
+            if !tmux.has_session(&pane.name).unwrap_or(false) || !pane_alive(&tmux, &pane) {
                 return gone;
             }
             let hit = tmux
@@ -390,6 +413,16 @@ impl SessionManager {
         .unwrap_or_default()
     }
 
+    /// The tmux session `name`'s record says tasks were typed into, for messages; the slot id
+    /// when there is no record.
+    pub fn recorded_tmux_name(&self, name: &SessionName) -> String {
+        self.shared
+            .state
+            .read_session_record(name)
+            .and_then(|record| record.tmux())
+            .map_or_else(|| name.as_str().to_string(), |tmux| tmux.as_str().to_string())
+    }
+
     /// Hands recovered tasks to the worker of `name`: the pushed one is supervised again, the rest
     /// are queued in the order given.
     pub async fn recover(&self, name: SessionName, adopt: Option<Adopt>, requeue: Vec<TmuxTask>) {
@@ -397,10 +430,10 @@ impl SessionManager {
     }
 }
 
-/// The pane a record names (id and PID as recorded).
-fn pane_of(name: &SessionName, record: &SessionRecord) -> Option<Pane> {
+/// The pane a record names (id and PID as recorded), in the tmux session the record names.
+fn pane_of(record: &SessionRecord) -> Option<Pane> {
     Some(Pane {
-        name: name.clone(),
+        name: record.tmux()?,
         id: PaneId::new(&record.pane_id).ok()?,
         pid: record.pane_pid,
     })
@@ -491,20 +524,17 @@ pub fn dir_unchanged(dir: &Path) -> bool {
 /// Records `pane` for the hook listener: the socket path of its server (asked once, here) with its
 /// id, replacing whatever the session had recorded. A server that cannot say its socket path
 /// leaves the pane unrecorded, and the session runs on the screen.
-fn register_pane(tmux: &Tmux, panes: &PaneMap, pane: &Pane) {
+fn register_pane(tmux: &Tmux, panes: &PaneMap, slot: &SessionName, pane: &Pane) {
     match tmux.socket_path(pane) {
-        Ok(path) => record_pane(panes, pane, path),
-        Err(e) => tracing::warn!(session = pane.name.as_str(), "no hooks for this pane: {e}"),
+        Ok(path) => record_pane(panes, slot, pane, path),
+        Err(e) => tracing::warn!(session = slot.as_str(), "no hooks for this pane: {e}"),
     }
 }
 
-fn record_pane(panes: &PaneMap, pane: &Pane, socket_path: String) {
+fn record_pane(panes: &PaneMap, slot: &SessionName, pane: &Pane, socket_path: String) {
     let mut map = panes.lock();
-    map.retain(|_, name| name != pane.name.as_str());
-    map.insert(
-        (socket_path, pane.id.as_str().to_string()),
-        pane.name.as_str().to_string(),
-    );
+    map.retain(|_, name| name != slot.as_str());
+    map.insert((socket_path, pane.id.as_str().to_string()), slot.as_str().to_string());
 }
 
 fn unix_now() -> u64 {
@@ -598,14 +628,15 @@ impl Worker {
                     let pane = record
                         .as_ref()
                         .filter(|record| record.project_id == adopt.task.project_id)
-                        .and_then(|record| pane_of(&self.name, record));
+                        .and_then(pane_of);
                     let tmux = self.tmux();
                     let panes = Arc::clone(&self.shared.panes);
+                    let slot = self.name.clone();
                     let alive = match pane.clone() {
                         Some(pane) => tokio::task::spawn_blocking(move || {
                             let alive = pane_alive(&tmux, &pane);
                             if alive {
-                                register_pane(&tmux, &panes, &pane);
+                                register_pane(&tmux, &panes, &slot, &pane);
                             }
                             alive
                         })
@@ -613,7 +644,7 @@ impl Worker {
                         .unwrap_or(false),
                         None => false,
                     };
-                    if let (Some(pane), Some(recorded), true) = (pane, record, alive) {
+                    if let (Some(pane), Some(recorded), true) = (pane, record.clone(), alive) {
                         self.pane = Some(pane);
                         // Until a hook of the pane is admitted, the screen tells the turns.
                         self.screen_mode = true;
@@ -637,7 +668,11 @@ impl Worker {
                     } else {
                         // It was pushed, so it is not typed again: its session cannot be taken
                         // over, and the task fails as retryable (design 7.8).
-                        let reason = format!("runner restarted and session {} was gone", self.name.as_str());
+                        let shown = record
+                            .as_ref()
+                            .and_then(SessionRecord::tmux)
+                            .map_or_else(|| self.name.as_str().to_string(), |tmux| tmux.as_str().to_string());
+                        let reason = format!("runner restarted and session {shown} was gone");
                         actions.push(Action::Fail {
                             task: *adopt.task,
                             reason,
@@ -834,14 +869,30 @@ impl Worker {
         self.shared
             .state
             .read_session_record(&self.name)
-            .and_then(|record| pane_of(&self.name, &record))
+            .and_then(|record| pane_of(&record))
+    }
+
+    /// The tmux session this slot's tasks go to: that of the task being served or next in line,
+    /// else the one the record names, else the derived name.
+    fn target(&self) -> TmuxName {
+        self.machine
+            .current_task()
+            .or_else(|| self.machine.queue.front().map(|entry| &entry.item))
+            .map(|task| task.tmux.clone())
+            .or_else(|| {
+                self.shared
+                    .state
+                    .read_session_record(&self.name)
+                    .and_then(|record| record.tmux())
+            })
+            .unwrap_or_else(|| TmuxName::derived(&self.name))
     }
 
     async fn alive(&self) -> bool {
         let Some(pane) = self.pane.clone() else {
             // No pane is known yet; a session that exists is looked for once.
             let tmux = self.tmux();
-            let name = self.name.clone();
+            let name = self.target();
             return tokio::task::spawn_blocking(move || tmux.has_session(&name).unwrap_or(false))
                 .await
                 .unwrap_or(false);
@@ -1093,6 +1144,11 @@ impl Worker {
             Ok(create) => create,
             Err(reason) => return declined(&reason, false),
         };
+        // The slot can be served by another tmux session than before (the configuration changed):
+        // the pane of the old one is let go.
+        if self.pane.as_ref().is_some_and(|pane| pane.name != task.tmux) {
+            self.pane = None;
+        }
         let process_names = process_names(&self.shared.config, &task.cli);
         let tmux = self.tmux();
         let name = self.name.clone();
@@ -1334,7 +1390,7 @@ struct EnsureResult {
 #[allow(clippy::too_many_arguments, reason = "one call gathers the facts of one session")]
 fn ensure_blocking(
     tmux: &Tmux,
-    name: &SessionName,
+    slot: &SessionName,
     task: &TmuxTask,
     create: Create,
     process_names: &[String],
@@ -1349,8 +1405,9 @@ fn ensure_blocking(
         record: None,
         launched: false,
     };
+    let target = &task.tmux;
     let new_record = |pane_id: &PaneId, pid: u32, created_by: CreatedBy| SessionRecord {
-        name: name.as_str().to_string(),
+        name: slot.as_str().to_string(),
         project_id: task.project_id.clone(),
         bot_id: task.bot.bot_id.clone(),
         cli: task.cli.clone(),
@@ -1359,17 +1416,20 @@ fn ensure_blocking(
         dir: task.dir.to_string_lossy().into_owned(),
         created_by,
         pushed: None,
+        tmux_name: target.as_str().to_string(),
+        name_source: task.name_source.as_str().to_string(),
     };
-    let exists = tmux.has_session(name)?;
-    let panes = if exists { tmux.list_panes(name)? } else { Vec::new() };
+    let exists = tmux.has_session(target)?;
+    let panes = if exists { tmux.list_panes(target)? } else { Vec::new() };
     let decision = decide_ensure(&EnsureFacts {
         session_exists: exists,
         panes: &panes,
         process_names,
+        allow_create: task.name_source == NameSource::Derived,
         record,
         task_bot_id: &task.bot.bot_id,
     });
-    if let Some((reason, retryable)) = decline_for(&decision, name.as_str()) {
+    if let Some((reason, retryable)) = decline_for(&decision, target.as_str(), &task.cli, task.name_source) {
         return Ok(declined(reason, retryable));
     }
     match decision {
@@ -1383,7 +1443,7 @@ fn ensure_blocking(
                     format!(
                         "tmux session {} is gone and its working directory is not inside this runner's allowed roots, \
                          so the runner will not start one there",
-                        name.as_str()
+                        target.as_str()
                     ),
                     true,
                 ));
@@ -1398,13 +1458,13 @@ fn ensure_blocking(
             }
             let created = job
                 .write()
-                .and_then(|()| tmux.new_session(name, &dir, cfg.window_width, cfg.window_height, &argv));
+                .and_then(|()| tmux.new_session(target, &dir, cfg.window_width, cfg.window_height, &argv));
             let (pane, socket_path) = match created {
                 Ok(created) => (created.pane, created.socket_path),
                 Err(e) => {
-                    tracing::error!("tmux session {} was not created: {e}", name.as_str());
+                    tracing::error!("tmux session {} was not created: {e}", target.as_str());
                     return Ok(declined(
-                        format!("the runner could not start tmux session {}", name.as_str()),
+                        format!("the runner could not start tmux session {}", target.as_str()),
                         true,
                     ));
                 }
@@ -1412,8 +1472,8 @@ fn ensure_blocking(
             // Recorded right away, from the answer of `new-session` itself: the CLI's first hook
             // may arrive within milliseconds.
             match socket_path {
-                Some(path) => record_pane(panes_for_hooks, &pane, path),
-                None => register_pane(tmux, panes_for_hooks, &pane),
+                Some(path) => record_pane(panes_for_hooks, slot, &pane, path),
+                None => register_pane(tmux, panes_for_hooks, slot, &pane),
             }
             let record = new_record(&pane.id, pane.pid, CreatedBy::Runner);
             Ok(EnsureResult {
@@ -1426,11 +1486,11 @@ fn ensure_blocking(
         EnsureDecision::Use { pane, created_by } => {
             let previous = record;
             let pane = Pane {
-                name: name.clone(),
+                name: target.clone(),
                 id: pane.id.clone(),
                 pid: pane.pid,
             };
-            register_pane(tmux, panes_for_hooks, &pane);
+            register_pane(tmux, panes_for_hooks, slot, &pane);
             let mut record = new_record(&pane.id, pane.pid, created_by);
             // The same pane keeps what is recorded of the task typed into it.
             record.pushed = previous
@@ -1443,9 +1503,10 @@ fn ensure_blocking(
                 launched: false,
             })
         }
-        EnsureDecision::NotRunning | EnsureDecision::Ambiguous | EnsureDecision::BotMismatch => {
-            Ok(declined("the session cannot be used".to_string(), false))
-        }
+        EnsureDecision::Absent
+        | EnsureDecision::NotRunning
+        | EnsureDecision::Ambiguous
+        | EnsureDecision::BotMismatch => Ok(declined("the session cannot be used".to_string(), false)),
     }
 }
 

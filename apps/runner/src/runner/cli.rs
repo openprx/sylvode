@@ -9,7 +9,7 @@ use std::process::ExitCode;
 use super::detect::{awaits_choice, input_is_empty, looks_busy};
 use super::files::{CreatedBy, SessionRecord, StateDir};
 use super::registry::SessionRegistry;
-use super::tmux::{PaneId, SESSION_CLIS, SessionName, SocketName, Tmux};
+use super::tmux::{PaneId, SESSION_CLIS, SessionName, SocketName, Tmux, TmuxName};
 use crate::config::Config;
 
 /// What a session the runner uses is doing, as far as tmux shows.
@@ -39,8 +39,10 @@ impl RowState {
 /// One line of `sessions`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Row {
-    /// `<KEY>-<cli>`.
+    /// `<KEY>-<cli>`: the slot.
     pub name: String,
+    /// The tmux session the CLI runs in.
+    pub tmux: String,
     pub project_id: String,
     pub cli: String,
     pub state: RowState,
@@ -54,14 +56,15 @@ pub fn render_rows(rows: &[Row]) -> String {
         return "no sessions recorded by this runner\n".to_string();
     }
     let mut out = format!(
-        "{:<44} {:<38} {:<9} {:<6} {}\n",
-        "NAME", "PROJECT", "CLI", "STATE", "STARTED BY"
+        "{:<44} {:<44} {:<38} {:<9} {:<6} {}\n",
+        "NAME", "TMUX SESSION", "PROJECT", "CLI", "STATE", "STARTED BY"
     );
     for row in rows {
         let _ = writeln!(
             out,
-            "{:<44} {:<38} {:<9} {:<6} {}",
+            "{:<44} {:<44} {:<38} {:<9} {:<6} {}",
             row.name,
+            row.tmux,
             row.project_id,
             row.cli,
             row.state.word(),
@@ -103,6 +106,7 @@ pub fn release_check(key: &str, bound: bool, session_exists: bool) -> Result<(),
 }
 
 struct Env {
+    runner: super::config::RunnerConfig,
     state: std::sync::Arc<StateDir>,
     registry: SessionRegistry,
     tmux: Tmux,
@@ -120,20 +124,26 @@ fn load(config_path: &str) -> Result<Env, String> {
     {
         tmux = tmux.with_program(program);
     }
-    Ok(Env { state, registry, tmux })
+    Ok(Env {
+        runner: config.runner,
+        state,
+        registry,
+        tmux,
+    })
 }
 
 fn row_for(env: &Env, record: &SessionRecord) -> Option<Row> {
     let name = SessionName::parse(&record.name).ok()?;
+    let target = record.tmux()?;
     let pane = super::tmux::Pane {
-        name: name.clone(),
+        name: target.clone(),
         id: PaneId::new(&record.pane_id).ok()?,
         pid: record.pane_pid,
     };
-    let state = if env.tmux.has_session(&name).unwrap_or(false) {
+    let state = if env.tmux.has_session(&target).unwrap_or(false) {
         match env.tmux.pane_state(&pane) {
             Ok(state) if state.dead => RowState::Dead,
-            Ok(state) if state.pid == record.pane_pid && state.session_name == name.as_str() => env
+            Ok(state) if state.pid == record.pane_pid && state.session_name == target.as_str() => env
                 .tmux
                 .capture_pane_styled(&pane, None)
                 .map_or(RowState::Busy, |screen| live_state(&record.cli, &screen)),
@@ -143,7 +153,8 @@ fn row_for(env: &Env, record: &SessionRecord) -> Option<Row> {
         RowState::Gone
     };
     Some(Row {
-        name: record.name.clone(),
+        name: name.as_str().to_string(),
+        tmux: target.as_str().to_string(),
         project_id: record.project_id.clone(),
         cli: record.cli.clone(),
         state,
@@ -185,6 +196,26 @@ pub fn run_sessions(config_path: &str) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Every tmux session a key may have for `cli`: the derived one, the configured one and the one
+/// the runner recorded.
+fn session_names_of(env: &Env, key: &str, cli: &str) -> Vec<TmuxName> {
+    let Ok(slot) = SessionName::new(key, cli) else {
+        return Vec::new();
+    };
+    let mut names = vec![TmuxName::derived(&slot)];
+    let configured = env
+        .runner
+        .session_override(key, cli)
+        .and_then(|entry| TmuxName::new(&entry.name).ok());
+    let recorded = env.state.read_session_record(&slot).and_then(|record| record.tmux());
+    for name in configured.into_iter().chain(recorded) {
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names
+}
+
 /// `release KEY`.
 pub fn run_release(config_path: &str, key_text: &str) -> ExitCode {
     let env = match load(config_path) {
@@ -199,9 +230,11 @@ pub fn run_release(config_path: &str, key_text: &str) -> ExitCode {
         Ok(lock) => lock,
         Err(e) => return fail(&format!("release needs the runner stopped: {e}")),
     };
-    let exists = SESSION_CLIS
-        .iter()
-        .any(|cli| SessionName::new(key_text, cli).is_ok_and(|name| env.tmux.has_session(&name).unwrap_or(true)));
+    let exists = SESSION_CLIS.iter().any(|cli| {
+        session_names_of(&env, key_text, cli)
+            .iter()
+            .any(|name| env.tmux.has_session(name).unwrap_or(true))
+    });
     let bound = env.registry.owner(key_text).is_some();
     if let Err(text) = release_check(key_text, bound, exists) {
         return fail(&text);

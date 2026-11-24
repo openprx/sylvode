@@ -9,7 +9,8 @@ use uuid::Uuid;
 
 use super::{
     BracketedPasteConfirmed, BufferName, LIST_PANES_FORMAT, MAX_PUSH_BYTES, PaneId, PasteGuard, PushText, Refusal,
-    SessionName, SocketName, Tmux, TmuxError, WorkDir, exec_argv, one_line, parse_listed_pane, parse_pane_state,
+    SessionName, SocketName, Tmux, TmuxError, TmuxName, WorkDir, exec_argv, one_line, parse_listed_pane,
+    parse_pane_state,
 };
 use super::{Pane, STATE_FORMAT};
 
@@ -40,9 +41,9 @@ impl Drop for Dir {
     }
 }
 
-/// The session `<key>-claude`.
-fn name(key: &str) -> SessionName {
-    SessionName::new(key, "claude").expect("name")
+/// The derived tmux session `<key>-claude`.
+fn name(key: &str) -> TmuxName {
+    TmuxName::derived(&SessionName::new(key, "claude").expect("name"))
 }
 
 /// The recorded pane of session SVWL-claude: pane id as given, process 1 (what the fake answers).
@@ -193,6 +194,77 @@ fn buffer_names_are_per_task() {
     assert_ne!(
         BufferName::for_task(&task()).as_str(),
         BufferName::for_task(&Uuid::new_v4()).as_str()
+    );
+}
+
+/// A configured name is accepted by pattern and never looks like a derived name of any project.
+#[test]
+fn a_configured_tmux_name_follows_the_pattern_and_never_looks_derived() {
+    for good in [
+        "sv",
+        "rf",
+        "prc-cli",
+        "cli",
+        "_x",
+        "a",
+        "SV",
+        "claude",
+        "SV-main",
+        &"a".repeat(64),
+    ] {
+        assert!(TmuxName::new(good).is_ok(), "{good}");
+    }
+    for bad in [
+        "",
+        "-x",
+        "a b",
+        "a:b",
+        "a.b",
+        "a=b",
+        "%1",
+        "a#b",
+        "a/b",
+        "é",
+        "a\nb",
+        &"a".repeat(65),
+        // The derived shape, in any case, for any key.
+        "SV-claude",
+        "sv-claude",
+        "Sv-Codex",
+        "X1-opencode",
+        "sv-CLAUDE",
+        "0-claude",
+    ] {
+        assert!(matches!(TmuxName::new(bad), Err(TmuxError::Invalid(_))), "{bad:?}");
+    }
+    // 33 key characters are not a derived shape, so the name is a plain custom one.
+    assert!(TmuxName::new(&format!("{}-claude", "A".repeat(33))).is_ok());
+    assert_eq!(TmuxName::new("sv").expect("name").session_target(), "=sv");
+    let slot = SessionName::new("SV", "codex").expect("slot");
+    assert_eq!(TmuxName::derived(&slot).as_str(), "SV-codex");
+}
+
+/// Every call that addresses a session takes the exact target of the name it is given, a
+/// configured one included, and the call set is the same as before.
+#[test]
+fn the_call_builders_address_a_configured_session_exactly() {
+    let t = driver("sylvode");
+    let k = TmuxName::new("sv").expect("name");
+    let with = |rest: &[&str]| -> Vec<String> {
+        ["-L", "sylvode"]
+            .iter()
+            .chain(rest.iter())
+            .map(|s| (*s).to_string())
+            .collect()
+    };
+    assert_eq!(t.has_session_call(&k).args, with(&["has-session", "-t", "=sv"]));
+    assert_eq!(
+        t.list_panes_call(&k).args,
+        with(&["list-panes", "-s", "-t", "=sv", "-F", LIST_PANES_FORMAT])
+    );
+    assert_eq!(
+        t.list_clients_call(&k).args,
+        with(&["list-clients", "-F", "#{client_activity}", "-t", "=sv"])
     );
 }
 

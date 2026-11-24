@@ -11,9 +11,10 @@
 //!   only calls that exist are `-V`, `has-session`, `new-session`, `list-panes`, `display-message`,
 //!   `capture-pane`, `list-clients`, `load-buffer`, `paste-buffer`, `delete-buffer` and
 //!   `send-keys ... Enter` (a unit test pins the set).
-//! - **Sessions by exact name.** A session is `<KEY>-<cli>` ([`SessionName`]) and is targeted as
-//!   `=<name>` (exact match: `AB-claude` never reaches `ABC-claude`). The pattern has no `:`, `.`,
-//!   `=` or `%`.
+//! - **Sessions by exact name.** A session is named by a [`TmuxName`] (derived `<KEY>-<cli>`, or an
+//!   existing session the operator configured) and is targeted as `=<name>` (exact match:
+//!   `AB-claude` never reaches `ABC-claude`). The pattern has no `:`, `.`, `=` or `%`. The slot id
+//!   `<KEY>-<cli>` is a [`SessionName`]; it is not a tmux target.
 //! - **Panes by id and PID.** A [`Pane`] holds the pane's id (`%N`, unique for the life of the
 //!   server) and the PID of its process, as the runner recorded them. Every call that types checks
 //!   that the pane still has that id, still belongs to the session and still has that PID, so a
@@ -288,6 +289,98 @@ impl SessionName {
     }
 }
 
+/// Where the tmux name of a session came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NameSource {
+    /// `<KEY>-<cli>`, derived from the slot; the only kind the runner creates.
+    Derived,
+    /// Named by the runner's own configuration (`[[runner.tmux.sessions]]`).
+    Local,
+    /// Named by the server (not read in this stage).
+    Server,
+}
+
+impl NameSource {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Derived => "derived",
+            Self::Local => "local",
+            Self::Server => "server",
+        }
+    }
+
+    /// Reads a recorded value; empty or unknown is `Derived` (a record written before the field existed).
+    pub fn from_record(text: &str) -> Self {
+        match text {
+            "local" => Self::Local,
+            "server" => Self::Server,
+            _ => Self::Derived,
+        }
+    }
+}
+
+/// The name of a tmux session as tmux knows it: `^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$`. A name that
+/// is configured (not derived) must not look like a derived name of any project, compared case
+/// insensitively; [`TmuxName::derived`] is the only way to make one that does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TmuxName(String);
+
+impl TmuxName {
+    /// A configured name.
+    ///
+    /// # Errors
+    ///
+    /// [`TmuxError::Invalid`] for a name outside the pattern or one shaped like `<KEY>-<cli>`.
+    pub fn new(name: &str) -> Result<Self, TmuxError> {
+        let mut chars = name.chars();
+        let first_ok = chars.next().is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
+        let ok = first_ok && name.len() <= 64 && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        if !ok {
+            return Err(TmuxError::Invalid(
+                "tmux session name must match ^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$".to_string(),
+            ));
+        }
+        if looks_derived(name) {
+            return Err(TmuxError::Invalid(
+                "tmux session name must not look like a derived name (<KEY>-claude, <KEY>-codex or <KEY>-opencode)"
+                    .to_string(),
+            ));
+        }
+        Ok(Self(name.to_string()))
+    }
+
+    /// The derived name of a slot: the same text as the slot id.
+    pub fn derived(slot: &SessionName) -> Self {
+        Self(slot.as_str().to_string())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// The exact session target, `=<name>`.
+    pub fn session_target(&self) -> String {
+        format!("={}", self.0)
+    }
+}
+
+/// Whether `name` has the shape `^[A-Z0-9]{1,32}-(claude|codex|opencode)$`, ignoring case.
+fn looks_derived(name: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
+    let lower = name.to_ascii_lowercase();
+    SESSION_CLIS.iter().any(|cli| {
+        lower
+            .strip_suffix(cli)
+            .and_then(|head| head.strip_suffix('-'))
+            .is_some_and(|key| {
+                (1..=32).contains(&key.len())
+                    && upper
+                        .get(..key.len())
+                        .is_some_and(|k| k.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()))
+            })
+    })
+}
+
 /// A pane id, `%N`: unique for the life of the tmux server and unaffected by window moves.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PaneId(String);
@@ -314,7 +407,7 @@ impl PaneId {
 /// uses them ever after.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pane {
-    pub name: SessionName,
+    pub name: TmuxName,
     pub id: PaneId,
     pub pid: u32,
 }
@@ -652,7 +745,7 @@ impl Tmux {
         }
     }
 
-    fn has_session_call(&self, name: &SessionName) -> Call {
+    fn has_session_call(&self, name: &TmuxName) -> Call {
         self.call(&["has-session", "-t", &name.session_target()])
     }
 
@@ -662,7 +755,7 @@ impl Tmux {
         self.call(&["list-panes", "-a", "-F", "#{pane_id}"])
     }
 
-    fn list_panes_call(&self, name: &SessionName) -> Call {
+    fn list_panes_call(&self, name: &TmuxName) -> Call {
         self.call(&[
             "list-panes",
             "-s",
@@ -675,7 +768,7 @@ impl Tmux {
 
     fn new_session_call(
         &self,
-        name: &SessionName,
+        name: &TmuxName,
         dir: &WorkDir,
         width: u16,
         height: u16,
@@ -727,7 +820,7 @@ impl Tmux {
         self.call(&rest)
     }
 
-    fn list_clients_call(&self, name: &SessionName) -> Call {
+    fn list_clients_call(&self, name: &TmuxName) -> Call {
         self.call(&["list-clients", "-F", "#{client_activity}", "-t", &name.session_target()])
     }
 
@@ -856,7 +949,7 @@ impl Tmux {
         }
     }
 
-    fn lock_for(&self, name: &SessionName) -> Arc<Mutex<()>> {
+    fn lock_for(&self, name: &TmuxName) -> Arc<Mutex<()>> {
         let name = format!("{}\0{}", self.socket.as_str(), name.as_str());
         Arc::clone(session_locks().lock().entry(name).or_default())
     }
@@ -875,7 +968,7 @@ impl Tmux {
     /// # Errors
     ///
     /// Any other failure.
-    pub fn has_session(&self, name: &SessionName) -> Result<bool, TmuxError> {
+    pub fn has_session(&self, name: &TmuxName) -> Result<bool, TmuxError> {
         let output = self.run(&self.has_session_call(name))?;
         match output.code {
             Some(0) => Ok(true),
@@ -903,7 +996,7 @@ impl Tmux {
     /// Invalid arguments and tmux failures.
     pub fn new_session(
         &self,
-        name: &SessionName,
+        name: &TmuxName,
         dir: &WorkDir,
         width: u16,
         height: u16,
@@ -937,7 +1030,7 @@ impl Tmux {
     /// # Errors
     ///
     /// A failure status (no such session) or an unreadable answer.
-    pub fn list_panes(&self, name: &SessionName) -> Result<Vec<ListedPane>, TmuxError> {
+    pub fn list_panes(&self, name: &TmuxName) -> Result<Vec<ListedPane>, TmuxError> {
         let output = self.run_ok(&self.list_panes_call(name))?;
         output
             .stdout
@@ -1041,7 +1134,7 @@ impl Tmux {
     /// # Errors
     ///
     /// A failure status.
-    pub fn client_activity(&self, name: &SessionName) -> Result<Vec<u64>, TmuxError> {
+    pub fn client_activity(&self, name: &TmuxName) -> Result<Vec<u64>, TmuxError> {
         let output = self.run_ok(&self.list_clients_call(name))?;
         Ok(output
             .stdout

@@ -144,7 +144,10 @@ async fn recover_bot(
             recorded_pushed: probe.recorded_pushed,
         });
         if step == Step::FailGone {
-            let reason = format!("runner restarted and session {} was gone", name.as_str());
+            let reason = format!(
+                "runner restarted and session {} was gone",
+                sessions.recorded_tmux_name(&name)
+            );
             if let Err(e) = client.fail(task_id, attempt, &reason, true, timeout).await {
                 tracing::warn!("restart recovery: could not fail a task: {e}");
             }
@@ -182,7 +185,10 @@ async fn recover_bot(
             // A session has one open task: a second one that may have been typed in is failed,
             // never typed again.
             Step::Adopt { .. } | Step::Blocked => {
-                let reason = format!("runner restarted with two open tasks in session {}", name.as_str());
+                let reason = format!(
+                    "runner restarted with two open tasks in session {}",
+                    sessions.recorded_tmux_name(&name)
+                );
                 if let Err(e) = client.fail(task_id, attempt, &reason, false, timeout).await {
                     tracing::warn!("restart recovery: could not fail a task: {e}");
                 }

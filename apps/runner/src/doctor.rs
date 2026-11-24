@@ -321,11 +321,12 @@ pub fn session_rows(config: &Config, key: &str) -> Vec<Component> {
         .iter()
         .copied()
         .filter(|cli| {
-            state.as_ref().is_some_and(|state| {
-                crate::runner::tmux::SessionName::new(key, cli)
-                    .ok()
-                    .is_some_and(|name| state.read_session_record(&name).is_some())
-            })
+            config.runner.session_override(key, cli).is_some()
+                || state.as_ref().is_some_and(|state| {
+                    crate::runner::tmux::SessionName::new(key, cli)
+                        .ok()
+                        .is_some_and(|name| state.read_session_record(&name).is_some())
+                })
         })
         .collect();
     if clis.is_empty() {
@@ -353,6 +354,9 @@ pub fn session_row(config: &Config, key: &str, cli: &str) -> Option<Component> {
     if let Some(created_by) = session.created_by {
         row = row.with_detail("created_by", json!(created_by.word()));
     }
+    row = row
+        .with_detail("tmux_session", json!(session.tmux.as_str()))
+        .with_detail("name_source", json!(session.source.as_str()));
     row = row.with_detail("pane", json!(session.pane_id.as_deref().unwrap_or("none")));
     if session.state == SessionState::Ambiguous {
         row = row.with_detail("pane", json!("ambiguous"));
@@ -373,17 +377,25 @@ pub fn session_row(config: &Config, key: &str, cli: &str) -> Option<Component> {
     if let Some(mcp) = session.mcp {
         row = row.with_detail("mcp", json!(mcp.word()));
     }
-    let name = name.as_str();
+    let derived = session.source == crate::runner::tmux::NameSource::Derived;
+    let name = session.tmux.as_str();
     row.hint = match session.state {
-        SessionState::CliNotRunning => Some(format!(
+        SessionState::CliNotRunning if derived => Some(format!(
             "attach with tmux attach -t {name} and start the CLI, or end the session so the runner starts it"
         )),
+        SessionState::CliNotRunning => Some(format!("attach with tmux attach -t {name} and start the CLI")),
         SessionState::Ambiguous => Some(format!("tmux session {name} has more than one pane running the CLI")),
         SessionState::Dialog => Some(format!(
             "the CLI shows a dialog; attach with tmux attach -t {name} and answer it"
         )),
-        SessionState::Absent => Some("not started: the runner starts it with the next task".to_string()),
+        SessionState::Absent if derived => Some("not started: the runner starts it with the next task".to_string()),
+        SessionState::Absent => Some(format!(
+            "tmux session {name} does not exist; start it and run {cli} in it: the runner does not create sessions with a configured name"
+        )),
         SessionState::Running => match (session.mcp, session.permissions) {
+            (Some(crate::runner::session_report::Mcp::Other), _) if !derived => {
+                Some("the session uses its own sylvode entry; it must hold this bot's token".to_string())
+            }
             (Some(crate::runner::session_report::Mcp::Missing | crate::runner::session_report::Mcp::Other), _) => {
                 Some(format!(
                     "the CLI has no Sylvode MCP server for this bot: run `sylvode-runner setup {cli} --project KEY`"

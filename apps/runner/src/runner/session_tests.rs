@@ -3,7 +3,7 @@ use super::session::{
     EnsureDecision, EnsureFacts, admit_hook, decide_ensure, decline_for, dir_unchanged, recovered_blocked,
     report_needed, stable_exe, view_facts,
 };
-use super::tmux::{ListedPane, PaneId};
+use super::tmux::{ListedPane, NameSource, PaneId};
 
 const BOT: &str = "00000000-0000-4000-8000-000000000001";
 const OTHER_BOT: &str = "00000000-0000-4000-8000-000000000002";
@@ -32,6 +32,8 @@ fn record(bot: &str, pane: &str, pid: u32, created_by: CreatedBy) -> SessionReco
         dir: "/x".to_string(),
         created_by,
         pushed: None,
+        tmux_name: "SVWL-claude".to_string(),
+        name_source: "derived".to_string(),
     }
 }
 
@@ -41,6 +43,7 @@ fn decide(panes: &[ListedPane], record: Option<&SessionRecord>) -> EnsureDecisio
         session_exists: true,
         panes,
         process_names: &n,
+        allow_create: true,
         record,
         task_bot_id: BOT,
     })
@@ -57,6 +60,7 @@ fn a_missing_session_is_created() {
                 session_exists: false,
                 panes: &[],
                 process_names: &n,
+                allow_create: true,
                 record,
                 task_bot_id: BOT,
             }),
@@ -122,7 +126,7 @@ fn no_cli_pane_and_two_cli_panes_are_failures_with_the_session_name() {
     ] {
         let decision = decide(&panes, None);
         assert_eq!(decision, EnsureDecision::NotRunning, "{panes:?}");
-        let (text, retryable) = decline_for(&decision, "SVWL-claude").expect("failure");
+        let (text, retryable) = decline_for(&decision, "SVWL-claude", "claude", NameSource::Derived).expect("failure");
         assert!(retryable);
         assert!(
             text.contains("not running in tmux session SVWL-claude")
@@ -134,7 +138,7 @@ fn no_cli_pane_and_two_cli_panes_are_failures_with_the_session_name() {
     let two = [pane("%0", 100, "claude", false), pane("%1", 101, "claude", false)];
     let decision = decide(&two, None);
     assert_eq!(decision, EnsureDecision::Ambiguous);
-    let (text, retryable) = decline_for(&decision, "SVWL-claude").expect("failure");
+    let (text, retryable) = decline_for(&decision, "SVWL-claude", "claude", NameSource::Derived).expect("failure");
     assert!(
         !retryable && text.contains("more than one pane running the CLI"),
         "{text}"
@@ -153,7 +157,7 @@ fn a_session_recorded_for_another_bot_is_refused() {
     let other = record(OTHER_BOT, "%0", 100, CreatedBy::Runner);
     let decision = decide(&panes, Some(&other));
     assert_eq!(decision, EnsureDecision::BotMismatch);
-    let (text, retryable) = decline_for(&decision, "SVWL-claude").expect("failure");
+    let (text, retryable) = decline_for(&decision, "SVWL-claude", "claude", NameSource::Derived).expect("failure");
     assert!(!retryable && text.starts_with("session_bot_mismatch"), "{text}");
     // The same record with a stale pane says nothing about who serves the session now.
     let stale = record(OTHER_BOT, "%0", 999, CreatedBy::Runner);
@@ -165,7 +169,7 @@ fn a_session_recorded_for_another_bot_is_refused() {
     let mine = record(BOT, "%0", 100, CreatedBy::Runner);
     assert!(matches!(decide(&panes, Some(&mine)), EnsureDecision::Use { .. }));
     // Usable decisions carry no failure text.
-    assert!(decline_for(&EnsureDecision::Create, "SVWL-claude").is_none());
+    assert!(decline_for(&EnsureDecision::Create, "SVWL-claude", "claude", NameSource::Derived).is_none());
 }
 
 #[test]
@@ -291,4 +295,59 @@ fn a_codex_turn_end_is_confirmed_only_by_an_idle_empty_composer() {
         assert!(!turn_end_confirmed("codex", screen), "{name}");
     }
     assert!(!turn_end_confirmed("codex", "no prompt on this screen"));
+}
+
+/// A session with a configured name is never created: when it is absent the decision is `Absent`,
+/// whatever the record says, and the text says how to start it. Only a derived name is created.
+#[test]
+fn an_absent_configured_session_is_declined_and_only_a_derived_one_is_created() {
+    let n = names();
+    let stale = record(BOT, "%1", 10, CreatedBy::Runner);
+    for record in [None, Some(&stale)] {
+        let facts = |allow_create| EnsureFacts {
+            session_exists: false,
+            panes: &[],
+            process_names: &n,
+            allow_create,
+            record,
+            task_bot_id: BOT,
+        };
+        assert_eq!(decide_ensure(&facts(true)), EnsureDecision::Create);
+        assert_eq!(decide_ensure(&facts(false)), EnsureDecision::Absent);
+    }
+    let (text, retryable) = decline_for(&EnsureDecision::Absent, "sv", "claude", NameSource::Local).expect("failure");
+    assert!(retryable);
+    assert_eq!(
+        text,
+        "tmux session sv does not exist; start it and run claude in it (tmux new-session -s sv); \
+         the runner does not create sessions with a configured name"
+    );
+    // An existing configured session is decided like any other.
+    let panes = [pane("%0", 100, "zsh", false), pane("%1", 200, "claude", false)];
+    assert!(matches!(decide(&panes, None), EnsureDecision::Use { .. }));
+}
+
+/// The offer to end the session so the runner starts it exists only for a derived name.
+#[test]
+fn only_a_derived_session_is_offered_to_the_runner_to_start() {
+    let derived = decline_for(
+        &EnsureDecision::NotRunning,
+        "SVWL-claude",
+        "claude",
+        NameSource::Derived,
+    )
+    .expect("text");
+    assert!(
+        derived.0.contains("end the session so the runner starts it") && derived.1,
+        "{derived:?}"
+    );
+    for source in [NameSource::Local, NameSource::Server] {
+        let (text, retryable) = decline_for(&EnsureDecision::NotRunning, "sv", "claude", source).expect("text");
+        assert!(retryable);
+        assert!(
+            text.contains("not running in tmux session sv; attach with tmux attach -t sv and start it")
+                && !text.contains("end the session"),
+            "{text}"
+        );
+    }
 }

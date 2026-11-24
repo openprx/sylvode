@@ -4,6 +4,7 @@ use super::files::CreatedBy;
 fn row(name: &str, state: RowState, created_by: CreatedBy) -> Row {
     Row {
         name: name.to_string(),
+        tmux: name.to_string(),
         project_id: "22222222-2222-4222-8222-222222222222".to_string(),
         cli: "claude".to_string(),
         state,
@@ -27,6 +28,21 @@ fn a_key_is_released_only_when_bound_and_without_a_session() {
 #[test]
 fn the_listing_shows_name_project_cli_state_and_who_started_it() {
     assert_eq!(render_rows(&[]), "no sessions recorded by this runner\n");
+    let mut named = row("SVWL-codex", RowState::Idle, CreatedBy::Operator);
+    named.tmux = "lead".to_string();
+    let listed = render_rows(&[named]);
+    let line = listed.lines().nth(1).expect("a row");
+    assert_eq!(
+        &line.split_whitespace().take(2).collect::<Vec<_>>(),
+        &["SVWL-codex", "lead"],
+        "{listed}"
+    );
+    assert!(
+        listed
+            .lines()
+            .next()
+            .is_some_and(|h| h.starts_with("NAME") && h.contains("TMUX SESSION"))
+    );
     let text = render_rows(&[
         row("SVWL-claude", RowState::Idle, CreatedBy::Runner),
         row("QLA-claude", RowState::Gone, CreatedBy::Operator),

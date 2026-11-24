@@ -1914,6 +1914,62 @@ url = "http://127.0.0.1:9000/hook"
         assert!(Config::from_toml(&ok).is_ok());
     }
 
+    /// Each start-up refusal of a `[[runner.tmux.sessions]]` entry names its place in the array.
+    #[test]
+    fn a_bad_session_entry_is_refused_naming_its_index() {
+        let entry = |project: &str, cli: &str, name: &str| {
+            format!("[[runner.tmux.sessions]]\nproject = \"{project}\"\ncli = \"{cli}\"\nname = \"{name}\"\n")
+        };
+        let good = entry("SV", "claude", "sv");
+        for (extra, want) in [
+            (entry("sv", "claude", "x"), "runner.tmux.sessions[0].project"),
+            (entry("", "claude", "x"), "runner.tmux.sessions[0].project"),
+            (entry("SV", "opencode", "x"), "runner.tmux.sessions[0].cli"),
+            (entry("SV", "bash", "x"), "runner.tmux.sessions[0].cli"),
+            (entry("SV", "claude", "a:b"), "runner.tmux.sessions[0].name"),
+            (entry("SV", "claude", "-x"), "runner.tmux.sessions[0].name"),
+            (entry("SV", "claude", "a.b"), "runner.tmux.sessions[0].name"),
+            (entry("SV", "claude", "SV-claude"), "runner.tmux.sessions[0].name"),
+            (entry("SV", "claude", "rf-Codex"), "runner.tmux.sessions[0].name"),
+            (entry("SV", "claude", &"a".repeat(65)), "runner.tmux.sessions[0].name"),
+            (
+                format!("{good}{}", entry("SV", "claude", "other")),
+                "runner.tmux.sessions[1] repeats",
+            ),
+            (
+                format!("{good}{}", entry("RF", "codex", "SV")),
+                "runner.tmux.sessions[1].name repeats",
+            ),
+            (
+                format!("{good}{}{}", entry("RF", "claude", "rf"), entry("PRC", "claude", "Rf")),
+                "runner.tmux.sessions[2].name repeats",
+            ),
+        ] {
+            let error = Config::from_toml(&format!("{GOLDEN_BLOCK}\n{extra}")).expect_err(want);
+            assert!(error.contains(want), "{want}: {error}");
+        }
+        // A key the entry does not know is refused naming it.
+        let error = Config::from_toml(&format!("{GOLDEN_BLOCK}\n{good}create = true\n")).expect_err("unknown key");
+        assert!(error.contains("create"), "{error}");
+        // The same project may name a session per CLI, and the names may look like plain words.
+        let two = format!("{good}{}", entry("SV", "codex", "sv-codex-lead"));
+        let cfg = Config::from_toml(&format!("{GOLDEN_BLOCK}\n{two}")).expect("two entries");
+        assert_eq!(cfg.runner.tmux.sessions.len(), 2);
+        assert_eq!(
+            cfg.runner.session_override("SV", "codex").map(|e| e.name.as_str()),
+            Some("sv-codex-lead")
+        );
+    }
+
+    /// A configuration with no `[[runner.tmux.sessions]]` entry has none, and so every session is
+    /// derived as before.
+    #[test]
+    fn without_session_entries_nothing_is_configured() {
+        let cfg = Config::from_toml(GOLDEN_BLOCK).expect("loads");
+        assert!(cfg.runner.tmux.sessions.is_empty());
+        assert!(cfg.runner.session_override("SV", "claude").is_none());
+    }
+
     /// A deployment without a `runner` agent is unaffected by the `[runner]` block.
     #[test]
     fn without_a_runner_agent_the_runner_block_asks_for_nothing() {

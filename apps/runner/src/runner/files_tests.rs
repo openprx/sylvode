@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use super::files::{BotFiles, CLAUDE_EVENTS, CreatedBy, PushedTask, SessionRecord, StateDir};
 use super::launch::LaunchFiles;
-use super::tmux::SessionName;
+use super::tmux::{NameSource, SessionName};
 
 const BOT: &str = "00000000-0000-4000-8000-000000000001";
 // Built so no token-shaped literal sits in the source.
@@ -274,6 +274,8 @@ fn record() -> SessionRecord {
         dir: "/x".to_string(),
         created_by: CreatedBy::Operator,
         pushed: None,
+        tmux_name: "SVWL-claude".to_string(),
+        name_source: "derived".to_string(),
     }
 }
 
@@ -352,4 +354,46 @@ fn session_start_and_notification_hooks_have_narrow_matchers() {
     );
     assert!(value["hooks"]["Stop"][0].get("matcher").is_none());
     assert!(value["hooks"]["UserPromptSubmit"][0].get("matcher").is_none());
+}
+
+/// A record written before the tmux name was kept still reads, as a derived session: a pushed task
+/// is then not typed twice after an upgrade.
+#[test]
+fn a_record_without_the_tmux_fields_is_a_derived_session() {
+    let old = r#"{"name":"SVWL-claude","project_id":"p","bot_id":"b","cli":"claude","pane_id":"%1","pane_pid":7,
+        "dir":"/x","created_by":"operator","pushed":{"task_id":"t","attempt":1}}"#;
+    let parsed: SessionRecord = serde_json::from_str(old).expect("old record parses");
+    assert_eq!((parsed.tmux_name.as_str(), parsed.name_source.as_str()), ("", ""));
+    assert_eq!(parsed.source(), NameSource::Derived);
+    assert_eq!(
+        parsed.tmux().map(|n| n.as_str().to_string()),
+        Some("SVWL-claude".to_string())
+    );
+    assert!(parsed.pushed.is_some());
+}
+
+/// A configured name is read back from the record under the slot's directory.
+#[test]
+fn a_configured_name_round_trips_in_the_record_of_the_slot() {
+    let dir = Dir::new();
+    let state = StateDir::open(&dir.state()).expect("open");
+    let named = SessionRecord {
+        tmux_name: "sv".to_string(),
+        name_source: "local".to_string(),
+        ..record()
+    };
+    state.write_session_record(&named).expect("write");
+    let slot = SessionName::new("SVWL", "claude").expect("name");
+    let back = state.read_session_record(&slot).expect("read");
+    assert_eq!(back, named);
+    assert_eq!(back.source(), NameSource::Local);
+    assert_eq!(back.tmux().map(|n| n.as_str().to_string()), Some("sv".to_string()));
+    assert!(state.root().join("sessions/SVWL-claude/session.json").is_file());
+    assert!(!state.root().join("sessions/sv").exists());
+    // A recorded configured name that is not valid is not trusted.
+    let bad = SessionRecord {
+        tmux_name: "a:b".to_string(),
+        ..named
+    };
+    assert!(bad.tmux().is_none());
 }

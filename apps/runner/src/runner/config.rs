@@ -70,6 +70,22 @@ pub struct RunnerTmuxConfig {
     /// tasks before they are failed as retryable (a false busy reading must not stall a session
     /// for good).
     pub screen_hold_secs: u64,
+    /// Existing tmux sessions to use instead of the derived `<KEY>-<cli>` ones
+    /// (`[[runner.tmux.sessions]]`). The runner never creates, renames or restarts them.
+    pub sessions: Vec<SessionOverride>,
+}
+
+/// One `[[runner.tmux.sessions]]` entry: the existing tmux session `name` serves tasks of project
+/// `project` for `cli`.
+#[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct SessionOverride {
+    /// The project key, `^[A-Z0-9]{1,32}$`.
+    pub project: String,
+    /// `claude` or `codex`.
+    pub cli: String,
+    /// The tmux session name, `^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$`, never shaped like `<KEY>-<cli>`.
+    pub name: String,
 }
 
 impl Default for RunnerTmuxConfig {
@@ -87,6 +103,7 @@ impl Default for RunnerTmuxConfig {
             report_unacked_after_secs: 900,
             completion_grace_secs: 60,
             screen_hold_secs: 600,
+            sessions: Vec::new(),
         }
     }
 }
@@ -237,6 +254,11 @@ impl RunnerConfig {
         }
     }
 
+    /// The configured entry for project `key` and `cli`.
+    pub fn session_override(&self, key: &str, cli: &str) -> Option<&SessionOverride> {
+        self.tmux.sessions.iter().find(|s| s.project == key && s.cli == cli)
+    }
+
     /// The pause between a paste and Enter for `cli`: the global `[runner.tmux] push_settle_ms`,
     /// or codex's own when that is longer.
     pub fn push_settle_ms(&self, cli: &str) -> u64 {
@@ -278,6 +300,7 @@ impl RunnerConfig {
         if !(20..=1000).contains(&tmux.window_width) || !(5..=500).contains(&tmux.window_height) {
             return Err("runner.tmux.window_width and window_height are out of range".to_string());
         }
+        validate_sessions(&tmux.sessions)?;
         if !TOOL_MODES.contains(&self.mcp.tool_mode.as_str()) {
             return Err(format!(
                 "runner.mcp.tool_mode must be one of: {}",
@@ -335,6 +358,31 @@ impl RunnerConfig {
         }
         Ok(())
     }
+}
+
+fn validate_sessions(sessions: &[SessionOverride]) -> Result<(), String> {
+    for (i, entry) in sessions.iter().enumerate() {
+        let at = format!("runner.tmux.sessions[{i}]");
+        if !super::checks::valid_project_key(&entry.project) {
+            return Err(format!("{at}.project must match ^[A-Z0-9]{{1,32}}$"));
+        }
+        if !matches!(entry.cli.as_str(), "claude" | "codex") {
+            return Err(format!("{at}.cli must be claude or codex"));
+        }
+        super::tmux::TmuxName::new(&entry.name).map_err(|e| format!("{at}.name: {e}"))?;
+        for (j, other) in sessions.iter().enumerate().take(i) {
+            let earlier = format!("runner.tmux.sessions[{j}]");
+            if other.project == entry.project && other.cli == entry.cli {
+                return Err(format!("{at} repeats the project and cli of {earlier}"));
+            }
+            if other.name.eq_ignore_ascii_case(&entry.name) {
+                return Err(format!(
+                    "{at}.name repeats the name of {earlier} (names compare without case)"
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn parse_major_minor(text: &str) -> Option<(u64, u64)> {
