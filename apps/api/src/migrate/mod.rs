@@ -58,6 +58,8 @@ enum SchemaProbe {
     RelationAbsent(&'static str),
     /// Column on a table, by table and column name.
     Column(&'static str, &'static str),
+    /// Column intentionally removed by a destructive migration, by table and column name.
+    ColumnAbsent(&'static str, &'static str),
     /// Label on an enum type.
     EnumLabel(&'static str, &'static str),
     /// Named constraint whose definition contains a marker the migration introduced.
@@ -99,6 +101,19 @@ impl SchemaProbe {
                 DbBackend::Postgres,
                 r"
                     SELECT EXISTS (
+                        SELECT 1 FROM pg_attribute
+                        WHERE attrelid = to_regclass($1)
+                          AND attname = $2
+                          AND attnum > 0
+                          AND NOT attisdropped
+                    ) AS present
+                ",
+                vec![table.into(), column.into()],
+            )),
+            Self::ColumnAbsent(table, column) => Some(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                r"
+                    SELECT NOT EXISTS (
                         SELECT 1 FROM pg_attribute
                         WHERE attrelid = to_regclass($1)
                           AND attname = $2
@@ -611,6 +626,10 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
     (
         "0119_plugin_single_active_version.sql",
         SchemaProbe::Relation("plugins_one_active_version"),
+    ),
+    (
+        "0126_retire_unused_columns.sql",
+        SchemaProbe::ColumnAbsent("users", "agent_config"),
     ),
     (
         "0130_tmux_cli_codex.sql",

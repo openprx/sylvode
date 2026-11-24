@@ -166,6 +166,9 @@ mod label_api_tests;
 mod export_import_api_tests;
 
 #[cfg(test)]
+mod admin_setup_api_tests;
+
+#[cfg(test)]
 mod plugin_template_api_tests;
 
 #[cfg(test)]

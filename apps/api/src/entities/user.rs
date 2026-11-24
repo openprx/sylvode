@@ -15,7 +15,6 @@ pub struct Model {
     pub is_active: bool,
     pub entity_type: String,
     pub agent_type: Option<String>,
-    pub agent_config: Option<serde_json::Value>,
     #[serde(with = "platform::timestamp::with_offset")]
     pub created_at: Timestamp,
     #[serde(with = "platform::timestamp::with_offset")]

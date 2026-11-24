@@ -15,15 +15,18 @@ configuration and agent types are described in the [runner README](../../apps/ru
 |---|---|---|---|
 | Token bot | workspace settings, **Members and bots**, section **API Tokens**, **Create Token** | `mcp` | one `opr_` token, shown once |
 | Connection bot | a project's **Execution** settings, **Connect a bot** | `mcp` | one `opr_` token for `mcp_stdio`, inside the configuration block, shown once |
-| Bot user created by an administrator | instance administration, users | `openclaw`, `webhook` or `custom` | none |
+| Bot user created by an administrator | instance administration, users | `runner`, `openclaw`, `openprx`, `webhook` or `custom` | none |
 
 Every token creates its own bot user: the token's name is the bot's display name in activity
 feeds, comments and the audit trail. A bot can be assigned issues, mentioned, named as a
 webhook's bot user and, as a connection bot, take part in governance votes.
 
-The administrator form also stores an OpenClaw command, channel and target for a bot user; nothing
-reads these values. The runner chooses agents by bot id, name or route, not by these settings
-(see [Choosing the agent for a task](../../apps/runner/README.md#choosing-the-agent-for-a-task)).
+The administrator form asks for one agent type for a bot user and nothing else: the agent's own
+settings (command, channel, target) live in the runner configuration. The agent type is what a
+task's `bot_context.bot_agent_type` carries, and the runner can route on it (see
+[Choosing the agent for a task](../../apps/runner/README.md#choosing-the-agent-for-a-task)). The
+server refuses an agent type outside the five above, and a request that still sends
+`agent_config` is refused as an unknown field.
 
 ### Token permissions
 
@@ -267,7 +270,6 @@ webhook whose bot user it is. Point that webhook at a runner and configure an `o
 a task once the hand-over is done, with the bot's token; a bot user without a token cannot end
 its tasks, so they end when the lease expires.
 
-Sylvode gives a bot the agent type `openclaw`, `webhook` or `custom` (created by an administrator)
-or `mcp` (token and connection bots). The runner's agent types are `runner`, `openclaw`,
-`openprx`, `webhook` and `custom`, so no bot carries `openprx` or `runner`: select those agents by
-bot id, name or route.
+Sylvode gives a bot the agent type `runner`, `openclaw`, `openprx`, `webhook` or `custom` (created
+by an administrator) or `mcp` (token and connection bots). These are the runner's own agent types,
+so the type of a bot created by an administrator can name the agent that handles its tasks.

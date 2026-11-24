@@ -9,7 +9,6 @@ use axum::{
 use platform::app::AppState;
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use uuid::Uuid;
 
 use crate::{error::ApiError, response::ApiResponse};
@@ -23,6 +22,7 @@ pub struct ListUsersQuery {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CreateUserRequest {
     pub name: String,
     pub email: String,
@@ -30,17 +30,16 @@ pub struct CreateUserRequest {
     pub role: Option<String>,
     pub entity_type: Option<String>,
     pub agent_type: Option<String>,
-    pub agent_config: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateUserRequest {
     pub name: Option<String>,
     pub email: Option<String>,
     pub role: Option<String>,
     pub entity_type: Option<String>,
     pub agent_type: Option<String>,
-    pub agent_config: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -62,7 +61,6 @@ pub struct UserSummary {
     pub is_active: bool,
     pub entity_type: String,
     pub agent_type: Option<String>,
-    pub agent_config: Option<Value>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -109,7 +107,6 @@ struct UserRow {
     is_active: bool,
     entity_type: String,
     agent_type: Option<String>,
-    agent_config: Option<Value>,
     created_at: platform::timestamp::Timestamp,
     updated_at: platform::timestamp::Timestamp,
 }
@@ -152,7 +149,7 @@ pub async fn list_users(
     values.push(limit.into());
     values.push(offset.into());
     let list_sql = format!(
-        "SELECT id, email, name, role, is_active, entity_type, agent_type, agent_config, created_at, updated_at FROM users {} ORDER BY created_at DESC LIMIT ${} OFFSET ${}",
+        "SELECT id, email, name, role, is_active, entity_type, agent_type, created_at, updated_at FROM users {} ORDER BY created_at DESC LIMIT ${} OFFSET ${}",
         where_sql,
         values.len() - 1,
         values.len()
@@ -236,7 +233,7 @@ pub async fn create_user(
         .db
         .execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "INSERT INTO users (id, email, password_hash, name, role, is_active, entity_type, agent_type, agent_config, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, true, $6, $7, $8, $9, $10)".to_string(),
+            "INSERT INTO users (id, email, password_hash, name, role, is_active, entity_type, agent_type, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, true, $6, $7, $8, $9)".to_string(),
             vec![
                 user_id.into(),
                 email.into(),
@@ -245,7 +242,6 @@ pub async fn create_user(
                 role.into(),
                 entity_type.into(),
                 agent_type.into(),
-                req.agent_config.into(),
                 now.into(),
                 now.into(),
             ],
@@ -303,7 +299,6 @@ pub async fn update_user(
         && req.role.is_none()
         && req.entity_type.is_none()
         && req.agent_type.is_none()
-        && req.agent_config.is_none()
     {
         return Err(ApiError::BadRequest("no fields to update".to_string()));
     }
@@ -393,12 +388,6 @@ pub async fn update_user(
         let normalized = normalize_agent_type(req.agent_type)?;
         set_parts.push(format!("agent_type = ${param_idx}"));
         values.push(normalized.into());
-        param_idx += 1;
-    }
-
-    if req.agent_config.is_some() {
-        set_parts.push(format!("agent_config = ${param_idx}"));
-        values.push(req.agent_config.into());
         param_idx += 1;
     }
 
@@ -562,7 +551,7 @@ async fn fetch_count(state: &AppState, sql: &str) -> Result<i64, ApiError> {
 async fn find_user_by_id(state: &AppState, user_id: Uuid) -> Result<UserRow, ApiError> {
     UserRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT id, email, name, role, is_active, entity_type, agent_type, agent_config, created_at, updated_at FROM users WHERE id = $1",
+        "SELECT id, email, name, role, is_active, entity_type, agent_type, created_at, updated_at FROM users WHERE id = $1",
         vec![user_id.into()],
     ))
     .one(&state.db)
@@ -579,7 +568,6 @@ fn map_user_summary(row: UserRow) -> UserSummary {
         is_active: row.is_active,
         entity_type: row.entity_type,
         agent_type: row.agent_type,
-        agent_config: row.agent_config,
         created_at: row.created_at.to_rfc3339(),
         updated_at: row.updated_at.to_rfc3339(),
     }
@@ -623,16 +611,19 @@ fn normalize_entity_type(entity_type: Option<&str>) -> Result<String, ApiError> 
     Ok(normalized)
 }
 
+const AGENT_TYPES: &[&str] = &["runner", "openclaw", "openprx", "webhook", "custom"];
+
 fn normalize_agent_type(agent_type: Option<String>) -> Result<Option<String>, ApiError> {
     if let Some(raw) = agent_type {
         let normalized = raw.trim().to_lowercase();
         if normalized.is_empty() {
             return Ok(None);
         }
-        if normalized != "openclaw" && normalized != "webhook" && normalized != "custom" {
-            return Err(ApiError::BadRequest(
-                "agent_type must be 'openclaw', 'webhook' or 'custom'".to_string(),
-            ));
+        if !AGENT_TYPES.contains(&normalized.as_str()) {
+            return Err(ApiError::BadRequest(format!(
+                "agent_type must be one of: {}",
+                AGENT_TYPES.join(", ")
+            )));
         }
         Ok(Some(normalized))
     } else {

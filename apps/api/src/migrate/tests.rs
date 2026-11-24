@@ -129,6 +129,7 @@ fn the_adoption_cutoff_names_a_registered_migration() {
             "0117_sprint_rules.sql",
             "0118_label_rules.sql",
             "0119_plugin_single_active_version.sql",
+            "0126_retire_unused_columns.sql",
             "0130_tmux_cli_codex.sql",
         ],
         "everything past the cutoff re-runs on an adopted database and must be idempotent"
@@ -455,6 +456,9 @@ fn only_the_intended_routes_are_reachable_without_authentication() {
         "/api/v1/auth/register",
         "/api/v1/auth/login",
         "/api/v1/auth/refresh",
+        // First-run check: answers one boolean, whether any person exists yet, so the setup page
+        // can be offered before there is a session.
+        "/api/v1/auth/setup-status",
         // WebSocket upgrade: authenticates via the one-time collab ticket the handler itself
         // consumes atomically (`ADR-0007`), never a Bearer/cookie token — a browser WebSocket
         // cannot set an `Authorization` header, so this route deliberately carries no

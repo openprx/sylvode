@@ -10,6 +10,7 @@ use platform::app::AppState;
 pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
     Router::new()
         // Auth routes
+        .route("/api/v1/auth/setup-status", get(routes::auth::setup_status))
         .route("/api/v1/auth/register", post(routes::auth::register))
         .route("/api/v1/auth/login", post(routes::auth::login))
         .route("/api/v1/auth/refresh", post(routes::auth::refresh))

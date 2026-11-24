@@ -101,9 +101,29 @@ pub struct PreferencesResponse {
     notification_prefs: NotificationPreferences,
 }
 
+#[derive(Debug, Serialize)]
+pub struct SetupStatusResponse {
+    needs_setup: bool,
+}
+
 /// Serializes the empty-database bootstrap. Two concurrent first registrations must not both
 /// observe `COUNT(*) = 0` and both become instance admins.
 const USER_BOOTSTRAP_LOCK_KEY: i64 = 7_483_926_150_234;
+
+/// `GET /api/v1/auth/setup-status` (no credentials): whether the server still waits for its first
+/// person, so the first-run page can be offered. It reveals nothing else.
+pub async fn setup_status(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+    let row = state
+        .db
+        .query_one(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT NOT EXISTS (SELECT 1 FROM users WHERE entity_type = 'human') AS needs_setup".to_string(),
+        ))
+        .await?
+        .ok_or(ApiError::Internal)?;
+    let needs_setup = row.try_get::<bool>("", "needs_setup").map_err(|_| ApiError::Internal)?;
+    Ok(ApiResponse::success(SetupStatusResponse { needs_setup }))
+}
 
 pub async fn register(
     State(state): State<AppState>,

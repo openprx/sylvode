@@ -630,6 +630,8 @@ const PUBLIC_ROUTES: &[(&str, &str)] = &[
     // Sign-in and registration: they take credentials in the body and give no bearer access.
     ("POST", "/api/v1/auth/login"),
     ("POST", "/api/v1/auth/register"),
+    // First-run check: one boolean, whether any person exists yet; the same answer for everyone.
+    ("GET", "/api/v1/auth/setup-status"),
     // Metadata documents: public by design (RFC 8414, RFC 9728); 404 when `[oauth]` is not set.
     ("GET", "/.well-known/oauth-authorization-server"),
     ("GET", "/.well-known/oauth-protected-resource"),
