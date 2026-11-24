@@ -14,6 +14,8 @@ export interface Issue {
 	priority: IssuePriority;
 	assignee_id?: string;
 	sprint_id?: string;
+	/** The workspace milestone the item belongs to; `null` when it is in none. */
+	milestone_id?: string | null;
 	reporter_id: string;
 	proposal_id?: string;
 	governance_exempt?: boolean;
@@ -39,9 +41,14 @@ export interface CreateIssueInput {
 	priority?: IssuePriority;
 	assignee_id?: string;
 	sprint_id?: string;
+	/** An open milestone of the item's workspace. */
+	milestone_id?: string;
 }
 
-/** A field that is left out is unchanged; `null` clears `assignee_id`, `sprint_id` and `due_at`. */
+/**
+ * A field that is left out is unchanged; `null` clears `assignee_id`, `sprint_id`, `milestone_id`
+ * and `due_at`.
+ */
 export interface UpdateIssueInput {
 	title?: string;
 	description?: string;
@@ -49,6 +56,7 @@ export interface UpdateIssueInput {
 	priority?: IssuePriority;
 	assignee_id?: string | null;
 	sprint_id?: string | null;
+	milestone_id?: string | null;
 	due_at?: string | null;
 }
 
@@ -84,6 +92,8 @@ export interface ListIssuesParams {
 	assignee_id?: string;
 	/** A sprint id, or `none` for the items that are in no sprint. */
 	sprint_id?: string;
+	/** A milestone id, or `none` for the items that are in no milestone. */
+	milestone_id?: string;
 	label_ids?: string;
 	search?: string;
 	sort_by?: 'updated_at' | 'created_at' | 'priority' | 'title';
@@ -143,6 +153,7 @@ export const issuesApi = {
 		if (params?.priority) query.set('priority', params.priority);
 		if (params?.assignee_id) query.set('assignee_id', params.assignee_id);
 		if (params?.sprint_id) query.set('sprint_id', params.sprint_id);
+		if (params?.milestone_id) query.set('milestone_id', params.milestone_id);
 		if (params?.label_ids) query.set('label_ids', params.label_ids);
 		if (params?.search) query.set('search', params.search);
 		if (params?.sort_by) query.set('sort_by', params.sort_by);
@@ -191,7 +202,8 @@ export const issuesApi = {
 				state: data.status,
 				priority: data.priority,
 				assignee_id: data.assignee_id,
-				sprint_id: data.sprint_id
+				sprint_id: data.sprint_id,
+				milestone_id: data.milestone_id
 			}
 		);
 		if (result.code !== 0 || !result.data) {
@@ -212,6 +224,7 @@ export const issuesApi = {
 			priority: data.priority,
 			assignee_id: data.assignee_id,
 			sprint_id: data.sprint_id,
+			milestone_id: data.milestone_id,
 			due_at: data.due_at
 		});
 		if (result.code !== 0 || !result.data) {
