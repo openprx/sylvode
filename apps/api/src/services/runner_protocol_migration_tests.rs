@@ -215,16 +215,13 @@ async fn the_tmux_channel_takes_claude_and_codex_only_in_the_database() {
         insert(bots[0], "opencode").await.is_err(),
         "tmux with opencode must be refused"
     );
-    // One claude and one codex tmux connection live side by side in the project.
+    // Claude and codex tmux connections live side by side, and a further bot may take either.
     insert(bots[1], "claude").await.expect("tmux with claude is accepted");
     insert(bots[2], "codex").await.expect("tmux with codex is accepted");
-    // A second tmux connection of the same CLI is refused by the unique index.
-    for (bot, cli) in [(bots[3], "codex"), (bots[3], "claude")] {
-        let duplicate = insert(bot, cli).await;
-        assert!(
-            duplicate.is_err_and(|err| err.to_string().contains("pbc_one_tmux_per_cli")),
-            "a second tmux connection for {cli} is refused by pbc_one_tmux_per_cli"
-        );
+    for (bot, cli) in [(bots[3], "codex"), (bots[0], "claude")] {
+        insert(bot, cli)
+            .await
+            .unwrap_or_else(|err| panic!("a second tmux connection for {cli} is accepted: {err}"));
     }
     scratch.drop_self().await;
 }

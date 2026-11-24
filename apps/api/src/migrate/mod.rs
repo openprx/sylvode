@@ -651,6 +651,10 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
         "0130_tmux_cli_codex.sql",
         SchemaProbe::ConstraintContains("project_bot_connections", "pbc_tmux_cli_check", "'codex'"),
     ),
+    (
+        "0131_drop_one_tmux_per_cli.sql",
+        SchemaProbe::RelationAbsent("pbc_one_tmux_per_cli"),
+    ),
 ];
 
 /// One recorded migration outcome.

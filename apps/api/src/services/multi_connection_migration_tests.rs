@@ -15,6 +15,8 @@ use crate::scratch_or_skip;
 const MIGRATION: &str = include_str!("../../../../migrations/0114_multi_bot_connections.sql");
 /// The later migration that widens the tmux check to codex; the final shape includes it.
 const TMUX_CODEX: &str = include_str!("../../../../migrations/0130_tmux_cli_codex.sql");
+/// The later migration that drops the one-tmux-per-CLI index 0114 creates; the final shape lacks it.
+const DROP_TMUX_INDEX: &str = include_str!("../../../../migrations/0131_drop_one_tmux_per_cli.sql");
 
 /// The tables as 0110 and 0112 created them before several connections per project.
 const EARLIER_SHAPE: &str = "
@@ -87,15 +89,16 @@ async fn a_new_database_has_the_final_shape_and_the_migration_changes_nothing() 
         db.execute_unprepared(MIGRATION)
             .await
             .unwrap_or_else(|err| panic!("run {run} of 0114 on a new database: {err}"));
+        db.execute_unprepared(DROP_TMUX_INDEX)
+            .await
+            .unwrap_or_else(|err| panic!("run {run} of 0131 on a new database: {err}"));
         assert_eq!(shape(db).await, before, "run {run} changes nothing");
     }
-    for needle in [
-        "\"pbc_one_tmux_per_cli\"",
-        "UNIQUE INDEX pbc_one_tmux_per_cli ON",
-        "WHERE (channel = 'tmux'::text)",
-        "pbc_tmux_cli_check",
-        "PRIMARY KEY (project_id, bot_id)",
-    ] {
+    assert!(
+        !before.contains("pbc_one_tmux_per_cli"),
+        "the one-tmux-per-CLI index is gone: {before}"
+    );
+    for needle in ["pbc_tmux_cli_check", "PRIMARY KEY (project_id, bot_id)"] {
         assert!(before.contains(needle), "{needle} missing from {before}");
     }
     scratch.drop_self().await;
@@ -148,6 +151,9 @@ async fn a_database_at_0113_is_brought_forward_and_a_second_run_changes_nothing(
         db.execute_unprepared(TMUX_CODEX)
             .await
             .unwrap_or_else(|err| panic!("run {run} of 0130 after 0114: {err}"));
+        db.execute_unprepared(DROP_TMUX_INDEX)
+            .await
+            .unwrap_or_else(|err| panic!("run {run} of 0131 after 0130: {err}"));
         assert_eq!(shape(db).await, final_shape, "run {run} ends in the final shape");
         assert!(!relation_present(db, "project_execution_settings").await);
     }
@@ -174,7 +180,7 @@ async fn a_database_at_0113_is_brought_forward_and_a_second_run_changes_nothing(
 }
 
 #[tokio::test]
-async fn one_tmux_connection_per_cli_and_any_number_of_headless_ones() {
+async fn tmux_connections_are_not_limited_per_cli_and_headless_ones_neither() {
     let scratch = scratch_or_skip!("multi_conn_unique");
     let db = &scratch.db;
     let tenant = seed_tenant(db, "mu").await;
@@ -186,26 +192,43 @@ async fn one_tmux_connection_per_cli_and_any_number_of_headless_ones() {
     for bot in [a, b, c] {
         seed_bot_runner(db, &tenant, bot).await;
     }
-    let insert = |bot: Uuid, channel: &'static str| {
-        let project = tenant.project_id;
-        async move {
-            db.execute(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "INSERT INTO project_bot_connections (project_id, bot_id, working_directory, channel, cli) \
-                 VALUES ($1, $2, '/work/a', $3, 'claude')",
-                vec![project.into(), bot.into(), channel.to_string().into()],
-            ))
-            .await
-        }
-    };
-    insert(a, "tmux").await.expect("the first tmux connection");
-    let second = insert(b, "tmux")
+    assert!(
+        !relation_present(db, "pbc_one_tmux_per_cli").await,
+        "migration 0131 drops the unique index"
+    );
+    let other_project = Uuid::new_v4();
+    exec(
+        db,
+        "INSERT INTO projects (id, workspace_id, key, name, created_by) VALUES ($1, $2, 'PMU2', 'second', $3)",
+        vec![
+            other_project.into(),
+            tenant.workspace_id.into(),
+            tenant.member_id.into(),
+        ],
+    )
+    .await;
+    let insert = |project: Uuid, bot: Uuid, channel: &'static str| async move {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO project_bot_connections (project_id, bot_id, working_directory, channel, cli) \
+             VALUES ($1, $2, '/work/a', $3, 'claude')",
+            vec![project.into(), bot.into(), channel.to_string().into()],
+        ))
         .await
-        .expect_err("a second tmux connection for claude");
-    assert!(second.to_string().contains("pbc_one_tmux_per_cli"), "{second}");
-    insert(b, "headless").await.expect("headless next to tmux");
-    insert(c, "headless").await.expect("a second headless connection");
-    let twice = insert(a, "headless").await;
+    };
+    let project = tenant.project_id;
+    insert(project, a, "tmux").await.expect("the first tmux connection");
+    insert(project, b, "tmux")
+        .await
+        .expect("a second bot's tmux connection for the same CLI in the same project");
+    insert(other_project, a, "tmux")
+        .await
+        .expect("the same bot's tmux connection for the same CLI in a second project");
+    insert(project, c, "headless").await.expect("headless next to tmux");
+    insert(other_project, c, "headless")
+        .await
+        .expect("a second headless connection");
+    let twice = insert(project, a, "headless").await;
     assert!(twice.is_err(), "(project, bot) is the primary key");
     scratch.drop_self().await;
 }

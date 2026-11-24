@@ -507,19 +507,15 @@ async fn a_connected_bot_joins_a_second_project_without_new_credentials() {
         bad_request(connect(&w, p3, existing_bot(Uuid::new_v4())).await),
         "bot.id: not a connected bot of this workspace"
     );
-    // The same bot twice in one project is refused; a second tmux connection for claude is refused
-    // with the name of the bot that holds the session.
+    // The same bot twice in one project is refused; a second bot may take the tmux channel for the
+    // same CLI.
     match connect(&w, w.tenant.project_id, existing_bot(bot)).await {
         Err(ApiError::Conflict(message)) => assert_eq!(message, "project already has a connection for this bot"),
         other => panic!("expected a 409, got {:?}", other.map(|_| ())),
     }
-    match connect(&w, w.tenant.project_id, new_bot("Second bot")).await {
-        Err(ApiError::Conflict(message)) => assert_eq!(
-            message,
-            "channel: project already has a tmux connection for claude (bot Shared bot)"
-        ),
-        other => panic!("expected a 409, got {:?}", other.map(|_| ())),
-    }
+    let second_bot = expect_connect(&w, w.tenant.project_id, new_bot("Second bot")).await;
+    assert_eq!(second_bot.connection.execution.channel, "tmux");
+    assert_eq!(second_bot.connection.execution.cli, "claude");
     scratch.drop_self().await;
 }
 
@@ -538,7 +534,7 @@ async fn a_bot_of_another_workspace_cannot_be_picked() {
 }
 
 #[tokio::test]
-async fn two_simultaneous_connects_make_one_connection_and_one_bot() {
+async fn two_simultaneous_connects_make_two_connections_and_two_bots() {
     let scratch = scratch_or_skip!("bc_race");
     let db = &scratch.db;
     let w = world(db, "r1").await;
@@ -547,24 +543,10 @@ async fn two_simultaneous_connects_make_one_connection_and_one_bot() {
         connect(&w, w.tenant.project_id, new_bot("Racer two"))
     );
     let results: [Result<Connected, ApiError>; 2] = both.into();
-    assert_eq!(
-        results.iter().filter(|r| r.is_ok()).count(),
-        1,
-        "exactly one connect wins"
-    );
-    let loser = results.iter().find_map(|r| r.as_ref().err()).expect("one loses");
-    assert!(
-        matches!(loser, ApiError::Conflict(message)
-            if message.starts_with("channel: project already has a tmux connection for claude (bot Racer ")),
-        "{loser:?}"
-    );
-    assert_eq!(
-        n(db, "SELECT 1 FROM workspace_bots", vec![]).await,
-        1,
-        "exactly one bot was created"
-    );
-    assert_eq!(n(db, "SELECT 1 FROM bot_runners", vec![]).await, 1);
-    assert_eq!(n(db, "SELECT 1 FROM webhooks", vec![]).await, 1);
+    assert!(results.iter().all(Result::is_ok), "both connects win: {results:?}");
+    assert_eq!(n(db, "SELECT 1 FROM workspace_bots", vec![]).await, 2);
+    assert_eq!(n(db, "SELECT 1 FROM bot_runners", vec![]).await, 2);
+    assert_eq!(n(db, "SELECT 1 FROM webhooks", vec![]).await, 2);
     scratch.drop_self().await;
 }
 
@@ -1620,7 +1602,7 @@ async fn the_status_follows_token_use_reports_and_deliveries() {
     let with_session = status_json(&w, project).await;
     assert_eq!(
         with_session["tmux_session"],
-        json!({"session_name": format!("{key}-claude"), "status": "warn", "state": "running",
+        json!({"scope": "project", "session_name": format!("{key}-claude"), "status": "warn", "state": "running",
                "created_by": "operator", "hooks": "seen", "permissions": "bypass", "mcp": "ok"})
     );
     assert_eq!(with_session["bypass"], true);
@@ -1760,7 +1742,7 @@ async fn no_secret_reaches_a_log_an_event_or_an_error() {
     let mut secrets = vec![block_token(&block), block_secret(&block), block.text.clone()];
     expect_connect(&w, p2, existing_bot(bot)).await;
     // A refused connect: its error text carries no secret either.
-    let refusal = format!("{:?}", connect(&w, p2, new_bot("Another")).await.map(|_| ()));
+    let refusal = format!("{:?}", connect(&w, p2, existing_bot(bot)).await.map(|_| ()));
     let Ok(Outcome::Done(rotated)) = rotate(&w, w.tenant.project_id, 1).await else {
         panic!("rotate failed");
     };

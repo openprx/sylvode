@@ -5,7 +5,7 @@
 #![cfg(test)]
 #![allow(clippy::expect_used, clippy::panic, clippy::indexing_slicing, clippy::too_many_lines)]
 
-use sea_orm::{ConnectionTrait, TransactionTrait};
+use sea_orm::TransactionTrait;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -13,7 +13,7 @@ use super::ai_task_fixture::seed_task;
 use super::ai_task_service::{RunnerBotBlock, load_task_with_protocol, runner_bot_block};
 use super::ai_task_view::build_task_view;
 use super::bot_connection_tests::{
-    connect, done, existing_bot, expect_connect, n, new_bot, remove_for, set_enabled_for, text_of, update_for, world,
+    done, existing_bot, expect_connect, n, new_bot, remove_for, set_enabled_for, text_of, update_for, world,
 };
 use super::bot_connections;
 use crate::error::ApiError;
@@ -28,13 +28,6 @@ fn headless(name: &str, cli: &str, directory: &str) -> Value {
     body
 }
 
-fn conflict(result: Result<impl std::fmt::Debug, ApiError>) -> String {
-    match result {
-        Err(ApiError::Conflict(message)) => message,
-        other => panic!("expected a 409, got {other:?}"),
-    }
-}
-
 fn tmux_codex(name: &str, directory: &str) -> Value {
     let mut body = new_bot(name);
     body["channel"] = json!("tmux");
@@ -44,7 +37,7 @@ fn tmux_codex(name: &str, directory: &str) -> Value {
 }
 
 #[tokio::test]
-async fn a_claude_and_a_codex_tmux_connection_live_side_by_side_and_a_second_codex_is_refused() {
+async fn a_claude_and_a_codex_tmux_connection_live_side_by_side_and_a_second_codex_is_accepted() {
     let scratch = scratch_or_skip!("mc_codex_tmux");
     let db = &scratch.db;
     let w = world(db, "x1").await;
@@ -59,20 +52,17 @@ async fn a_claude_and_a_codex_tmux_connection_live_side_by_side_and_a_second_cod
     assert_eq!(codex.execution.cli, "codex");
     assert_eq!(codex.execution.session_name.as_deref(), Some("Px1-codex"));
 
-    assert_eq!(
-        conflict(connect(&w, project, tmux_codex("Gamma", "/srv/dev/work/gamma")).await),
-        "channel: project already has a tmux connection for codex (bot Beta)"
-    );
-    assert_eq!(
-        n(db, "SELECT 1 FROM workspace_bots", vec![]).await,
-        2,
-        "the refused connect leaves no bot behind"
-    );
+    let second = expect_connect(&w, project, tmux_codex("Gamma", "/srv/dev/work/gamma"))
+        .await
+        .connection;
+    assert_eq!(second.execution.channel, "tmux");
+    assert_eq!(second.execution.cli, "codex");
+    assert_eq!(n(db, "SELECT 1 FROM workspace_bots", vec![]).await, 3);
     scratch.drop_self().await;
 }
 
 #[tokio::test]
-async fn one_tmux_connection_per_cli_and_any_number_of_headless_ones() {
+async fn tmux_and_headless_connections_are_not_limited_per_cli() {
     let scratch = scratch_or_skip!("mc_unique");
     let db = &scratch.db;
     let w = world(db, "u1").await;
@@ -82,16 +72,10 @@ async fn one_tmux_connection_per_cli_and_any_number_of_headless_ones() {
     assert_eq!(alpha.execution.channel, "tmux");
     assert_eq!(alpha.execution.session_name.as_deref(), Some("Pu1-claude"));
 
-    // A second tmux connection for claude is refused with the name of the holder.
-    assert_eq!(
-        conflict(connect(&w, project, new_bot("Beta")).await),
-        "channel: project already has a tmux connection for claude (bot Alpha)"
-    );
-    assert_eq!(
-        n(db, "SELECT 1 FROM workspace_bots", vec![]).await,
-        1,
-        "the refused connect leaves no bot behind"
-    );
+    // A second bot connects over tmux with the same CLI.
+    let zeta = expect_connect(&w, project, new_bot("Zeta")).await.connection;
+    assert_eq!(zeta.execution.channel, "tmux");
+    assert_eq!(zeta.execution.cli, "claude");
 
     // Headless connections are not limited: several, next to the tmux one.
     let beta = expect_connect(&w, project, headless("Beta", "codex", "/srv/dev/work/beta"))
@@ -102,17 +86,29 @@ async fn one_tmux_connection_per_cli_and_any_number_of_headless_ones() {
         .await
         .connection;
 
-    // Switching a headless connection to tmux is refused by the service while Alpha holds claude.
-    let switch = update_for(
-        &w,
-        project,
-        gamma.bot.id,
-        json!({"expected_version": gamma.version, "channel": "tmux"}),
+    // A second bot may take the tmux channel for the CLI Alpha already holds.
+    let switched = done(
+        update_for(
+            &w,
+            project,
+            gamma.bot.id,
+            json!({"expected_version": gamma.version, "channel": "tmux"}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(switched.execution.channel, "tmux");
+    assert_eq!(switched.execution.cli, "claude");
+    let tmux_claude = count(
+        db,
+        "SELECT COUNT(*)::bigint AS count FROM project_bot_connections \
+         WHERE project_id = $1 AND channel = 'tmux' AND cli = 'claude'",
+        vec![project.into()],
     )
     .await;
     assert_eq!(
-        conflict(switch),
-        "channel: project already has a tmux connection for claude (bot Alpha)"
+        tmux_claude, 3,
+        "Alpha, Zeta and Gamma hold a tmux connection for claude"
     );
     // opencode cannot use tmux at all.
     let opencode = expect_connect(&w, project, headless("Delta", "opencode", "/srv/dev/work/delta"))
@@ -129,42 +125,6 @@ async fn one_tmux_connection_per_cli_and_any_number_of_headless_ones() {
         matches!(refused, Err(ApiError::BadRequest(m)) if m == "cli: only claude and codex can use the tmux channel")
     );
 
-    // The unique index is the backstop for a race the check cannot see.
-    let race = db
-        .execute(sea_orm::Statement::from_sql_and_values(
-            sea_orm::DbBackend::Postgres,
-            "UPDATE project_bot_connections SET channel = 'tmux' WHERE project_id = $1 AND bot_id = $2",
-            vec![project.into(), gamma.bot.id.into()],
-        ))
-        .await;
-    assert!(race.is_err_and(|err| err.to_string().contains("pbc_one_tmux_per_cli")));
-
-    // Alpha moves to headless; then Gamma may take the tmux session.
-    done(
-        update_for(
-            &w,
-            project,
-            alpha.bot.id,
-            json!({"expected_version": alpha.version, "channel": "headless"}),
-        )
-        .await,
-    )
-    .await;
-    let gamma_now = bot_connections::load_view(db, project, gamma.bot.id)
-        .await
-        .expect("loads")
-        .expect("exists");
-    let moved = done(
-        update_for(
-            &w,
-            project,
-            gamma.bot.id,
-            json!({"expected_version": gamma_now.version, "channel": "tmux"}),
-        )
-        .await,
-    )
-    .await;
-    assert_eq!(moved.execution.session_name.as_deref(), Some("Pu1-claude"));
     // The list is ordered by bot name.
     let names: Vec<String> = bot_connections::list_views(db, project)
         .await
@@ -172,7 +132,7 @@ async fn one_tmux_connection_per_cli_and_any_number_of_headless_ones() {
         .into_iter()
         .map(|view| view.bot.name)
         .collect();
-    assert_eq!(names, ["Alpha", "Beta", "Delta", "Gamma"]);
+    assert_eq!(names, ["Alpha", "Beta", "Delta", "Gamma", "Zeta"]);
     scratch.drop_self().await;
 }
 
@@ -201,7 +161,7 @@ async fn each_bot_gets_its_own_tasks_with_its_own_settings() {
     assert_eq!(alpha_view["execution"]["channel"], "tmux");
     assert_eq!(alpha_view["execution"]["cli"], "claude");
     assert_eq!(alpha_view["execution"]["working_directory"], "/srv/dev/work/svwl");
-    assert_eq!(alpha_view["execution"]["session_name"], "Pt1-claude");
+    assert!(alpha_view["execution"].get("session_name").is_none());
     let beta_view = view_for(beta.bot.id).await;
     assert_eq!(beta_view["execution"]["channel"], "headless");
     assert_eq!(beta_view["execution"]["cli"], "codex");

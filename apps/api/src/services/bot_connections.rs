@@ -819,104 +819,34 @@ fn settings_input(settings: &ExecutionSettings) -> ExecutionSettingsInput {
     }
 }
 
-/// The refusal of a second tmux connection for a CLI: names the bot that holds the session.
-fn tmux_taken(cli: &str, holder: &str) -> ApiError {
-    ApiError::Conflict(format!(
-        "channel: project already has a tmux connection for {cli} (bot {holder})"
-    ))
-}
-
-/// The bot, other than `except`, that holds the tmux connection for `cli` in the project.
-async fn tmux_holder(
-    db: &impl ConnectionTrait,
-    project_id: Uuid,
-    cli: &str,
-    except: Option<Uuid>,
-) -> Result<Option<String>, ApiError> {
-    #[derive(FromQueryResult)]
-    struct Holder {
-        name: String,
-    }
-    Ok(one::<Holder>(
-        db,
-        "SELECT b.name FROM project_bot_connections c JOIN workspace_bots b ON b.id = c.bot_id \
-         WHERE c.project_id = $1 AND c.channel = 'tmux' AND c.cli = $2 AND ($3::uuid IS NULL OR c.bot_id <> $3) \
-         ORDER BY b.name LIMIT 1",
-        vec![project_id.into(), cli.to_string().into(), except.into()],
-    )
-    .await?
-    .map(|row| row.name))
-}
-
-/// Refuses a tmux connection for `valid` when another bot of the project already has one for the
-/// same CLI (rule C3). The unique index catches the race this check cannot see.
-async fn ensure_tmux_free(
-    db: &impl ConnectionTrait,
-    project_id: Uuid,
-    bot_id: Uuid,
-    valid: &ValidSettings,
-) -> Result<(), ApiError> {
-    if valid.channel != "tmux" {
-        return Ok(());
-    }
-    tmux_holder(db, project_id, &valid.cli, Some(bot_id))
-        .await?
-        .map_or(Ok(()), |holder| Err(tmux_taken(&valid.cli, &holder)))
-}
-
-/// Maps the unique violation of `pbc_one_tmux_per_cli` to the 409 of rule C3. The failed statement
-/// aborted its transaction, so the bot's name is read through `lookup`, a connection of its own.
-async fn tmux_race(
-    lookup: &impl ConnectionTrait,
-    err: sea_orm::DbErr,
-    project_id: Uuid,
-    bot_id: Uuid,
-    cli: &str,
-) -> ApiError {
-    if err.to_string().contains("pbc_one_tmux_per_cli") {
-        let holder = tmux_holder(lookup, project_id, cli, Some(bot_id))
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| "another bot".to_string());
-        return tmux_taken(cli, &holder);
-    }
-    ApiError::from(err)
-}
-
 /// Writes `valid` into the connection row of (`project_id`, `bot_id`). The caller holds the
 /// connection lock and bumps the version afterwards.
 async fn store_settings(
-    state: &AppState,
     tx: &impl ConnectionTrait,
     project_id: Uuid,
     bot_id: Uuid,
     valid: &ValidSettings,
 ) -> Result<(), ApiError> {
-    let outcome = tx
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "UPDATE project_bot_connections \
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE project_bot_connections \
              SET enabled = $3, channel = $4, cli = $5, working_directory = $6, on_complete_state = $7, \
                  on_fail_label_id = $8, approval_gate = $9 \
              WHERE project_id = $1 AND bot_id = $2",
-            vec![
-                project_id.into(),
-                bot_id.into(),
-                valid.enabled.into(),
-                valid.channel.clone().into(),
-                valid.cli.clone().into(),
-                valid.working_directory.clone().into(),
-                valid.on_complete_state.clone().into(),
-                valid.on_fail_label_id.into(),
-                valid.approval_gate.clone().into(),
-            ],
-        ))
-        .await;
-    match outcome {
-        Ok(_) => Ok(()),
-        Err(err) => Err(tmux_race(&state.db, err, project_id, bot_id, &valid.cli).await),
-    }
+        vec![
+            project_id.into(),
+            bot_id.into(),
+            valid.enabled.into(),
+            valid.channel.clone().into(),
+            valid.cli.clone().into(),
+            valid.working_directory.clone().into(),
+            valid.on_complete_state.clone().into(),
+            valid.on_fail_label_id.into(),
+            valid.approval_gate.clone().into(),
+        ],
+    ))
+    .await?;
+    Ok(())
 }
 
 /// The version check shared by every write after connect.
@@ -1112,7 +1042,6 @@ pub async fn connect(
     };
 
     let bot_id = runner.bot_id;
-    ensure_tmux_free(&tx, project.id, bot_id, &valid.settings).await?;
     one::<Count>(
         &tx,
         "INSERT INTO ai_participants \
@@ -1132,30 +1061,26 @@ pub async fn connect(
     )
     .await?;
     let settings = &valid.settings;
-    let inserted = tx
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "INSERT INTO project_bot_connections \
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO project_bot_connections \
              (project_id, bot_id, enabled, channel, cli, working_directory, on_complete_state, \
               on_fail_label_id, approval_gate, created_by, updated_by) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)",
-            vec![
-                project.id.into(),
-                bot_id.into(),
-                settings.enabled.into(),
-                settings.channel.clone().into(),
-                settings.cli.clone().into(),
-                settings.working_directory.clone().into(),
-                settings.on_complete_state.clone().into(),
-                settings.on_fail_label_id.into(),
-                settings.approval_gate.clone().into(),
-                actor.into(),
-            ],
-        ))
-        .await;
-    if let Err(err) = inserted {
-        return Err(tmux_race(&state.db, err, project.id, bot_id, &settings.cli).await);
-    }
+        vec![
+            project.id.into(),
+            bot_id.into(),
+            settings.enabled.into(),
+            settings.channel.clone().into(),
+            settings.cli.clone().into(),
+            settings.working_directory.clone().into(),
+            settings.on_complete_state.clone().into(),
+            settings.on_fail_label_id.into(),
+            settings.approval_gate.clone().into(),
+            actor.into(),
+        ],
+    ))
+    .await?;
 
     // Shared parts follow the per-project state: this connection is enabled, so they are on.
     let switched = if !new_bot && !shared_is_on(&tx, &runner).await? {
@@ -1282,7 +1207,6 @@ pub async fn update(
         input.on_fail_label_id = label;
     }
     let valid = execution_settings::validate(state, project, &input).await?;
-    ensure_tmux_free(&tx, project.id, bot_id, &valid).await?;
     let governance = match &req.governance {
         Some(change) => validate_governance(&before, change)?,
         None => before.clone(),
@@ -1336,7 +1260,7 @@ pub async fn update(
         json!(valid.on_fail_label_id),
     );
     track("governance", json!(before), json!(governance));
-    store_settings(state, &tx, project.id, bot_id, &valid).await?;
+    store_settings(&tx, project.id, bot_id, &valid).await?;
     if governance != before {
         run(
             &tx,
@@ -1409,7 +1333,7 @@ pub async fn set_enabled(
         on_fail_label_id: settings.on_fail_label_id,
         approval_gate: settings.approval_gate.clone(),
     };
-    store_settings(state, &tx, project.id, bot_id, &valid).await?;
+    store_settings(&tx, project.id, bot_id, &valid).await?;
     run(
         &tx,
         "UPDATE ai_participants SET is_active = $3 WHERE project_id = $1 AND id = $2",
