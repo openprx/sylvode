@@ -12,15 +12,21 @@ name.
 
 ### Added
 
-- **Runner: an existing tmux session by name.** `[[runner.tmux.sessions]]` (`project`, `cli`, `name`)
-  makes the runner type the tasks of a project for a CLI into an existing tmux session instead of
-  `<KEY>-<cli>`, for example an operator's lead session with several windows (only the pane that
-  runs the CLI is used). The runner never creates, renames or restarts such a session: when it is
-  absent the task fails, retryably. A name may not look like a derived name. `doctor` and
-  `sessions` show the tmux name; the status report carries `session_source` and never the name; a
-  configured session whose MCP entry is not the runner's own is a warning. The state directory
-  stays `sessions/<KEY>-<cli>/`. A project renamed in Sylvode is refused with `session_config_stale`
-  while an entry names its old key.
+- **Runner: one session per bot, across projects.** `[[runner.tmux.sessions]]` (`bot`, `cli`,
+  `name`) makes the runner type the tasks of a bot for a CLI, from every project the bot is
+  connected to, into one existing tmux session, for example an operator's lead session with several
+  windows (only the pane that runs the CLI is used). It holds on either channel: a headless
+  delivery for such a bot is typed into the session too. The tasks of all projects share one
+  queue; every task text has a `Project: <KEY>` line. The runner never creates, renames or restarts
+  such a session: when it is absent the task fails, retryably. Its working directory is not
+  checked (no `path_outside_allowlist`), no project key is bound and the agent guide is not
+  installed; the guide is written only into a directory that passed the allowed roots. A name may
+  not look like a derived name; the bot must be served by a runner agent and have a token. A derived
+  session already recorded for another bot is refused with `session_bot_conflict`. `doctor` shows
+  a `session.bot-<id>-<cli>` row per entry, `sessions` shows slot, tmux name and bot, and the
+  status report carries `scope` and `session_source` and never the name. The state directory is
+  `sessions/bot-<id>-<cli>/`. A configured session whose MCP entry is not the runner's own is a
+  warning.
 
 - **Runner: a plain-http server address outside loopback can be acknowledged.**
   `[ai_task_callback] allow_insecure_transport = true` (default `false`) lets a `runner` agent use an
