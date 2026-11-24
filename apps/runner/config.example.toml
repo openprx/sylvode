@@ -141,3 +141,14 @@ retry_delay_ms = 1000
 # agent_type = "runner"
 # [agents.route]
 # bot_ids = ["00000000-0000-0000-0000-000000000000"]
+
+# To type the tasks of a project into a tmux session that already exists under another name (your
+# own lead session, say), name it here. The runner never creates, renames or restarts it; when it
+# is absent the task fails and can be retried. project is the project key, cli is claude or codex,
+# name matches ^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$ and may not look like <KEY>-claude or <KEY>-codex.
+# The session needs its own Sylvode MCP entry for the bot (see `sylvode-runner setup claude`).
+#
+# [[runner.tmux.sessions]]
+# project = "SV"
+# cli = "claude"
+# name = "sv"

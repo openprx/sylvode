@@ -213,7 +213,7 @@ A project can have several connected bots, but at most one tmux connection per C
 tmux connection for the same CLI is refused with 409
 `channel: project already has a tmux connection for <cli> (bot <holder>)`. Headless connections
 are not limited. On the runner a tmux connection uses the session `<KEY>-<cli>` (`<KEY>-claude` for Claude
-Code, `<KEY>-codex` for Codex). A runner-created Codex session starts with
+Code, `<KEY>-codex` for Codex), unless the runner's own configuration names an existing session for the project and CLI (the runner never creates such a session). A runner-created Codex session starts with
 `codex --no-daemon --no-alt-screen --dangerously-bypass-approvals-and-sandbox`, which turns off all of Codex's
 permission checks (see the [runner security notes](../../apps/runner/SECURITY.md)); Codex asks once to
 trust a new folder, and the runner never answers that dialog: attach to the session and answer it.

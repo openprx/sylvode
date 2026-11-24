@@ -12,6 +12,16 @@ name.
 
 ### Added
 
+- **Runner: an existing tmux session by name.** `[[runner.tmux.sessions]]` (`project`, `cli`, `name`)
+  makes the runner type the tasks of a project for a CLI into an existing tmux session instead of
+  `<KEY>-<cli>`, for example an operator's lead session with several windows (only the pane that
+  runs the CLI is used). The runner never creates, renames or restarts such a session: when it is
+  absent the task fails, retryably. A name may not look like a derived name. `doctor` and
+  `sessions` show the tmux name; the status report carries `session_source` and never the name; a
+  configured session whose MCP entry is not the runner's own is a warning. The state directory
+  stays `sessions/<KEY>-<cli>/`. A project renamed in Sylvode is refused with `session_config_stale`
+  while an entry names its old key.
+
 - **Milestones.** Workspace milestones with a target date, open/closed status and progress per
   project (`GET|POST /api/v1/workspaces/{id}/milestones`, `GET|PUT|DELETE /api/v1/milestones/{id}`);
   work items carry `milestone_id` (create, update, list filter `milestone_id=<uuid>|none`); activity

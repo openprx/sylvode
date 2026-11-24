@@ -597,7 +597,10 @@ the queue position, or `headless`).
 A project's tmux connection has one session, `<KEY>-<cli>`: the project key exactly as Sylvode
 stores it, a hyphen, and the CLI. The tmux channel accepts `claude` and `codex` (opencode is
 refused with `cli_unverified`), so the session is `<KEY>-claude` or `<KEY>-codex`; the two sessions
-of one project run side by side. The session lives on the operator's default tmux server
+of one project run side by side. To use a tmux session that already exists under another name,
+for example your own lead session, name it in the runner's configuration
+([Using an existing session](#using-an-existing-session-with-another-name)); the runner never
+creates such a session. The session lives on the operator's default tmux server
 (`[runner.tmux] socket_name = ""`), with the operator's `tmux.conf`, environment and login. Attach
 with `tmux attach -t <KEY>-claude` or `tmux attach -t <KEY>-codex`. Everything below that names
 claude holds for codex with its own `[runner.cli.codex]` settings, except where a paragraph says
@@ -609,10 +612,11 @@ On every task the runner:
   one of the CLI's `process_names` (`[runner.cli.claude]` or `[runner.cli.codex]`) receives the task. A session whose CLI is not running
   (a shell is left, or the pane is dead) fails the task, retryably, with
   `the CLI is not running in tmux session <name>; attach with tmux attach -t <name> and start it,
-  or end the session so the runner starts it`. More than one pane running the CLI fails it without
+  or end the session so the runner starts it` (for a session named in the configuration the last
+  clause is left out). More than one pane running the CLI fails it without
   a retry. A session the runner recorded for another bot is refused
   (`session_bot_mismatch: tmux session <name> serves another bot`).
-- **creates the session if it does not exist**, with the launch command
+- **creates the session if it does not exist and its name is the derived `<KEY>-<cli>`**, with the launch command
   (`new-session -d -s <name> -n cli -x <window_width> -y <window_height> -c <working directory> --
   <launch command>`), in the connection's working directory, which must then lie inside the allowed
   roots. When the CLI exits, tmux ends the session and the next task creates it again. A change of
@@ -624,7 +628,54 @@ On every task the runner:
   pane id and process id, checked at every push.
 
 The runner records each session it uses in `<state_dir>/sessions/<KEY>-<cli>/session.json`
-(bot, pane id and process id, directory, who started it).
+(bot, pane id and process id, directory, who started it, the tmux session name and where the name
+came from: `derived` or `local`). The state directory is always named after the project key and
+the CLI, never after a configured tmux name.
+
+#### Using an existing session with another name
+
+```toml
+[[runner.tmux.sessions]]
+project = "SV"       # the project key, ^[A-Z0-9]{1,32}$
+cli = "claude"       # claude or codex; required
+name = "sv"          # an existing tmux session
+```
+
+Tasks of project `SV` for `claude` are then typed into the tmux session `sv` instead of
+`SV-claude`. Everything else in this section holds for it, with these differences:
+
+- **The runner never creates it.** When the session does not exist the task fails, retryably, with
+  `tmux session sv does not exist; start it and run claude in it (tmux new-session -s sv); the
+  runner does not create sessions with a configured name`. Nothing is created in its place, and a
+  derived `SV-claude` session is not made either. The allowed roots do not apply to the working
+  directory of such a connection, because the runner never starts a CLI there.
+- **It may have several windows.** The pane that receives the task is the one pane of the whole
+  session whose foreground command is one of the CLI's `process_names`; a codex window, a shell or
+  an editor in the same session is never typed into. Two panes running the same CLI make the
+  session ambiguous (the task fails, without a retry). Typing in any window of the session counts
+  as typing for `user_idle_secs`.
+- **It needs its own Sylvode MCP entry.** The runner passes nothing to a session it did not start
+  (no `--settings`, no MCP file), so turns are read from the screen, as for any session you
+  start yourself. Give the CLI the bot's MCP entry with
+  [`setup claude`](#setup-claude-for-a-session-you-start-yourself) or
+  [`setup codex`](#setup-codex-for-a-session-you-start-yourself), run for the project's bot; the
+  server accepts a task call only from the bot the task belongs to. With `install_agent_guide =
+  true` the runner also writes its guide into the connection's working directory; turn it off if
+  that directory is not meant to hold it.
+- **`doctor`, `sessions` and the report.** The `session.<KEY>-<cli>` row and the `sessions` table
+  show the tmux name. A configured session that does not exist, or whose `sylvode` MCP entry is
+  not the runner's own (`mcp: other`), is a warning (`the session uses its own sylvode entry; it
+  must hold this bot's token`), not a failure. The report to Sylvode carries `session_source`
+  (`local` or `derived`) and never the name.
+
+Rules: the name matches `^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$` and may not have the shape
+`<KEY>-claude`, `<KEY>-codex` or `<KEY>-opencode` in any letter case, so it can never be or fold
+onto the derived name of any project. The runner refuses to start, naming `runner.tmux.sessions[i]`,
+for an invalid key, a CLI other than `claude` or `codex`, an invalid name, a repeated project and
+CLI, or a repeated name (compared without case). An entry is keyed by project key: if the project
+is renamed in Sylvode, deliveries are refused with `session_config_stale` until the entry is
+updated, so a fresh derived session is not started next to your own. `sylvode-runner release KEY`
+refuses while the configured session exists.
 
 A session the operator starts gets the Sylvode MCP server and the hooks through
 [`setup claude`](#setup-claude-for-a-session-you-start-yourself) or
@@ -678,7 +729,8 @@ sylvode-runner setup claude --project KEY [--dir D] [--bot ID] [--apply] [--conf
 `setup` gives a claude you start yourself the same Sylvode MCP server and hooks that a session
 the runner creates gets. It never touches a tmux session.
 
-- Without `--apply` it prints and writes nothing: the session name, a
+- Without `--apply` it prints and writes nothing: the session name (the configured one, with its
+  source, when `[[runner.tmux.sessions]]` names one; the runner then does not create it), a
   `tmux new-session -d -s <KEY>-claude -c <dir>` line, the full launch line, the MCP server entry
   (it names the file that holds the bot's token, never the token) and the hooks.
 - With `--apply` it runs `claude mcp add-json --scope local sylvode ...` in the directory (an
@@ -1026,6 +1078,7 @@ valid values (`runner, openclaw, openprx, webhook, custom`).
 | `report_unacked_after_secs` | `900` | [Timers](#timers-of-a-tmux-task) |
 | `completion_grace_secs` | `60` | [Timers](#timers-of-a-tmux-task) |
 | `screen_hold_secs` | `600` | [Timers](#timers-of-a-tmux-task); at least 30 is applied |
+| `sessions` | `[]` | `[[runner.tmux.sessions]]` entries with `project`, `cli` and `name`: [Using an existing session](#using-an-existing-session-with-another-name) |
 
 ### `[runner.cli.claude]`, `[runner.cli.codex]`, `[runner.cli.opencode]`
 
@@ -1105,7 +1158,8 @@ With `--project KEY`:
   the state of the agent guide (`current`, `stale`, `conflict`, `absent`). The row also carries a
   `trusted` field: `yes` or `no` as the CLI's own files say (claude `~/.claude.json`, codex
   `~/.codex/config.toml`), otherwise `unknown`.
-- `session.<KEY>-<cli>`, one for every CLI recorded for the key: state (`running`, `absent`, `cli_not_running`, `ambiguous`, `dialog`),
+- `session.<KEY>-<cli>`, one for every CLI recorded or configured for the key (details `tmux_session`
+  and `name_source`): state (`running`, `absent`, `cli_not_running`, `ambiguous`, `dialog`),
   who started it, pane, foreground command, hooks seen, `permissions` (`bypass`, `normal`,
   `unknown`) and `mcp` (`ok`, `missing`, `other`, `stale`), each with a hint.
 - a warning when the project is a git worktree, which cannot get its exclude line.
