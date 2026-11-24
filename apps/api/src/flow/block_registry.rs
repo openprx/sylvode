@@ -2329,6 +2329,21 @@ mod tests {
         tx
     }
 
+    /// The caps `reconcile_10k_blocks_under_production_statement_caps` runs under: the production
+    /// ones when the machine is qualified for timing assertions (`OPENPR_FLOW_QUIET_PG_QUALIFIED=1`),
+    /// otherwise a 1 s statement and 800 ms lock timeout so CI load cannot fail the structural checks.
+    async fn begin_for_timing_mode(db: &DatabaseConnection) -> DatabaseTransaction {
+        if quiet_qualified() {
+            return begin_capped(db).await;
+        }
+        let tx = db.begin().await.unwrap();
+        tx.execute_unprepared("SET LOCAL lock_timeout = '800ms'").await.unwrap();
+        tx.execute_unprepared("SET LOCAL statement_timeout = '1s'")
+            .await
+            .unwrap();
+        tx
+    }
+
     /// The locked-phase staging budget of `collab::write` (4 x the document lock hold limit).
     const STAGING_BUDGET: Duration = crate::flow::collab::write::LOCKED_PHASE_STAGING_BUDGET;
 
@@ -2345,7 +2360,7 @@ mod tests {
         head: i64,
         blocks: &[PreparedBlock],
     ) -> (ReconcileOutcome, Duration, Vec<statement_probe::Record>) {
-        let tx = begin_capped(db).await;
+        let tx = begin_for_timing_mode(db).await;
         let started = Instant::now();
         let allowance = RegistrationAllowance::bounded(
             started,
@@ -2387,7 +2402,7 @@ mod tests {
             assert!(steps.len() < 64, "registration must converge");
             if !interleaved_write {
                 // The page stays writable while it is partly registered.
-                let tx = begin_capped(db).await;
+                let tx = begin_for_timing_mode(db).await;
                 let mut changed = initial.clone();
                 changed[5_000] = block(5_000, 2);
                 bounded(&tx, scope, page_id, 0, &changed, 0).await.unwrap();
@@ -2404,7 +2419,7 @@ mod tests {
         let tx = db.begin().await.unwrap();
         let before = row_versions(&tx, page_id).await;
         tx.rollback().await.unwrap();
-        let tx = begin_capped(db).await;
+        let tx = begin_for_timing_mode(db).await;
         let started = Instant::now();
         let (outcome, records) = counted(&tx, scope, page_id, 1, &changed, RegistrationAllowance::Complete).await;
         let steady = started.elapsed();
