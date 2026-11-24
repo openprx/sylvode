@@ -154,7 +154,25 @@ fn arm_sigprof_micros(budget_micros: i64) {
         // An inherited blocked mask would void the ceiling silently.
         exit_cannot_arm();
     }
+    start_cpu_timer(budget_micros);
+}
+
+/// Starts the CPU timer of a ceiling. The unit tests replace it with a recorder of the budgets that
+/// were asked for, so what `arm_sigprof` and `arm_sigprof_for_import` arm is checked exactly and
+/// without a timer.
+#[cfg(not(test))]
+fn start_cpu_timer(budget_micros: i64) {
     arm_cpu_timer(budget_micros);
+}
+
+#[cfg(test)]
+fn start_cpu_timer(budget_micros: i64) {
+    ARMED_BUDGETS.with(|armed| armed.borrow_mut().push(budget_micros));
+}
+
+#[cfg(test)]
+thread_local! {
+    static ARMED_BUDGETS: std::cell::RefCell<Vec<i64>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Arms the one-shot timer that delivers `SIGPROF` once the process has consumed `budget_micros`
@@ -167,6 +185,10 @@ fn arm_sigprof_micros(budget_micros: i64) {
 /// consumed. Measured on a loaded 2-CPU machine the 2 s ceiling fired up to 29 ms (1.5%) early.
 /// The process-clock timer is checked against the scheduler's exact runtime: it never fires
 /// before the ceiling is consumed and fires at most about a tick after it.
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "the unit tests record the budget instead of arming a timer")
+)]
 fn arm_cpu_timer(budget_micros: i64) {
     // SAFETY: `libc::sigevent` is a C struct for which all-zero is a valid value; the fields set
     // below are the ones `timer_create` reads for `SIGEV_SIGNAL`.
@@ -221,6 +243,29 @@ mod tests {
         // threading does not silently make this check meaningless.
         // `is_single_threaded` itself must still return a real, non-panicking answer either way.
         let _ = is_single_threaded();
+    }
+
+    /// The budgets the calls of `f` asked the CPU timer for, in order.
+    fn budgets_armed_by(f: impl FnOnce()) -> Vec<i64> {
+        ARMED_BUDGETS.with(|armed| armed.borrow_mut().clear());
+        f();
+        ARMED_BUDGETS.with(|armed| std::mem::take(&mut *armed.borrow_mut()))
+    }
+
+    #[test]
+    fn the_write_ceiling_arms_exactly_the_decode_apply_budget() {
+        assert_eq!(
+            budgets_armed_by(arm_sigprof),
+            vec![i64::try_from(crate::isolation::DECODE_APPLY_CPU_MS_MAX * 1_000).expect("fits")]
+        );
+    }
+
+    #[test]
+    fn the_import_ceiling_arms_exactly_the_import_budget() {
+        assert_eq!(
+            budgets_armed_by(arm_sigprof_for_import),
+            vec![i64::try_from(crate::isolation::IMPORT_DECODE_CPU_MS_MAX * 1_000).expect("fits")]
+        );
     }
 
     // `set_address_space_backstop` is deliberately not exercised here: it lowers the *calling

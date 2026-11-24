@@ -1446,6 +1446,31 @@ impl LoroCollabEngine {
     pub(crate) fn first_text_over(&self, blocks: &[String], text_cpu_nanos: u64) -> Option<crate::setup_guard::Fired> {
         use crate::setup_guard::{SetupGuard, TEXT_ALLOCATION_LIMIT_BYTES};
         let guard = SetupGuard::with_limit(u64::MAX).with_text_limits(TEXT_ALLOCATION_LIMIT_BYTES, text_cpu_nanos);
+        self.first_text_over_guarded(blocks, &guard)
+    }
+
+    /// [`Self::first_text_over_budget`] with the CPU cost of a text taken from `meter` instead of
+    /// the clock (the allocation budget applies as usual). Test support, see
+    /// [`crate::setup_guard::FixedRateMeter`].
+    #[cfg(any(test, feature = "test-injection"))]
+    #[must_use]
+    pub fn first_text_over_budget_metered(
+        &self,
+        blocks: &[String],
+        meter: &crate::setup_guard::FixedRateMeter,
+    ) -> Option<crate::setup_guard::Fired> {
+        use crate::setup_guard::{SetupGuard, TEXT_ALLOCATION_LIMIT_BYTES, TEXT_CPU_BUDGET_NANOS};
+        let guard = SetupGuard::with_limit(u64::MAX)
+            .with_text_limits(TEXT_ALLOCATION_LIMIT_BYTES, TEXT_CPU_BUDGET_NANOS)
+            .with_fixed_text_cost(meter.text_nanos(self.doc.len_ops()));
+        self.first_text_over_guarded(blocks, &guard)
+    }
+
+    fn first_text_over_guarded(
+        &self,
+        blocks: &[String],
+        guard: &crate::setup_guard::SetupGuard,
+    ) -> Option<crate::setup_guard::Fired> {
         for id in blocks {
             let Ok(id) = loro::ContainerID::try_from(id.as_str()) else {
                 continue;
@@ -1454,7 +1479,7 @@ impl LoroCollabEngine {
                 continue;
             };
             if let Err(crate::work::Stop::Guard(fired)) =
-                crate::work::block_mark_items_guarded(&block, u64::MAX, Some(&guard))
+                crate::work::block_mark_items_guarded(&block, u64::MAX, Some(guard))
             {
                 return Some(fired);
             }

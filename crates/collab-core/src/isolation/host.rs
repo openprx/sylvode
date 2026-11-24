@@ -194,6 +194,37 @@ pub fn isolated_apply_with_observed(
     }
 }
 
+/// The variable the debug build of the worker reads its synthetic workload from (the worker's
+/// `test_injection` module).
+#[cfg(feature = "test-injection")]
+const TEST_INJECT_ENV_VAR_FOR_HOST: &str = "COLLAB_ISOLATION_TEST_INJECT";
+
+/// [`isolated_apply_with_observed`] with `inject` set as the worker's test-injection variable on the
+/// one child this call spawns (for example `cpu_burn_micros=60000`): a debug build of the worker
+/// then runs that synthetic workload in its metered window instead of the document's. A release
+/// build of the worker ignores the variable, as it does not contain the code that reads it.
+///
+/// Test support for the API crate's tests, behind the `test-injection` feature; the production entry
+/// points never set the variable.
+#[cfg(feature = "test-injection")]
+pub fn isolated_apply_injected_observed(
+    base_snapshot: &[u8],
+    update: &[u8],
+    mode: WindowMode,
+    setup_cpu_budget_ms: u64,
+    inject: &str,
+) -> (Result<IsolatedApplySuccess, IsolatedApplyError>, WorkerObservation) {
+    let budget = setup_cpu_budget_ms.to_string();
+    let mut env = vec![
+        (wire::SETUP_CPU_BUDGET_ENV, budget.as_str()),
+        (TEST_INJECT_ENV_VAR_FOR_HOST, inject),
+    ];
+    if mode == WindowMode::Full {
+        env.push((wire::WINDOW_ENV, wire::WINDOW_FULL));
+    }
+    run_isolated_apply_observed(base_snapshot, update, wire::OPERATION_APPLY, &env)
+}
+
 /// Same as [`isolated_apply`], and additionally reports the [`WorkerObservation`] of the run.
 /// Callers use it to log whether a [`IsolatedApplyError::WallCeiling`] came with the worker
 /// having had the CPU or not. It runs the default (incremental) window mode: it has no mode
@@ -1456,8 +1487,74 @@ mod tests {
         conclusive_within(4, BOUNDARY_PAUSE, "a burn over the import CPU ceiling", || {
             let (result, observation) =
                 isolated_import_injected_observed(&format!("cpu_burn_micros={}", import_ceiling_us.saturating_mul(2)));
-            judge_burn_over_cpu_ceiling(&result, &observation, import_ceiling_us)
+            judge_import_burn_killed_at_its_ceiling(&result, &observation, import_ceiling_us)
         });
+    }
+
+    /// Judges an import-window burn of twice the ceiling: the verdict is the CPU ceiling's, and the
+    /// worker had consumed the ceiling (to the host's reading, within [`CPU_ACCOUNTING_SLACK_US`])
+    /// when it was killed. How far past the ceiling the kill came is not judged here: that is the
+    /// scheduler's latency on a loaded host (it overshot a 2,000 ms ceiling by 22.8 ms against a
+    /// tolerance of two ticks); the exact figure the timer is armed with is pinned by
+    /// `child_runtime::tests::the_import_ceiling_arms_exactly_the_import_budget`. A `WallCeiling` of
+    /// a worker that had not consumed the ceiling is a starved worker.
+    fn judge_import_burn_killed_at_its_ceiling(
+        result: &Result<IsolatedApplySuccess, IsolatedApplyError>,
+        observation: &WorkerObservation,
+        ceiling_us: u64,
+    ) -> CeilingVerdict {
+        let Some(cpu_us) = observation.metered_cpu_us else {
+            return CeilingVerdict::Violation("the host could not observe the worker's CPU time".to_string());
+        };
+        match result {
+            Err(IsolatedApplyError::CpuCeiling) if cpu_us.saturating_add(CPU_ACCOUNTING_SLACK_US) >= ceiling_us => {
+                CeilingVerdict::Conclusive
+            }
+            Err(IsolatedApplyError::CpuCeiling) => CeilingVerdict::Violation(format!(
+                "SIGPROF killed the worker after only {cpu_us}us of CPU, below the {ceiling_us}us ceiling"
+            )),
+            Err(IsolatedApplyError::WallCeiling) if cpu_us < ceiling_us.saturating_add(CPU_ACCOUNTING_SLACK_US) => {
+                CeilingVerdict::Starved
+            }
+            other => CeilingVerdict::Violation(format!("unexpected outcome {other:?} after {cpu_us}us of CPU")),
+        }
+    }
+
+    #[test]
+    fn an_import_burn_is_judged_by_the_verdict_and_the_ceiling_it_consumed() {
+        let ceiling = 2_000_000;
+        let cpu_kill = || Err(IsolatedApplyError::CpuCeiling);
+        let wall = || Err(IsolatedApplyError::WallCeiling);
+        let observed = |cpu_us| WorkerObservation {
+            metered_cpu_us: Some(cpu_us),
+            ..WorkerObservation::default()
+        };
+        // A late kill is not a violation: the overshoot is the scheduler's.
+        for cpu_us in [ceiling, ceiling + 22_800, ceiling + 200_000] {
+            assert_eq!(
+                judge_import_burn_killed_at_its_ceiling(&cpu_kill(), &observed(cpu_us), ceiling),
+                CeilingVerdict::Conclusive,
+                "{cpu_us}"
+            );
+        }
+        // An early kill is: the ceiling was not consumed.
+        assert!(matches!(
+            judge_import_burn_killed_at_its_ceiling(&cpu_kill(), &observed(ceiling - 11_000), ceiling),
+            CeilingVerdict::Violation(_)
+        ));
+        // A wall kill of a worker that never consumed the ceiling is starvation, of one that did, a violation.
+        assert_eq!(
+            judge_import_burn_killed_at_its_ceiling(&wall(), &observed(500_000), ceiling),
+            CeilingVerdict::Starved
+        );
+        assert!(matches!(
+            judge_import_burn_killed_at_its_ceiling(&wall(), &observed(ceiling + 20_000), ceiling),
+            CeilingVerdict::Violation(_)
+        ));
+        assert!(matches!(
+            judge_import_burn_killed_at_its_ceiling(&cpu_kill(), &WorkerObservation::default(), ceiling),
+            CeilingVerdict::Violation(_)
+        ));
     }
 
     /// Judges an import-window burn that must end inside the window: the worker finishes with the

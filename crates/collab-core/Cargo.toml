@@ -22,6 +22,14 @@ sha2 = "0.10"
 libc = "0.2"
 crc32fast = "1"
 
+[features]
+# Test support for other crates' tests (`apps/api`, as a dev-dependency only). Never a default and
+# never enabled by a release build of the worker or the API: it adds a fixed-rate stand-in for the
+# per-text CPU reading of the host's text measure and a host entry that sets the worker's
+# debug-build test-injection variable on one spawned child. Nothing in the isolated worker binary
+# reads it.
+test-injection = []
+
 [dev-dependencies]
 # Test-only: `isolation::host`'s tests serialize access to a shared env var across parallel
 # `cargo test` threads (`disallowed_types` bans `std::sync::Mutex` even in test code; matches

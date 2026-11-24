@@ -49,6 +49,8 @@ mod spawn_env;
 mod unsupported;
 pub mod wire;
 
+#[cfg(all(target_os = "linux", feature = "test-injection"))]
+pub use host::isolated_apply_injected_observed;
 #[cfg(target_os = "linux")]
 pub use host::{
     WORKER_BINARY_PATH_ENV, isolated_apply, isolated_apply_observed, isolated_apply_with, isolated_apply_with_observed,

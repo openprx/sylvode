@@ -21,8 +21,8 @@ use super::{CollabEngine, LoroCollabEngine};
 use crate::alloc_meter::requested_bytes;
 use crate::facts::BaseFacts;
 use crate::setup_guard::{
-    Fired, SETUP_ALLOCATION_LIMIT_BYTES, SetupGuard, TEXT_ALLOCATION_LIMIT_BYTES, TEXT_CPU_BUDGET_NANOS,
-    stepping_clock, thread_cpu_nanos,
+    Fired, FixedRateMeter, SETUP_ALLOCATION_LIMIT_BYTES, SetupGuard, TEXT_ALLOCATION_LIMIT_BYTES,
+    TEXT_CPU_BUDGET_NANOS, stepping_clock, thread_cpu_nanos,
 };
 use crate::window_check::fault::{Fault, inject};
 
@@ -699,6 +699,43 @@ fn r9_3_a_setup_without_facts_that_read_the_texts_needs_a_fresh_engine() {
     // The full mode computes nothing (it is `SetupFacts::none(None)`): nothing was read.
     let none = crate::facts::SetupFacts::none(None);
     assert!(!none.texts_read && !none.needs_fresh_engine());
+}
+
+/// The fixed-rate meter of the tests decides the per-text CPU budget from the operations of the
+/// document and its rate alone: a rate that charges the budget exactly is within it, one nano more
+/// per operation is over it, whatever the clock says, and the answer is the same every time.
+#[test]
+fn the_fixed_rate_meter_holds_the_text_budget_without_a_clock() {
+    let base = anchor_page(10, 1, 500, Anchors::NestedSameKey);
+    let engine = LoroCollabEngine::load(&base).unwrap();
+    let blocks: Vec<String> = engine
+        .root_block_ids()
+        .unwrap()
+        .unwrap()
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    let ops = engine.doc.len_ops() as u64;
+    let exact = FixedRateMeter {
+        nanos_per_op: TEXT_CPU_BUDGET_NANOS / ops,
+    };
+    assert!(exact.text_nanos(ops as usize) <= TEXT_CPU_BUDGET_NANOS);
+    let over = FixedRateMeter {
+        nanos_per_op: exact.nanos_per_op + 1,
+    };
+    assert!(over.text_nanos(ops as usize) > TEXT_CPU_BUDGET_NANOS);
+    for _ in 0..3 {
+        assert_eq!(engine.first_text_over_budget_metered(&blocks, &exact), None);
+        assert_eq!(engine.first_text_over_budget_metered(&blocks, &over), Some(Fired::Text));
+    }
+    // A malformed id is skipped, as it is by the clock's measure.
+    assert_eq!(
+        engine.first_text_over_budget_metered(&["not an id".to_owned()], &over),
+        None
+    );
+    // A free rate never fires: the cost is the rate's, not the clock's.
+    let free = FixedRateMeter { nanos_per_op: 0 };
+    assert_eq!(engine.first_text_over_budget_metered(&blocks, &free), None);
 }
 
 /// R9-1: the incremental window reports the blocks the update touched, the host measures their texts

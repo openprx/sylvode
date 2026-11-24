@@ -336,6 +336,10 @@ pub struct SetupGuard {
     text_byte_limit: u64,
     text_cpu_budget: u64,
     clock: fn() -> Option<u64>,
+    /// What every text is taken to have cost in CPU time, instead of a reading of the clock: set
+    /// only by a test ([`Self::with_fixed_text_cost`]).
+    #[cfg(any(test, feature = "test-injection"))]
+    fixed_text_nanos: Option<u64>,
 }
 
 impl SetupGuard {
@@ -373,6 +377,8 @@ impl SetupGuard {
             text_byte_limit: u64::MAX,
             text_cpu_budget: u64::MAX,
             clock,
+            #[cfg(any(test, feature = "test-injection"))]
+            fixed_text_nanos: None,
         }
     }
 
@@ -383,6 +389,16 @@ impl SetupGuard {
     pub const fn with_text_limits(mut self, text_bytes: u64, text_cpu_nanos: u64) -> Self {
         self.text_byte_limit = text_bytes;
         self.text_cpu_budget = text_cpu_nanos;
+        self
+    }
+
+    /// This guard with every text taken to cost `nanos` of CPU time: the per-text CPU budget is
+    /// held against that figure and the clock is not read for it. For tests that need the refusal
+    /// of a text over its budget without depending on how fast the machine is.
+    #[cfg(any(test, feature = "test-injection"))]
+    #[must_use]
+    pub const fn with_fixed_text_cost(mut self, nanos: u64) -> Self {
+        self.fixed_text_nanos = Some(nanos);
         self
     }
 
@@ -463,6 +479,10 @@ impl SetupGuard {
             return Some(Fired::Text);
         }
         if self.text_cpu_budget != u64::MAX {
+            #[cfg(any(test, feature = "test-injection"))]
+            if let Some(fixed) = self.fixed_text_nanos {
+                return (fixed > self.text_cpu_budget).then_some(Fired::Text);
+            }
             let spent = match (mark.nanos, (self.clock)()) {
                 (Some(before), Some(now)) => now.saturating_sub(before),
                 _ => return Some(Fired::Text),
@@ -472,6 +492,30 @@ impl SetupGuard {
             }
         }
         None
+    }
+}
+
+/// A stand-in for the CPU cost of decoding a text, for tests: the cost is the number of operations
+/// in the document times a fixed rate, so it is the same on every machine and under any load.
+///
+/// It exists only in test builds and under the `test-injection` feature (a dev-dependency of the
+/// API crate); no release build of the worker or the API has it, and nothing reads it from a
+/// configuration or from the wire. The count of operations is a stand-in for the marks of a text:
+/// every style mark is two operations, so on a page whose text carries the marks the count follows
+/// them, and a test finds the number of marks that crosses the budget by asking the measure itself.
+#[cfg(any(test, feature = "test-injection"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixedRateMeter {
+    /// CPU nanoseconds charged per operation of the document.
+    pub nanos_per_op: u64,
+}
+
+#[cfg(any(test, feature = "test-injection"))]
+impl FixedRateMeter {
+    /// The cost charged to a text of a document with `ops` operations.
+    #[must_use]
+    pub const fn text_nanos(&self, ops: usize) -> u64 {
+        (ops as u64).saturating_mul(self.nanos_per_op)
     }
 }
 
