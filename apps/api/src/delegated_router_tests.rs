@@ -2931,6 +2931,60 @@ async fn forms_follow_the_forms_scopes_the_grants_projects_and_the_member_field_
         );
     }
 
+    // The same record with Flow lineage: a Flow page references it and a conversion job created it.
+    // The person with a session sees both entries; the connected application sees none.
+    let page = Uuid::new_v4();
+    exec(
+        &w.db,
+        "INSERT INTO flow_workspace_settings (workspace_id, flow_enabled) VALUES ($1, true) \
+         ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = true",
+        vec![w.ws1.into()],
+    )
+    .await;
+    exec(
+        &w.db,
+        "INSERT INTO flow_objects (id, workspace_id, project_id, object_type, parent_id) \
+         VALUES ($1, $2, NULL, 'page', flow_ensure_navigator_root($2, NULL))",
+        vec![page.into(), w.ws1.into()],
+    )
+    .await;
+    exec(
+        &w.db,
+        "INSERT INTO flow_bridge_references \
+            (id, workspace_id, source_object_id, target_type, target_id, idempotency_key, created_by, created_by_kind) \
+         VALUES ($1, $2, $3, 'form_record', $4, 'lineage-reference', $5, 'user')",
+        vec![
+            Uuid::new_v4().into(),
+            w.ws1.into(),
+            page.into(),
+            w.r1.into(),
+            w.alice.into(),
+        ],
+    )
+    .await;
+    let own = w.send("GET", &record_uri, Some(&World::jwt(w.alice)), &[], None).await;
+    assert_ok(&own, "record with a session");
+    assert_eq!(
+        own.json()["data"]["flow_lineage"]["references"]
+            .as_array()
+            .map(Vec::len),
+        Some(1),
+        "the person sees the Flow reference: {}",
+        own.text()
+    );
+    let delegated = w.get(&read, &record_uri).await;
+    assert_ok(&delegated, "record with a connection");
+    assert_eq!(
+        delegated.json()["data"]["flow_lineage"],
+        json!({"references": [], "conversions": []}),
+        "a connected application sees no Flow lineage even where the record has some: {}",
+        delegated.text()
+    );
+    assert!(
+        !delegated.text().contains(&page.to_string()),
+        "the page id must not reach a connected application"
+    );
+
     // A grant for one project reaches the forms of that project only; another project of the same
     // workspace and another workspace answer like a missing object.
     let one = w.session(w.alice, w.ws1, &[w.p1], &["forms:read", "forms:write"]).await;
