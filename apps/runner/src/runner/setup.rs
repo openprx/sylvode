@@ -21,7 +21,7 @@ use std::process::{Command, ExitCode, Stdio};
 use serde_json::{Value, json};
 use sylvode_prereq::{Checker, InstallKind};
 
-use super::checks::valid_project_key;
+use super::checks::{Channel, valid_project_key};
 use super::files::{RUNNER_MARK, StateDir, claude_hooks, mcp_server_entry};
 use super::launch::{
     CodexLaunchFiles, LaunchFiles, SEARCH_MODE_TOOLS, SERVER_NAME, WRITE_TOOL, codex_session_argv, hook_words_for,
@@ -82,7 +82,8 @@ pub fn plan(config: &Config, inputs: &Inputs<'_>) -> Result<Plan, String> {
     if !valid_project_key(inputs.key) {
         return Err("the project key must match ^[A-Z0-9]{1,32}$".to_string());
     }
-    let resolved = super::naming::resolve(&config.runner, inputs.bot_id, inputs.key, "claude").map_err(|r| r.reason)?;
+    let resolved = super::naming::resolve(&config.runner, inputs.bot_id, inputs.key, "claude", Channel::Tmux)
+        .map_err(|r| r.reason)?;
     let name = resolved.slot;
     WorkDir::new(&inputs.dir).map_err(|e| e.to_string())?;
     let mcp_json = inputs
@@ -512,7 +513,8 @@ pub fn codex_plan(config: &Config, inputs: &CodexInputs<'_>) -> Result<CodexPlan
     if !valid_project_key(inputs.key) {
         return Err("the project key must match ^[A-Z0-9]{1,32}$".to_string());
     }
-    let resolved = super::naming::resolve(&config.runner, inputs.bot_id, inputs.key, "codex").map_err(|r| r.reason)?;
+    let resolved = super::naming::resolve(&config.runner, inputs.bot_id, inputs.key, "codex", Channel::Tmux)
+        .map_err(|r| r.reason)?;
     let name = resolved.slot;
     WorkDir::new(&inputs.dir).map_err(|e| e.to_string())?;
     let mcp_toml = inputs.state_dir.join("mcp").join(format!("{}.toml", inputs.bot_id));

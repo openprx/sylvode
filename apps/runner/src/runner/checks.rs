@@ -125,10 +125,10 @@ pub struct Accepted {
 }
 
 impl Accepted {
-    /// Whether the task is typed into a tmux session: the tmux channel, or a bot's own session
-    /// whatever the channel says.
+    /// Whether the task is typed into a tmux session: the tmux channel, whether the session is the
+    /// project's derived one or a bot's own.
     pub fn uses_tmux(&self) -> bool {
-        self.channel == Channel::Tmux || self.slot.is_bot()
+        self.channel == Channel::Tmux
     }
 }
 
@@ -259,8 +259,9 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
         }
     };
     let cli = str_at(execution, &["cli"]).unwrap_or_default().to_string();
-    // A bot with a configured session is served by it on either channel.
-    let bot_session = runner.bot_session(&ctx.bot.bot_id, &cli).is_some();
+    // On the tmux channel a bot with a configured session is served by it; a headless connection
+    // runs headless whatever sessions the runner has.
+    let bot_session = channel == Channel::Tmux && runner.bot_session(&ctx.bot.bot_id, &cli).is_some();
     // A project slot's key is bound to one project; a bot slot binds no key.
     if !bot_session && ctx.registry.check(project_id, project_key).is_err() {
         return refuse(
@@ -268,7 +269,7 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
             "another project already uses this session name on this runner",
         );
     }
-    let tmux = if channel == Channel::Tmux || bot_session {
+    let tmux = if channel == Channel::Tmux {
         // opencode has no verified tmux behaviour (readiness, dialogs, permissions): refused
         // whatever else is set.
         if !super::profile::profile(&cli).is_some_and(|p| p.tmux) {
@@ -294,7 +295,7 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
     let mut resolved = None;
     let mut session_exists = false;
     if let Some(tmux) = &tmux {
-        let found = match super::naming::resolve(runner, &ctx.bot.bot_id, project_key, &cli) {
+        let found = match super::naming::resolve(runner, &ctx.bot.bot_id, project_key, &cli, channel) {
             Ok(found) => found,
             Err(refusal) => return Verdict::Refused(refusal),
         };
@@ -353,7 +354,7 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
     };
     let found = match resolved {
         Some(found) => found,
-        None => match super::naming::resolve(runner, &ctx.bot.bot_id, project_key, &cli) {
+        None => match super::naming::resolve(runner, &ctx.bot.bot_id, project_key, &cli, channel) {
             Ok(found) => found,
             Err(_) => return refuse("cli_unavailable", "the project's CLI is not known to this runner"),
         },

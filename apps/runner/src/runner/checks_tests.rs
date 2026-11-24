@@ -870,10 +870,10 @@ async fn a_bot_slot_ignores_the_key_registry() {
     assert_eq!(refused(&verdict).0, "session_name_collision");
 }
 
-/// Stage R: a headless delivery for a bot with an entry is typed into its session. The directory
-/// is outside the roots, which would refuse a headless run, and is not checked.
+/// A headless delivery for a bot with an entry is a headless run of the project: the entry serves
+/// the tmux channel only, so the roots decide the directory.
 #[tokio::test]
-async fn a_headless_delivery_for_a_bot_with_an_entry_goes_to_its_session() {
+async fn a_headless_delivery_for_a_bot_with_an_entry_runs_headless() {
     let fx = Fixture::new();
     let (tmux, _log) = logging_tmux(&fx);
     let outside = fx.base.sub("elsewhere");
@@ -881,20 +881,22 @@ async fn a_headless_delivery_for_a_bot_with_an_entry_goes_to_its_session() {
     let (addr, _server) = serve(m.clone()).await;
     let mut config = fx.config_with(addr, &format!("[runner.tmux]\nwindow_width = 200\n{}", bot_entry()));
     config.runner.tmux.binary = tmux.to_string_lossy().into_owned();
-    let Verdict::Run(accepted) = fx.run(&config, m.clone(), addr, &delivery()).await else {
+    // The directory outside the roots is refused as for any headless run.
+    let verdict = fx.run(&config, m, addr, &delivery()).await;
+    assert_eq!(refused(&verdict).0, "path_outside_allowlist");
+    // Inside the roots it runs headless in the project's own slot.
+    let m = ok_mock(task_view(&fx.project_dir, "headless", "claude"));
+    let (addr, _server) = serve(m.clone()).await;
+    let mut config = fx.config_with(addr, &format!("[runner.tmux]\nwindow_width = 200\n{}", bot_entry()));
+    config.runner.tmux.binary = tmux.to_string_lossy().into_owned();
+    let Verdict::Run(accepted) = fx.run(&config, m, addr, &delivery()).await else {
         panic!("accepted")
     };
     assert_eq!(accepted.channel, Channel::Headless);
-    assert!(accepted.uses_tmux());
-    assert_eq!(
-        (accepted.slot.as_str(), accepted.tmux.as_str()),
-        (format!("bot-{BOT}-claude").as_str(), "sv")
-    );
-    assert!(!accepted.dir_checked);
-    // The same delivery without an entry is a headless run and the roots refuse it.
-    let plain = fx.config(addr);
-    let verdict = fx.run(&plain, m, addr, &delivery()).await;
-    assert_eq!(refused(&verdict).0, "path_outside_allowlist");
+    assert!(!accepted.uses_tmux());
+    assert_eq!(accepted.slot.as_str(), "SVWL-claude");
+    assert_eq!(accepted.name_source, super::tmux::NameSource::Derived);
+    assert!(accepted.dir_checked);
 }
 
 /// An entry for the other CLI leaves the project's own derived session (an entry of another bot is

@@ -2063,11 +2063,11 @@ async fn tasks_of_two_projects_for_one_bot_go_into_its_one_session_in_order() {
     drop(server);
 }
 
-/// Stage R: a headless delivery for a bot that has a session is typed into it, and the directory
-/// that the roots would refuse for a headless run is not looked at.
+/// A headless delivery for a bot that has a session is not typed into it: the entry serves the tmux
+/// channel only, so the headless rules apply (the roots refuse a directory outside them).
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
-async fn a_headless_delivery_for_a_bot_with_a_session_is_typed_into_it() {
+async fn a_headless_delivery_for_a_bot_with_a_session_is_not_typed_into_it() {
     if !enabled() {
         return;
     }
@@ -2077,23 +2077,14 @@ async fn a_headless_delivery_for_a_bot_with_a_session_is_typed_into_it() {
     fx.set_view_b(T1, "headless", true, true);
     let server = fx.serve();
     let answer = post_signed(&server.url("/webhook"), &Fixture::delivery_b(T1)).await.1;
-    assert_eq!(answer["status"], "dispatched", "{answer}");
-    assert_eq!(
-        (answer["channel"].as_str(), answer["session"].as_str()),
-        (Some("tmux"), Some("sv")),
-        "{answer}"
+    assert_eq!(answer["status"], "refused", "{answer}");
+    assert_eq!(answer["reason_code"], "path_outside_allowlist", "{answer}");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert!(
+        fx.typed().is_empty(),
+        "nothing is typed into the session: {:?}",
+        fx.typed()
     );
-    let typed = fx.wait_typed(1, 40).await;
-    assert_eq!(typed.len(), 1, "{typed:?}");
-    assert!(typed[0].contains("|Project: RFGUI|"), "{typed:?}");
-    // The same delivery for a bot without a session is a headless run that the roots refuse.
-    drop(server);
-    let plain = Fixture::new(find_tmux().expect("tmux"), Standin::Normal).await;
-    plain.set_view_b(T1, "headless", true, true);
-    let server = plain.serve();
-    let refused = post_signed(&server.url("/webhook"), &Fixture::delivery_b(T1)).await.1;
-    assert_eq!(refused["status"], "refused", "{refused}");
-    assert_eq!(refused["reason_code"], "path_outside_allowlist", "{refused}");
     drop(server);
 }
 

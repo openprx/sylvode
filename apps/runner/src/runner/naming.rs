@@ -1,16 +1,17 @@
 //! Which slot and which tmux session a task of a bot, project and CLI goes to: a pure function of
 //! the runner's configuration.
 //!
-//! 1. A local entry (`[[runner.tmux.sessions]]`) for the bot and CLI names an existing session
-//!    that serves the bot for every project, on either channel: [`Slot::Bot`] and
-//!    [`NameSource::Local`]. The runner never creates such a session.
+//! 1. For a tmux delivery, a local entry (`[[runner.tmux.sessions]]`) for the bot and CLI names an
+//!    existing session that serves the bot for every project: [`Slot::Bot`] and
+//!    [`NameSource::Local`]. The runner never creates such a session. A headless delivery never
+//!    uses it: the channel setting means what it says.
 //! 2. Else the derived `<KEY>-<cli>`: [`Slot::Project`] and [`NameSource::Derived`], the only kind
 //!    the runner creates.
 //!
 //! The slot keys the worker, the state directory and the hook routing; the tmux name is only the
 //! target of the driver.
 
-use super::checks::Refusal;
+use super::checks::{Channel, Refusal};
 use super::config::RunnerConfig;
 use super::tmux::{NameSource, Slot, TmuxName};
 
@@ -24,13 +25,15 @@ pub struct Resolved {
     pub source: NameSource,
 }
 
-/// Resolves the slot and tmux session of a task for `bot` in project `key` for `cli`.
+/// Resolves the slot and tmux session of a task for `bot` in project `key` for `cli` on `channel`.
 ///
 /// # Errors
 ///
 /// A refusal for an invalid key or CLI, or an invalid configured name.
-pub fn resolve(cfg: &RunnerConfig, bot: &str, key: &str, cli: &str) -> Result<Resolved, Refusal> {
-    if let Some(entry) = cfg.bot_session(bot, cli) {
+pub fn resolve(cfg: &RunnerConfig, bot: &str, key: &str, cli: &str, channel: Channel) -> Result<Resolved, Refusal> {
+    if channel == Channel::Tmux
+        && let Some(entry) = cfg.bot_session(bot, cli)
+    {
         let invalid = || Refusal::new("session_config_invalid", "the runner's configured session is not valid");
         return Ok(Resolved {
             slot: Slot::bot(&entry.bot, cli).map_err(|_| invalid())?,

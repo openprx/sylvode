@@ -1,3 +1,4 @@
+use super::checks::Channel;
 use super::config::RunnerConfig;
 use super::naming::{resolve, tmux_of_slot};
 use super::tmux::{NameSource, Slot};
@@ -17,7 +18,7 @@ fn entry(bot: &str, cli: &str, name: &str) -> String {
 fn with_no_entry_every_session_is_the_derived_one() {
     let cfg = config("");
     for (key, cli) in [("SV", "claude"), ("SV", "codex"), ("RF9", "claude")] {
-        let found = resolve(&cfg, BOT, key, cli).expect("resolves");
+        let found = resolve(&cfg, BOT, key, cli, Channel::Tmux).expect("resolves");
         assert_eq!(found.source, NameSource::Derived);
         assert!(!found.slot.is_bot());
         assert_eq!(found.slot.as_str(), format!("{key}-{cli}"));
@@ -31,15 +32,27 @@ fn with_no_entry_every_session_is_the_derived_one() {
 fn a_bot_entry_serves_every_project_of_the_bot() {
     let cfg = config(&entry(BOT, "claude", "sv"));
     for key in ["SV", "RFGUI", "PRC"] {
-        let found = resolve(&cfg, BOT, key, "claude").expect("resolves");
+        let found = resolve(&cfg, BOT, key, "claude", Channel::Tmux).expect("resolves");
         assert_eq!(found.source, NameSource::Local);
         assert_eq!(found.tmux.as_str(), "sv");
         assert_eq!(found.slot.as_str(), format!("bot-{BOT}-claude"));
         assert_eq!(found.slot.bot_id(), Some(BOT));
     }
     // The bot id compares whatever its case.
-    let upper = resolve(&cfg, &BOT.to_uppercase(), "SV", "claude").expect("resolves");
+    let upper = resolve(&cfg, &BOT.to_uppercase(), "SV", "claude", Channel::Tmux).expect("resolves");
     assert_eq!(upper.source, NameSource::Local);
+}
+
+/// A headless delivery never uses the bot's session: the channel setting means what it says.
+#[test]
+fn a_headless_delivery_ignores_the_bot_entry() {
+    let cfg = config(&entry(BOT, "claude", "sv"));
+    let found = resolve(&cfg, BOT, "SV", "claude", Channel::Headless).expect("resolves");
+    assert_eq!(found.source, NameSource::Derived);
+    assert!(!found.slot.is_bot());
+    assert_eq!(found.slot.as_str(), "SV-claude");
+    let tmux = resolve(&cfg, BOT, "SV", "claude", Channel::Tmux).expect("resolves");
+    assert_eq!(tmux.source, NameSource::Local);
 }
 
 /// Another CLI of the bot, and another bot, keep the derived session of the project.
@@ -47,7 +60,7 @@ fn a_bot_entry_serves_every_project_of_the_bot() {
 fn another_cli_or_bot_falls_back_to_the_derived_session() {
     let cfg = config(&entry(BOT, "claude", "sv"));
     for (bot, key, cli) in [(BOT, "SV", "codex"), (OTHER_BOT, "SV", "claude")] {
-        let other = resolve(&cfg, bot, key, cli).expect("resolves");
+        let other = resolve(&cfg, bot, key, cli, Channel::Tmux).expect("resolves");
         assert_eq!(
             (other.source, other.tmux.as_str().to_string()),
             (NameSource::Derived, format!("{key}-{cli}"))
@@ -60,11 +73,11 @@ fn another_cli_or_bot_falls_back_to_the_derived_session() {
 fn an_invalid_key_or_cli_is_refused() {
     let cfg = config("");
     assert_eq!(
-        resolve(&cfg, BOT, "sv", "claude").expect_err("key").code,
+        resolve(&cfg, BOT, "sv", "claude", Channel::Tmux).expect_err("key").code,
         "invalid_project_key"
     );
     assert_eq!(
-        resolve(&cfg, BOT, "SV", "vim").expect_err("cli").code,
+        resolve(&cfg, BOT, "SV", "vim", Channel::Tmux).expect_err("cli").code,
         "invalid_project_key"
     );
 }

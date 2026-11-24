@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use super::checks::{self, BotCreds, Context, Verdict};
+use super::checks::{self, BotCreds, Channel, Context, Verdict};
 use super::session::{Adopt, Probe, TmuxTask};
 use super::sv_client::{SvClient, TASK_PROTOCOL};
 use super::tmux::Slot;
@@ -127,13 +127,11 @@ async fn recover_bot(
             continue;
         };
         let cli = str_at(&view, &["execution", "cli"]).unwrap_or("claude");
-        // A bot with a configured session has every task typed into it, whatever the channel.
-        let typed_in = str_at(&view, &["execution", "channel"]) == Some("tmux")
-            || state.config.runner.bot_session(&bot.bot_id, cli).is_some();
-        if !typed_in || !checks::valid_project_key(key_text) {
+        // Only tasks typed into a tmux session are recovered here; a bot's own session is among them.
+        if str_at(&view, &["execution", "channel"]) != Some("tmux") || !checks::valid_project_key(key_text) {
             continue;
         }
-        let Ok(found) = super::naming::resolve(&state.config.runner, &bot.bot_id, key_text, cli) else {
+        let Ok(found) = super::naming::resolve(&state.config.runner, &bot.bot_id, key_text, cli, Channel::Tmux) else {
             continue;
         };
         let name = found.slot;
