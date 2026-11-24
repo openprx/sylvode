@@ -14,6 +14,7 @@ use super::{
     description::build_title,
     ingest::{find_open_alert, is_terminal, opened_this_hour, waiting_for_rule},
     notify::current_human_members,
+    rule_input::ValidatedRule,
     rules::{ACTION_WORK_ITEM_AND_TASK, RULE_COLUMNS, RuleRow, mismatch_reason},
     severity::Severity,
     tasks::{CapState, cap_state, valid_bot},
@@ -43,6 +44,60 @@ pub struct Limits {
     pub alerts_per_rule_per_hour: u32,
 }
 
+/// A rule that is not saved: evaluated in place of the saved rule it replaces, or after all of them.
+pub struct DraftRule {
+    pub replaces: Option<Uuid>,
+    pub rule: ValidatedRule,
+}
+
+impl DraftRule {
+    /// The rows to evaluate: `saved` with the draft substituted or appended, and the index of the
+    /// draft among them. A draft that replaces nothing has the nil id and a position after every
+    /// saved rule; a replacing draft keeps the id, position and version of the rule it stands in for.
+    fn apply(self, mut saved: Vec<RuleRow>, workspace_id: Uuid, project_id: Uuid) -> (Vec<RuleRow>, usize) {
+        let existing = self.replaces.and_then(|id| saved.iter().position(|rule| rule.id == id));
+        let replaced = existing
+            .and_then(|index| saved.get(index))
+            .map(|rule| (rule.id, rule.position, rule.version));
+        let (id, position, version) = replaced.unwrap_or_else(|| {
+            let last = saved.iter().map(|rule| rule.position).max().unwrap_or(0);
+            (Uuid::nil(), last.saturating_add(10), 1)
+        });
+        let rule = self.rule;
+        let row = RuleRow {
+            id,
+            workspace_id,
+            project_id,
+            name: rule.name,
+            position,
+            enabled: rule.enabled,
+            source_id: rule.source_id,
+            kind_patterns: rule.kind_patterns,
+            min_severity: rule.min_severity.as_str().to_owned(),
+            action: rule.action.to_owned(),
+            bot_user_id: rule.bot_user_id,
+            instructions: rule.instructions,
+            priority_map: rule.priority_map,
+            label_ids: rule.label_ids,
+            notify_user_ids: rule.notify_user_ids,
+            max_tasks_per_hour: rule.max_tasks_per_hour,
+            max_active_tasks: rule.max_active_tasks,
+            dedup_window_secs: rule.dedup_window_secs,
+            rearm_after_secs: rule.rearm_after_secs,
+            task_max_attempts: rule.task_max_attempts,
+            version,
+        };
+        if let Some((index, slot)) = existing.and_then(|index| saved.get_mut(index).map(|slot| (index, slot))) {
+            *slot = row;
+            (saved, index)
+        } else {
+            saved.push(row);
+            let index = saved.len() - 1;
+            (saved, index)
+        }
+    }
+}
+
 #[derive(Serialize)]
 pub struct RuleVerdict {
     pub id: Uuid,
@@ -51,6 +106,8 @@ pub struct RuleVerdict {
     pub matched: bool,
     /// `matched`, or why the rule does not handle the event.
     pub reason: &'static str,
+    /// This verdict is the unsaved draft rule.
+    pub draft: bool,
 }
 
 #[derive(Serialize)]
@@ -92,17 +149,26 @@ pub async fn evaluate<C: ConnectionTrait>(
     source: &SourceFacts<'_>,
     event: &EventFacts,
     limits: Limits,
+    draft: Option<DraftRule>,
 ) -> Result<DryRunReport, ApiError> {
-    let rules = RuleRow::find_by_statement(Statement::from_sql_and_values(
+    let saved = RuleRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         format!("SELECT {RULE_COLUMNS} FROM alert_rules WHERE project_id = $1 ORDER BY position, id"),
         vec![source.project_id.into()],
     ))
     .all(db)
     .await?;
+    let (rules, draft_index) = match draft {
+        Some(draft) => {
+            let (rules, index) = draft.apply(saved, source.workspace_id, source.project_id);
+            (rules, Some(index))
+        }
+        None => (saved, None),
+    };
     let verdicts: Vec<RuleVerdict> = rules
         .iter()
-        .map(|rule| {
+        .enumerate()
+        .map(|(index, rule)| {
             let reason = mismatch_reason(rule, source.id, &event.kind, event.severity);
             RuleVerdict {
                 id: rule.id,
@@ -110,14 +176,16 @@ pub async fn evaluate<C: ConnectionTrait>(
                 position: rule.position,
                 matched: reason.is_none(),
                 reason: reason.unwrap_or("matched"),
+                draft: draft_index == Some(index),
             }
         })
         .collect();
     let title = build_title(event.severity, source.name, &event.kind, &event.subject);
-    let Some(rule) = rules
+    let Some((matched_index, rule)) = rules
         .iter()
         .zip(&verdicts)
-        .find_map(|(rule, verdict)| verdict.matched.then_some(rule))
+        .enumerate()
+        .find_map(|(index, (rule, verdict))| verdict.matched.then_some((index, rule)))
     else {
         return Ok(DryRunReport {
             matched: false,
@@ -172,6 +240,7 @@ pub async fn evaluate<C: ConnectionTrait>(
             position: rule.position,
             matched: true,
             reason: "matched",
+            draft: draft_index == Some(matched_index),
         }),
         rules_evaluated: verdicts,
         alert,

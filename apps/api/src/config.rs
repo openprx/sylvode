@@ -40,6 +40,8 @@ pub struct RuntimeConfig {
     pub inbound: InboundConfig,
     /// The SMTP sender (`[email]`), `None` unless it is enabled.
     pub email: Option<EmailConfig>,
+    /// `[server] public_url`: the origin this server is reached at, `None` when not configured.
+    pub public_url: Option<String>,
 }
 
 impl RuntimeConfig {
@@ -58,6 +60,7 @@ impl RuntimeConfig {
             oauth: config.oauth.clone().map(Arc::new),
             inbound: config.inbound,
             email: config.email.clone(),
+            public_url: config.server.public_url.clone(),
         }
     }
 
@@ -86,6 +89,7 @@ impl RuntimeConfig {
             oauth: None,
             inbound: InboundConfig::default(),
             email: None,
+            public_url: None,
         }
     }
 }
