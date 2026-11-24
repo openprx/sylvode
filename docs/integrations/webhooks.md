@@ -201,8 +201,8 @@ One action gives a bot at most one bot task, and never one caused by the bot its
 - When the action already queued a worker task for the bot (assigning a work item to it, mentioning
   it in a comment), that task is the bot's task for the action, and every delivery of the same
   action reaches the bot's webhook without `bot_context`.
-- When the bot performed the action (it changed the state, edited, commented, completed its own
-  task), the delivery reaches its webhook without `bot_context`.
+- When the bot performed the action (it changed the state, edited or commented), the delivery
+  reaches its webhook without `bot_context`.
 
 A delivery without `bot_context` is still sent, so the webhook keeps receiving every event it
 subscribes to as a plain notification. `sylvode-runner` answers such a delivery `not_bot_task`.

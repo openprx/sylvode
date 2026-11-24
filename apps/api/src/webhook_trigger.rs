@@ -808,9 +808,8 @@ fn bot_task_candidate(
 /// Why a delivery that would otherwise be a bot task for a bot goes out without `bot_context`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BotTaskSuppression {
-    /// The bot caused the event itself (it changed the state, edited, commented, completed its
-    /// own task). A bot is never handed a task by its own action, which would make an agent
-    /// trigger itself in a loop.
+    /// The bot caused the event itself (it changed the state, edited or commented). A bot is
+    /// never handed a task by its own action, which would make an agent trigger itself in a loop.
     OwnAction,
     /// The action already queued a worker AI task for this bot (an assignment or a mention),
     /// which is the bot's one task for it.
@@ -1106,8 +1105,6 @@ const fn default_trigger_reason(event: WebhookEvent) -> &'static str {
         WebhookEvent::IssueCreated => "created",
         WebhookEvent::IssueStateChanged => "status_changed",
         WebhookEvent::CommentCreated => "mentioned",
-        WebhookEvent::AiTaskCompleted => "completed",
-        WebhookEvent::AiTaskFailed => "failed",
         _ => "assigned",
     }
 }
