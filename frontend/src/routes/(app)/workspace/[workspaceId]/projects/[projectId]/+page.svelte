@@ -110,19 +110,21 @@
 
 	async function handleExportProject() {
 		exporting = true;
-		const response = await importExportApi.exportProject(projectId);
+		const response = await importExportApi.exportProject(
+			projectId,
+			'json',
+			`project_${project?.key ?? 'project'}_export.json`
+		);
 		if (response.code !== 0 || !response.data) {
 			toast.error(describeResult(response, get(t)('project.exportFailed')));
 			exporting = false;
 			return;
 		}
 
-		const payload = JSON.stringify(response.data, null, 2);
-		const blob = new Blob([payload], { type: 'application/json' });
-		const url = URL.createObjectURL(blob);
+		const url = URL.createObjectURL(response.data.blob);
 		const anchor = document.createElement('a');
 		anchor.href = url;
-		anchor.download = `${project?.key ?? 'project'}-export.json`;
+		anchor.download = response.data.filename;
 		document.body.append(anchor);
 		anchor.click();
 		anchor.remove();

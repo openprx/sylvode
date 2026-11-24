@@ -1,6 +1,4 @@
 import { apiClient, type ApiResult } from './client';
-import { get } from 'svelte/store';
-import { t } from 'svelte-i18n';
 
 /** What importing an export file into a project did. */
 export interface ImportSummary {
@@ -12,38 +10,56 @@ export interface ImportSummary {
 	identifiers: Record<string, string>;
 }
 
-interface ExportPayload {
-	format: string;
+export type ExportFormat = 'json' | 'csv';
+
+/** A project export as the server sends it: the file and the name it chose for it. */
+export interface ExportFile {
+	blob: Blob;
 	filename: string;
-	content: string;
+}
+
+/** The file name of a `Content-Disposition: attachment` header (quoted, plain or RFC 5987 form). */
+export function filenameFromDisposition(header: string | null, fallback: string): string {
+	if (!header) return fallback;
+	const extended = /filename\*\s*=\s*(?:[^']*)'[^']*'([^;]+)/i.exec(header);
+	if (extended) {
+		try {
+			const name = decodeURIComponent(extended[1].trim());
+			if (name) return name;
+		} catch {
+			// fall through to the plain form
+		}
+	}
+	const quoted = /filename\s*=\s*"((?:[^"\\]|\\.)*)"/i.exec(header);
+	if (quoted?.[1]) return quoted[1].replace(/\\(.)/g, '$1');
+	const plain = /filename\s*=\s*([^;\s]+)/i.exec(header);
+	return plain?.[1] || fallback;
 }
 
 export const importExportApi = {
-	async exportProject(projectId: string): Promise<ApiResult<unknown>> {
-		const result = await apiClient.get<ExportPayload>(
-			`/api/v1/export/project/${projectId}?format=json`
+	/** Downloads the project's export file; a rejection comes back as the usual envelope. */
+	async exportProject(
+		projectId: string,
+		format: ExportFormat = 'json',
+		fallbackName = `project_export.${format}`
+	): Promise<ApiResult<ExportFile>> {
+		const result = await apiClient.getBinary(
+			`/api/v1/projects/${encodeURIComponent(projectId)}/export?format=${format}`
 		);
-		if (result.code !== 0) {
-			return {
-				code: result.code,
-				message: result.message || get(t)('project.exportFailed'),
-				data: null
-			};
+		if (result.code !== 0 || !result.data) {
+			return { code: result.code, message: result.message, data: null };
 		}
-
-		if (result.data?.format === 'json' && typeof result.data.content === 'string') {
-			try {
-				return {
-					code: 0,
-					message: result.message,
-					data: JSON.parse(result.data.content) as unknown
-				};
-			} catch {
-				return { code: 0, message: result.message, data: result.data.content };
+		return {
+			code: 0,
+			message: result.message,
+			data: {
+				blob: result.data.blob,
+				filename: filenameFromDisposition(
+					result.data.headers.get('Content-Disposition'),
+					fallbackName
+				)
 			}
-		}
-
-		return { code: 0, message: result.message, data: result.data };
+		};
 	},
 
 	/** Adds the work items and comments of an export file to the existing project `projectKey`. */
