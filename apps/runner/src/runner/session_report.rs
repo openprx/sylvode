@@ -18,7 +18,7 @@ use super::detect::classify_bottom;
 use super::files::{CreatedBy, SessionRecord, StateDir};
 use super::profile::{McpProbe, profile};
 use super::session::{EnsureDecision, EnsureFacts, decide_ensure};
-use super::tmux::{ListedPane, NameSource, Pane, SessionName, Tmux, TmuxName};
+use super::tmux::{ListedPane, NameSource, Pane, Slot, Tmux, TmuxName};
 use super::words_bypass_permissions;
 
 /// `state` of a session row.
@@ -94,8 +94,8 @@ pub enum McpEntry {
 /// What was seen of one session.
 #[derive(Clone, Debug)]
 pub struct Observation {
-    /// The slot, `<KEY>-<cli>`.
-    pub name: SessionName,
+    /// The slot, `<KEY>-<cli>` or `bot-<uuid>-<cli>`.
+    pub name: Slot,
     /// The tmux session looked at, and where its name came from.
     pub tmux: TmuxName,
     pub source: NameSource,
@@ -122,7 +122,7 @@ pub struct Observation {
 /// What `doctor` and the report show about one session.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Assessment {
-    pub name: SessionName,
+    pub name: Slot,
     /// The tmux session looked at; shown by `doctor` and `sessions`, never reported to Sylvode.
     pub tmux: TmuxName,
     pub source: NameSource,
@@ -221,11 +221,16 @@ pub fn assess(obs: &Observation) -> Assessment {
         name: obs.name.clone(),
         tmux: obs.tmux.clone(),
         source: obs.source,
-        bot_id: obs
-            .record
-            .as_ref()
-            .map(|record| record.bot_id.clone())
-            .unwrap_or_default(),
+        // A bot slot is its bot's, with or without a record.
+        bot_id: obs.name.bot_id().map_or_else(
+            || {
+                obs.record
+                    .as_ref()
+                    .map(|record| record.bot_id.clone())
+                    .unwrap_or_default()
+            },
+            str::to_string,
+        ),
         state: SessionState::Absent,
         created_by: created_by_record,
         hooks_seen: None,
@@ -437,20 +442,20 @@ pub fn open_state(config: &crate::config::Config) -> Option<(StateDir, std::path
     StateDir::open(&path).ok().map(|state| (state, path))
 }
 
-/// The tmux session a slot is looked for in: the configured one when there is an entry, else the
-/// one its record names, else the derived name.
-fn target_of(runner: &RunnerConfig, slot: &SessionName, record: Option<&SessionRecord>) -> (TmuxName, NameSource) {
-    if let Some(entry) = runner.session_override(slot.key(), slot.cli())
-        && let Ok(name) = TmuxName::new(&entry.name)
-    {
-        return (name, NameSource::Local);
+/// The tmux session a slot is looked for in: for a bot slot the configured one (else the one its
+/// record names), for a project slot the one its record names, else the derived name. `None` for
+/// a bot slot that has neither (its entry was removed and nothing was recorded).
+fn target_of(runner: &RunnerConfig, slot: &Slot, record: Option<&SessionRecord>) -> Option<(TmuxName, NameSource)> {
+    if slot.is_bot() {
+        return super::naming::tmux_of_slot(runner, slot)
+            .or_else(|| record.and_then(|record| record.tmux().map(|name| (name, record.source()))));
     }
     record
         .and_then(|record| record.tmux().map(|name| (name, record.source())))
-        .unwrap_or_else(|| (TmuxName::derived(slot), NameSource::Derived))
+        .or_else(|| super::naming::tmux_of_slot(runner, slot))
 }
 
-/// Looks at one session with read-only calls.
+/// Looks at one session with read-only calls; `None` for a bot slot whose session nothing names.
 #[must_use]
 pub fn observe(
     config: &crate::config::Config,
@@ -458,14 +463,14 @@ pub fn observe(
     state: &StateDir,
     state_path: &Path,
     program: Option<&Path>,
-    name: &SessionName,
-) -> Observation {
+    name: &Slot,
+) -> Option<Observation> {
     let process_names = config.runner.cli_settings(name.cli()).map_or_else(
         || vec![name.cli().to_string()],
         |settings| settings.process_names.to_vec(),
     );
     let record = state.read_session_record(name);
-    let (target, source) = target_of(&config.runner, name, record.as_ref());
+    let (target, source) = target_of(&config.runner, name, record.as_ref())?;
     let exists = tmux.has_session(&target).unwrap_or(false);
     let panes = if exists {
         tmux.list_panes(&target).unwrap_or_default()
@@ -490,9 +495,12 @@ pub fn observe(
         pane_id: None,
     };
     if !exists {
-        return obs;
+        return Some(obs);
     }
-    let bot = record.as_ref().map_or("", |record| record.bot_id.as_str());
+    let bot = name
+        .bot_id()
+        .or_else(|| record.as_ref().map(|record| record.bot_id.as_str()))
+        .unwrap_or_default();
     let chosen = decide_ensure(&EnsureFacts {
         session_exists: true,
         panes: &obs.panes,
@@ -502,7 +510,7 @@ pub fn observe(
         task_bot_id: bot,
     });
     let EnsureDecision::Use { pane: listed, .. } = chosen else {
-        return obs;
+        return Some(obs);
     };
     let pane = Pane {
         name: target,
@@ -541,7 +549,7 @@ pub fn observe(
         .map(|(started, written)| written > started + Duration::from_secs(2));
     obs.foreground = Some(listed.command);
     obs.pane_id = Some(listed.id.as_str().to_string());
-    obs
+    Some(obs)
 }
 
 /// What looking at sessions needs: tmux, the state directory and the CLI programs.
@@ -584,14 +592,14 @@ pub fn assess_recorded(config: &crate::config::Config) -> Vec<Assessment> {
     let Some(context) = context(config) else {
         return Vec::new();
     };
-    let mut names: Vec<SessionName> = context
+    let mut names: Vec<Slot> = context
         .state
         .recorded_names()
         .iter()
-        .filter_map(|name| SessionName::parse(name).ok())
+        .filter_map(|name| Slot::parse(name).ok())
         .collect();
     for entry in &config.runner.tmux.sessions {
-        if let Ok(name) = SessionName::new(&entry.project, &entry.cli)
+        if let Ok(name) = Slot::bot(&entry.bot, &entry.cli)
             && !names.contains(&name)
         {
             names.push(name);
@@ -599,23 +607,23 @@ pub fn assess_recorded(config: &crate::config::Config) -> Vec<Assessment> {
     }
     names
         .into_iter()
-        .map(|name| {
-            let obs = observe(
+        .filter_map(|name| {
+            observe(
                 config,
                 &context.tmux,
                 &context.state,
                 &context.path,
                 context.program_of(name.cli()),
                 &name,
-            );
-            assess(&obs)
+            )
         })
+        .map(|obs| assess(&obs))
         .collect()
 }
 
 /// The assessment of one session, `None` when there is no tmux or state directory to look in.
 #[must_use]
-pub fn assess_named(config: &crate::config::Config, name: &SessionName) -> Option<Assessment> {
+pub fn assess_named(config: &crate::config::Config, name: &Slot) -> Option<Assessment> {
     let context = context(config)?;
     let obs = observe(
         config,
@@ -624,7 +632,7 @@ pub fn assess_named(config: &crate::config::Config, name: &SessionName) -> Optio
         &context.path,
         context.program_of(name.cli()),
         name,
-    );
+    )?;
     Some(assess(&obs))
 }
 

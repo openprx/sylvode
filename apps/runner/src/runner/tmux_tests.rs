@@ -9,8 +9,7 @@ use uuid::Uuid;
 
 use super::{
     BracketedPasteConfirmed, BufferName, LIST_PANES_FORMAT, MAX_PUSH_BYTES, PaneId, PasteGuard, PushText, Refusal,
-    SessionName, SocketName, Tmux, TmuxError, TmuxName, WorkDir, exec_argv, one_line, parse_listed_pane,
-    parse_pane_state,
+    Slot, SocketName, Tmux, TmuxError, TmuxName, WorkDir, exec_argv, one_line, parse_listed_pane, parse_pane_state,
 };
 use super::{Pane, STATE_FORMAT};
 
@@ -43,7 +42,7 @@ impl Drop for Dir {
 
 /// The derived tmux session `<key>-claude`.
 fn name(key: &str) -> TmuxName {
-    TmuxName::derived(&SessionName::new(key, "claude").expect("name"))
+    TmuxName::derived(&Slot::project(key, "claude").expect("name")).expect("derived")
 }
 
 /// The recorded pane of session SVWL-claude: pane id as given, process 1 (what the fake answers).
@@ -73,6 +72,7 @@ fn strings(items: &[&str]) -> Vec<String> {
     items.iter().map(|s| (*s).to_string()).collect()
 }
 
+const BOT: &str = "8c1f0a52-3d4e-4b6a-9c7d-1e2f3a4b5c6d";
 const TASK: &str = "0b9d6a52-3f7e-4c1a-9a55-1d2e3f4a5b6c";
 
 fn task() -> Uuid {
@@ -98,10 +98,10 @@ fn session_names_and_pane_ids_are_validated() {
         ("AB12", "claude"),
         (&"K".repeat(32), "claude"),
     ] {
-        let name = SessionName::new(key, cli).expect("valid");
+        let name = Slot::project(key, cli).expect("valid");
         assert_eq!(name.as_str(), format!("{key}-{cli}"));
-        assert_eq!((name.key(), name.cli()), (key, cli));
-        assert_eq!(SessionName::parse(name.as_str()), Ok(name));
+        assert_eq!((name.key(), name.cli()), (Some(key), cli));
+        assert_eq!(Slot::parse(name.as_str()), Ok(name));
     }
     for bad_key in [
         "",
@@ -122,13 +122,13 @@ fn session_names_and_pane_ids_are_validated() {
         &"K".repeat(33),
     ] {
         assert!(
-            matches!(SessionName::new(bad_key, "claude"), Err(TmuxError::Invalid(_))),
+            matches!(Slot::project(bad_key, "claude"), Err(TmuxError::Invalid(_))),
             "{bad_key:?}"
         );
     }
     for bad_cli in ["", "Claude", "gemini", "claude ", "claude-x", "cla.ude"] {
         assert!(
-            matches!(SessionName::new("SVWL", bad_cli), Err(TmuxError::Invalid(_))),
+            matches!(Slot::project("SVWL", bad_cli), Err(TmuxError::Invalid(_))),
             "{bad_cli:?}"
         );
     }
@@ -146,7 +146,7 @@ fn session_names_and_pane_ids_are_validated() {
         "SVWL-claude:0",
         "SV-WL-claude",
     ] {
-        assert!(SessionName::parse(bad).is_err(), "{bad:?}");
+        assert!(Slot::parse(bad).is_err(), "{bad:?}");
     }
     // The exact target cannot match another session.
     assert_eq!(name("SVWL").session_target(), "=SVWL-claude");
@@ -240,8 +240,10 @@ fn a_configured_tmux_name_follows_the_pattern_and_never_looks_derived() {
     // 33 key characters are not a derived shape, so the name is a plain custom one.
     assert!(TmuxName::new(&format!("{}-claude", "A".repeat(33))).is_ok());
     assert_eq!(TmuxName::new("sv").expect("name").session_target(), "=sv");
-    let slot = SessionName::new("SV", "codex").expect("slot");
-    assert_eq!(TmuxName::derived(&slot).as_str(), "SV-codex");
+    let slot = Slot::project("SV", "codex").expect("slot");
+    assert_eq!(TmuxName::derived(&slot).expect("derived").as_str(), "SV-codex");
+    // A bot slot has no derived name.
+    assert!(TmuxName::derived(&Slot::bot(BOT, "codex").expect("bot slot")).is_none());
 }
 
 /// Every call that addresses a session takes the exact target of the name it is given, a
@@ -1238,4 +1240,52 @@ fn a_freshly_written_program_that_is_briefly_busy_still_runs() {
     for handle in handles {
         handle.join().expect("no thread failed");
     }
+}
+
+/// A bot slot is `bot-<uuid>-<cli>`: it parses back, carries the bot and the CLI, has no key, and
+/// can never be read as a project slot, a derived name or a state directory of a key.
+#[test]
+fn a_bot_slot_formats_and_parses_and_never_folds_onto_a_project_slot() {
+    for cli in ["claude", "codex"] {
+        let slot = Slot::bot(BOT, cli).expect("bot slot");
+        assert_eq!(slot.as_str(), format!("bot-{BOT}-{cli}"));
+        assert_eq!((slot.key(), slot.bot_id(), slot.cli()), (None, Some(BOT), cli));
+        assert!(slot.is_bot());
+        assert_eq!(Slot::parse(slot.as_str()), Ok(slot));
+    }
+    // Any form of the id gives the canonical lower case one.
+    assert_eq!(
+        Slot::bot(&BOT.to_uppercase(), "claude").expect("upper").as_str(),
+        format!("bot-{BOT}-claude")
+    );
+    assert!(Slot::bot("not-a-uuid", "claude").is_err());
+    assert!(Slot::bot(BOT, "gemini").is_err());
+    // A project slot has a key and no bot.
+    let project = Slot::project("SV", "claude").expect("project slot");
+    assert_eq!(
+        (project.key(), project.bot_id(), project.is_bot()),
+        (Some("SV"), None, false)
+    );
+    // Reading back needs the canonical lower case form.
+    let upper = BOT.to_uppercase();
+    for bad in [
+        format!("bot-{upper}-claude"),
+        format!("BOT-{BOT}-claude"),
+        format!("bot-{BOT}"),
+        format!("bot-{BOT}-gemini"),
+        format!("bot-{BOT}-claude-x"),
+        format!("bot-{}-claude", BOT.replace('-', "")),
+        format!("bot-{BOT}-claude\n"),
+        "bot-claude".to_string(),
+    ] {
+        assert!(Slot::parse(&bad).is_err(), "{bad:?}");
+    }
+    // The first part is lower case: a project key never parses from it, and it is no derived name.
+    assert!(Slot::project("bot", "claude").is_err());
+    assert!(
+        TmuxName::new(&format!("bot-{BOT}-claude")).is_ok(),
+        "a plain name of this length"
+    );
+    let slot = Slot::bot(BOT, "claude").expect("bot slot");
+    assert_ne!(slot.as_str().to_ascii_uppercase(), slot.as_str());
 }

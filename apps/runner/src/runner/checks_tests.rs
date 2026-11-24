@@ -15,6 +15,7 @@ use parking_lot::Mutex;
 use serde_json::{Value, json};
 
 use super::checks::{BotCreds, Channel, Context, Verdict, check_delivery, valid_project_key};
+use super::files::StateDir;
 use super::paths::AllowedRoots;
 use super::registry::SessionRegistry;
 use super::sv_client::SvClient;
@@ -185,6 +186,7 @@ impl Fixture {
                 config,
                 roots: &roots,
                 registry: &self.registry,
+                state: None,
                 protocol_mismatch: mismatch,
                 client,
                 bot: bot(),
@@ -300,6 +302,7 @@ async fn invalid_roots_refuse_the_runner_agents() {
             config: &config,
             roots: &roots,
             registry: &fx.registry,
+            state: None,
             protocol_mismatch: None,
             client,
             bot: bot(),
@@ -776,44 +779,226 @@ async fn without_an_entry_the_session_is_the_derived_one() {
     assert!(fs::read_to_string(log).expect("log").contains("=SVWL-claude"));
 }
 
-/// A configured session is looked up under its own name, and because the runner never creates it
-/// the allowed roots do not decide, even when it is absent.
+/// A fake tmux that answers its version and says every session exists.
+fn existing_tmux(fx: &Fixture) -> PathBuf {
+    let tmux = fx.base.path().join("tmux-live");
+    fs::write(
+        &tmux,
+        "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = -V ] && { echo 'tmux 3.7b'; exit 0; }; done\nexit 0\n",
+    )
+    .expect("tmux");
+    fs::set_permissions(&tmux, fs::Permissions::from_mode(0o755)).expect("chmod");
+    tmux
+}
+
+/// A state directory the runner accepts (mode 0700).
+fn private_state(fx: &Fixture) -> StateDir {
+    let path = fx.base.sub("runner-state");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).expect("chmod");
+    StateDir::open(&path).expect("state dir")
+}
+
+const OTHER_BOT: &str = "00000000-0000-4000-8000-000000000002";
+
+fn bot_entry() -> String {
+    format!("[[runner.tmux.sessions]]\nbot = \"{BOT}\"\ncli = \"claude\"\nname = \"sv\"\n")
+}
+
+fn record_of(bot: &str, name: &str) -> super::files::SessionRecord {
+    super::files::SessionRecord {
+        name: name.to_string(),
+        project_id: PROJECT.to_string(),
+        bot_id: bot.to_string(),
+        cli: "claude".to_string(),
+        pane_id: "%1".to_string(),
+        pane_pid: 1,
+        dir: String::new(),
+        created_by: super::files::CreatedBy::Operator,
+        pushed: None,
+        tmux_name: name.to_string(),
+        name_source: "derived".to_string(),
+    }
+}
+
+/// A task of any project goes to the bot's configured session: its directory (outside every root
+/// here) is neither checked nor used, no key is bound and no session lookup is made.
 #[tokio::test]
-async fn a_configured_session_is_looked_up_by_name_and_its_directory_is_not_checked() {
+async fn a_bot_entry_takes_a_task_of_any_project_and_its_directory_is_not_checked() {
     let fx = Fixture::new();
     let (tmux, log) = logging_tmux(&fx);
     let outside = fx.base.sub("elsewhere");
     let m = ok_mock(task_view(&outside, "tmux", "claude"));
     let (addr, _server) = serve(m.clone()).await;
-    let extra = "[[runner.tmux.sessions]]\nproject = \"SVWL\"\ncli = \"claude\"\nname = \"sv\"\n";
-    let mut config = fx.config_with(addr, &format!("[runner.tmux]\nwindow_width = 200\n{extra}"));
+    let mut config = fx.config_with(addr, &format!("[runner.tmux]\nwindow_width = 200\n{}", bot_entry()));
     config.runner.tmux.binary = tmux.to_string_lossy().into_owned();
     let Verdict::Run(accepted) = fx.run(&config, m, addr, &delivery()).await else {
         panic!("accepted")
     };
+    assert_eq!(accepted.slot.as_str(), format!("bot-{BOT}-claude"));
     assert_eq!(accepted.tmux.as_str(), "sv");
     assert_eq!(accepted.name_source, super::tmux::NameSource::Local);
+    assert_eq!(accepted.channel, Channel::Tmux);
+    assert!(accepted.uses_tmux());
     assert!(!accepted.dir_checked);
-    assert_eq!(accepted.dir, outside);
-    let seen = fs::read_to_string(log).expect("log");
-    assert!(seen.contains("=sv") && !seen.contains("SVWL-claude"), "{seen}");
+    assert_eq!(accepted.project_key, "SVWL");
+    // No key was bound and the session was not looked up (the worker finds out it is absent).
+    assert!(fx.registry.owner("SVWL").is_none());
+    assert!(!log.exists(), "{:?}", fs::read_to_string(&log));
+    assert!(accepted.message.contains("\nProject: SVWL\n"), "{}", accepted.message);
 }
 
-/// A local entry is keyed by project key: when the project of a delivery owns another key that has
-/// entries, the project was renamed and the delivery is refused.
+/// A key another project owns does not matter to a bot slot: it binds and checks no key.
 #[tokio::test]
-async fn a_renamed_project_is_refused_while_the_old_key_has_an_entry() {
+async fn a_bot_slot_ignores_the_key_registry() {
     let fx = Fixture::new();
     let (tmux, _log) = logging_tmux(&fx);
-    fx.registry.bind(PROJECT, "OLD").expect("bind");
+    fx.registry
+        .bind("44444444-4444-4444-8444-444444444444", "SVWL")
+        .expect("bind");
     let m = ok_mock(task_view(&fx.project_dir, "tmux", "claude"));
     let (addr, _server) = serve(m.clone()).await;
-    let extra = "[[runner.tmux.sessions]]\nproject = \"OLD\"\ncli = \"claude\"\nname = \"sv\"\n";
-    let mut config = fx.config_with(addr, &format!("[runner.tmux]\nwindow_width = 200\n{extra}"));
+    let mut config = fx.config_with(addr, &format!("[runner.tmux]\nwindow_width = 200\n{}", bot_entry()));
     config.runner.tmux.binary = tmux.to_string_lossy().into_owned();
-    let (code, reason) = refused(&fx.run(&config, m, addr, &delivery()).await);
-    assert_eq!(code, "session_config_stale");
-    assert!(reason.contains("OLD") && reason.contains("SVWL"), "{reason}");
-    // Nothing was bound for the new key.
+    assert!(matches!(
+        fx.run(&config, m.clone(), addr, &delivery()).await,
+        Verdict::Run(_)
+    ));
+    // Without the entry the same delivery is a collision.
+    let mut plain = fx.config(addr);
+    plain.runner.tmux.binary = tmux.to_string_lossy().into_owned();
+    let verdict = fx.run(&plain, m, addr, &delivery()).await;
+    assert_eq!(refused(&verdict).0, "session_name_collision");
+}
+
+/// Stage R: a headless delivery for a bot with an entry is typed into its session. The directory
+/// is outside the roots, which would refuse a headless run, and is not checked.
+#[tokio::test]
+async fn a_headless_delivery_for_a_bot_with_an_entry_goes_to_its_session() {
+    let fx = Fixture::new();
+    let (tmux, _log) = logging_tmux(&fx);
+    let outside = fx.base.sub("elsewhere");
+    let m = ok_mock(task_view(&outside, "headless", "claude"));
+    let (addr, _server) = serve(m.clone()).await;
+    let mut config = fx.config_with(addr, &format!("[runner.tmux]\nwindow_width = 200\n{}", bot_entry()));
+    config.runner.tmux.binary = tmux.to_string_lossy().into_owned();
+    let Verdict::Run(accepted) = fx.run(&config, m.clone(), addr, &delivery()).await else {
+        panic!("accepted")
+    };
+    assert_eq!(accepted.channel, Channel::Headless);
+    assert!(accepted.uses_tmux());
+    assert_eq!(
+        (accepted.slot.as_str(), accepted.tmux.as_str()),
+        (format!("bot-{BOT}-claude").as_str(), "sv")
+    );
+    assert!(!accepted.dir_checked);
+    // The same delivery without an entry is a headless run and the roots refuse it.
+    let plain = fx.config(addr);
+    let verdict = fx.run(&plain, m, addr, &delivery()).await;
+    assert_eq!(refused(&verdict).0, "path_outside_allowlist");
+}
+
+/// An entry for the other CLI leaves the project's own derived session (an entry of another bot is
+/// covered by the naming tests: the configuration only loads for bots a runner agent serves).
+#[tokio::test]
+async fn an_entry_of_another_cli_does_not_apply() {
+    let fx = Fixture::new();
+    let (tmux, _log) = logging_tmux(&fx);
+    let m = ok_mock(task_view(&fx.project_dir, "tmux", "claude"));
+    let (addr, _server) = serve(m.clone()).await;
+    let entry = format!("[[runner.tmux.sessions]]\nbot = \"{BOT}\"\ncli = \"codex\"\nname = \"sv\"\n");
+    let mut config = fx.config_with(addr, &format!("[runner.tmux]\nwindow_width = 200\n{entry}"));
+    config.runner.tmux.binary = tmux.to_string_lossy().into_owned();
+    let Verdict::Run(accepted) = fx.run(&config, m, addr, &delivery()).await else {
+        panic!("accepted")
+    };
+    assert_eq!(accepted.slot.as_str(), "SVWL-claude");
+    assert_eq!(accepted.name_source, super::tmux::NameSource::Derived);
+    assert!(accepted.dir_checked);
+}
+
+/// A derived slot recorded for another bot, whose tmux session exists, is refused for good.
+#[tokio::test]
+async fn a_derived_session_of_another_bot_is_refused_for_good() {
+    let fx = Fixture::new();
+    let live = existing_tmux(&fx);
+    let state = private_state(&fx);
+    state
+        .write_session_record(&record_of(OTHER_BOT, "SVWL-claude"))
+        .expect("record");
+    let m = ok_mock(task_view(&fx.project_dir, "tmux", "claude"));
+    let (addr, _server) = serve(m.clone()).await;
+    let mut config = fx.config(addr);
+    config.runner.tmux.binary = live.to_string_lossy().into_owned();
+    let roots = AllowedRoots::from_entries(
+        &config.runner.allowed_roots,
+        Some(&std::env::temp_dir().join("sylvode-checks-home")),
+    )
+    .map(|r| r.roots);
+    let payload = delivery();
+    let run = async |state: Option<&StateDir>| {
+        let client = SvClient::new(reqwest::Client::new(), &format!("http://{addr}"), TOKEN, "mcp_stdio");
+        check_delivery(
+            Context {
+                config: &config,
+                roots: &roots,
+                registry: &fx.registry,
+                state,
+                protocol_mismatch: None,
+                client,
+                bot: bot(),
+            },
+            &payload,
+        )
+        .await
+    };
+    let (code, reason) = refused(&run(Some(&state)).await);
+    assert_eq!(code, "session_bot_conflict");
+    assert!(
+        reason.contains("tmux session SVWL-claude on this runner serves another bot")
+            && reason.contains("runner.tmux.sessions"),
+        "{reason}"
+    );
+    // Nothing was bound for the key.
     assert!(fx.registry.owner("SVWL").is_none());
+    // The record of the same bot is no conflict, and neither is the lack of a record.
+    state
+        .write_session_record(&record_of(BOT, "SVWL-claude"))
+        .expect("record");
+    assert!(matches!(run(Some(&state)).await, Verdict::Run(_)));
+    assert!(matches!(run(None).await, Verdict::Run(_)));
+}
+
+/// A record of another bot whose session is gone says nothing about who serves it now.
+#[tokio::test]
+async fn a_record_of_another_bot_without_its_session_is_no_conflict() {
+    let fx = Fixture::new();
+    let (tmux, _log) = logging_tmux(&fx);
+    let state = private_state(&fx);
+    state
+        .write_session_record(&record_of(OTHER_BOT, "SVWL-claude"))
+        .expect("record");
+    let m = ok_mock(task_view(&fx.project_dir, "tmux", "claude"));
+    let (addr, _server) = serve(m.clone()).await;
+    let mut config = fx.config(addr);
+    config.runner.tmux.binary = tmux.to_string_lossy().into_owned();
+    let roots = AllowedRoots::from_entries(
+        &config.runner.allowed_roots,
+        Some(&std::env::temp_dir().join("sylvode-checks-home")),
+    )
+    .map(|r| r.roots);
+    let client = SvClient::new(reqwest::Client::new(), &format!("http://{addr}"), TOKEN, "mcp_stdio");
+    let verdict = check_delivery(
+        Context {
+            config: &config,
+            roots: &roots,
+            registry: &fx.registry,
+            state: Some(&state),
+            protocol_mismatch: None,
+            client,
+            bot: bot(),
+        },
+        &delivery(),
+    )
+    .await;
+    assert!(matches!(verdict, Verdict::Run(_)), "{verdict:?}");
 }

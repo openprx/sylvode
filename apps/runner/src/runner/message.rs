@@ -11,11 +11,14 @@ use super::sanitize::sanitize_title;
 
 /// Why a message could not be built.
 #[derive(Debug, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names, reason = "each variant names the value that was refused")]
 pub enum MessageError {
     /// The identifier does not match `^[A-Z0-9]{1,32}-[0-9]{1,10}$`.
     InvalidIdentifier,
     /// The attempt is 0, or beyond the maximum.
     InvalidAttempt,
+    /// The project key does not match `^[A-Z0-9]{1,32}$`.
+    InvalidProjectKey,
 }
 
 impl std::fmt::Display for MessageError {
@@ -23,6 +26,7 @@ impl std::fmt::Display for MessageError {
         match self {
             Self::InvalidIdentifier => write!(f, "the work item identifier is not KEY-number"),
             Self::InvalidAttempt => write!(f, "the attempt number is outside 1..=max"),
+            Self::InvalidProjectKey => write!(f, "the project key is not ^[A-Z0-9]{{1,32}}$"),
         }
     }
 }
@@ -113,6 +117,9 @@ pub enum Source {
 /// The task message of design section 4.9.
 #[derive(Clone, Debug)]
 pub struct TaskMessage<'a> {
+    /// The key of the task's project: a bot's one session serves several projects, so every task
+    /// says which one it belongs to. Validated here; no path and no project name goes in.
+    pub project_key: &'a str,
     pub id: Uuid,
     pub attempt: u32,
     pub max_attempts: u32,
@@ -133,10 +140,14 @@ impl TaskMessage<'_> {
     ///
     /// # Errors
     ///
-    /// [`MessageError::InvalidAttempt`] when `attempt` is 0 or above `max_attempts`.
+    /// [`MessageError::InvalidAttempt`] when `attempt` is 0 or above `max_attempts`;
+    /// [`MessageError::InvalidProjectKey`] for a key outside `^[A-Z0-9]{1,32}$`.
     pub fn render(&self) -> Result<String, MessageError> {
         if self.attempt == 0 || self.attempt > self.max_attempts {
             return Err(MessageError::InvalidAttempt);
+        }
+        if !super::checks::valid_project_key(self.project_key) {
+            return Err(MessageError::InvalidProjectKey);
         }
         let title = sanitize_title(self.title);
         let (subject, reason) = match &self.source {
@@ -158,7 +169,7 @@ impl TaskMessage<'_> {
             _ => String::new(),
         };
         Ok(format!(
-            "[Sylvode task] id={} attempt={}/{}\n{subject}\nReason: {reason}{retry}\nDo this:\n\
+            "[Sylvode task] id={} attempt={}/{}\nProject: {}\n{subject}\nReason: {reason}{retry}\nDo this:\n\
              1. Call sylvode_task_get with this id and attempt.\n\
              2. Call sylvode_task_ack with a short plan, then start work at once.\n\
              3. Call sylvode_task_progress at each milestone and at least every 10 minutes.\n\
@@ -166,6 +177,7 @@ impl TaskMessage<'_> {
             self.id.hyphenated(),
             self.attempt,
             self.max_attempts,
+            self.project_key,
         ))
     }
 }

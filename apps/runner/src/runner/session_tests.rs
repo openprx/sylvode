@@ -341,13 +341,11 @@ fn only_a_derived_session_is_offered_to_the_runner_to_start() {
         derived.0.contains("end the session so the runner starts it") && derived.1,
         "{derived:?}"
     );
-    for source in [NameSource::Local, NameSource::Server] {
-        let (text, retryable) = decline_for(&EnsureDecision::NotRunning, "sv", "claude", source).expect("text");
-        assert!(retryable);
-        assert!(
-            text.contains("not running in tmux session sv; attach with tmux attach -t sv and start it")
-                && !text.contains("end the session"),
-            "{text}"
-        );
-    }
+    let (text, retryable) = decline_for(&EnsureDecision::NotRunning, "sv", "claude", NameSource::Local).expect("text");
+    assert!(retryable);
+    assert!(
+        text.contains("not running in tmux session sv; attach with tmux attach -t sv and start it")
+            && !text.contains("end the session"),
+        "{text}"
+    );
 }

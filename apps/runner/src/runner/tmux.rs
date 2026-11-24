@@ -14,7 +14,7 @@
 //! - **Sessions by exact name.** A session is named by a [`TmuxName`] (derived `<KEY>-<cli>`, or an
 //!   existing session the operator configured) and is targeted as `=<name>` (exact match:
 //!   `AB-claude` never reaches `ABC-claude`). The pattern has no `:`, `.`, `=` or `%`. The slot id
-//!   `<KEY>-<cli>` is a [`SessionName`]; it is not a tmux target.
+//!   `<KEY>-<cli>` (or `bot-<uuid>-<cli>`) is a [`Slot`]; it is not a tmux target.
 //! - **Panes by id and PID.** A [`Pane`] holds the pane's id (`%N`, unique for the life of the
 //!   server) and the PID of its process, as the runner recorded them. Every call that types checks
 //!   that the pane still has that id, still belongs to the session and still has that PID, so a
@@ -226,66 +226,123 @@ impl SocketName {
 /// The CLI types a session can be for.
 pub const SESSION_CLIS: [&str; 3] = ["claude", "codex", "opencode"];
 
-/// A session name, `<KEY>-<cli>`: the project key (`^[A-Z0-9]{1,32}$`), one hyphen and the CLI type
-/// in lower case (`claude`, `codex` or `opencode`).
+/// A slot: the unit that owns one queue of tasks, one state directory and one hook route.
+///
+/// - [`Slot::Project`] is `<KEY>-<cli>`: the project key (`^[A-Z0-9]{1,32}$`), one hyphen and the
+///   CLI type in lower case. The runner derives it and may create its tmux session.
+/// - [`Slot::Bot`] is `bot-<uuid>-<cli>`: the bot's id (lower case, hyphenated) and the CLI type.
+///   It names an operator-owned session and serves every project of the bot. Its first part is
+///   lower case, so it never parses as a project slot and never folds onto `sessions/<KEY>/` on a
+///   case-insensitive file system (keys are upper case).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SessionName {
-    text: String,
-    key_len: usize,
+pub enum Slot {
+    Project { text: String, key_len: usize },
+    Bot { text: String },
 }
 
-impl SessionName {
-    /// The session of project `key` for `cli`.
+/// The length of a hyphenated UUID.
+const UUID_LEN: usize = 36;
+const BOT_PREFIX: &str = "bot-";
+
+impl Slot {
+    /// The slot of project `key` for `cli`.
     ///
     /// # Errors
     ///
     /// [`TmuxError::Invalid`] for a key or CLI type that does not fit the pattern.
-    pub fn new(key: &str, cli: &str) -> Result<Self, TmuxError> {
+    pub fn project(key: &str, cli: &str) -> Result<Self, TmuxError> {
         if key.is_empty() || key.len() > 32 || !key.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) {
             return Err(TmuxError::Invalid(
                 "session key must match ^[A-Z0-9]{1,32}$".to_string(),
             ));
         }
-        if !SESSION_CLIS.contains(&cli) {
-            return Err(TmuxError::Invalid(
-                "session CLI must be claude, codex or opencode".to_string(),
-            ));
-        }
-        Ok(Self {
+        check_cli(cli)?;
+        Ok(Self::Project {
             text: format!("{key}-{cli}"),
             key_len: key.len(),
         })
     }
 
-    /// A name read back, for example from a hook message or a directory name.
+    /// The slot of bot `bot` (a UUID in any form) for `cli`.
     ///
     /// # Errors
     ///
-    /// [`TmuxError::Invalid`] unless it matches `^[A-Z0-9]{1,32}-(claude|codex|opencode)$`.
+    /// [`TmuxError::Invalid`] for a bot id that is not a UUID or a CLI type that does not fit.
+    pub fn bot(bot: &str, cli: &str) -> Result<Self, TmuxError> {
+        let id =
+            uuid::Uuid::parse_str(bot.trim()).map_err(|_| TmuxError::Invalid("bot id must be a UUID".to_string()))?;
+        check_cli(cli)?;
+        Ok(Self::Bot {
+            text: format!("{BOT_PREFIX}{}-{cli}", id.hyphenated()),
+        })
+    }
+
+    /// A slot read back, for example from a hook message or a directory name: either form.
+    ///
+    /// # Errors
+    ///
+    /// [`TmuxError::Invalid`] unless it matches `^[A-Z0-9]{1,32}-(claude|codex|opencode)$` or
+    /// `^bot-<lower case hyphenated uuid>-(claude|codex|opencode)$`.
     pub fn parse(name: &str) -> Result<Self, TmuxError> {
+        if let Some(rest) = name.strip_prefix(BOT_PREFIX) {
+            let (id, cli) = rest
+                .split_at_checked(UUID_LEN)
+                .and_then(|(id, tail)| Some((id, tail.strip_prefix('-')?)))
+                .ok_or_else(|| TmuxError::Invalid("slot name must look like bot-<uuid>-cli".to_string()))?;
+            let canonical = uuid::Uuid::parse_str(id).is_ok_and(|parsed| parsed.hyphenated().to_string() == id);
+            if !canonical {
+                return Err(TmuxError::Invalid("slot name holds no canonical bot id".to_string()));
+            }
+            return Self::bot(id, cli);
+        }
         let (key, cli) = name
             .split_once('-')
-            .ok_or_else(|| TmuxError::Invalid("session name must look like KEY-cli".to_string()))?;
-        Self::new(key, cli)
+            .ok_or_else(|| TmuxError::Invalid("slot name must look like KEY-cli".to_string()))?;
+        Self::project(key, cli)
     }
 
     pub fn as_str(&self) -> &str {
-        &self.text
+        match self {
+            Self::Project { text, .. } | Self::Bot { text } => text,
+        }
     }
 
-    /// The project key part.
-    pub fn key(&self) -> &str {
-        self.text.get(..self.key_len).unwrap_or_default()
+    /// The project key part; `None` for a bot slot.
+    pub fn key(&self) -> Option<&str> {
+        match self {
+            Self::Project { text, key_len } => text.get(..*key_len),
+            Self::Bot { .. } => None,
+        }
+    }
+
+    /// The bot id part (lower case, hyphenated); `None` for a project slot.
+    pub fn bot_id(&self) -> Option<&str> {
+        match self {
+            Self::Project { .. } => None,
+            Self::Bot { text } => text.get(BOT_PREFIX.len()..BOT_PREFIX.len() + UUID_LEN),
+        }
     }
 
     /// The CLI type part.
     pub fn cli(&self) -> &str {
-        self.text.get(self.key_len + 1..).unwrap_or_default()
+        match self {
+            Self::Project { text, key_len } => text.get(key_len + 1..).unwrap_or_default(),
+            Self::Bot { text } => text.get(BOT_PREFIX.len() + UUID_LEN + 1..).unwrap_or_default(),
+        }
     }
 
-    /// The exact session target, `=<name>`.
-    pub fn session_target(&self) -> String {
-        format!("={}", self.text)
+    pub const fn is_bot(&self) -> bool {
+        matches!(self, Self::Bot { .. })
+    }
+}
+
+fn check_cli(cli: &str) -> Result<(), TmuxError> {
+    if SESSION_CLIS.contains(&cli) {
+        Ok(())
+    } else {
+        Err(TmuxError::Invalid(
+            "session CLI must be claude, codex or opencode".to_string(),
+        ))
     }
 }
 
@@ -296,8 +353,6 @@ pub enum NameSource {
     Derived,
     /// Named by the runner's own configuration (`[[runner.tmux.sessions]]`).
     Local,
-    /// Named by the server (not read in this stage).
-    Server,
 }
 
 impl NameSource {
@@ -305,7 +360,6 @@ impl NameSource {
         match self {
             Self::Derived => "derived",
             Self::Local => "local",
-            Self::Server => "server",
         }
     }
 
@@ -313,7 +367,6 @@ impl NameSource {
     pub fn from_record(text: &str) -> Self {
         match text {
             "local" => Self::Local,
-            "server" => Self::Server,
             _ => Self::Derived,
         }
     }
@@ -349,9 +402,13 @@ impl TmuxName {
         Ok(Self(name.to_string()))
     }
 
-    /// The derived name of a slot: the same text as the slot id.
-    pub fn derived(slot: &SessionName) -> Self {
-        Self(slot.as_str().to_string())
+    /// The derived name of a project slot: the same text as the slot id. A bot slot has no
+    /// derived name (its session is named in the configuration).
+    pub fn derived(slot: &Slot) -> Option<Self> {
+        match slot {
+            Slot::Project { text, .. } => Some(Self(text.clone())),
+            Slot::Bot { .. } => None,
+        }
     }
 
     pub fn as_str(&self) -> &str {

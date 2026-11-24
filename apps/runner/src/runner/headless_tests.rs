@@ -8,7 +8,7 @@ use super::checks::{Accepted, BotCreds, Channel};
 use super::files::StateDir;
 use super::headless::{Prepared, execute, prepare};
 use super::sv_client::SvClient;
-use super::tmux::{NameSource, SessionName, TmuxName, agent_environment_from};
+use super::tmux::{NameSource, Slot, TmuxName, agent_environment_from};
 use crate::config::Config;
 
 const BOT: &str = "00000000-0000-4000-8000-000000000001";
@@ -53,7 +53,8 @@ fn accepted(cli: &str, dir: &Path, key: &str, program: &Path) -> Accepted {
         attempt: 1,
         max_attempts: 3,
         project_key: key.to_string(),
-        tmux: TmuxName::derived(&SessionName::new(key, cli).expect("slot")),
+        slot: Slot::project(key, cli).expect("slot"),
+        tmux: TmuxName::derived(&Slot::project(key, cli).expect("slot")).expect("derived"),
         name_source: NameSource::Derived,
         project_id: "22222222-2222-4222-8222-222222222222".to_string(),
         message: "[Sylvode task] id=x".to_string(),

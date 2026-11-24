@@ -1,19 +1,19 @@
 //! Restart recovery (design 7.8): the state of every task is rebuilt from Sylvode, never from
 //! memory. For each bot the runner serves, `GET /ai/tasks/active` lists its open tasks; each one
-//! that belongs to a tmux project of this runner is adopted, failed or queued again, by
-//! [`plan_task`]. Tasks of other channels, other keys the runner cannot serve, and other bots are
-//! left alone (the lease sweep handles those).
+//! that is typed into a tmux session of this runner (the tmux channel, or any channel for a bot
+//! with a configured session) is adopted, failed or queued again, by [`plan_task`]. Tasks of other
+//! channels, other keys the runner cannot serve, and other bots are left alone (the lease sweep
+//! handles those).
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use super::checks::{self, BotCreds, Channel, Context, Verdict};
+use super::checks::{self, BotCreds, Context, Verdict};
 use super::session::{Adopt, Probe, TmuxTask};
 use super::sv_client::{SvClient, TASK_PROTOCOL};
-use super::tmux::SessionName;
+use super::tmux::Slot;
 use crate::AppState;
 
 /// What to do with one active task after a restart.
@@ -121,18 +121,22 @@ async fn recover_bot(
     views: Vec<Value>,
     timeout: Duration,
 ) {
-    let mut keys: Vec<((String, String), PerKey)> = Vec::new();
+    let mut slots: Vec<(Slot, PerKey)> = Vec::new();
     for view in views {
         let (Some(task_id), Some(key_text)) = (str_at(&view, &["task_id"]), str_at(&view, &["project", "key"])) else {
             continue;
         };
-        if str_at(&view, &["execution", "channel"]) != Some("tmux") || !checks::valid_project_key(key_text) {
+        let cli = str_at(&view, &["execution", "cli"]).unwrap_or("claude");
+        // A bot with a configured session has every task typed into it, whatever the channel.
+        let typed_in = str_at(&view, &["execution", "channel"]) == Some("tmux")
+            || state.config.runner.bot_session(&bot.bot_id, cli).is_some();
+        if !typed_in || !checks::valid_project_key(key_text) {
             continue;
         }
-        let cli = str_at(&view, &["execution", "cli"]).unwrap_or("claude");
-        let Ok(name) = SessionName::new(key_text, cli) else {
+        let Ok(found) = super::naming::resolve(&state.config.runner, &bot.bot_id, key_text, cli) else {
             continue;
         };
+        let name = found.slot;
         let attempt = view.get("attempt").and_then(Value::as_i64).unwrap_or(0);
         let probe: Probe = sessions.probe(&name, task_id, attempt).await;
         let step = plan_task(&Facts {
@@ -159,14 +163,11 @@ async fn recover_bot(
         let Some(task) = rebuild_task(state, client, bot, &view).await else {
             continue;
         };
-        let at = keys
-            .iter()
-            .position(|((key, key_cli), _)| key == key_text && key_cli == cli)
-            .unwrap_or_else(|| {
-                keys.push(((key_text.to_string(), cli.to_string()), PerKey::default()));
-                keys.len() - 1
-            });
-        let Some((_, entry)) = keys.get_mut(at) else { continue };
+        let at = slots.iter().position(|(slot, _)| *slot == name).unwrap_or_else(|| {
+            slots.push((name.clone(), PerKey::default()));
+            slots.len() - 1
+        });
+        let Some((_, entry)) = slots.get_mut(at) else { continue };
         match step {
             Step::Adopt { acknowledged } if entry.adopt.is_none() => {
                 entry.adopt = Some(Adopt {
@@ -196,12 +197,9 @@ async fn recover_bot(
             _ => entry.requeue.push(task),
         }
     }
-    let mut by_key: HashMap<(String, String), PerKey> = keys.into_iter().collect();
-    for ((key_text, cli), entry) in by_key.drain() {
-        if let Ok(name) = SessionName::new(&key_text, &cli) {
-            tracing::info!(session = %name.as_str(), adopted = entry.adopt.is_some(), requeued = entry.requeue.len(), "restart recovery");
-            sessions.recover(name, entry.adopt, entry.requeue).await;
-        }
+    for (name, entry) in slots {
+        tracing::info!(session = %name.as_str(), adopted = entry.adopt.is_some(), requeued = entry.requeue.len(), "restart recovery");
+        sessions.recover(name, entry.adopt, entry.requeue).await;
     }
 }
 
@@ -226,6 +224,7 @@ async fn rebuild_task(state: &Arc<AppState>, client: &SvClient, bot: &BotCreds, 
                 .runner_agent_for_bot(&bot.bot_id)
                 .map_or(&state.runner.roots, |agent| state.runner.roots_for(agent)),
             registry,
+            state: state.runner.state.as_deref().ok(),
             protocol_mismatch: None,
             client: client.clone(),
             bot: bot.clone(),
@@ -234,7 +233,7 @@ async fn rebuild_task(state: &Arc<AppState>, client: &SvClient, bot: &BotCreds, 
     )
     .await;
     match verdict {
-        Verdict::Run(accepted) if accepted.channel == Channel::Tmux => Some(TmuxTask::from_accepted(&accepted)),
+        Verdict::Run(accepted) if accepted.uses_tmux() => Some(TmuxTask::from_accepted(&accepted)),
         other => {
             tracing::info!("restart recovery leaves a task alone: {other:?}");
             None

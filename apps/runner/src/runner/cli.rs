@@ -9,7 +9,7 @@ use std::process::ExitCode;
 use super::detect::{awaits_choice, input_is_empty, looks_busy};
 use super::files::{CreatedBy, SessionRecord, StateDir};
 use super::registry::SessionRegistry;
-use super::tmux::{PaneId, SESSION_CLIS, SessionName, SocketName, Tmux, TmuxName};
+use super::tmux::{PaneId, SESSION_CLIS, Slot, SocketName, Tmux, TmuxName};
 use crate::config::Config;
 
 /// What a session the runner uses is doing, as far as tmux shows.
@@ -39,10 +39,13 @@ impl RowState {
 /// One line of `sessions`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Row {
-    /// `<KEY>-<cli>`: the slot.
+    /// `<KEY>-<cli>` or `bot-<uuid>-<cli>`: the slot.
     pub name: String,
     /// The tmux session the CLI runs in.
     pub tmux: String,
+    /// The bot that serves the session.
+    pub bot_id: String,
+    /// The project of the task that last used the session.
     pub project_id: String,
     pub cli: String,
     pub state: RowState,
@@ -56,15 +59,16 @@ pub fn render_rows(rows: &[Row]) -> String {
         return "no sessions recorded by this runner\n".to_string();
     }
     let mut out = format!(
-        "{:<44} {:<44} {:<38} {:<9} {:<6} {}\n",
-        "NAME", "TMUX SESSION", "PROJECT", "CLI", "STATE", "STARTED BY"
+        "{:<48} {:<44} {:<38} {:<38} {:<9} {:<6} {}\n",
+        "SLOT", "TMUX SESSION", "BOT", "PROJECT", "CLI", "STATE", "STARTED BY"
     );
     for row in rows {
         let _ = writeln!(
             out,
-            "{:<44} {:<44} {:<38} {:<9} {:<6} {}",
+            "{:<48} {:<44} {:<38} {:<38} {:<9} {:<6} {}",
             row.name,
             row.tmux,
+            row.bot_id,
             row.project_id,
             row.cli,
             row.state.word(),
@@ -106,7 +110,6 @@ pub fn release_check(key: &str, bound: bool, session_exists: bool) -> Result<(),
 }
 
 struct Env {
-    runner: super::config::RunnerConfig,
     state: std::sync::Arc<StateDir>,
     registry: SessionRegistry,
     tmux: Tmux,
@@ -124,16 +127,11 @@ fn load(config_path: &str) -> Result<Env, String> {
     {
         tmux = tmux.with_program(program);
     }
-    Ok(Env {
-        runner: config.runner,
-        state,
-        registry,
-        tmux,
-    })
+    Ok(Env { state, registry, tmux })
 }
 
 fn row_for(env: &Env, record: &SessionRecord) -> Option<Row> {
-    let name = SessionName::parse(&record.name).ok()?;
+    let name = Slot::parse(&record.name).ok()?;
     let target = record.tmux()?;
     let pane = super::tmux::Pane {
         name: target.clone(),
@@ -155,6 +153,7 @@ fn row_for(env: &Env, record: &SessionRecord) -> Option<Row> {
     Some(Row {
         name: name.as_str().to_string(),
         tmux: target.as_str().to_string(),
+        bot_id: record.bot_id.clone(),
         project_id: record.project_id.clone(),
         cli: record.cli.clone(),
         state,
@@ -166,7 +165,7 @@ fn rows(env: &Env) -> Vec<Row> {
     env.state
         .recorded_names()
         .iter()
-        .filter_map(|name| SessionName::parse(name).ok())
+        .filter_map(|name| Slot::parse(name).ok())
         .filter_map(|name| env.state.read_session_record(&name))
         .filter_map(|record| row_for(env, &record))
         .collect()
@@ -196,22 +195,18 @@ pub fn run_sessions(config_path: &str) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Every tmux session a key may have for `cli`: the derived one, the configured one and the one
-/// the runner recorded.
+/// Every tmux session a key may have for `cli`: the derived one and the one the runner recorded.
+/// A bot's configured session binds no key, so it never keeps one reserved.
 fn session_names_of(env: &Env, key: &str, cli: &str) -> Vec<TmuxName> {
-    let Ok(slot) = SessionName::new(key, cli) else {
+    let Ok(slot) = Slot::project(key, cli) else {
         return Vec::new();
     };
-    let mut names = vec![TmuxName::derived(&slot)];
-    let configured = env
-        .runner
-        .session_override(key, cli)
-        .and_then(|entry| TmuxName::new(&entry.name).ok());
+    let mut names: Vec<TmuxName> = TmuxName::derived(&slot).into_iter().collect();
     let recorded = env.state.read_session_record(&slot).and_then(|record| record.tmux());
-    for name in configured.into_iter().chain(recorded) {
-        if !names.contains(&name) {
-            names.push(name);
-        }
+    if let Some(name) = recorded
+        && !names.contains(&name)
+    {
+        names.push(name);
     }
     names
 }

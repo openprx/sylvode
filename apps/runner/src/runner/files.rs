@@ -30,7 +30,7 @@ use serde_json::json;
 
 use super::guide::{Entry, Read_, classify, create_file, open_dir, open_root, read_regular, replace_file};
 use super::launch::{LaunchError, LaunchFiles, SERVER_NAME, claude_hook_command};
-use super::tmux::{NameSource, SessionName, TmuxName};
+use super::tmux::{NameSource, Slot, TmuxName};
 
 /// The most bytes of one of these files that are read back.
 const MAX_FILE_BYTES: u64 = 64 * 1024;
@@ -134,10 +134,11 @@ impl CreatedBy {
 /// What the runner knows about a session it uses: which project and bot, which pane, which CLI.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SessionRecord {
-    /// `<KEY>-<cli>`.
+    /// The slot: `<KEY>-<cli>` or `bot-<uuid>-<cli>`.
     pub name: String,
+    /// The project of the task that last used the session (a bot slot serves several).
     pub project_id: String,
-    /// The bot of the connection that serves the session.
+    /// The bot of the connection that serves the session; fixed for a bot slot.
     pub bot_id: String,
     pub cli: String,
     pub pane_id: String,
@@ -153,7 +154,7 @@ pub struct SessionRecord {
     /// from `name` (then it is the derived name).
     #[serde(default)]
     pub tmux_name: String,
-    /// `local`, `server` or `derived`; empty means `derived`.
+    /// `local` or `derived`; empty means `derived`.
     #[serde(default)]
     pub name_source: String,
 }
@@ -168,8 +169,8 @@ impl SessionRecord {
     /// old) record, else the recorded name. `None` when it cannot be read.
     pub fn tmux(&self) -> Option<TmuxName> {
         match self.source() {
-            NameSource::Derived => SessionName::parse(&self.name).ok().map(|slot| TmuxName::derived(&slot)),
-            NameSource::Local | NameSource::Server => TmuxName::new(&self.tmux_name).ok(),
+            NameSource::Derived => Slot::parse(&self.name).ok().and_then(|slot| TmuxName::derived(&slot)),
+            NameSource::Local => TmuxName::new(&self.tmux_name).ok(),
         }
     }
 }
@@ -262,7 +263,7 @@ impl StateDir {
         self.root.join("mcp").join(format!("{bot_id}.claude.json"))
     }
 
-    pub fn claude_settings(&self, name: &SessionName) -> PathBuf {
+    pub fn claude_settings(&self, name: &Slot) -> PathBuf {
         self.root
             .join("sessions")
             .join(name.as_str())
@@ -347,7 +348,7 @@ impl StateDir {
     /// # Errors
     ///
     /// A message when a path cannot be used or a file cannot be written.
-    pub fn write_session_settings(&self, name: &SessionName, files: &LaunchFiles<'_>) -> Result<Written, String> {
+    pub fn write_session_settings(&self, name: &Slot, files: &LaunchFiles<'_>) -> Result<Written, String> {
         let hooks = claude_hooks(files, false)?;
         let text = serde_json::to_string_pretty(&json!({"hooks": hooks})).map_err(|e| e.to_string())?;
         let sessions = private_dir(&self.fd, "sessions")?;
@@ -361,7 +362,7 @@ impl StateDir {
     ///
     /// A message when it cannot be written.
     pub fn write_session_record(&self, record: &SessionRecord) -> Result<(), String> {
-        let name = SessionName::parse(&record.name).map_err(|e| e.to_string())?;
+        let name = Slot::parse(&record.name).map_err(|e| e.to_string())?;
         let text = serde_json::to_string_pretty(record).map_err(|e| e.to_string())?;
         let sessions = private_dir(&self.fd, "sessions")?;
         let dir = private_dir(&sessions, name.as_str())?;
@@ -370,7 +371,7 @@ impl StateDir {
 
     /// Reads `sessions/<NAME>/session.json`; `None` when there is none or it is not ours (a link, a
     /// special file, unreadable or not the expected shape).
-    pub fn read_session_record(&self, name: &SessionName) -> Option<SessionRecord> {
+    pub fn read_session_record(&self, name: &Slot) -> Option<SessionRecord> {
         let sessions = open_dir(&self.fd, "sessions").ok()?;
         let dir = open_dir(&sessions, name.as_str()).ok()?;
         match read_regular(&dir, "session.json", MAX_FILE_BYTES).ok()? {
@@ -385,7 +386,7 @@ impl StateDir {
     ///
     /// A message when there is no `session.json` or it cannot be written; the caller must then not
     /// paste.
-    pub fn mark_pushed(&self, name: &SessionName, pushed: Option<PushedTask>) -> Result<(), String> {
+    pub fn mark_pushed(&self, name: &Slot, pushed: Option<PushedTask>) -> Result<(), String> {
         let record = self
             .read_session_record(name)
             .ok_or_else(|| "the session has no session.json".to_string())?;
@@ -393,6 +394,30 @@ impl StateDir {
             return Ok(());
         }
         self.write_session_record(&SessionRecord { pushed, ..record })
+    }
+
+    /// Records, durably, that `pushed` is about to be typed into session `name` for the task of
+    /// project `project_id` with working directory `dir`: a bot's session serves several
+    /// projects, so the record's project and directory are those of the current or last task.
+    ///
+    /// # Errors
+    ///
+    /// A message when there is no `session.json` or it cannot be written; the caller must then not
+    /// paste.
+    pub fn begin_push(&self, name: &Slot, pushed: PushedTask, project_id: &str, dir: &str) -> Result<(), String> {
+        let record = self
+            .read_session_record(name)
+            .ok_or_else(|| "the session has no session.json".to_string())?;
+        let next = SessionRecord {
+            pushed: Some(pushed),
+            project_id: project_id.to_string(),
+            dir: dir.to_string(),
+            ..record.clone()
+        };
+        if next == record {
+            return Ok(());
+        }
+        self.write_session_record(&next)
     }
 
     /// The names that have a `session.json`, for the `sessions` command.
@@ -405,7 +430,7 @@ impl StateDir {
             .flatten()
             .filter_map(Result::ok)
             .filter_map(|entry| entry.file_name().into_string().ok())
-            .filter(|name| SessionName::parse(name).is_ok())
+            .filter(|name| Slot::parse(name).is_ok())
             .filter(|name| {
                 open_dir(&sessions, name).ok().is_some_and(|dir| {
                     matches!(

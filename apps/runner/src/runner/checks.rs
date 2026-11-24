@@ -13,7 +13,7 @@ use serde_json::Value;
 use sylvode_prereq::{Checker, InstallKind};
 
 use super::config::RunnerConfig;
-use super::files::BotFiles;
+use super::files::{BotFiles, StateDir};
 use super::paths::AllowedRoots;
 use super::registry::SessionRegistry;
 use super::sv_client::{SvClient, SvError, TASK_PROTOCOL, token_refused};
@@ -100,6 +100,9 @@ pub struct Accepted {
     #[allow(dead_code, reason = "the session manager reads it")]
     pub max_attempts: i64,
     pub project_key: String,
+    /// The slot of the task: the project's own (`<KEY>-<cli>`) or, when this runner configures a
+    /// session for the bot and CLI, the bot's.
+    pub slot: super::tmux::Slot,
     /// The tmux session of a tmux task, and where its name came from (derived for a headless one).
     pub tmux: super::tmux::TmuxName,
     pub name_source: super::tmux::NameSource,
@@ -109,7 +112,8 @@ pub struct Accepted {
     pub message: String,
     /// The canonical working directory; the only form of the path used from here on.
     pub dir: PathBuf,
-    /// The directory passed the allowed roots (always, unless the tmux session already exists).
+    /// The directory passed the allowed roots (always, unless the tmux session already exists or
+    /// the slot is a bot's, which never uses a directory).
     pub dir_checked: bool,
     pub channel: Channel,
     /// `claude`, `codex` or `opencode`.
@@ -118,6 +122,14 @@ pub struct Accepted {
     pub program: PathBuf,
     /// The MCP server executable.
     pub mcp_server: PathBuf,
+}
+
+impl Accepted {
+    /// Whether the task is typed into a tmux session: the tmux channel, or a bot's own session
+    /// whatever the channel says.
+    pub fn uses_tmux(&self) -> bool {
+        self.channel == Channel::Tmux || self.slot.is_bot()
+    }
 }
 
 /// What the checks decided.
@@ -141,6 +153,8 @@ pub struct Context<'a> {
     pub config: &'a Config,
     pub roots: &'a Result<AllowedRoots, String>,
     pub registry: &'a SessionRegistry,
+    /// The runner's state directory, when it is usable: the records of the sessions.
+    pub state: Option<&'a StateDir>,
     /// `Some(text)` when the protocol handshake found a mismatch.
     pub protocol_mismatch: Option<String>,
     pub client: SvClient,
@@ -229,15 +243,9 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
             "the project has no execution settings or they are disabled",
         );
     };
-    // 5. The key is a session name, bound to one project.
+    // 5. The key is part of a session name and of the task text.
     if !valid_project_key(project_key) {
         return refuse("invalid_project_key", "the project key is not a valid session name");
-    }
-    if ctx.registry.check(project_id, project_key).is_err() {
-        return refuse(
-            "session_name_collision",
-            "another project already uses this session name on this runner",
-        );
     }
     // 6. Channel and CLI.
     let channel = match str_at(execution, &["channel"]) {
@@ -251,7 +259,16 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
         }
     };
     let cli = str_at(execution, &["cli"]).unwrap_or_default().to_string();
-    let tmux = if channel == Channel::Tmux {
+    // A bot with a configured session is served by it on either channel.
+    let bot_session = runner.bot_session(&ctx.bot.bot_id, &cli).is_some();
+    // A project slot's key is bound to one project; a bot slot binds no key.
+    if !bot_session && ctx.registry.check(project_id, project_key).is_err() {
+        return refuse(
+            "session_name_collision",
+            "another project already uses this session name on this runner",
+        );
+    }
+    let tmux = if channel == Channel::Tmux || bot_session {
         // opencode has no verified tmux behaviour (readiness, dialogs, permissions): refused
         // whatever else is set.
         if !super::profile::profile(&cli).is_some_and(|p| p.tmux) {
@@ -269,40 +286,49 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
     };
     // 7. The working directory. A session that exists is used as it is, wherever its CLI runs, so
     // the allowed roots decide only when the runner would have to create the session (and always
-    // for a headless run); a session with a configured name is never created, so it is the same.
-    // A directory that cannot be used for an existing session is carried on
-    // as the path given, and marked as not checked: should the session be gone when the task is
-    // served, the runner declines to create it.
+    // for a headless run). A bot's session is never created and its directory is never read, used
+    // or checked. A directory that cannot be used for an existing session is carried on as the
+    // path given, and marked as not checked: should the session be gone when the task is served,
+    // the runner declines to create it.
     let raw_dir = str_at(execution, &["working_directory"]).unwrap_or_default();
     let mut resolved = None;
-    let session_exists = match &tmux {
-        Some(tmux) => {
-            let found = match super::naming::resolve(runner, project_key, &cli, None) {
-                Ok(found) => found,
-                Err(refusal) => return Verdict::Refused(refusal),
-            };
-            if let Err(refusal) = super::naming::check_stale(runner, ctx.registry, project_id, project_key) {
-                return Verdict::Refused(refusal);
-            }
+    let mut session_exists = false;
+    if let Some(tmux) = &tmux {
+        let found = match super::naming::resolve(runner, &ctx.bot.bot_id, project_key, &cli) {
+            Ok(found) => found,
+            Err(refusal) => return Verdict::Refused(refusal),
+        };
+        if !found.slot.is_bot() {
             let tmux = tmux.clone();
             let target = found.tmux.clone();
-            resolved = Some(found);
-            match tokio::task::spawn_blocking(move || tmux.has_session(&target)).await {
+            session_exists = match tokio::task::spawn_blocking(move || tmux.has_session(&target)).await {
                 Ok(Ok(exists)) => exists,
                 _ => return refuse("tmux_unavailable", "the tmux session could not be looked up"),
+            };
+            if session_exists && serves_another_bot(ctx.state, &found.slot, &ctx.bot.bot_id) {
+                return refuse(
+                    "session_bot_conflict",
+                    format!(
+                        "tmux session {} on this runner serves another bot; give this bot its own session in \
+                         runner.tmux.sessions",
+                        found.tmux.as_str()
+                    ),
+                );
             }
         }
-        None => false,
-    };
-    let never_created = resolved
-        .as_ref()
-        .is_some_and(|found| found.source != super::tmux::NameSource::Derived);
-    let (dir, dir_checked) = match roots.check_directory(raw_dir) {
-        Ok(dir) => (dir, true),
-        Err(_) if session_exists || never_created => (PathBuf::from(raw_dir), false),
-        Err(refusal) => {
-            tracing::info!(code = refusal.code, directory = ?raw_dir, "working directory declined");
-            return refuse(refusal.code, refusal.reason);
+        resolved = Some(found);
+    }
+    let bot_slot = resolved.as_ref().is_some_and(|found| found.slot.is_bot());
+    let (dir, dir_checked) = if bot_slot {
+        (PathBuf::from(raw_dir), false)
+    } else {
+        match roots.check_directory(raw_dir) {
+            Ok(dir) => (dir, true),
+            Err(_) if session_exists => (PathBuf::from(raw_dir), false),
+            Err(refusal) => {
+                tracing::info!(code = refusal.code, directory = ?raw_dir, "working directory declined");
+                return refuse(refusal.code, refusal.reason);
+            }
         }
     };
     tracing::info!(directory = ?dir, checked = dir_checked, "working directory");
@@ -325,21 +351,21 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
             "the MCP server (mcp-server) was not found on this runner",
         );
     };
-    let (tmux_name, name_source) = match resolved {
-        Some(found) => (found.tmux, found.source),
-        None => match super::tmux::SessionName::new(project_key, &cli) {
-            Ok(slot) => (super::tmux::TmuxName::derived(&slot), super::tmux::NameSource::Derived),
+    let found = match resolved {
+        Some(found) => found,
+        None => match super::naming::resolve(runner, &ctx.bot.bot_id, project_key, &cli) {
+            Ok(found) => found,
             Err(_) => return refuse("cli_unavailable", "the project's CLI is not known to this runner"),
         },
     };
-    let Some(message) = task_message(&view, task_id, attempt, max_attempts) else {
+    let Some(message) = task_message(&view, project_key, task_id, attempt, max_attempts) else {
         return refuse(
             "delivery_mismatch",
             "the task view cannot be turned into a task message",
         );
     };
-    // Every check passed: only now does the project own its key.
-    if ctx.registry.bind(project_id, project_key).is_err() {
+    // Every check passed: only now does the project own its key (a bot slot binds none).
+    if !found.slot.is_bot() && ctx.registry.bind(project_id, project_key).is_err() {
         return refuse(
             "session_name_collision",
             "another project already uses this session name on this runner",
@@ -352,8 +378,9 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
         attempt,
         max_attempts,
         project_key: project_key.to_string(),
-        tmux: tmux_name,
-        name_source,
+        slot: found.slot,
+        tmux: found.tmux,
+        name_source: found.source,
         project_id: project_id.to_string(),
         message,
         dir,
@@ -363,6 +390,13 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
         program,
         mcp_server,
     }))
+}
+
+/// Whether the record of project slot `slot` names a bot other than `bot`.
+fn serves_another_bot(state: Option<&StateDir>, slot: &super::tmux::Slot, bot: &str) -> bool {
+    state
+        .and_then(|state| state.read_session_record(slot))
+        .is_some_and(|record| !record.bot_id.is_empty() && !record.bot_id.eq_ignore_ascii_case(bot.trim()))
 }
 
 fn refuse(code: &'static str, reason: impl Into<String>) -> Verdict {
@@ -406,7 +440,7 @@ async fn tmux_prerequisites(runner: &super::config::RunnerConfig) -> Result<supe
 /// The task message of design section 4.9 for the view of a task: the issue or proposal it is
 /// about, the title (sanitised by the builder), the attempt. `None` when the view holds a value the
 /// builder refuses.
-pub fn task_message(view: &Value, task_id: &str, attempt: i64, max_attempts: i64) -> Option<String> {
+pub fn task_message(view: &Value, project_key: &str, task_id: &str, attempt: i64, max_attempts: i64) -> Option<String> {
     use super::message::{Identifier, Source, TaskMessage};
     let issue_identifier = || str_at(view, &["source", "issue", "identifier"]).map(Identifier::parse);
     let title = str_at(view, &["source", "issue", "title"])
@@ -429,6 +463,7 @@ pub fn task_message(view: &Value, task_id: &str, attempt: i64, max_attempts: i64
         }
     };
     TaskMessage {
+        project_key,
         id: uuid::Uuid::parse_str(task_id).ok()?,
         attempt: u32::try_from(attempt).ok()?,
         max_attempts: u32::try_from(max_attempts).ok()?,

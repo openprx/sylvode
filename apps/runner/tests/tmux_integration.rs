@@ -22,9 +22,7 @@ use std::process::Command;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use tmux::{
-    BracketedPasteConfirmed, Pane, PasteGuard, Refusal, SessionName, SocketName, Tmux, TmuxError, TmuxName, WorkDir,
-};
+use tmux::{BracketedPasteConfirmed, Pane, PasteGuard, Refusal, Slot, SocketName, Tmux, TmuxError, TmuxName, WorkDir};
 
 /// The server of one test; killed on drop.
 struct Server {
@@ -83,7 +81,7 @@ impl Drop for Server {
 
 /// The derived tmux session `<key>-claude`.
 fn key(value: &str) -> TmuxName {
-    TmuxName::derived(&SessionName::new(value, "claude").expect("name"))
+    TmuxName::derived(&Slot::project(value, "claude").expect("name")).expect("derived")
 }
 
 /// `new_session`, keeping only the pane.

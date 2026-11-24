@@ -42,7 +42,7 @@ use super::message::{reminder_not_acknowledged, reminder_still_open};
 use super::profile::profile;
 use super::sv_client::SvClient;
 use super::tmux::{
-    BracketedPasteConfirmed, ListedPane, NameSource, Pane, PaneId, PasteGuard, Refusal, SessionName, SocketName, Tmux,
+    BracketedPasteConfirmed, ListedPane, NameSource, Pane, PaneId, PasteGuard, Refusal, Slot, SocketName, Tmux,
     TmuxError, TmuxName, WorkDir,
 };
 use crate::background::Background;
@@ -59,6 +59,8 @@ pub struct TmuxTask {
     pub bot: BotCreds,
     pub project_id: String,
     pub project_key: String,
+    /// The slot that serves the task: the project's own, or its bot's.
+    pub slot: Slot,
     /// The tmux session the task is typed into, and where its name came from.
     pub tmux: TmuxName,
     pub name_source: NameSource,
@@ -93,6 +95,7 @@ impl TmuxTask {
             bot: accepted.bot.clone(),
             project_id: accepted.project_id.clone(),
             project_key: accepted.project_key.clone(),
+            slot: accepted.slot.clone(),
             tmux: accepted.tmux.clone(),
             name_source: accepted.name_source,
             dir: accepted.dir.clone(),
@@ -320,7 +323,7 @@ impl SessionManager {
         Arc::new(move |message| panes.lock().contains_key(&(message.tmux.clone(), message.pane.clone())))
     }
 
-    fn sender(&self, name: &SessionName) -> mpsc::Sender<Cmd> {
+    fn sender(&self, name: &Slot) -> mpsc::Sender<Cmd> {
         let (tx, rx) = mpsc::channel(256);
         {
             let mut workers = self.workers.lock();
@@ -334,11 +337,11 @@ impl SessionManager {
         tx
     }
 
-    /// Queues a task on the session of its project and CLI and returns its 1-based queue position.
+    /// Queues a task on its slot (the project's session, or the bot's one session shared by every
+    /// project) and returns its 1-based queue position.
     pub async fn enqueue(&self, task: TmuxTask) -> Option<usize> {
-        let name = SessionName::new(&task.project_key, &task.cli).ok()?;
         let (reply, answer) = oneshot::channel();
-        self.sender(&name)
+        self.sender(&task.slot.clone())
             .send(Cmd::Enqueue {
                 task: Box::new(task),
                 reply,
@@ -374,7 +377,7 @@ impl SessionManager {
 
     /// Whether the session `name` has its recorded CLI pane alive and shows `id=<task_id>` in its
     /// last 200 lines. Reads tmux only.
-    pub async fn probe(&self, name: &SessionName, task_id: &str, attempt: i64) -> Probe {
+    pub async fn probe(&self, name: &Slot, task_id: &str, attempt: i64) -> Probe {
         let tmux = {
             let mut tmux = Tmux::new(self.shared.socket.clone());
             if let Some(program) = &self.shared.tmux_program {
@@ -415,7 +418,7 @@ impl SessionManager {
 
     /// The tmux session `name`'s record says tasks were typed into, for messages; the slot id
     /// when there is no record.
-    pub fn recorded_tmux_name(&self, name: &SessionName) -> String {
+    pub fn recorded_tmux_name(&self, name: &Slot) -> String {
         self.shared
             .state
             .read_session_record(name)
@@ -425,7 +428,7 @@ impl SessionManager {
 
     /// Hands recovered tasks to the worker of `name`: the pushed one is supervised again, the rest
     /// are queued in the order given.
-    pub async fn recover(&self, name: SessionName, adopt: Option<Adopt>, requeue: Vec<TmuxTask>) {
+    pub async fn recover(&self, name: Slot, adopt: Option<Adopt>, requeue: Vec<TmuxTask>) {
         let _ = self.sender(&name).send(Cmd::Recover { adopt, requeue }).await;
     }
 }
@@ -449,7 +452,7 @@ fn pane_alive(tmux: &Tmux, pane: &Pane) -> bool {
 
 struct Worker {
     shared: Arc<Shared>,
-    name: SessionName,
+    name: Slot,
     machine: Machine<TmuxTask>,
     pane: Option<Pane>,
     rx: mpsc::Receiver<Cmd>,
@@ -524,14 +527,14 @@ pub fn dir_unchanged(dir: &Path) -> bool {
 /// Records `pane` for the hook listener: the socket path of its server (asked once, here) with its
 /// id, replacing whatever the session had recorded. A server that cannot say its socket path
 /// leaves the pane unrecorded, and the session runs on the screen.
-fn register_pane(tmux: &Tmux, panes: &PaneMap, slot: &SessionName, pane: &Pane) {
+fn register_pane(tmux: &Tmux, panes: &PaneMap, slot: &Slot, pane: &Pane) {
     match tmux.socket_path(pane) {
         Ok(path) => record_pane(panes, slot, pane, path),
         Err(e) => tracing::warn!(session = slot.as_str(), "no hooks for this pane: {e}"),
     }
 }
 
-fn record_pane(panes: &PaneMap, slot: &SessionName, pane: &Pane, socket_path: String) {
+fn record_pane(panes: &PaneMap, slot: &Slot, pane: &Pane, socket_path: String) {
     let mut map = panes.lock();
     map.retain(|_, name| name != slot.as_str());
     map.insert((socket_path, pane.id.as_str().to_string()), slot.as_str().to_string());
@@ -542,7 +545,7 @@ fn unix_now() -> u64 {
 }
 
 impl Worker {
-    fn new(shared: Arc<Shared>, name: SessionName, rx: mpsc::Receiver<Cmd>, tx: mpsc::Sender<Cmd>) -> Self {
+    fn new(shared: Arc<Shared>, name: Slot, rx: mpsc::Receiver<Cmd>, tx: mpsc::Sender<Cmd>) -> Self {
         let socket = shared.socket.as_str();
         let attach = if socket.is_empty() {
             format!("tmux attach -t {}", name.as_str())
@@ -627,7 +630,8 @@ impl Worker {
                     let record = self.shared.state.read_session_record(&self.name);
                     let pane = record
                         .as_ref()
-                        .filter(|record| record.project_id == adopt.task.project_id)
+                        // A bot's session serves several projects: its record names the last task's.
+                        .filter(|record| self.name.is_bot() || record.project_id == adopt.task.project_id)
                         .and_then(pane_of);
                     let tmux = self.tmux();
                     let panes = Arc::clone(&self.shared.panes);
@@ -873,8 +877,8 @@ impl Worker {
     }
 
     /// The tmux session this slot's tasks go to: that of the task being served or next in line,
-    /// else the one the record names, else the derived name.
-    fn target(&self) -> TmuxName {
+    /// else the one the record names, else the one the slot's name or configuration gives.
+    fn target(&self) -> Option<TmuxName> {
         self.machine
             .current_task()
             .or_else(|| self.machine.queue.front().map(|entry| &entry.item))
@@ -885,14 +889,16 @@ impl Worker {
                     .read_session_record(&self.name)
                     .and_then(|record| record.tmux())
             })
-            .unwrap_or_else(|| TmuxName::derived(&self.name))
+            .or_else(|| super::naming::tmux_of_slot(&self.shared.config.runner, &self.name).map(|(tmux, _)| tmux))
     }
 
     async fn alive(&self) -> bool {
         let Some(pane) = self.pane.clone() else {
             // No pane is known yet; a session that exists is looked for once.
             let tmux = self.tmux();
-            let name = self.target();
+            let Some(name) = self.target() else {
+                return false;
+            };
             return tokio::task::spawn_blocking(move || tmux.has_session(&name).unwrap_or(false))
                 .await
                 .unwrap_or(false);
@@ -1243,7 +1249,8 @@ impl Worker {
             task_id: task.task_id.clone(),
             attempt: task.attempt,
         };
-        if let Err(e) = self.shared.state.mark_pushed(&self.name, Some(pushed)) {
+        let dir = task.dir.to_string_lossy();
+        if let Err(e) = self.shared.state.begin_push(&self.name, pushed, &task.project_id, &dir) {
             tracing::warn!(
                 session = self.name.as_str(),
                 "nothing is typed: the push could not be recorded: {e}"
@@ -1297,7 +1304,7 @@ impl Worker {
 /// session.
 struct SettingsJob {
     state: Arc<StateDir>,
-    name: SessionName,
+    name: Slot,
     /// Hooks are on (claude, `[runner.cli.claude] hooks`).
     enabled: bool,
     runner_exe: PathBuf,
@@ -1349,7 +1356,7 @@ pub fn turn_end_confirmed(cli: &str, screen: &str) -> bool {
 
 /// Whether a hook message of CLI `cli` belongs to the session called `session`.
 pub fn hook_is_for_session(session: &str, cli: &str) -> bool {
-    SessionName::parse(session).is_ok_and(|name| name.cli() == cli)
+    Slot::parse(session).is_ok_and(|name| name.cli() == cli)
 }
 
 /// What Sylvode says about a task view.
@@ -1390,7 +1397,7 @@ struct EnsureResult {
 #[allow(clippy::too_many_arguments, reason = "one call gathers the facts of one session")]
 fn ensure_blocking(
     tmux: &Tmux,
-    slot: &SessionName,
+    slot: &Slot,
     task: &TmuxTask,
     create: Create,
     process_names: &[String],

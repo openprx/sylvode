@@ -589,6 +589,7 @@ impl Config {
     /// type table: its permissions come from `[runner.cli.*]` and its directory from Sylvode.
     fn validate_runner_agents(&self) -> Result<(), String> {
         self.runner.validate()?;
+        self.validate_session_bots()?;
         let runners: Vec<&AgentConfig> = self.agents.iter().filter(|a| a.agent_type == "runner").collect();
         if runners.is_empty() {
             return Ok(());
@@ -671,6 +672,30 @@ impl Config {
                          [[ai_task_callback.bots]] entry, so one bot's secret cannot sign another bot's deliveries"
                     ));
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// Every `[[runner.tmux.sessions]]` entry names a bot a `runner` agent serves and for which
+    /// `[ai_task_callback]` holds a token.
+    fn validate_session_bots(&self) -> Result<(), String> {
+        for (i, entry) in self.runner.tmux.sessions.iter().enumerate() {
+            let at = format!("runner.tmux.sessions[{i}]");
+            let served = self
+                .agents
+                .iter()
+                .filter(|agent| agent.agent_type == "runner")
+                .any(|agent| agent.runner_bot_ids().iter().any(|id| same_bot(id, &entry.bot)));
+            if !served {
+                return Err(format!(
+                    "{at}.bot is not a bot of any runner agent (list it in the agent's route.bot_ids)"
+                ));
+            }
+            if matches!(self.ai_task_callback_for(&entry.bot), AiTaskCallback::NoToken) {
+                return Err(format!(
+                    "{at}.bot has no token in [ai_task_callback]; add a [[ai_task_callback.bots]] entry for it"
+                ));
             }
         }
         Ok(())
@@ -1704,6 +1729,10 @@ url = "http://127.0.0.1:9000/hook"
     /// The configuration block Sylvode hands out when a bot is connected to a project, byte for
     /// byte as the API's contract test fixture holds it.
     const GOLDEN_BLOCK: &str = include_str!("../../api/tests/fixtures/runner-config-block.toml");
+    /// The bot of the golden block: served by its runner agent, with a token.
+    const SESSION_BOT: &str = "00000000-0000-0000-0000-000000000000";
+    const SESSION_OTHER_BOT: &str = "9d2a1b63-4e5f-4c7b-8d8e-2f3a4b5c6d7e";
+    const SESSION_TOKEN: &str = "opr_second_fixture_token";
 
     const GOLDEN_BOT: &str = "00000000-0000-0000-0000-000000000000";
 
@@ -2007,32 +2036,57 @@ url = "http://127.0.0.1:9000/hook"
     /// Each start-up refusal of a `[[runner.tmux.sessions]]` entry names its place in the array.
     #[test]
     fn a_bad_session_entry_is_refused_naming_its_index() {
-        let entry = |project: &str, cli: &str, name: &str| {
-            format!("[[runner.tmux.sessions]]\nproject = \"{project}\"\ncli = \"{cli}\"\nname = \"{name}\"\n")
+        let entry = |bot: &str, cli: &str, name: &str| {
+            format!("[[runner.tmux.sessions]]\nbot = \"{bot}\"\ncli = \"{cli}\"\nname = \"{name}\"\n")
         };
-        let good = entry("SV", "claude", "sv");
+        let good = entry(SESSION_BOT, "claude", "sv");
         for (extra, want) in [
-            (entry("sv", "claude", "x"), "runner.tmux.sessions[0].project"),
-            (entry("", "claude", "x"), "runner.tmux.sessions[0].project"),
-            (entry("SV", "opencode", "x"), "runner.tmux.sessions[0].cli"),
-            (entry("SV", "bash", "x"), "runner.tmux.sessions[0].cli"),
-            (entry("SV", "claude", "a:b"), "runner.tmux.sessions[0].name"),
-            (entry("SV", "claude", "-x"), "runner.tmux.sessions[0].name"),
-            (entry("SV", "claude", "a.b"), "runner.tmux.sessions[0].name"),
-            (entry("SV", "claude", "SV-claude"), "runner.tmux.sessions[0].name"),
-            (entry("SV", "claude", "rf-Codex"), "runner.tmux.sessions[0].name"),
-            (entry("SV", "claude", &"a".repeat(65)), "runner.tmux.sessions[0].name"),
+            (entry("sv", "claude", "x"), "runner.tmux.sessions[0].bot"),
+            (entry("", "claude", "x"), "runner.tmux.sessions[0].bot"),
+            (entry("SV", "claude", "x"), "runner.tmux.sessions[0].bot"),
+            // Upper case and unhyphenated forms of a valid UUID are not canonical.
             (
-                format!("{good}{}", entry("SV", "claude", "other")),
+                entry(&SESSION_OTHER_BOT.to_uppercase(), "claude", "x"),
+                "runner.tmux.sessions[0].bot",
+            ),
+            (
+                entry(&SESSION_OTHER_BOT.replace('-', ""), "claude", "x"),
+                "runner.tmux.sessions[0].bot",
+            ),
+            (entry(SESSION_BOT, "opencode", "x"), "runner.tmux.sessions[0].cli"),
+            (entry(SESSION_BOT, "bash", "x"), "runner.tmux.sessions[0].cli"),
+            (entry(SESSION_BOT, "claude", "a:b"), "runner.tmux.sessions[0].name"),
+            (entry(SESSION_BOT, "claude", "-x"), "runner.tmux.sessions[0].name"),
+            (entry(SESSION_BOT, "claude", "a.b"), "runner.tmux.sessions[0].name"),
+            (
+                entry(SESSION_BOT, "claude", "SV-claude"),
+                "runner.tmux.sessions[0].name",
+            ),
+            (entry(SESSION_BOT, "claude", "rf-Codex"), "runner.tmux.sessions[0].name"),
+            (
+                entry(SESSION_BOT, "claude", &"a".repeat(65)),
+                "runner.tmux.sessions[0].name",
+            ),
+            (
+                format!("{good}{}", entry(SESSION_BOT, "claude", "other")),
                 "runner.tmux.sessions[1] repeats",
             ),
             (
-                format!("{good}{}", entry("RF", "codex", "SV")),
+                format!("{good}{}", entry(SESSION_OTHER_BOT, "codex", "SV")),
                 "runner.tmux.sessions[1].name repeats",
             ),
             (
-                format!("{good}{}{}", entry("RF", "claude", "rf"), entry("PRC", "claude", "Rf")),
+                format!(
+                    "{good}{}{}",
+                    entry(SESSION_OTHER_BOT, "claude", "rf"),
+                    entry(SESSION_BOT, "codex", "Rf")
+                ),
                 "runner.tmux.sessions[2].name repeats",
+            ),
+            // The `project` key is gone, not renamed: it is refused naming the key.
+            (
+                "[[runner.tmux.sessions]]\nproject = \"SV\"\ncli = \"claude\"\nname = \"sv\"\n".to_string(),
+                "project",
             ),
         ] {
             let error = Config::from_toml(&format!("{GOLDEN_BLOCK}\n{extra}")).expect_err(want);
@@ -2041,14 +2095,52 @@ url = "http://127.0.0.1:9000/hook"
         // A key the entry does not know is refused naming it.
         let error = Config::from_toml(&format!("{GOLDEN_BLOCK}\n{good}create = true\n")).expect_err("unknown key");
         assert!(error.contains("create"), "{error}");
-        // The same project may name a session per CLI, and the names may look like plain words.
-        let two = format!("{good}{}", entry("SV", "codex", "sv-codex-lead"));
-        let cfg = Config::from_toml(&format!("{GOLDEN_BLOCK}\n{two}")).expect("two entries");
+    }
+
+    /// An entry names a bot a runner agent serves and that has a token.
+    #[test]
+    fn a_session_entry_needs_a_served_bot_with_a_token() {
+        let entry = |bot: &str| format!("[[runner.tmux.sessions]]\nbot = \"{bot}\"\ncli = \"claude\"\nname = \"sv\"\n");
+        // A bot no runner agent serves, though it holds a token of its own.
+        let unserved = format!(
+            "{GOLDEN_BLOCK}\n{}[[ai_task_callback.bots]]\nbot_id = \"{SESSION_OTHER_BOT}\"\n\
+             workspace_id = \"{SESSION_OTHER_BOT}\"\ntoken = \"{SESSION_TOKEN}\"\nsurface = \"mcp_stdio\"\n",
+            entry(SESSION_OTHER_BOT)
+        );
+        let error = Config::from_toml(&unserved).expect_err("not served");
+        assert!(
+            error.contains("runner.tmux.sessions[0].bot") && error.contains("route.bot_ids"),
+            "{error}"
+        );
+        // A served bot with no token is refused naming the entry.
+        let tokenless = format!(
+            "{}\n{}",
+            GOLDEN_BLOCK.replace(
+                "bot_ids = [\"00000000-0000-0000-0000-000000000000\"]",
+                &format!("bot_ids = [\"00000000-0000-0000-0000-000000000000\", \"{SESSION_OTHER_BOT}\"]"),
+            ),
+            entry(SESSION_OTHER_BOT)
+        );
+        let error = Config::from_toml(&tokenless).expect_err("no token");
+        assert!(error.contains("runner.tmux.sessions[0].bot has no token"), "{error}");
+        // A served bot loads, and the two CLIs of one bot may have a session each.
+        let bot = SESSION_BOT;
+        let two = format!(
+            "{GOLDEN_BLOCK}\n{}{}",
+            entry(bot),
+            entry(bot)
+                .replace("claude", "codex")
+                .replace("\"sv\"", "\"sv-codex-lead\"")
+        );
+        let cfg = Config::from_toml(&two).expect("two entries");
         assert_eq!(cfg.runner.tmux.sessions.len(), 2);
         assert_eq!(
-            cfg.runner.session_override("SV", "codex").map(|e| e.name.as_str()),
+            cfg.runner
+                .bot_session(&bot.to_uppercase(), "codex")
+                .map(|e| e.name.as_str()),
             Some("sv-codex-lead")
         );
+        assert!(cfg.runner.bot_session(SESSION_OTHER_BOT, "claude").is_none());
     }
 
     /// A configuration with no `[[runner.tmux.sessions]]` entry has none, and so every session is
@@ -2057,7 +2149,7 @@ url = "http://127.0.0.1:9000/hook"
     fn without_session_entries_nothing_is_configured() {
         let cfg = Config::from_toml(GOLDEN_BLOCK).expect("loads");
         assert!(cfg.runner.tmux.sessions.is_empty());
-        assert!(cfg.runner.session_override("SV", "claude").is_none());
+        assert!(cfg.runner.bot_session(SESSION_BOT, "claude").is_none());
     }
 
     /// A deployment without a `runner` agent is unaffected by the `[runner]` block.

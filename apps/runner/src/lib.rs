@@ -59,5 +59,5 @@ pub mod mcp_launch_for_tests {
         LaunchFiles, SEARCH_MODE_TOOLS, SERVER_NAME, WRITE_TOOL, claude_headless_argv, codex_headless_argv,
         session_argv,
     };
-    pub use crate::runner::tmux::SessionName;
+    pub use crate::runner::tmux::Slot;
 }

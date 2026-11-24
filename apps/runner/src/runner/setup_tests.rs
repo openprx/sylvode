@@ -564,15 +564,16 @@ fn a_failing_codex_is_an_error() {
 }
 
 fn named_config(cli: &str) -> Config {
+    let block = include_str!("../../../api/tests/fixtures/runner-config-block.toml")
+        .replace("00000000-0000-0000-0000-000000000000", BOT);
     Config::from_toml(&format!(
-        "{}\n[[runner.tmux.sessions]]\nproject = \"QLA\"\ncli = \"{cli}\"\nname = \"lead\"\n",
-        include_str!("../../../api/tests/fixtures/runner-config-block.toml")
+        "{block}\n[[runner.tmux.sessions]]\nbot = \"{BOT}\"\ncli = \"{cli}\"\nname = \"lead\"\n"
     ))
     .expect("block with a session entry")
 }
 
-/// A project with a configured session: the plan names it, says where the name comes from, never
-/// offers to let the runner create it, and keeps the hook settings under the slot's directory.
+/// A bot with a configured session: the plan names it, says which bot it serves, never offers to
+/// let the runner create it, and keeps the hook settings under the bot slot's directory.
 #[test]
 fn a_configured_session_is_named_and_never_offered_to_the_runner_to_create() {
     let base = Dir::new();
@@ -592,12 +593,16 @@ fn a_configured_session_is_named_and_never_offered_to_the_runner_to_create() {
         },
     )
     .expect("plan");
-    assert_eq!((named.name.as_str(), named.tmux.as_str()), ("QLA-claude", "lead"));
+    assert_eq!(
+        (named.name.as_str(), named.tmux.as_str()),
+        (format!("bot-{BOT}-claude").as_str(), "lead")
+    );
     assert_eq!(named.source, super::tmux::NameSource::Local);
     let text = render(&named);
     for wanted in [
-        "Session name: lead (named in runner.tmux.sessions",
-        "the runner will not create it",
+        "Session name: lead",
+        &format!("bot {BOT}: tasks of every connected project go to tmux session lead"),
+        "the runner does not create it",
         "tmux new-session -d -s lead -c",
     ] {
         assert!(text.contains(wanted), "{wanted}: {text}");
@@ -607,7 +612,7 @@ fn a_configured_session_is_named_and_never_offered_to_the_runner_to_create() {
         named
             .launch
             .iter()
-            .any(|w| w.contains("sessions/QLA-claude/claude-settings.json")),
+            .any(|w| w.contains(&format!("sessions/bot-{BOT}-claude/claude-settings.json"))),
         "{:?}",
         named.launch
     );
@@ -638,11 +643,15 @@ fn a_configured_codex_session_is_named_in_the_codex_plan() {
         },
     )
     .expect("plan");
-    assert_eq!((plan.name.as_str(), plan.tmux.as_str()), ("QLA-codex", "lead"));
+    assert_eq!(
+        (plan.name.as_str(), plan.tmux.as_str()),
+        (format!("bot-{BOT}-codex").as_str(), "lead")
+    );
     let text = render_codex(&plan).expect("render");
     assert!(
-        text.contains("Session name: lead (named in runner.tmux.sessions")
-            && text.contains("the runner will not create it")
+        text.contains("Session name: lead")
+            && text.contains("tasks of every connected project go to tmux session lead")
+            && text.contains("the runner does not create it")
             && text.contains("tmux new-session -d -s lead"),
         "{text}"
     );

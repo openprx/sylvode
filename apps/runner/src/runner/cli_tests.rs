@@ -1,10 +1,13 @@
 use super::cli::{Row, RowState, live_state, release_check, render_rows};
 use super::files::CreatedBy;
 
+const BOT: &str = "8c1f0a52-3d4e-4b6a-9c7d-1e2f3a4b5c6d";
+
 fn row(name: &str, state: RowState, created_by: CreatedBy) -> Row {
     Row {
         name: name.to_string(),
         tmux: name.to_string(),
+        bot_id: BOT.to_string(),
         project_id: "22222222-2222-4222-8222-222222222222".to_string(),
         cli: "claude".to_string(),
         state,
@@ -26,7 +29,7 @@ fn a_key_is_released_only_when_bound_and_without_a_session() {
 
 #[allow(clippy::indexing_slicing)]
 #[test]
-fn the_listing_shows_name_project_cli_state_and_who_started_it() {
+fn the_listing_shows_slot_tmux_name_bot_project_cli_state_and_who_started_it() {
     assert_eq!(render_rows(&[]), "no sessions recorded by this runner\n");
     let mut named = row("SVWL-codex", RowState::Idle, CreatedBy::Operator);
     named.tmux = "lead".to_string();
@@ -41,7 +44,7 @@ fn the_listing_shows_name_project_cli_state_and_who_started_it() {
         listed
             .lines()
             .next()
-            .is_some_and(|h| h.starts_with("NAME") && h.contains("TMUX SESSION"))
+            .is_some_and(|h| h.starts_with("SLOT") && h.contains("TMUX SESSION") && h.contains("BOT"))
     );
     let text = render_rows(&[
         row("SVWL-claude", RowState::Idle, CreatedBy::Runner),
@@ -49,9 +52,10 @@ fn the_listing_shows_name_project_cli_state_and_who_started_it() {
     ]);
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines.len(), 3, "{text}");
-    assert!(lines[0].starts_with("NAME") && lines[0].ends_with("STARTED BY"));
+    assert!(lines[0].starts_with("SLOT") && lines[0].ends_with("STARTED BY"));
     assert!(
         lines[1].contains("SVWL-claude")
+            && lines[1].contains(BOT)
             && lines[1].contains("22222222-2222-4222-8222-222222222222")
             && lines[1].contains("idle")
             && lines[1].ends_with("runner"),
@@ -76,4 +80,14 @@ fn a_working_cli_is_never_idle() {
     ] {
         assert_eq!(live_state("claude", screen), RowState::Busy, "{name}");
     }
+}
+
+/// A bot slot row shows the slot, the configured tmux name and the bot; it needs no project key.
+#[test]
+fn a_bot_slot_row_shows_slot_tmux_name_and_bot() {
+    let mut bot_row = row(&format!("bot-{BOT}-claude"), RowState::Busy, CreatedBy::Operator);
+    bot_row.tmux = "sv".to_string();
+    let text = render_rows(&[bot_row]);
+    let fields: Vec<&str> = text.lines().nth(1).expect("a row").split_whitespace().take(3).collect();
+    assert_eq!(fields, vec![format!("bot-{BOT}-claude").as_str(), "sv", BOT], "{text}");
 }

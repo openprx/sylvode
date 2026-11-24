@@ -1,91 +1,60 @@
-//! Which tmux session a task of a project and CLI is typed into: a pure function of the runner's
-//! configuration (and, in a later stage, a name the server sends).
+//! Which slot and which tmux session a task of a bot, project and CLI goes to: a pure function of
+//! the runner's configuration.
 //!
-//! 1. A local entry (`[[runner.tmux.sessions]]`) for the project key and CLI names an existing
-//!    session: [`NameSource::Local`].
-//! 2. A name from the server is accepted only when the operator allows it. Stage A reads no server
-//!    name and has no allow list, so a server name is always refused.
-//! 3. Else the derived `<KEY>-<cli>`: [`NameSource::Derived`], the only kind the runner creates.
+//! 1. A local entry (`[[runner.tmux.sessions]]`) for the bot and CLI names an existing session
+//!    that serves the bot for every project, on either channel: [`Slot::Bot`] and
+//!    [`NameSource::Local`]. The runner never creates such a session.
+//! 2. Else the derived `<KEY>-<cli>`: [`Slot::Project`] and [`NameSource::Derived`], the only kind
+//!    the runner creates.
 //!
-//! The slot id (`<KEY>-<cli>`, a [`SessionName`]) never changes with the tmux name: it keys the
-//! worker, the state directory and the hook routing.
+//! The slot keys the worker, the state directory and the hook routing; the tmux name is only the
+//! target of the driver.
 
 use super::checks::Refusal;
 use super::config::RunnerConfig;
-use super::registry::SessionRegistry;
-use super::tmux::{NameSource, SessionName, TmuxName};
+use super::tmux::{NameSource, Slot, TmuxName};
 
 /// The answer of [`resolve`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Resolved {
     /// The slot: worker key, state directory, hook routing.
-    pub slot: SessionName,
+    pub slot: Slot,
     /// The tmux session tasks are typed into.
     pub tmux: TmuxName,
     pub source: NameSource,
 }
 
-/// Resolves the tmux session of `key` and `cli`. `server` is the name the server sent, if any.
+/// Resolves the slot and tmux session of a task for `bot` in project `key` for `cli`.
 ///
 /// # Errors
 ///
-/// A refusal for an invalid key or CLI, an invalid configured name, or a server name the
-/// operator did not allow.
-pub fn resolve(cfg: &RunnerConfig, key: &str, cli: &str, server: Option<&str>) -> Result<Resolved, Refusal> {
-    let slot = SessionName::new(key, cli)
-        .map_err(|_| Refusal::new("invalid_project_key", "the project key is not a valid session name"))?;
-    if let Some(entry) = cfg.session_override(key, cli) {
-        let tmux = TmuxName::new(&entry.name).map_err(|_| {
-            Refusal::new(
-                "session_config_invalid",
-                "the runner's configured session name is not valid",
-            )
-        })?;
-        if server.is_some_and(|name| !name.eq_ignore_ascii_case(&entry.name)) {
-            tracing::info!(
-                session = slot.as_str(),
-                "the runner's own session name wins over the server's"
-            );
-        }
+/// A refusal for an invalid key or CLI, or an invalid configured name.
+pub fn resolve(cfg: &RunnerConfig, bot: &str, key: &str, cli: &str) -> Result<Resolved, Refusal> {
+    if let Some(entry) = cfg.bot_session(bot, cli) {
+        let invalid = || Refusal::new("session_config_invalid", "the runner's configured session is not valid");
         return Ok(Resolved {
-            slot,
-            tmux,
+            slot: Slot::bot(&entry.bot, cli).map_err(|_| invalid())?,
+            tmux: TmuxName::new(&entry.name).map_err(|_| invalid())?,
             source: NameSource::Local,
         });
     }
-    if server.is_some() {
-        return Err(Refusal::new(
-            "session_name_not_allowed",
-            "this runner does not accept a session name from Sylvode",
-        ));
-    }
+    let invalid = || Refusal::new("invalid_project_key", "the project key is not a valid session name");
+    let slot = Slot::project(key, cli).map_err(|_| invalid())?;
     Ok(Resolved {
-        tmux: TmuxName::derived(&slot),
+        tmux: TmuxName::derived(&slot).ok_or_else(invalid)?,
         slot,
         source: NameSource::Derived,
     })
 }
 
-/// A local entry is keyed by project key. When the registry says the project of a delivery owns
-/// another key that has local entries, the project was renamed and the entries are stale: the
-/// runner would otherwise start a fresh derived session next to the operator's one.
-///
-/// # Errors
-///
-/// `session_config_stale`.
-pub fn check_stale(cfg: &RunnerConfig, registry: &SessionRegistry, project_id: &str, key: &str) -> Result<(), Refusal> {
-    let stale = cfg
-        .tmux
-        .sessions
-        .iter()
-        .find(|entry| entry.project != key && registry.owner(&entry.project).as_deref() == Some(project_id));
-    stale.map_or(Ok(()), |entry| {
-        Err(Refusal::new(
-            "session_config_stale",
-            format!(
-                "the project key changed from {} to {key}; update runner.tmux.sessions on this runner",
-                entry.project
-            ),
-        ))
-    })
+/// The tmux session a slot is served by when nothing else says: the derived name of a project
+/// slot, the configured name of a bot slot (`None` when its entry is gone).
+pub fn tmux_of_slot(cfg: &RunnerConfig, slot: &Slot) -> Option<(TmuxName, NameSource)> {
+    match slot.bot_id() {
+        Some(bot) => {
+            let entry = cfg.bot_session(bot, slot.cli())?;
+            Some((TmuxName::new(&entry.name).ok()?, NameSource::Local))
+        }
+        None => Some((TmuxName::derived(slot)?, NameSource::Derived)),
+    }
 }

@@ -508,4 +508,8 @@ fn a_hook_message_applies_only_to_the_session_of_its_cli() {
     assert!(!hook_is_for_session("QLB-claude", "codex"));
     assert!(!hook_is_for_session("QLB-codex", "claude"));
     assert!(!hook_is_for_session("not a name", "codex"));
+    // A bot slot routes by its CLI too.
+    let bot = "bot-8c1f0a52-3d4e-4b6a-9c7d-1e2f3a4b5c6d";
+    assert!(hook_is_for_session(&format!("{bot}-claude"), "claude"));
+    assert!(!hook_is_for_session(&format!("{bot}-claude"), "codex"));
 }

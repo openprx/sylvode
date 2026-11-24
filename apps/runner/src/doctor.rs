@@ -248,7 +248,7 @@ pub fn project_row(config: &Config, key: &str, show_paths: bool) -> Component {
     // The first recorded CLI of the key describes the project (claude before codex).
     let record = state.and_then(|state| {
         crate::runner::tmux::SESSION_CLIS.iter().find_map(|cli| {
-            crate::runner::tmux::SessionName::new(key, cli)
+            crate::runner::tmux::Slot::project(key, cli)
                 .ok()
                 .and_then(|name| state.read_session_record(&name))
         })
@@ -333,9 +333,10 @@ fn pointer_escape(token: &str) -> String {
     token.replace('~', "~0").replace('/', "~1")
 }
 
-/// The `session.<KEY>-<cli>` rows: what the runner can see of the project's tmux sessions, one per
-/// CLI the runner has a record of (`claude` when it has none). Empty for a key that is not a
-/// project key.
+/// The session rows: `session.<KEY>-<cli>` for what the runner can see of the project's derived
+/// tmux sessions, one per CLI the runner has a record of (`claude` when it has none), and
+/// `session.bot-<uuid>-<cli>` for every `[[runner.tmux.sessions]]` entry, with or without a
+/// record. No project row for a key that is not a project key.
 pub fn session_rows(config: &Config, key: &str) -> Vec<Component> {
     let state = crate::runner::state_dir(config, crate::runner::paths::service_user_home().as_deref())
         .and_then(|dir| crate::runner::files::StateDir::open(&dir).ok());
@@ -343,38 +344,47 @@ pub fn session_rows(config: &Config, key: &str) -> Vec<Component> {
         .iter()
         .copied()
         .filter(|cli| {
-            config.runner.session_override(key, cli).is_some()
-                || state.as_ref().is_some_and(|state| {
-                    crate::runner::tmux::SessionName::new(key, cli)
-                        .ok()
-                        .is_some_and(|name| state.read_session_record(&name).is_some())
-                })
+            state.as_ref().is_some_and(|state| {
+                crate::runner::tmux::Slot::project(key, cli)
+                    .ok()
+                    .is_some_and(|name| state.read_session_record(&name).is_some())
+            })
         })
         .collect();
     if clis.is_empty() {
         clis.push("claude");
     }
-    clis.into_iter()
-        .filter_map(|cli| session_row(config, key, cli))
-        .collect()
+    let projects = clis
+        .into_iter()
+        .filter_map(|cli| crate::runner::tmux::Slot::project(key, cli).ok())
+        .map(|slot| session_row(config, &slot));
+    let bots = config
+        .runner
+        .tmux
+        .sessions
+        .iter()
+        .filter_map(|entry| crate::runner::tmux::Slot::bot(&entry.bot, &entry.cli).ok())
+        .map(|slot| session_row(config, &slot));
+    projects.chain(bots).collect()
 }
 
-/// The `session.<KEY>-<cli>` row. `None` for a key that is not a project key.
-pub fn session_row(config: &Config, key: &str, cli: &str) -> Option<Component> {
+/// The `session.<slot>` row of a project slot (`<KEY>-<cli>`) or a bot slot (`bot-<uuid>-<cli>`).
+pub fn session_row(config: &Config, name: &crate::runner::tmux::Slot) -> Component {
     use crate::runner::session_report::{SessionState, assess_named};
-    let name = crate::runner::tmux::SessionName::new(key, cli).ok()?;
+    let cli = name.cli();
     let component = format!("session.{}", name.as_str());
-    let Some(session) = assess_named(config, &name) else {
-        return Some(
-            Component::new(component, false, Status::Ok, false)
-                .with_detail("state", json!("unknown"))
-                .with_hint("tmux or the runner's state directory is not available to look at the session"),
-        );
+    let Some(session) = assess_named(config, name) else {
+        return Component::new(component, false, Status::Ok, false)
+            .with_detail("state", json!("unknown"))
+            .with_hint("tmux or the runner's state directory is not available to look at the session");
     };
     let mut row = Component::new(component, session.state != SessionState::Absent, session.status, false)
         .with_detail("state", json!(session.state.word()));
     if let Some(created_by) = session.created_by {
         row = row.with_detail("created_by", json!(created_by.word()));
+    }
+    if let Some(bot) = name.bot_id() {
+        row = row.with_detail("bot", json!(bot));
     }
     row = row
         .with_detail("tmux_session", json!(session.tmux.as_str()))
@@ -435,7 +445,7 @@ pub fn session_row(config: &Config, key: &str, cli: &str) -> Option<Component> {
             _ => row.hint.take(),
         },
     };
-    Some(row)
+    row
 }
 
 /// The worktree warning of the guide installer: a project whose `.git` is a file cannot have its

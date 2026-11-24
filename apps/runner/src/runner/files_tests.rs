@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use super::files::{BotFiles, CLAUDE_EVENTS, CreatedBy, PushedTask, SessionRecord, StateDir};
 use super::launch::LaunchFiles;
-use super::tmux::{NameSource, SessionName};
+use super::tmux::{NameSource, Slot};
 
 const BOT: &str = "00000000-0000-4000-8000-000000000001";
 // Built so no token-shaped literal sits in the source.
@@ -214,7 +214,7 @@ fn debug_output_hides_the_token() {
 fn session_settings_hold_the_four_hooks_and_are_private() {
     let base = Dir::new();
     let state = StateDir::open(&base.state()).expect("open");
-    let name = SessionName::new("SVWL", "claude").expect("name");
+    let name = Slot::project("SVWL", "claude").expect("name");
     let (exe, _server, socket) = launch_files(&state);
     let json = state.claude_mcp_json(BOT);
     let settings = state.claude_settings(&name);
@@ -285,7 +285,7 @@ fn record() -> SessionRecord {
 fn a_session_record_is_kept_by_name_with_who_started_the_session() {
     let dir = Dir::new();
     let state = StateDir::open(&dir.state()).expect("open");
-    let name = SessionName::new("SVWL", "claude").expect("name");
+    let name = Slot::project("SVWL", "claude").expect("name");
     assert!(state.read_session_record(&name).is_none());
     assert!(
         state
@@ -336,7 +336,7 @@ fn a_session_record_is_kept_by_name_with_who_started_the_session() {
 fn session_start_and_notification_hooks_have_narrow_matchers() {
     let base = Dir::new();
     let state = StateDir::open(&base.state()).expect("open");
-    let name = SessionName::new("SVWL", "claude").expect("name");
+    let name = Slot::project("SVWL", "claude").expect("name");
     let (exe, _server, socket) = launch_files(&state);
     let (json, settings) = (state.claude_mcp_json(BOT), state.claude_settings(&name));
     let files = LaunchFiles {
@@ -383,7 +383,7 @@ fn a_configured_name_round_trips_in_the_record_of_the_slot() {
         ..record()
     };
     state.write_session_record(&named).expect("write");
-    let slot = SessionName::new("SVWL", "claude").expect("name");
+    let slot = Slot::project("SVWL", "claude").expect("name");
     let back = state.read_session_record(&slot).expect("read");
     assert_eq!(back, named);
     assert_eq!(back.source(), NameSource::Local);
@@ -396,4 +396,54 @@ fn a_configured_name_round_trips_in_the_record_of_the_slot() {
         ..named
     };
     assert!(bad.tmux().is_none());
+}
+
+/// A bot slot keeps its record under `sessions/bot-<uuid>-<cli>/`, is listed with the project
+/// slots, and each push rewrites the project and directory to those of the task typed in.
+#[test]
+fn a_bot_slot_has_its_own_record_directory_and_follows_the_task_it_serves() {
+    let dir = Dir::new();
+    let state = StateDir::open(&dir.state()).expect("open");
+    let slot = Slot::bot(BOT, "claude").expect("bot slot");
+    let name = slot.as_str().to_string();
+    let bot_record = SessionRecord {
+        name: name.clone(),
+        tmux_name: "sv".to_string(),
+        name_source: "local".to_string(),
+        ..record()
+    };
+    state.write_session_record(&bot_record).expect("write");
+    state.write_session_record(&record()).expect("write the project slot");
+    assert_eq!(state.read_session_record(&slot), Some(bot_record.clone()));
+    assert_eq!(state.recorded_names(), vec!["SVWL-claude".to_string(), name.clone()]);
+    assert!(state.root().join("sessions").join(&name).join("session.json").is_file());
+    assert!(!state.root().join("sessions/sv").exists());
+    let task = |id: &str| PushedTask {
+        task_id: id.to_string(),
+        attempt: 1,
+    };
+    state.begin_push(&slot, task("a"), "project-b", "/b").expect("begin");
+    let after = state.read_session_record(&slot).expect("record");
+    assert_eq!(
+        (
+            after.project_id.as_str(),
+            after.dir.as_str(),
+            after.pushed,
+            after.bot_id.as_str()
+        ),
+        ("project-b", "/b", Some(task("a")), BOT)
+    );
+    // Clearing the mark keeps the project of the last task.
+    state.mark_pushed(&slot, None).expect("clear");
+    let cleared = state.read_session_record(&slot).expect("record");
+    assert_eq!((cleared.project_id.as_str(), cleared.pushed), ("project-b", None));
+    // No record, no push.
+    let other = Slot::bot("9d2a1b63-4e5f-4c7b-8d8e-2f3a4b5c6d7e", "claude").expect("slot");
+    assert!(state.begin_push(&other, task("b"), "p", "/x").is_err());
+    // A record named neither as a project slot nor as a bot slot is refused.
+    let bad = SessionRecord {
+        name: format!("bot-{}-claude", "G".repeat(36)),
+        ..bot_record
+    };
+    assert!(state.write_session_record(&bad).is_err());
 }

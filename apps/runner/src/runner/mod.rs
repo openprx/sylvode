@@ -348,11 +348,12 @@ pub fn build_http_client() -> Result<reqwest::Client, String> {
         .map_err(|e| format!("the HTTP client for Sylvode could not be built: {e}"))
 }
 
-/// Installs the agent guide into the project directory (design 8.5) when the operator allows it.
-/// A failure or conflict is logged; the task runs either way, because the server instructions carry
-/// the procedure too.
+/// Installs the agent guide into the project directory (design 8.5) when the operator allows it
+/// and the directory passed the allowed roots (a bot's session never uses a directory, and a
+/// directory that failed the roots is not written to). A failure or conflict is logged; the task
+/// runs either way, because the server instructions carry the procedure too.
 async fn install_guide(config: &Config, files: &Arc<files::StateDir>, accepted: &checks::Accepted) {
-    if !config.runner.install_agent_guide {
+    if !config.runner.install_agent_guide || !accepted.dir_checked {
         return;
     }
     let dir = accepted.dir.clone();
@@ -443,6 +444,7 @@ pub async fn accept(state: &Arc<AppState>, agent: &AgentConfig, payload: &Value)
             config,
             roots: state.runner.roots_for(agent),
             registry,
+            state: state.runner.state.as_deref().ok(),
             protocol_mismatch: state.handshake.mismatch_text(),
             client,
             bot: bot_creds,
@@ -454,7 +456,7 @@ pub async fn accept(state: &Arc<AppState>, agent: &AgentConfig, payload: &Value)
         Verdict::Unavailable => Err(StatusCode::SERVICE_UNAVAILABLE),
         Verdict::Ignored(reason) => Ok(json!({"status": "ignored", "reason": reason, "agent": agent.id})),
         Verdict::Refused(refusal) => Ok(refused(agent, refusal.code, &refusal.reason)),
-        Verdict::Run(accepted) if accepted.channel == checks::Channel::Tmux => {
+        Verdict::Run(accepted) if accepted.uses_tmux() => {
             let Some(sessions) = &state.sessions else {
                 return Ok(refused(
                     agent,

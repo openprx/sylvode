@@ -70,18 +70,18 @@ pub struct RunnerTmuxConfig {
     /// tasks before they are failed as retryable (a false busy reading must not stall a session
     /// for good).
     pub screen_hold_secs: u64,
-    /// Existing tmux sessions to use instead of the derived `<KEY>-<cli>` ones
+    /// Existing tmux sessions that serve a bot for a CLI, whatever the project of the task
     /// (`[[runner.tmux.sessions]]`). The runner never creates, renames or restarts them.
     pub sessions: Vec<SessionOverride>,
 }
 
-/// One `[[runner.tmux.sessions]]` entry: the existing tmux session `name` serves tasks of project
-/// `project` for `cli`.
+/// One `[[runner.tmux.sessions]]` entry: the existing tmux session `name` serves the tasks of bot
+/// `bot` for `cli`, from every project the bot is connected to.
 #[derive(Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct SessionOverride {
-    /// The project key, `^[A-Z0-9]{1,32}$`.
-    pub project: String,
+    /// The bot's id: a lower case, hyphenated UUID.
+    pub bot: String,
     /// `claude` or `codex`.
     pub cli: String,
     /// The tmux session name, `^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$`, never shaped like `<KEY>-<cli>`.
@@ -254,9 +254,10 @@ impl RunnerConfig {
         }
     }
 
-    /// The configured entry for project `key` and `cli`.
-    pub fn session_override(&self, key: &str, cli: &str) -> Option<&SessionOverride> {
-        self.tmux.sessions.iter().find(|s| s.project == key && s.cli == cli)
+    /// The configured session of bot `bot` (a UUID in any form) for `cli`.
+    pub fn bot_session(&self, bot: &str, cli: &str) -> Option<&SessionOverride> {
+        let bot = uuid::Uuid::parse_str(bot.trim()).ok()?.hyphenated().to_string();
+        self.tmux.sessions.iter().find(|s| s.bot == bot && s.cli == cli)
     }
 
     /// The pause between a paste and Enter for `cli`: the global `[runner.tmux] push_settle_ms`,
@@ -363,8 +364,9 @@ impl RunnerConfig {
 fn validate_sessions(sessions: &[SessionOverride]) -> Result<(), String> {
     for (i, entry) in sessions.iter().enumerate() {
         let at = format!("runner.tmux.sessions[{i}]");
-        if !super::checks::valid_project_key(&entry.project) {
-            return Err(format!("{at}.project must match ^[A-Z0-9]{{1,32}}$"));
+        let canonical = uuid::Uuid::parse_str(&entry.bot).is_ok_and(|id| id.hyphenated().to_string() == entry.bot);
+        if !canonical {
+            return Err(format!("{at}.bot must be a bot id: a lower case, hyphenated UUID"));
         }
         if !matches!(entry.cli.as_str(), "claude" | "codex") {
             return Err(format!("{at}.cli must be claude or codex"));
@@ -372,8 +374,8 @@ fn validate_sessions(sessions: &[SessionOverride]) -> Result<(), String> {
         super::tmux::TmuxName::new(&entry.name).map_err(|e| format!("{at}.name: {e}"))?;
         for (j, other) in sessions.iter().enumerate().take(i) {
             let earlier = format!("runner.tmux.sessions[{j}]");
-            if other.project == entry.project && other.cli == entry.cli {
-                return Err(format!("{at} repeats the project and cli of {earlier}"));
+            if other.bot == entry.bot && other.cli == entry.cli {
+                return Err(format!("{at} repeats the bot and cli of {earlier}"));
             }
             if other.name.eq_ignore_ascii_case(&entry.name) {
                 return Err(format!(

@@ -171,3 +171,33 @@ fn an_acknowledged_plain_http_server_address_is_a_warning() {
         "{hint}"
     );
 }
+
+/// Every `[[runner.tmux.sessions]]` entry gets a `session.bot-<uuid>-<cli>` row beside the project's
+/// own `session.<KEY>-<cli>` row, with or without a record.
+#[test]
+fn every_session_entry_gets_a_bot_row_beside_the_project_row() {
+    let bot = "00000000-0000-0000-0000-000000000000";
+    let cfg = crate::config::Config::from_toml(&format!(
+        "{}\n[[runner.tmux.sessions]]\nbot = \"{bot}\"\ncli = \"claude\"\nname = \"sv\"\n\
+         [[runner.tmux.sessions]]\nbot = \"{bot}\"\ncli = \"codex\"\nname = \"lead-two\"\n",
+        include_str!("../../api/tests/fixtures/runner-config-block.toml")
+    ))
+    .expect("block with entries");
+    let components: Vec<String> = super::doctor::session_rows(&cfg, "SVWL")
+        .into_iter()
+        .map(|row| row.component)
+        .collect();
+    assert_eq!(
+        components,
+        vec![
+            "session.SVWL-claude".to_string(),
+            format!("session.bot-{bot}-claude"),
+            format!("session.bot-{bot}-codex"),
+        ]
+    );
+    // Without an entry only the project's row is there.
+    let plain = crate::config::Config::from_toml(include_str!("../../api/tests/fixtures/runner-config-block.toml"))
+        .expect("block");
+    let rows = super::doctor::session_rows(&plain, "SVWL");
+    assert_eq!(rows.len(), 1);
+}

@@ -10,7 +10,7 @@ use super::session_report::{
     Assessment, Mcp, McpEntry, Observation, Permissions, ProcRow, SessionState, assess, cli_process, codex_permissions,
     parse_etime, parse_process_rows, permissions_for, postures_of,
 };
-use super::tmux::{ListedPane, NameSource, PaneId, SessionName, TmuxName};
+use super::tmux::{ListedPane, NameSource, PaneId, Slot, TmuxName};
 
 /// What the CLI's process arguments look like: the default launch command, an operator's own
 /// start, and a start with the older flag.
@@ -92,8 +92,8 @@ fn record(created_by: CreatedBy) -> SessionRecord {
 /// A running operator session with everything in place, to be spoiled one field at a time.
 fn healthy() -> Observation {
     Observation {
-        name: SessionName::new("QLA", "claude").expect("name"),
-        tmux: TmuxName::derived(&SessionName::new("QLA", "claude").expect("name")),
+        name: Slot::project("QLA", "claude").expect("name"),
+        tmux: TmuxName::derived(&Slot::project("QLA", "claude").expect("name")).expect("derived"),
         source: NameSource::Derived,
         exists: true,
         panes: vec![pane("%0", 99, "zsh", false), pane("%1", 100, "claude", false)],
@@ -395,4 +395,27 @@ fn a_foreign_mcp_entry_is_a_warning_for_a_configured_session() {
     // A missing entry still fails a configured session: the CLI cannot reach Sylvode at all.
     obs.mcp_entry = Some(McpEntry::Absent);
     assert_eq!(row(&obs).status, Status::Fail);
+}
+
+/// A bot slot is its bot's whether or not a record exists, so the report sends its row to that
+/// bot only; a project slot takes the bot from its record.
+#[test]
+fn a_bot_slot_names_its_bot_without_a_record() {
+    const BOT: &str = "8c1f0a52-3d4e-4b6a-9c7d-1e2f3a4b5c6d";
+    let mut obs = healthy();
+    obs.name = Slot::bot(BOT, "claude").expect("bot slot");
+    obs.tmux = TmuxName::new("sv").expect("tmux name");
+    obs.source = NameSource::Local;
+    obs.exists = false;
+    obs.record = None;
+    let row = assess(&obs);
+    assert_eq!(row.bot_id, BOT);
+    // Never created, so an absent session is a warning.
+    assert_eq!(row.status, Status::Warn);
+    // A project slot has no bot of its own: the record's.
+    let mut project = healthy();
+    project.exists = false;
+    assert_eq!(assess(&project).bot_id, record(CreatedBy::Operator).bot_id);
+    project.record = None;
+    assert_eq!(assess(&project).bot_id, "");
 }

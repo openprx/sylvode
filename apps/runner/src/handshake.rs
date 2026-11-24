@@ -233,7 +233,8 @@ fn posture_row(cli: &str, posture: crate::runner::session_report::Posture) -> Va
     })
 }
 
-/// A `tmux_session` row: the project key, the CLI type and fields of fixed vocabularies (including
+/// A `tmux_session` row: `scope` (`bot` for a bot's own session, `project` for a project's), the
+/// project key for a project row only, the CLI type and fields of fixed vocabularies (including
 /// where the tmux name came from, never the name); no session name, path or pane id.
 fn session_row(session: &crate::runner::session_report::Assessment) -> Value {
     let status = match session.status {
@@ -243,7 +244,15 @@ fn session_row(session: &crate::runner::session_report::Assessment) -> Value {
     };
     let mut row = serde_json::Map::new();
     row.insert("component".to_string(), json!("tmux_session"));
-    row.insert("project_key".to_string(), json!(session.name.key()));
+    match session.name.key() {
+        Some(key) => {
+            row.insert("scope".to_string(), json!("project"));
+            row.insert("project_key".to_string(), json!(key));
+        }
+        None => {
+            row.insert("scope".to_string(), json!("bot"));
+        }
+    }
     row.insert("cli".to_string(), json!(session.name.cli()));
     row.insert("status".to_string(), json!(status));
     row.insert("state".to_string(), json!(session.state.word()));
@@ -509,8 +518,8 @@ mod tests {
     fn the_posture_and_session_rows_have_exactly_the_shape_the_api_keeps() {
         use crate::runner::files::CreatedBy;
         use crate::runner::session_report::{Assessment, Mcp, Permissions, Posture, SessionState};
-        use crate::runner::tmux::{NameSource, SessionName, TmuxName};
-        let name = SessionName::new("QLA", "claude").expect("name");
+        use crate::runner::tmux::{NameSource, Slot, TmuxName};
+        let name = Slot::project("QLA", "claude").expect("name");
         let running = Assessment {
             tmux: TmuxName::new("lead").expect("tmux name"),
             source: NameSource::Local,
@@ -527,8 +536,22 @@ mod tests {
             status: Status::Warn,
         };
         let absent = Assessment {
-            tmux: TmuxName::derived(&running.name),
+            tmux: TmuxName::derived(&running.name).expect("derived"),
             source: NameSource::Derived,
+            state: SessionState::Absent,
+            created_by: None,
+            hooks: None,
+            permissions: None,
+            mcp: None,
+            pane_id: None,
+            foreground: None,
+            status: Status::Ok,
+            ..running.clone()
+        };
+        let bot_row = Assessment {
+            name: Slot::bot("8c1f0a52-3d4e-4b6a-9c7d-1e2f3a4b5c6d", "claude").expect("bot slot"),
+            tmux: TmuxName::new("sv").expect("tmux name"),
+            source: NameSource::Local,
             state: SessionState::Absent,
             created_by: None,
             hooks: None,
@@ -541,7 +564,7 @@ mod tests {
         };
         let body = report_body(
             &[],
-            &[running, absent],
+            &[running, absent, bot_row],
             &[
                 (
                     "claude",
@@ -564,16 +587,28 @@ mod tests {
             json!([
                 {"component": "posture", "cli": "claude", "status": "warn", "bypass": {"tmux": true, "headless": false}},
                 {"component": "posture", "cli": "codex", "status": "ok", "bypass": {"tmux": false, "headless": false}},
-                {"component": "tmux_session", "project_key": "QLA", "cli": "claude", "status": "warn",
-                 "state": "running", "session_source": "local", "created_by": "operator", "hooks": "seen",
-                 "permissions": "bypass", "mcp": "stale"},
-                {"component": "tmux_session", "project_key": "QLA", "cli": "claude", "status": "ok",
-                 "state": "absent", "session_source": "derived"},
+                {"component": "tmux_session", "scope": "project", "project_key": "QLA", "cli": "claude",
+                 "status": "warn", "state": "running", "session_source": "local", "created_by": "operator",
+                 "hooks": "seen", "permissions": "bypass", "mcp": "stale"},
+                {"component": "tmux_session", "scope": "project", "project_key": "QLA", "cli": "claude",
+                 "status": "ok", "state": "absent", "session_source": "derived"},
+                {"component": "tmux_session", "scope": "bot", "cli": "claude", "status": "ok",
+                 "state": "absent", "session_source": "local"},
             ])
         );
         // No session name, pane id or foreground command leaves the process.
         let text = body.to_string();
-        for leaked in ["QLA-claude", "lead", "%3", "pane", "foreground", "\"b\""] {
+        for leaked in [
+            "QLA-claude",
+            "lead",
+            "%3",
+            "pane",
+            "foreground",
+            "\"b\"",
+            "bot-",
+            "8c1f0a52",
+            "\"sv\"",
+        ] {
             assert!(!text.contains(leaked), "{leaked}: {text}");
         }
     }
