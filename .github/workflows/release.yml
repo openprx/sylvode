@@ -74,7 +74,7 @@ jobs:
             use_cross: false
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            suffix: windows-amd64
+            suffix: cli-windows-amd64
             use_cross: false
 
     runs-on: ${{ matrix.os }}
@@ -124,8 +124,14 @@ jobs:
 
       # Builds every workspace binary, collab-isolated-apply-worker included.
       - name: Build all binaries (native)
-        if: "!matrix.use_cross"
+        if: "!matrix.use_cross && runner.os != 'Windows'"
         run: cargo build --release --target ${{ matrix.target }}
+
+      # Windows ships only the client tools (the CLI and the stdio MCP server): the server
+      # binaries are Linux-only in practice (Flow collaborative writes need Linux).
+      - name: Build the client tools (Windows)
+        if: runner.os == 'Windows'
+        run: cargo build --release --locked --target ${{ matrix.target }} -p mcp-server --bin mcp-server --bin sylvode
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
@@ -160,8 +166,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force staging
-          # collab-isolated-apply-worker must stay in the same directory as api.
-          foreach ($bin in @("api", "collab-isolated-apply-worker", "worker", "mcp-server", "sylvode")) {
+          foreach ($bin in @("mcp-server", "sylvode")) {
             $src = "target/${{ matrix.target }}/release/$bin.exe"
             if (-not (Test-Path $src)) { throw "missing release binary: $src" }
             Copy-Item $src staging/
@@ -320,7 +325,7 @@ jobs:
         run: |
           set -euo pipefail
           for file in sylvode-linux-amd64.tar.gz sylvode-linux-arm64.tar.gz sylvode-macos-amd64.tar.gz \
-                      sylvode-macos-arm64.tar.gz sylvode-windows-amd64.zip sylvode-frontend.tar.gz \
+                      sylvode-macos-arm64.tar.gz sylvode-cli-windows-amd64.zip sylvode-frontend.tar.gz \
                       sylvode-runner-linux-amd64.tar.gz sylvode-runner-linux-arm64.tar.gz \
                       sylvode-runner-macos-amd64.tar.gz sylvode-runner-macos-arm64.tar.gz; do
             test -s "artifacts/$file" || { echo "::error::missing release archive $file"; exit 1; }
@@ -342,11 +347,15 @@ jobs:
               grep -qx "$bin" <<<"$listing" || { echo "::error::$archive lacks $bin"; exit 1; }
             done
           done
+          # The Windows archive carries only the client tools.
           for archive in artifacts/*-windows-*.zip; do
             listing="$(unzip -Z1 "$archive")"
-            for bin in api.exe collab-isolated-apply-worker.exe; do
+            for bin in mcp-server.exe sylvode.exe; do
               grep -qx "$bin" <<<"$listing" || { echo "::error::$archive lacks $bin"; exit 1; }
             done
+            if grep -qx 'api.exe' <<<"$listing"; then
+              echo "::error::$archive must not carry server binaries"; exit 1
+            fi
           done
 
       - name: Create Release
@@ -371,13 +380,14 @@ jobs:
             | Linux | ARM64 | `sylvode-linux-arm64.tar.gz` |
             | macOS | Intel | `sylvode-macos-amd64.tar.gz` |
             | macOS | Apple Silicon | `sylvode-macos-arm64.tar.gz` |
-            | Windows | x86_64 | `sylvode-windows-amd64.zip` |
+            | Windows | x86_64 | `sylvode-cli-windows-amd64.zip` (CLI and MCP server only) |
             | Frontend | Static | `sylvode-frontend.tar.gz` |
             | Runner | Linux and macOS, amd64 and arm64 | `sylvode-runner-<platform>.tar.gz` |
 
-            Each archive contains `api`, `collab-isolated-apply-worker`, `worker`,
-            `mcp-server`, and the `sylvode` CLI, with a `.sha256` file to
-            check it (`sha256sum -c`). Keep `collab-isolated-apply-worker` in the same directory
+            Each Linux and macOS archive contains `api`, `collab-isolated-apply-worker`, `worker`,
+            `mcp-server`, and the `sylvode` CLI; the Windows archive contains `mcp-server.exe` and
+            `sylvode.exe` only. Each has a `.sha256` file to check it (`sha256sum -c`).
+            In the Linux and macOS archives keep `collab-isolated-apply-worker` in the same directory
             as `api`: the API spawns it for every Flow collaborative write.
             Each `sylvode-runner-<platform>.tar.gz` contains the `sylvode-runner` executable; there is
             no Windows build of the runner.

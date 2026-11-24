@@ -21,8 +21,9 @@ configuration key in [configuration.md](configuration.md).
 - PostgreSQL 18. The Compose stack runs the `postgres:18` image.
 - A Linux server for Flow. On every other platform the API serves projects, forms, MCP and Flow
   reads, but refuses every Flow collaborative write and object diff (error `server_rejected`,
-  reason `isolated_apply_unsupported_platform`) and logs a warning at startup. The macOS and
-  Windows release archives are therefore suitable for evaluation without Flow editing only.
+  reason `isolated_apply_unsupported_platform`) and logs a warning at startup. The macOS archives
+  are therefore suitable for development and evaluation without Flow editing only. There is no
+  Windows server: Windows is supported for the client tools (`sylvode` and `mcp-server`) only.
 - The `worker` running next to the API. Without it, Page creation and editing in Flow are refused
   (see [operations.md](operations.md#flow-reader-leases)) and no background job runs.
 
@@ -182,7 +183,7 @@ Each release publishes these archives, each with a `.sha256` file:
 |---|---|
 | `sylvode-linux-amd64.tar.gz`, `sylvode-linux-arm64.tar.gz` | `api`, `collab-isolated-apply-worker`, `worker`, `mcp-server`, `sylvode` |
 | `sylvode-macos-amd64.tar.gz`, `sylvode-macos-arm64.tar.gz` | the same executables for macOS (no Flow editing, see [Requirements](#requirements)) |
-| `sylvode-windows-amd64.zip` | the same executables with `.exe` (no Flow editing) |
+| `sylvode-cli-windows-amd64.zip` | `mcp-server.exe` and `sylvode.exe` only: the client tools, no server binaries |
 | `sylvode-frontend.tar.gz` | `build/` (the web UI) and `nginx.conf` |
 | `sylvode-runner-<platform>.tar.gz` | `sylvode-runner`, for Linux and macOS on amd64 and arm64 |
 
