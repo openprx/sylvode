@@ -308,8 +308,14 @@ The result is in `frontend/build/`.
 
 ## The first administrator account
 
-The web UI has a login page but no sign-up page. On an empty database, the first account
-registered through the API becomes the instance administrator:
+A new instance has no accounts. While it has none, the login page shows a **Set up this server**
+link to the first-run page (`/auth/setup`, **Create the administrator account**). Anyone who can reach
+the server can use it: enter a name, an email address and a password (at least 8 characters) twice.
+The account it creates is the instance administrator. The page and the link disappear as soon as the
+instance has an account: the page then redirects to the login page.
+
+The same step can be made through the API. On an empty database, the first account registered
+through the endpoint becomes the instance administrator:
 
 ```bash
 curl -X POST http://localhost:8081/api/v1/auth/register \
@@ -317,7 +323,8 @@ curl -X POST http://localhost:8081/api/v1/auth/register \
   -d '{"email":"admin@example.com","password":"choose-a-long-password","name":"Admin"}'
 ```
 
-The password must be at least 8 characters. Registrations are serialised, so two simultaneous
+The password must be at least 8 characters. `GET /api/v1/auth/setup-status` (no sign-in needed)
+answers whether the instance still needs its first account. Registrations are serialised, so two simultaneous
 first registrations cannot both become administrators. Once an account exists, the same endpoint
 refuses callers that are not signed in as an administrator; an administrator creates further
 accounts in the web UI on the instance administration's **Users** page (`/admin/users`) with
