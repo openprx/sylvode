@@ -360,7 +360,7 @@ async fn comments_and_public_links_follow_object_permissions() {
     assert_eq!(typed["code"], 0, "{typed}");
     assert_eq!(
         typed["data"]["mentions"],
-        json!([{"id": editor, "name": "Edith Editor", "is_bot": false, "state": "active"}]),
+        json!([{"id": editor, "name": "Edith Editor", "label": "Edith Editor", "is_bot": false, "state": "active"}]),
         "{typed}"
     );
     assert_eq!(notification_count(db, editor).await, 2);

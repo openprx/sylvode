@@ -4237,7 +4237,9 @@ async fn typed_names_in_personal_comments_become_mentions_with_people_to_show() 
     let shown = serde_json::to_value(&comment).unwrap();
     assert_eq!(
         shown.pointer("/mentions"),
-        Some(&serde_json::json!([{"id": owner, "name": "Olive Owner", "is_bot": false, "state": "active"}])),
+        Some(
+            &serde_json::json!([{"id": owner, "name": "Olive Owner", "label": "Olive Owner", "is_bot": false, "state": "active"}])
+        ),
         "{shown}"
     );
     assert_eq!(
