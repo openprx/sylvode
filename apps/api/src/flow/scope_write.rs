@@ -254,7 +254,7 @@ async fn accept_inner(
             permit.lock_after_head(&tx, head.head_seq).await?;
         }
         if editor_init {
-            super::block_registry::preserve_editor_aliases(&tx, object, &prepared.logical_blocks).await?;
+            super::block_registry::carry_tree_block_identities(&tx, object, &prepared.logical_blocks).await?;
         }
         let seq = head.head_seq + 1;
         let event_key = format!("content:{document}:{update}");

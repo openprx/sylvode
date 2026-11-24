@@ -188,8 +188,8 @@ impl SchemaProbe {
  AND (SELECT bool_and(EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass(required.relation_name) AND position(required.marker IN pg_get_constraintdef(oid))>0)) FROM unnest($6::text[],$7::text[]) AS required(relation_name,marker)) AS present",
                 vec![
                     vec!["flow_logical_blocks","flow_block_placements","flow_block_checkpoints","flow_block_shares","flow_block_share_members","flow_block_share_placements","flow_block_share_audiences","flow_block_share_asset_aliases","flow_block_share_receipts","flow_block_comment_anchors","flow_block_alias_fences","flow_block_one_active_logical","flow_block_one_active_physical","flow_block_placement_target"].into_iter().map(str::to_owned).collect::<Vec<_>>().into(),
-                    vec!["flow_block_checkpoints","flow_block_shares","flow_block_shares","flow_block_shares","flow_block_shares","flow_block_comment_anchors","flow_block_comment_anchors","flow_block_comment_anchors","flow_block_alias_fences","flow_block_share_audiences"].into_iter().map(str::to_owned).collect::<Vec<_>>().into(),
-                    vec!["legacy_anchors_sealed","publisher_user_id","root_logical_id","source_root_cid","projection_hash","logical_id","origin_generation","origin_placement_id","ever_retired","placement_id"].into_iter().map(str::to_owned).collect::<Vec<_>>().into(),
+                    vec!["flow_block_shares","flow_block_shares","flow_block_shares","flow_block_shares","flow_block_comment_anchors","flow_block_comment_anchors","flow_block_comment_anchors","flow_block_alias_fences","flow_block_share_audiences"].into_iter().map(str::to_owned).collect::<Vec<_>>().into(),
+                    vec!["publisher_user_id","root_logical_id","source_root_cid","projection_hash","logical_id","origin_generation","origin_placement_id","ever_retired","placement_id"].into_iter().map(str::to_owned).collect::<Vec<_>>().into(),
                     vec!["flow_objects","flow_objects","flow_scopes","projects","workspaces","flow_block_placements","flow_block_placements"].into_iter().map(str::to_owned).collect::<Vec<_>>().into(),
                     vec!["flow_block_source_object_archive","flow_block_source_object_delete","flow_block_source_scope_archive","flow_block_target_project_delete","flow_block_target_workspace_delete","flow_block_alias_retire","flow_block_alias_prune"].into_iter().map(str::to_owned).collect::<Vec<_>>().into(),
                     vec!["flow_block_shares","flow_block_share_placements","flow_block_share_asset_aliases","flow_block_share_audiences"].into_iter().map(str::to_owned).collect::<Vec<_>>().into(),
@@ -612,6 +612,7 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
         "0119_plugin_single_active_version.sql",
         SchemaProbe::Relation("plugins_one_active_version"),
     ),
+    ("0127_retire_legacy_objects.sql", SchemaProbe::Rerunnable),
     (
         "0130_tmux_cli_codex.sql",
         SchemaProbe::ConstraintContains("project_bot_connections", "pbc_tmux_cli_check", "'codex'"),

@@ -129,6 +129,7 @@ fn the_adoption_cutoff_names_a_registered_migration() {
             "0117_sprint_rules.sql",
             "0118_label_rules.sql",
             "0119_plugin_single_active_version.sql",
+            "0127_retire_legacy_objects.sql",
             "0130_tmux_cli_codex.sql",
         ],
         "everything past the cutoff re-runs on an adopted database and must be idempotent"
@@ -270,7 +271,8 @@ fn only_rerunnable_probes_have_no_statement() {
             "0014_proposal_comments_schema_compat.sql",
             "0021_fix_cascade.sql",
             "0035_project_type_two_lanes.sql",
-            "0105_token_bot_entity_type.sql"
+            "0105_token_bot_entity_type.sql",
+            "0127_retire_legacy_objects.sql"
         ],
         "a migration may only skip its probe when re-executing it is a no-op"
     );

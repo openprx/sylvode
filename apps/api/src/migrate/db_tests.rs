@@ -1917,3 +1917,38 @@ async fn the_registration_progress_migration_keeps_existing_checkpoints_complete
     assert_schema_complete(&scratch.db).await;
     scratch.drop_self().await;
 }
+
+/// 0127 drops the anchor seal column and the other retired objects; every statement of it can run
+/// again without effect.
+#[tokio::test]
+async fn the_legacy_objects_migration_retires_what_it_names_and_reruns() {
+    let scratch = scratch_or_skip!("legacy_objects_migration");
+    run_migrations_with(&scratch.db, MigrationOptions::default())
+        .await
+        .expect("a fresh database migrates cleanly");
+    let db = &scratch.db;
+    let sealed_column = || async {
+        db.query_one(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT count(*) AS n FROM pg_attribute WHERE attrelid = to_regclass('flow_block_checkpoints') \
+             AND attname = 'legacy_anchors_sealed' AND NOT attisdropped"
+                .to_string(),
+        ))
+        .await
+        .expect("the column catalogue is readable")
+        .expect("count query returns a row")
+        .try_get::<i64>("", "n")
+        .expect("n column")
+    };
+    assert_eq!(sealed_column().await, 0, "the seal column is gone");
+    let sql = MIGRATIONS
+        .iter()
+        .find(|(name, _)| *name == "0127_retire_legacy_objects.sql")
+        .map(|(_, sql)| *sql)
+        .expect("0127 is registered");
+    db.execute_unprepared(sql)
+        .await
+        .expect("0127 second execution succeeds");
+    assert_eq!(sealed_column().await, 0, "a second execution changes nothing");
+    scratch.drop_self().await;
+}
