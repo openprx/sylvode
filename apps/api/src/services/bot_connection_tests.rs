@@ -1611,7 +1611,7 @@ async fn the_status_follows_token_use_reports_and_deliveries() {
                 {"component": "tmux_session", "project_key": key, "cli": "claude", "status": "warn",
                  "state": "running", "created_by": "operator", "hooks": "seen", "permissions": "bypass",
                  "mcp": "ok"},
-                {"component": "posture", "status": "warn", "bypass": {"tmux": true}}
+                {"component": "posture", "cli": "claude", "status": "warn", "bypass": {"tmux": true}}
             ])
             .into(),
         ],

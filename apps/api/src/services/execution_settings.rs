@@ -16,6 +16,15 @@ use crate::{error::ApiError, services::workflow_service::resolve_effective_workf
 
 /// The channels a runner can use to run a task.
 pub const CHANNELS: [&str; 2] = ["tmux", "headless"];
+/// The CLI types that can run in a tmux session.
+const TMUX_CLIS: [&str; 2] = ["claude", "codex"];
+/// The tmux channel is for the CLIs of [`TMUX_CLIS`]; every CLI may use the headless channel.
+fn check_tmux_cli(channel: &str, cli: &str) -> Result<(), &'static str> {
+    if channel == "tmux" && !TMUX_CLIS.contains(&cli) {
+        return Err("only claude and codex can use the tmux channel");
+    }
+    Ok(())
+}
 /// The command line agents a runner can start.
 pub const CLIS: [&str; 3] = ["claude", "codex", "opencode"];
 /// Longest accepted working directory, in bytes.
@@ -233,7 +242,7 @@ fn complete_state_key(value: &str) -> Result<Option<&str>, &'static str> {
 }
 
 /// Checks the settings of a connection against the rules of the settings, the project's workflow
-/// and workspace, and the tmux channel (claude only). The first refusal names its field.
+/// and workspace, and the tmux channel (claude and codex). The first refusal names its field.
 pub async fn validate(
     state: &AppState,
     project: &ProjectRef,
@@ -251,8 +260,8 @@ pub async fn validate(
     if !CLIS.contains(&input.cli.as_str()) {
         return Err(invalid("cli", "must be claude, codex or opencode"));
     }
-    if input.channel == "tmux" && input.cli != "claude" {
-        return Err(invalid("cli", "only claude can use the tmux channel"));
+    if let Err(why) = check_tmux_cli(&input.channel, &input.cli) {
+        return Err(invalid("cli", why));
     }
     if input.approval_gate != "none" {
         return Err(invalid("approval_gate", "must be none"));
@@ -293,7 +302,20 @@ pub async fn validate(
 
 #[cfg(test)]
 mod tests {
-    use super::{complete_state_key, normalize_working_directory, session_name};
+    use super::{check_tmux_cli, complete_state_key, normalize_working_directory, session_name};
+
+    #[test]
+    fn the_tmux_channel_takes_claude_and_codex_only() {
+        assert_eq!(check_tmux_cli("tmux", "claude"), Ok(()));
+        assert_eq!(check_tmux_cli("tmux", "codex"), Ok(()));
+        assert_eq!(
+            check_tmux_cli("tmux", "opencode"),
+            Err("only claude and codex can use the tmux channel")
+        );
+        for cli in ["claude", "codex", "opencode"] {
+            assert_eq!(check_tmux_cli("headless", cli), Ok(()), "headless takes {cli}");
+        }
+    }
 
     #[test]
     fn working_directories_are_checked_and_normalised() {

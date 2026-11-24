@@ -78,15 +78,20 @@ async fn one_tmux_connection_per_cli_and_any_number_of_headless_ones() {
         conflict(switch),
         "channel: project already has a tmux connection for claude (bot Alpha)"
     );
-    // Codex cannot use tmux at all.
-    let codex = update_for(
+    // opencode cannot use tmux at all.
+    let opencode = expect_connect(&w, project, headless("Delta", "opencode", "/srv/dev/work/delta"))
+        .await
+        .connection;
+    let refused = update_for(
         &w,
         project,
-        beta.bot.id,
-        json!({"expected_version": beta.version, "channel": "tmux"}),
+        opencode.bot.id,
+        json!({"expected_version": opencode.version, "channel": "tmux"}),
     )
     .await;
-    assert!(matches!(codex, Err(ApiError::BadRequest(m)) if m == "cli: only claude can use the tmux channel"));
+    assert!(
+        matches!(refused, Err(ApiError::BadRequest(m)) if m == "cli: only claude and codex can use the tmux channel")
+    );
 
     // The unique index is the backstop for a race the check cannot see.
     let race = db
@@ -131,7 +136,7 @@ async fn one_tmux_connection_per_cli_and_any_number_of_headless_ones() {
         .into_iter()
         .map(|view| view.bot.name)
         .collect();
-    assert_eq!(names, ["Alpha", "Beta", "Gamma"]);
+    assert_eq!(names, ["Alpha", "Beta", "Delta", "Gamma"]);
     scratch.drop_self().await;
 }
 

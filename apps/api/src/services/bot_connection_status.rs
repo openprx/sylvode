@@ -99,9 +99,15 @@ fn sanitize_session_row(row: &Value) -> Option<Value> {
     Some(Value::Object(kept))
 }
 
-/// The `posture` row: `status` and, per channel, whether the launch settings run with permission
-/// checks off (`bypass`: `{"tmux": bool, "headless": bool}`, each key only when it is a boolean).
+/// The `posture` rows, one per CLI: `cli` (one of [`SESSION_CLIS`]), `status` and, per channel,
+/// whether the launch settings run with permission checks off (`bypass`:
+/// `{"tmux": bool, "headless": bool}`, each key only when it is a boolean). A row without a known
+/// `cli` is dropped.
 fn sanitize_posture_row(row: &Value) -> Option<Value> {
+    let cli = row
+        .get("cli")
+        .and_then(Value::as_str)
+        .filter(|cli| SESSION_CLIS.contains(cli))?;
     let status = row
         .get("status")
         .and_then(Value::as_str)
@@ -116,7 +122,7 @@ fn sanitize_posture_row(row: &Value) -> Option<Value> {
             bypass.insert(channel.to_string(), json!(flag));
         }
     }
-    Some(json!({ "component": "posture", "status": status, "bypass": bypass }))
+    Some(json!({ "component": "posture", "cli": cli, "status": status, "bypass": bypass }))
 }
 
 fn short_version(value: Option<&Value>) -> Option<String> {
@@ -135,7 +141,7 @@ fn short_version(value: Option<&Value>) -> Option<String> {
 ///
 /// That is `generated_by.version`, `generated_by.task_protocol`, and per known component its
 /// `component`, `status` (`ok`, `warn` or `fail`) and `version` (at most 64 characters), plus the
-/// `tmux_session` rows and the `posture` row described on [`sanitize_session_row`] and
+/// `tmux_session` rows and the `posture` rows described on [`sanitize_session_row`] and
 /// [`sanitize_posture_row`]. Everything else, including every unknown key at any depth, is
 /// dropped, so no host path reaches the database.
 #[must_use]
@@ -157,6 +163,7 @@ pub fn sanitize_report(body: &Value) -> Value {
         .and_then(Value::as_array)
         .map(|rows| {
             let mut sessions = 0_usize;
+            let mut postured = std::collections::HashSet::new();
             rows.iter()
                 .filter_map(|row| {
                     let name = row.get("component").and_then(Value::as_str)?;
@@ -166,7 +173,9 @@ pub fn sanitize_report(body: &Value) -> Value {
                         return (sessions <= MAX_SESSION_ROWS).then_some(kept);
                     }
                     if name == "posture" {
-                        return sanitize_posture_row(row);
+                        let kept = sanitize_posture_row(row)?;
+                        let cli = kept.get("cli").and_then(Value::as_str).map(str::to_string)?;
+                        return postured.insert(cli).then_some(kept);
                     }
                     let name = Some(name).filter(|name| is_known_component(name))?;
                     let status = row
@@ -418,8 +427,8 @@ fn session_row(inputs: &StatusInputs) -> Option<SessionStatus> {
     })
 }
 
-/// Whether permission checks are off on the connection's channel: the `posture` row's flag for the
-/// channel, and for tmux also the session's own `permissions: bypass`.
+/// Whether permission checks are off on the connection's channel: the flag for the channel in the
+/// `posture` row of the connection's CLI, and for tmux also the session's own `permissions: bypass`.
 fn bypass_flag(inputs: &StatusInputs, session: Option<&SessionStatus>) -> Option<bool> {
     let posture = inputs
         .report
@@ -427,8 +436,10 @@ fn bypass_flag(inputs: &StatusInputs, session: Option<&SessionStatus>) -> Option
         .and_then(|report| report.get("components"))
         .and_then(Value::as_array)
         .and_then(|rows| {
-            rows.iter()
-                .find(|row| row.get("component").and_then(Value::as_str) == Some("posture"))
+            rows.iter().find(|row| {
+                row.get("component").and_then(Value::as_str) == Some("posture")
+                    && row.get("cli").and_then(Value::as_str) == Some(inputs.cli.as_str())
+            })
         })
         .and_then(|row| row.get("bypass"))
         .and_then(|bypass| bypass.get(inputs.channel.as_str()))
@@ -832,7 +843,7 @@ mod tests {
             {"component": "tmux_session", "project_key": "SVWL", "cli": "claude", "status": "warn",
              "state": "running", "created_by": "operator", "hooks": "none", "permissions": "bypass",
              "mcp": "stale"},
-            {"component": "posture", "status": "warn", "bypass": {"tmux": false, "headless": true}},
+            {"component": "posture", "cli": "claude", "status": "warn", "bypass": {"tmux": false, "headless": true}},
         ]}));
         let status = derive(&input);
         let session = status.tmux_session.expect("the session of this key and CLI");
@@ -853,7 +864,7 @@ mod tests {
 
         // Posture alone decides when the report has no session row; false stays false.
         input.report = Some(json!({"components": [
-            {"component": "posture", "status": "ok", "bypass": {"tmux": false}}]}));
+            {"component": "posture", "cli": "claude", "status": "ok", "bypass": {"tmux": false}}]}));
         let calm = derive(&input);
         assert!(calm.tmux_session.is_none());
         assert_eq!(calm.bypass, Some(false));
@@ -935,18 +946,48 @@ mod tests {
     #[test]
     fn the_posture_row_keeps_status_and_boolean_bypass_flags_per_channel() {
         let kept = sanitize_report(&json!({"components": [
-            {"component": "posture", "status": "warn",
+            {"component": "posture", "cli": "claude", "status": "warn",
              "bypass": {"tmux": true, "headless": false, "other": true}, "launch_command": ["claude"]},
-            {"component": "posture", "status": "ok", "bypass": {"tmux": "yes"}},
-            {"component": "posture", "status": "nope"},
+            {"component": "posture", "cli": "codex", "status": "ok", "bypass": {"tmux": "yes"}},
+            {"component": "posture", "cli": "codex", "status": "warn", "bypass": {"tmux": true}},
+            {"component": "posture", "cli": "other", "status": "ok", "bypass": {"tmux": true}},
+            {"component": "posture", "status": "ok", "bypass": {"tmux": true}},
+            {"component": "posture", "cli": "opencode", "status": "nope"},
         ]}));
         assert_eq!(
             kept["components"],
             json!([
-                {"component": "posture", "status": "warn", "bypass": {"tmux": true, "headless": false}},
-                {"component": "posture", "status": "ok", "bypass": {}},
-            ])
+                {"component": "posture", "cli": "claude", "status": "warn",
+                 "bypass": {"tmux": true, "headless": false}},
+                {"component": "posture", "cli": "codex", "status": "ok", "bypass": {}},
+            ]),
+            "a row without a known cli, a bad status and a second row of one CLI are dropped"
         );
+    }
+
+    #[test]
+    fn a_connection_shows_the_posture_row_of_its_own_cli() {
+        let report = json!({"components": [
+            {"component": "posture", "cli": "claude", "status": "warn", "bypass": {"tmux": true, "headless": false}},
+            {"component": "posture", "cli": "codex", "status": "ok", "bypass": {"tmux": false, "headless": true}},
+        ]});
+        let kept = sanitize_report(&json!({"components": report["components"]}));
+        let flag = |cli: &str, channel: &str| {
+            let mut input = inputs();
+            input.report = Some(kept.clone());
+            input.cli = cli.to_string();
+            input.channel = channel.to_string();
+            derive(&input).bypass
+        };
+        assert_eq!(flag("claude", "tmux"), Some(true));
+        assert_eq!(
+            flag("codex", "tmux"),
+            Some(false),
+            "codex does not show claude's posture"
+        );
+        assert_eq!(flag("claude", "headless"), Some(false));
+        assert_eq!(flag("codex", "headless"), Some(true));
+        assert_eq!(flag("opencode", "tmux"), None, "no row for this CLI");
     }
 
     /// A version is `^[0-9A-Za-z.+_-]{1,64}$`: no markup, no whitespace, no hidden characters.
