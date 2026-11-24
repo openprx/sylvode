@@ -90,7 +90,10 @@ export function resolveRoute(url: URL, routeId: string | null = null): RouteCont
 
 	if (segs[0] === 'flow' || segs[0] === 'shared-blocks' || (inWorkspace && wsSection === 'flow'))
 		return inDestination('flow');
-	if ((inWorkspace && wsSection === 'projects') || segs[0] === 'projects')
+	if (
+		(inWorkspace && (wsSection === 'projects' || wsSection === 'milestones')) ||
+		segs[0] === 'projects'
+	)
 		return inDestination('projects');
 	if ((segs[0] && GOVERNANCE_ROOTS.has(segs[0])) || (segs[0] === 'users' && segs[2] === 'trust'))
 		return inDestination('governance');
