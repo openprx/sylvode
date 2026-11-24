@@ -42,7 +42,7 @@ export type CallResult<T> =
 			/** Set when the client produced the failure itself: `describeResult` makes words of it. */
 			messageKey?: string;
 			errorCode: string | null;
-		};
+	  };
 
 /** The rejection of a rule write whose `expected_version` is stale (409 `version_conflict`). */
 export const VERSION_CONFLICT = 'version_conflict';

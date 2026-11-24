@@ -49,10 +49,12 @@ import { parseEvent, parseRule, parseSource } from '../../src/lib/project/inboun
 import type { InboundEvent, Rule, Source } from '../../src/lib/project/inbound/wire';
 
 await installSvelteSsr();
-const { default: SourceSecrets } = await import('../../src/lib/project/inbound/SourceSecrets.svelte');
+const { default: SourceSecrets } =
+	await import('../../src/lib/project/inbound/SourceSecrets.svelte');
 const { default: EventDetailDialog } =
 	await import('../../src/lib/project/inbound/EventDetailDialog.svelte');
-const { default: SourceDialogs } = await import('../../src/lib/project/inbound/SourceDialogs.svelte');
+const { default: SourceDialogs } =
+	await import('../../src/lib/project/inbound/SourceDialogs.svelte');
 const { default: SourceCard } = await import('../../src/lib/project/inbound/SourceCard.svelte');
 
 const suite = new Suite('inbound-sources');
