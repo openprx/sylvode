@@ -1,6 +1,4 @@
 pub mod extension;
-#[cfg(test)]
-mod legacy_rows;
 pub mod library;
 pub mod preferences;
 

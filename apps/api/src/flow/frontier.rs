@@ -1,11 +1,10 @@
 //! Semantic frontier comparison for every API-side frontier check.
 //!
-//! A frontier is an encoded Loro version vector. Releases up to 0.2.539 emitted it in hash-map
-//! iteration order, so one causal version can be stored under several byte strings: a writer that
-//! imported updates incrementally and a reader that rebuilt the same document from snapshot plus
-//! tail can disagree bytewise while naming the same version. New frontiers are canonical
-//! (peer-sorted), but rows written earlier keep their original bytes. Every equality check between
-//! frontiers therefore goes through this module and compares decoded version vectors.
+//! A frontier is an encoded Loro version vector. Its encoding is not canonical across producers,
+//! so one causal version can be stored under several byte strings: a writer that imported updates
+//! incrementally and a reader that rebuilt the same document from snapshot plus tail can disagree
+//! bytewise while naming the same version. Equality is therefore semantic: every equality check
+//! between frontiers goes through this module and compares decoded version vectors.
 //!
 //! An undecodable frontier is never equal to anything: it is a typed error.
 

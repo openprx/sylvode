@@ -39,8 +39,8 @@ enum PolicyScope {
     /// see `report`/`README` notes and `TOOL_POLICY_SCOPES` for the full list.
     WorkspaceWide,
     /// `WorkspaceWide`, plus the call is a Flow administrative operation
-    /// (`mcp-surface-v1.md`: "WorkspaceWide(admin)") — a workspace rollout flag change or an
-    /// ADR-0003 legacy migration step. Like `WorkspaceWide`, no *project* agent policy can
+    /// (`mcp-surface-v1.md`: "WorkspaceWide(admin)") — a workspace rollout flag change or a
+    /// workspace-wide import or export step. Like `WorkspaceWide`, no *project* agent policy can
     /// govern these, so `resolve_policy_project_id` answers `Ok(None)` for both the same
     /// way. The variant exists as its own name, not a bool on `WorkspaceWide`, only so a
     /// tool's admin intent is visible at the `TOOL_POLICY_SCOPES` call site and in the
@@ -51,8 +51,8 @@ enum PolicyScope {
     /// 与 route workspace admin policy". `apps/api` does carry a real bot-capability model for
     /// this — `middleware::bot_auth::BotPermission::{Read,Write,Admin}`, stored per bot on
     /// `workspace_bots.permissions` — and every Flow admin REST endpoint checked here
-    /// (`PUT .../features/flow`, `.../collab/verify` at `write`, the legacy-pages admin
-    /// routes) already enforces it: a bot without the right permission gets a real `403`, not
+    /// (`PUT .../features/flow`, `.../collab/verify` at `write`, the import
+    /// and export admin routes) already enforces it: a bot without the right permission gets a real `403`, not
     /// a fiction, as confirmed against a live `apps/api` instance while building this change.
     /// What is missing is purely a *pre-check*: the MCP server has no endpoint that lets it
     /// introspect a caller's own bot permissions before dispatch, and no existing tool in this
@@ -377,10 +377,6 @@ const TOOL_POLICY_SCOPES: &[(&str, PolicyScope)] = &[
         "collab.projection_lag",
         PolicyScope::DeclaredProject { required: false },
     ),
-    ("legacy_pages.inventory", PolicyScope::WorkspaceWideAdmin),
-    ("legacy_pages.import_preview", PolicyScope::WorkspaceWideAdmin),
-    ("legacy_pages.import_commit", PolicyScope::WorkspaceWideAdmin),
-    ("legacy_pages.import_status", PolicyScope::WorkspaceWideAdmin),
     ("flow.comments.list", PolicyScope::OwnedBy(OwnerLookup::FlowObject)),
     ("flow.comments.create", PolicyScope::OwnedBy(OwnerLookup::FlowObject)),
     ("flow.comments.update", PolicyScope::OwnedBy(OwnerLookup::FlowObject)),
@@ -1005,12 +1001,7 @@ impl McpServer {
     /// genuinely does not hold admin capability in this workspace; the write's own check
     /// downstream remains the authority of record for the "route workspace admin policy" leg.
     ///
-    /// Applied only to `flow.feature_set`: `apps/api` has no legacy-pages admin REST
-    /// surface at all yet (see `tools::legacy_pages`'s module doc), so probing an unrelated
-    /// endpoint to gate a feature with zero backend would be exactly the "MCP 侧跑到后端就绪
-    /// 之前" mistake this package was told to avoid. Those four tools keep their existing,
-    /// always-local behaviour (refused with `not_required_zero_inventory`, never reaching the
-    /// network); this gap is called out in the delivery report rather than papered over here.
+    /// Applied only to `flow.feature_set`.
     async fn enforce_flow_admin_capability(&self, tool_name: &str, args: &Value) -> Result<(), String> {
         if tool_name != "flow.feature_set" {
             return Ok(());
@@ -1210,10 +1201,6 @@ impl McpServer {
             "deliveries.replay" => tools::objects::replay_flow_deliveries(&self.client, args).await,
             "collab.rebuild_projection" => tools::objects::rebuild_flow_projection(&self.client, args).await,
             "collab.repair_quarantine" => tools::objects::repair_quarantine(&self.client, args).await,
-            "legacy_pages.inventory" => tools::legacy_pages::legacy_pages_inventory(&self.client, args).await,
-            "legacy_pages.import_preview" => tools::legacy_pages::legacy_pages_import_preview(&self.client, args).await,
-            "legacy_pages.import_commit" => tools::legacy_pages::legacy_pages_import_commit(&self.client, args).await,
-            "legacy_pages.import_status" => tools::legacy_pages::legacy_pages_import_status(&self.client, args).await,
             tools::tasks::TASK_GET => tools::tasks::get(&self.client, args).await,
             tools::tasks::TASK_ACK => tools::tasks::ack(&self.client, args).await,
             tools::tasks::TASK_PROGRESS => tools::tasks::progress(&self.client, args).await,

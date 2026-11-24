@@ -97,7 +97,7 @@ Full mode is an explicit choice of whoever configured the server. Then the tool 
 
 ### Tool categories
 
-Sylvode has 158 tools in 20 categories. Find a tool with `sylvode_search`, call a `read` tool with `sylvode_read` and a `write` tool with `sylvode_write`. The five task tools are called directly.
+Sylvode has 154 tools in 20 categories. Find a tool with `sylvode_search`, call a `read` tool with `sylvode_read` and a `write` tool with `sylvode_write`. The five task tools are called directly.
 
 | Category | Tools | Read | Write | Covers |
 |---|---:|---:|---:|---|
@@ -119,5 +119,5 @@ Sylvode has 158 tools in 20 categories. Find a tool with `sylvode_search`, call 
 | `documents`: Documents | 3 | 0 | 3 | Governed document summaries, risk reviews and approvals |
 | `operations`: Operations | 2 | 0 | 2 | Governed inspection reports and corrective actions |
 | `workspace`: Workspace | 3 | 3 | 0 | Members, global search and bot operation records |
-| `flow`: Flow | 56 | 21 | 35 | Pages, collections, shares, comments, imports, exports and maintenance of Flow |
+| `flow`: Flow | 52 | 19 | 33 | Pages, collections, shares, comments, imports, exports and maintenance of Flow |
 | `tasks`: Agent tasks | 5 | 1 | 4 | The protocol of tasks assigned to a bot: get, acknowledge, report progress, complete, fail |

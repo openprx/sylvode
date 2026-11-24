@@ -559,12 +559,8 @@ fn tool_call_audit_redacts_sensitive_arguments() {
 /// "workspace wide and admin only" — both address a workspace, never a project or a
 /// project-owned resource — so unlike every other branch of the derivation below this
 /// one is necessarily a name list, exactly like the `destructive` list further down.
-const WORKSPACE_ADMIN_TOOLS: [&str; 12] = [
+const WORKSPACE_ADMIN_TOOLS: [&str; 8] = [
     "flow.feature_set",
-    "legacy_pages.inventory",
-    "legacy_pages.import_preview",
-    "legacy_pages.import_commit",
-    "legacy_pages.import_status",
     "objects.export_workspace",
     "objects.import_artifact",
     "objects.import_preview",

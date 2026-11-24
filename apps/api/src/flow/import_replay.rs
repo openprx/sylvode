@@ -26,9 +26,8 @@
 //! `portable_graph_package::MAX_REPLAY_MARK_EDITS`), server-built documents (records, collections,
 //! scopes, page creation), snapshot and compaction (re-export of accepted heads), export (reads this
 //! server's own storage), the projection rebuild and the other maintenance reads (this server's
-//! own storage), and the legacy page import (`flow_import_jobs.kind = 'legacy_pages'`: the kind
-//! exists in the schema but no code path writes it). The bytes of the last group only ever come
-//! from this server's own storage, so nothing there is metered by the import window.
+//! own storage). The bytes of the last group only ever come from this server's own storage, so
+//! nothing there is metered by the import window.
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use collab_core::isolation::wire::{ReplayDiffRequest, ReplayDiffResult};
@@ -278,22 +277,7 @@ fn reported_fingerprint(report: &ReplayDiffResult, model: PackageSemanticModel) 
         ApiError::unsupported_protocol(format!("isolated worker lacks the {reader} package fingerprint reader"))
     };
     match model {
-        PackageSemanticModel::V1 => report
-            .legacy_package_semantic_hash_v1
-            .clone()
-            .ok_or_else(|| missing("v1")),
-        PackageSemanticModel::V2 => report
-            .legacy_package_semantic_hash_v2
-            .clone()
-            .ok_or_else(|| missing("v2")),
-        PackageSemanticModel::V3 => report
-            .legacy_package_semantic_hash_v3
-            .clone()
-            .ok_or_else(|| missing("v3")),
-        PackageSemanticModel::V4 => report
-            .legacy_package_semantic_hash_v4
-            .clone()
-            .ok_or_else(|| missing("v4 compatible")),
+        PackageSemanticModel::V4 => report.package_semantic_hash_v4.clone().ok_or_else(|| missing("v4")),
         PackageSemanticModel::V5 => Ok(report.to_snapshot.semantic_hash()),
     }
 }
@@ -308,13 +292,10 @@ mod tests {
         ReplayDiffResult {
             semantic_diff: collab_core::SemanticDiff::default(),
             to_snapshot: engine.semantic_snapshot().unwrap(),
-            legacy_package_semantic_hash_v4: None,
-            legacy_package_semantic_hash_v3: None,
+            package_semantic_hash_v4: None,
             from_title: String::new(),
             to_title: engine.title().unwrap(),
             package_reference_remap_required: Some(false),
-            legacy_package_semantic_hash_v2: None,
-            legacy_package_semantic_hash_v1: None,
             validated_head_snapshot_base64: Some(STANDARD.encode(head)),
         }
     }

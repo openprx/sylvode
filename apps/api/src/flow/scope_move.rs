@@ -691,14 +691,12 @@ mod tests {
         assert_eq!(after.get(&c.to_string()), before.get(&c.to_string()));
         let snapshot = engine.semantic_snapshot().unwrap();
         assert_eq!(snapshot.nodes.get(a.to_string().as_str()).unwrap().order_key, "m");
-        let frozen = engine.legacy_package_semantic_snapshot_v1().unwrap();
-        assert_ne!(frozen.nodes.get(a.to_string().as_str()).unwrap().order_key, "m");
         if let Some(path) = std::env::var_os("OPENPR_FLOW_NAVIGATOR_BRIDGE_OUTPUT") {
             std::fs::write(path, engine.export_snapshot().unwrap()).unwrap();
         }
     }
     #[test]
-    fn subsequent_browser_map_only_reorder_updates_current_semantics_without_rewriting_v1() {
+    fn subsequent_browser_map_only_reorder_updates_current_semantics() {
         let engine = LoroCollabEngine::load(include_bytes!(
             "../../../../frontend/tests/fixtures/flow-navigator-order/browser-reedit.snapshot"
         ))
@@ -706,32 +704,6 @@ mod tests {
         let c = "33333333-3333-4333-8333-333333333333";
         assert_eq!(engine.navigator_order().unwrap().get(c).map(String::as_str), Some("9"));
         assert_eq!(engine.semantic_snapshot().unwrap().nodes.get(c).unwrap().order_key, "9");
-        assert_ne!(
-            engine
-                .legacy_package_semantic_snapshot_v1()
-                .unwrap()
-                .nodes
-                .get(c)
-                .unwrap()
-                .order_key,
-            "9"
-        );
-        assert_eq!(
-            engine
-                .legacy_package_semantic_snapshot_v2()
-                .unwrap()
-                .nodes
-                .get(c)
-                .unwrap()
-                .order_key,
-            engine
-                .legacy_package_semantic_snapshot_v1()
-                .unwrap()
-                .nodes
-                .get(c)
-                .unwrap()
-                .order_key
-        );
     }
     #[tokio::test]
     async fn move_rejection_does_not_disclose_unreadable_navigator_metadata() {

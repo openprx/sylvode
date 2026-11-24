@@ -17,7 +17,6 @@ import {
 	sortViewsByDefault,
 	viewIsDefault
 } from '#lib/forms/view-config.js';
-import { syncLegacyViewFilterFields } from '#lib/forms/view-draft-parse.js';
 
 export class ViewsController extends FormsController {
 	isServerSortable = (key: string): boolean => {
@@ -214,8 +213,7 @@ export class ViewsController extends FormsController {
 		const filterGroups = filters.length > 0 ? [{ logic, filters }] : [];
 		this.s.viewDraft = {
 			...this.s.viewDraft,
-			filterGroups,
-			...syncLegacyViewFilterFields(filterGroups)
+			filterGroups
 		};
 	};
 }

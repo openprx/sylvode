@@ -133,6 +133,7 @@ fn the_adoption_cutoff_names_a_registered_migration() {
             "0121_milestones.sql",
             "0122_bot_project_access.sql",
             "0126_retire_unused_columns.sql",
+            "0127_retire_legacy_objects.sql",
             "0130_tmux_cli_codex.sql",
         ],
         "everything past the cutoff re-runs on an adopted database and must be idempotent"
@@ -150,10 +151,11 @@ fn migration_checksums_are_content_addressed() {
 
 /// The post-cutoff files that intentionally drop relations. Everything else past the cutoff
 /// must stay replay-safe.
-const RETIREMENT_MIGRATIONS: [&str; 3] = [
+const RETIREMENT_MIGRATIONS: [&str; 4] = [
     "0052_drop_connectors_and_agent_invocations.sql",
     "0053_drop_event_outbox.sql",
     "0114_multi_bot_connections.sql",
+    "0127_retire_legacy_objects.sql",
 ];
 
 /// Non-destructive post-cutoff migrations must remain safe to replay. The explicitly
@@ -226,6 +228,10 @@ fn the_retirement_migrations_drop_only_the_confirmed_relations() {
             "0114_multi_bot_connections.sql",
             ["project_execution_settings"].as_slice(),
         ),
+        (
+            "0127_retire_legacy_objects.sql",
+            ["pages", "form_plugin_layouts"].as_slice(),
+        ),
     ] {
         let sql = MIGRATIONS
             .iter()
@@ -274,7 +280,8 @@ fn only_rerunnable_probes_have_no_statement() {
             "0014_proposal_comments_schema_compat.sql",
             "0021_fix_cascade.sql",
             "0035_project_type_two_lanes.sql",
-            "0105_token_bot_entity_type.sql"
+            "0105_token_bot_entity_type.sql",
+            "0127_retire_legacy_objects.sql"
         ],
         "a migration may only skip its probe when re-executing it is a no-op"
     );

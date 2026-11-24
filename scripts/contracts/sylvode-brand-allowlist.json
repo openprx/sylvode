@@ -131,8 +131,8 @@
       "paths": [
         "**"
       ],
-      "pattern": "(?:bot\\+\\{\\}|admin)@openpr\\.local\\b",
-      "explanation": "Synthetic identities stored in the users table: the bot JWT subject email (`bot+{}@openpr.local`) and the built-in admin seeded by migration 0008 (`admin@openpr.local`). Existing rows carry these values; D3 keeps database data unchanged."
+      "pattern": "admin@openpr\\.local\\b",
+      "explanation": "The built-in admin seeded by migration 0008 (`admin@openpr.local`). Existing rows carry this value; the applied migration stays unchanged."
     },
     {
       "id": "sylvode-skill-resource-id",
@@ -216,7 +216,7 @@
         "spikes/**"
       ],
       "pattern": "(?i:openpr)",
-      "explanation": "Frozen Flow engine and legacy-pages spikes with their recorded evidence (bundle metafiles, environment topology, inventories), captured under the OpenPR name."
+      "explanation": "Frozen Flow engine spikes with their recorded evidence (bundle metafiles, environment topology), captured under the OpenPR name."
     },
     {
       "id": "sylvode-legacy-negative-checks",

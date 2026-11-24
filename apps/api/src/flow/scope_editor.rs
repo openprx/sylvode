@@ -361,7 +361,7 @@ mod model_tests {
             ApiErrorKind::UnsupportedProtocol
         );
         require_bootstrap_model(&boot(&engine), 5).unwrap();
-        assert!(engine.legacy_package_semantic_snapshot_v4().is_err());
+        assert!(engine.package_semantic_snapshot_v4().is_err());
     }
     #[test]
     fn exact_bootstrap_model_admission_preserves_plain_and_rejects_old_rich_reader() {

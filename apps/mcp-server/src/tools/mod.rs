@@ -12,7 +12,6 @@ mod flow_scope_existing;
 pub mod flow_social;
 pub mod forms;
 pub mod labels;
-pub mod legacy_pages;
 pub mod members;
 pub mod milestones;
 pub mod objects;
@@ -152,12 +151,6 @@ pub fn get_all_tool_definitions() -> Vec<ToolDefinition> {
     tools.extend(flow_v07_tool_definitions());
     tools.extend(flow_v08_tool_definitions());
     tools.extend(flow_social::tool_definitions());
-    tools.extend([
-        legacy_pages::legacy_pages_inventory_tool(),
-        legacy_pages::legacy_pages_import_preview_tool(),
-        legacy_pages::legacy_pages_import_commit_tool(),
-        legacy_pages::legacy_pages_import_status_tool(),
-    ]);
     tools.extend(tasks::tool_definitions());
     tools
 }
@@ -547,10 +540,6 @@ mod tests {
             "objects.relations",
             "objects.search",
             "collab.projection_lag",
-            "legacy_pages.inventory",
-            "legacy_pages.import_preview",
-            "legacy_pages.import_commit",
-            "legacy_pages.import_status",
         ] {
             assert!(
                 unique.contains(expected),

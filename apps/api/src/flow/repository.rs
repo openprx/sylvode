@@ -1049,13 +1049,7 @@ pub async fn fetch_history<C: ConnectionTrait>(conn: &C, filter: &HistoryFilter)
 }
 
 // ================================================================================================
-// flow_import_jobs / flow_import_lineage (`migrations/0055_flow_import_jobs.sql`).
-//
-// No command/query module in this package writes or reads these yet (the ADR-0003 inventory is
-// zero-row, so the importer surface itself is not required — see the migration file's header);
-// these functions exist so the table has a typed data-access layer ready for whichever package
-// wires the importer command up, matching how this file's other `insert_*`/`fetch_*` functions
-// predate their own command wiring in this codebase's history.
+// flow_import_jobs (`migrations/0055_flow_import_jobs.sql`): the package importer's job ledger.
 // ================================================================================================
 
 /// A `flow_import_jobs` row (`model::ImportJobView`'s source shape).
@@ -1127,7 +1121,7 @@ pub async fn find_import_job_by_idempotency_key<C: ConnectionTrait>(
 pub struct NewImportJob<'a> {
     pub id: Uuid,
     pub workspace_id: Uuid,
-    /// `flow_import_jobs_kind_check`: `"legacy_pages"` or `"flow_package"`.
+    /// `flow_import_jobs_kind_check`: `"flow_package"`.
     pub kind: &'a str,
     pub source_workspace_id: Option<Uuid>,
     pub mapping_hash: &'a str,
@@ -1211,112 +1205,6 @@ pub async fn finish_import_job<C: ConnectionTrait>(
             report.into(),
             error.into(),
             audit_event_id.into(),
-        ],
-    ))
-    .await?;
-    Ok(())
-}
-
-/// A `flow_import_lineage` row (`model::ImportLineageView`'s source shape).
-#[derive(Debug, Clone, FromQueryResult)]
-pub struct ImportLineageRow {
-    pub source_id: Uuid,
-    pub source_content_hash: String,
-    pub target_object_id: Uuid,
-    pub target_document_id: Uuid,
-    pub result: String,
-}
-
-/// A prior lineage row for this exact `(target_workspace_id,source_kind,source_id,
-/// source_content_hash)` (`flow_import_lineage_idempotency_key`), if any. The importer reuses its
-/// `target_object_id`/`target_document_id` instead of creating a duplicate when this is `Some`.
-pub async fn find_import_lineage<C: ConnectionTrait>(
-    conn: &C,
-    target_workspace_id: Uuid,
-    source_kind: &str,
-    source_id: Uuid,
-    source_content_hash: &str,
-) -> Result<Option<ImportLineageRow>, ApiError> {
-    Ok(ImportLineageRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        r"
-            SELECT source_id, source_content_hash, target_object_id, target_document_id, result
-            FROM flow_import_lineage
-            WHERE target_workspace_id = $1 AND source_kind = $2 AND source_id = $3 AND source_content_hash = $4
-        ",
-        vec![
-            target_workspace_id.into(),
-            source_kind.into(),
-            source_id.into(),
-            source_content_hash.into(),
-        ],
-    ))
-    .one(conn)
-    .await?)
-}
-
-/// Every lineage row a job produced, in the order its items were imported (`imported_at`), for the
-/// status endpoints' `items[]`/`object_mapping[]`.
-pub async fn list_import_lineage_for_job<C: ConnectionTrait>(
-    conn: &C,
-    import_id: Uuid,
-) -> Result<Vec<ImportLineageRow>, ApiError> {
-    Ok(ImportLineageRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        r"
-            SELECT source_id, source_content_hash, target_object_id, target_document_id, result
-            FROM flow_import_lineage
-            WHERE import_id = $1
-            ORDER BY imported_at ASC
-        ",
-        vec![import_id.into()],
-    ))
-    .all(conn)
-    .await?)
-}
-
-/// Fields needed to insert one `flow_import_lineage` row inside the importer's single commit
-/// transaction (`legacy-pages-import-v1.md`: "execute 对所选 source set 采用单一事务").
-pub struct NewImportLineage<'a> {
-    pub import_id: Uuid,
-    /// `flow_import_lineage_source_kind_check`: v0.4 only ever writes `"legacy_pages"`.
-    pub source_kind: &'a str,
-    /// `flow_import_lineage_source_table_check`: fixed to `"pages"` for `legacy_pages`.
-    pub source_table: &'a str,
-    pub source_id: Uuid,
-    pub source_workspace_id: Uuid,
-    pub target_workspace_id: Uuid,
-    pub source_content_hash: &'a str,
-    pub target_object_id: Uuid,
-    pub target_document_id: Uuid,
-    /// `flow_import_lineage_result_check`: `"created"` or `"reused"`.
-    pub result: &'a str,
-}
-
-pub async fn insert_import_lineage<C: ConnectionTrait>(
-    conn: &C,
-    lineage: &NewImportLineage<'_>,
-) -> Result<(), ApiError> {
-    conn.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        r"
-            INSERT INTO flow_import_lineage (
-                import_id, source_kind, source_table, source_id, source_workspace_id,
-                target_workspace_id, source_content_hash, target_object_id, target_document_id, result
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        ",
-        vec![
-            lineage.import_id.into(),
-            lineage.source_kind.into(),
-            lineage.source_table.into(),
-            lineage.source_id.into(),
-            lineage.source_workspace_id.into(),
-            lineage.target_workspace_id.into(),
-            lineage.source_content_hash.into(),
-            lineage.target_object_id.into(),
-            lineage.target_document_id.into(),
-            lineage.result.into(),
         ],
     ))
     .await?;

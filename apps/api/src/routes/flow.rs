@@ -11814,7 +11814,7 @@ mod flow_database_tests {
                 name: ENGINE_NAME.to_string(),
                 crate_version: ENGINE_CRATE_VERSION.to_string(),
                 wire_format_version: ENGINE_WIRE_FORMAT_VERSION,
-                semantic_model: None,
+                semantic_model: Some(crate::flow::package::SEMANTIC_MODEL_V4.to_owned()),
             },
             history: PackageHistory {
                 included: false,

@@ -169,7 +169,7 @@ pub struct ReplayDiffRequest {
     pub to_frontier: Vec<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub package_updates_base64: Option<Vec<String>>,
-    /// The versioned package reader whose fingerprint the import window reads (`"v1"` to `"v5"`),
+    /// The versioned package reader whose fingerprint the import window reads (`"v4"` or `"v5"`),
     /// for the `import` operation. `"v5"` is the fingerprint of the projection itself and needs no
     /// further read. Absent for every other operation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -183,13 +183,7 @@ pub struct ReplayDiffResult {
     pub from_title: String,
     pub to_title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub legacy_package_semantic_hash_v1: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub legacy_package_semantic_hash_v2: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub legacy_package_semantic_hash_v3: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub legacy_package_semantic_hash_v4: Option<String>,
+    pub package_semantic_hash_v4: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub package_reference_remap_required: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -659,10 +653,7 @@ mod tests {
             to_snapshot: SemanticSnapshot::default(),
             from_title: "before".to_string(),
             to_title: "after".to_string(),
-            legacy_package_semantic_hash_v1: None,
-            legacy_package_semantic_hash_v2: None,
-            legacy_package_semantic_hash_v3: None,
-            legacy_package_semantic_hash_v4: None,
+            package_semantic_hash_v4: None,
             package_reference_remap_required: None,
             validated_head_snapshot_base64: None,
         };

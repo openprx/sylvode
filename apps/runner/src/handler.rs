@@ -658,11 +658,11 @@ project_types = ["contract_review"]
     }
 
     #[test]
-    fn keeps_legacy_agent_type_fallback_without_route_config() {
+    fn selects_the_agent_by_agent_type_without_route_config() {
         let agents = vec![agent(
             r#"
-id = "legacy-webhook"
-name = "Legacy Webhook"
+id = "plain-webhook"
+name = "Plain Webhook"
 agent_type = "webhook"
 "#,
         )];
@@ -678,7 +678,7 @@ agent_type = "webhook"
         .expect("target");
 
         let selected = select_agent(&agents, &target).expect("selected agent");
-        assert_eq!(selected.id, "legacy-webhook");
+        assert_eq!(selected.id, "plain-webhook");
     }
 
     /// A bot-task target with the given direct bot name and id.

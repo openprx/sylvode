@@ -535,9 +535,7 @@ async fn render_export(
             name: ENGINE_NAME.to_string(),
             crate_version: ENGINE_CRATE_VERSION.to_string(),
             wire_format_version: ENGINE_WIRE_FORMAT_VERSION,
-            semantic_model: super::package::RAW_PACKAGE_SEMANTIC_MODEL
-                .wire_name()
-                .map(str::to_owned),
+            semantic_model: Some(super::package::RAW_PACKAGE_SEMANTIC_MODEL.wire_name().to_owned()),
         },
         history: PackageHistory {
             included: request.include_history,
@@ -1687,7 +1685,7 @@ mod tests {
         );
         assert_eq!(
             object["semantic_hash"],
-            engine.legacy_package_semantic_snapshot_v4().unwrap().semantic_hash(),
+            engine.package_semantic_snapshot_v4().unwrap().semantic_hash(),
             "exported metadata must fingerprint the reconstructed accepted head with its declared reader"
         );
         assert!(

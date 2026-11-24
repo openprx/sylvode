@@ -88,7 +88,7 @@ impl Doc {
                     parent_physical_cid: blk.parent.clone(),
                     order_key: format!("{:012}", blk.order),
                     asset_id: None,
-                    legacy_alias: None,
+                    tree_block_alias: None,
                     content_hash,
                 }
             })
@@ -271,17 +271,16 @@ async fn rows(tx: &DatabaseTransaction, page: Uuid) -> (Vec<String>, HashMap<Uui
     let checkpoint = tx
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT accepted_head,pending_registrations,legacy_anchors_sealed FROM flow_block_checkpoints WHERE page_id=$1",
+            "SELECT accepted_head,pending_registrations FROM flow_block_checkpoints WHERE page_id=$1",
             vec![page.into()],
         ))
         .await
         .unwrap()
         .unwrap();
     lines.push(format!(
-        "checkpoint head={} pending={} sealed={}",
+        "checkpoint head={} pending={}",
         checkpoint.try_get::<i64>("", "accepted_head").unwrap(),
         checkpoint.try_get::<i32>("", "pending_registrations").unwrap(),
-        checkpoint.try_get::<bool>("", "legacy_anchors_sealed").unwrap(),
     ));
     for row in tx
         .query_all(Statement::from_sql_and_values(

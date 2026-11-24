@@ -90,34 +90,6 @@ fn record_filter_groups_from_config(config: &Value) -> Vec<RecordFilterGroupConf
     if let Some(groups) = groups.filter(|groups| !groups.is_empty()) {
         return groups;
     }
-    let filters = config
-        .get("filters")
-        .and_then(Value::as_array)
-        .map(|filters| {
-            filters
-                .iter()
-                .take(5)
-                .filter_map(Value::as_object)
-                .filter_map(record_filter_config_from_json)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    if !filters.is_empty() {
-        return vec![RecordFilterGroupConfig {
-            logic: RecordFilterLogic::All,
-            filters,
-        }];
-    }
-    if let Some(filter) = config
-        .get("filter")
-        .and_then(Value::as_object)
-        .and_then(record_filter_config_from_json)
-    {
-        return vec![RecordFilterGroupConfig {
-            logic: RecordFilterLogic::All,
-            filters: vec![filter],
-        }];
-    }
     Vec::new()
 }
 
@@ -464,6 +436,16 @@ mod tests {
         assert!(where_parts[0].contains("filter_idx_1.value_decimal > $4::numeric"));
         assert_eq!(values.len(), 4);
         assert_eq!(next_idx, 5);
+    }
+
+    #[test]
+    fn a_flat_filter_list_or_a_single_filter_is_not_a_view_filter() {
+        for config in [
+            json!({"filters": [{"field": "status", "operator": "equals", "value": "open"}]}),
+            json!({"filter": {"field": "status", "operator": "equals", "value": "open"}}),
+        ] {
+            assert!(record_filter_expression_from_config(&config).is_none(), "{config}");
+        }
     }
 
     #[test]

@@ -30,7 +30,6 @@ import {
 	viewVisibility
 } from '#lib/forms/view-config.js';
 import {
-	syncLegacyViewFilterFields,
 	viewDraftCalendarExceptionDatesFromView,
 	viewDraftFilterGroupsFromView,
 	viewDraftFilterRootLogicFromView,
@@ -58,7 +57,6 @@ export class ViewDraftController extends FormsController {
 				columns: viewColumns(view),
 				filterGroups,
 				filterRootLogic: viewDraftFilterRootLogicFromView(view),
-				...syncLegacyViewFilterFields(filterGroups),
 				sortField: typeof sort?.field === 'string' ? sort.field : '',
 				sortDirection: viewSortDirection(sort?.direction),
 				groupBy: viewConfigString(view, 'group_by'),
@@ -129,12 +127,8 @@ export class ViewDraftController extends FormsController {
 			name: '',
 			view_type: 'grid',
 			columns: this.defaultViewColumns(),
-			filters: [],
 			filterRootLogic: 'all',
 			filterGroups: [],
-			filterField: '',
-			filterOperator: 'contains',
-			filterValue: '',
 			sortField: '',
 			sortDirection: 'asc',
 			groupBy: '',
@@ -269,8 +263,6 @@ export class ViewDraftController extends FormsController {
 			if (filterExpression) config.filter_expression = filterExpression;
 
 			config.filter_groups = filterGroups;
-			config.filters = filters;
-			config.filter = filters[0];
 		}
 
 		if (this.s.viewDraft.sortField) {

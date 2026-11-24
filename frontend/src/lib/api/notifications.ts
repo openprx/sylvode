@@ -5,6 +5,8 @@ export type NotificationType =
 	| 'assignment'
 	| 'comment_reply'
 	| 'issue_update'
+	| 'issue_state_changed'
+	| 'issue_priority_changed'
 	| 'project_update'
 	| 'info'
 	| string;

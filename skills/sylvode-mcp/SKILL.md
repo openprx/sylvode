@@ -2,7 +2,7 @@
 name: sylvode-mcp
 description: Work on Sylvode tasks and data through the Sylvode MCP server. Use when a message starts with "[Sylvode task]" or "[Sylvode reminder]", or when you need to read or change Sylvode projects, issues, comments, forms, proposals or Flow objects.
 ---
-<!-- sylvode-skill v=0.5.0 h=61d047bc8b2b -->
+<!-- sylvode-skill v=0.5.0 h=1a69d092775f -->
 
 # Sylvode MCP
 
@@ -105,7 +105,7 @@ Full mode is an explicit choice of whoever configured the server. Then the tool 
 ## Tools
 
 <!-- BEGIN GENERATED: tool-overview (sylvode-skillgen; do not edit) -->
-Sylvode has 158 tools in 20 categories. In search mode (the default) the tool list holds only `sylvode_overview`, `sylvode_search`, `sylvode_read`, `sylvode_write` and the task tools. Find a tool with `sylvode_search`, call a `read` tool with `sylvode_read` and a `write` tool with `sylvode_write`. The five task tools are called directly.
+Sylvode has 154 tools in 20 categories. In search mode (the default) the tool list holds only `sylvode_overview`, `sylvode_search`, `sylvode_read`, `sylvode_write` and the task tools. Find a tool with `sylvode_search`, call a `read` tool with `sylvode_read` and a `write` tool with `sylvode_write`. The five task tools are called directly.
 
 | Category | Tools | Read | Write | Covers |
 |---|---:|---:|---:|---|
@@ -127,7 +127,7 @@ Sylvode has 158 tools in 20 categories. In search mode (the default) the tool li
 | `documents`: Documents | 3 | 0 | 3 | Governed document summaries, risk reviews and approvals |
 | `operations`: Operations | 2 | 0 | 2 | Governed inspection reports and corrective actions |
 | `workspace`: Workspace | 3 | 3 | 0 | Members, global search and bot operation records |
-| `flow`: Flow | 56 | 21 | 35 | Pages, collections, shares, comments, imports, exports and maintenance of Flow |
+| `flow`: Flow | 52 | 19 | 33 | Pages, collections, shares, comments, imports, exports and maintenance of Flow |
 | `tasks`: Agent tasks | 5 | 1 | 4 | The protocol of tasks assigned to a bot: get, acknowledge, report progress, complete, fail |
 <!-- END GENERATED: tool-overview -->
 

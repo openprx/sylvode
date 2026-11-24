@@ -997,7 +997,7 @@ mod tests {
     #[tokio::test]
     async fn cleanup_expired_signature_values_deletes_objects_and_records_audit() {
         let root = test_upload_root();
-        let storage = ObjectStorage::local(&root, "local").expect("local storage should construct");
+        let storage = ObjectStorage::local(&root);
         storage
             .put("signatures/signature-guest-expired.png", b"expired")
             .await
@@ -1060,7 +1060,7 @@ mod tests {
     #[tokio::test]
     async fn cleanup_expired_replaced_signature_objects_from_audit_source() {
         let root = test_upload_root();
-        let storage = ObjectStorage::local(&root, "local").expect("local storage should construct");
+        let storage = ObjectStorage::local(&root);
         storage
             .put("signatures/signature-guest-old.png", b"old-signature")
             .await
@@ -1134,7 +1134,7 @@ mod tests {
     #[tokio::test]
     async fn materializes_signature_data_urls_to_object_storage() {
         let root = test_upload_root();
-        let storage = ObjectStorage::local(&root, "local").expect("local storage should construct");
+        let storage = ObjectStorage::local(&root);
         let schema = json!({
             "fields": [
                 {"field_id": "fld_signature", "key": "guest_signature", "label": "Signature", "type": "signature"},
@@ -1185,7 +1185,7 @@ mod tests {
     #[tokio::test]
     async fn materialized_signature_records_reason_and_consent_policy() {
         let root = test_upload_root();
-        let storage = ObjectStorage::local(&root, "local").expect("local storage should construct");
+        let storage = ObjectStorage::local(&root);
         let schema = json!({
             "fields": [
                 {"field_id": "fld_reason", "key": "signature_reason", "label": "Reason", "type": "text"},
@@ -1226,7 +1226,7 @@ mod tests {
     #[tokio::test]
     async fn required_signature_reason_is_enforced_before_materialization() {
         let root = test_upload_root();
-        let storage = ObjectStorage::local(&root, "local").expect("local storage should construct");
+        let storage = ObjectStorage::local(&root);
         let schema = json!({
             "fields": [
                 {"field_id": "fld_reason", "key": "signature_reason", "label": "Reason", "type": "text"},
@@ -1265,7 +1265,7 @@ mod tests {
     #[tokio::test]
     async fn materialized_signature_records_previous_object_metadata_when_replaced() {
         let root = test_upload_root();
-        let storage = ObjectStorage::local(&root, "local").expect("local storage should construct");
+        let storage = ObjectStorage::local(&root);
         storage
             .put("signatures/signature-guest-old.png", b"old-signature")
             .await
@@ -1312,7 +1312,7 @@ mod tests {
     #[tokio::test]
     async fn verifies_signature_audit_entry_digest_and_size() {
         let root = test_upload_root();
-        let storage = ObjectStorage::local(&root, "local").expect("local storage should construct");
+        let storage = ObjectStorage::local(&root);
         storage
             .put("signatures/signature-guest-verified.png", b"verified-signature")
             .await
@@ -1343,7 +1343,7 @@ mod tests {
     #[tokio::test]
     async fn detects_signature_audit_entry_digest_mismatch() {
         let root = test_upload_root();
-        let storage = ObjectStorage::local(&root, "local").expect("local storage should construct");
+        let storage = ObjectStorage::local(&root);
         storage
             .put("signatures/signature-guest-mismatch.png", b"actual-signature")
             .await
@@ -1372,7 +1372,7 @@ mod tests {
     #[tokio::test]
     async fn verifies_signature_audit_source_summary() {
         let root = test_upload_root();
-        let storage = ObjectStorage::local(&root, "local").expect("local storage should construct");
+        let storage = ObjectStorage::local(&root);
         storage
             .put("signatures/signature-guest-ok.png", b"source-ok")
             .await

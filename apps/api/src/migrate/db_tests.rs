@@ -748,11 +748,9 @@ async fn navigator_root_migration_materializes_project_scope_without_rewriting_i
 }
 
 /// 0054 lands the whole Sylvode Flow v0.4 data layer in one migration: every table from
-/// `contracts/domain-model-v1.md` plus the ADR-0011 delivery substrate must exist afterward,
-/// and the legacy `pages` table (ADR-0003 zero-inventory branch) must be left exactly as
-/// 0001 created it — 0054 must not reference it at all.
+/// `contracts/domain-model-v1.md` plus the ADR-0011 delivery substrate must exist afterward.
 #[tokio::test]
-async fn flow_v04_data_layer_lands_and_leaves_pages_untouched() {
+async fn flow_v04_data_layer_lands() {
     /// Every table the Sylvode Flow v0.4 data layer (migration 0054) must create.
     const FLOW_TABLES: &[&str] = &[
         "flow_objects",
@@ -790,52 +788,6 @@ async fn flow_v04_data_layer_lands_and_leaves_pages_untouched() {
         let present: bool = row.try_get("", "present").expect("present column");
         assert!(present, "{table} must exist after migration 0054");
     }
-
-    // `pages` predates Flow (0001_init.sql) and is the ADR-0003 legacy table 0054 must not
-    // touch. Its column set is checked, not just its existence, so a stray `ALTER TABLE
-    // pages` in a future edit of 0054 would fail this test even though the table still
-    // "exists".
-    let pages_columns = scratch
-        .db
-        .query_all(Statement::from_string(
-            DbBackend::Postgres,
-            "SELECT attname FROM pg_attribute \
-             WHERE attrelid = to_regclass('pages') AND attnum > 0 AND NOT attisdropped \
-             ORDER BY attname"
-                .to_string(),
-        ))
-        .await
-        .expect("pages columns are readable");
-    let mut columns: Vec<String> = pages_columns
-        .iter()
-        .map(|row| row.try_get::<String>("", "attname").expect("attname column"))
-        .collect();
-    columns.sort();
-    assert_eq!(
-        columns,
-        vec![
-            "body_md",
-            "created_at",
-            "created_by",
-            "id",
-            "title",
-            "updated_at",
-            "workspace_id"
-        ],
-        "pages must keep exactly the columns 0001_init.sql created; 0054 must never alter it"
-    );
-
-    let pages_rows = scratch
-        .db
-        .query_one(Statement::from_string(
-            DbBackend::Postgres,
-            "SELECT count(*) AS n FROM pages".to_string(),
-        ))
-        .await
-        .expect("pages is queryable")
-        .expect("count query returns a row");
-    let pages_rows: i64 = pages_rows.try_get("", "n").expect("n column");
-    assert_eq!(pages_rows, 0, "0054 must not insert into pages");
 
     scratch.drop_self().await;
 }
@@ -1915,5 +1867,125 @@ async fn the_registration_progress_migration_keeps_existing_checkpoints_complete
         "a negative pending count is refused"
     );
     assert_schema_complete(&scratch.db).await;
+    scratch.drop_self().await;
+}
+
+/// 0127 drops the anchor seal column and the other retired objects; every statement of it can run
+/// again without effect.
+#[tokio::test]
+async fn the_legacy_objects_migration_retires_what_it_names_and_reruns() {
+    let scratch = scratch_or_skip!("legacy_objects_migration");
+    run_migrations_with(&scratch.db, MigrationOptions::default())
+        .await
+        .expect("a fresh database migrates cleanly");
+    let db = &scratch.db;
+    let sealed_column = || async {
+        db.query_one(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT count(*) AS n FROM pg_attribute WHERE attrelid = to_regclass('flow_block_checkpoints') \
+             AND attname = 'legacy_anchors_sealed' AND NOT attisdropped"
+                .to_string(),
+        ))
+        .await
+        .expect("the column catalogue is readable")
+        .expect("count query returns a row")
+        .try_get::<i64>("", "n")
+        .expect("n column")
+    };
+    assert_eq!(sealed_column().await, 0, "the seal column is gone");
+    let sql = MIGRATIONS
+        .iter()
+        .find(|(name, _)| *name == "0127_retire_legacy_objects.sql")
+        .map(|(_, sql)| *sql)
+        .expect("0127 is registered");
+    db.execute_unprepared(sql)
+        .await
+        .expect("0127 second execution succeeds");
+    assert_eq!(sealed_column().await, 0, "a second execution changes nothing");
+    scratch.drop_self().await;
+}
+
+/// 0127 leaves `flow_package` as the only import kind and refuses to run over a legacy import
+/// row without deleting anything.
+#[tokio::test]
+async fn the_legacy_objects_migration_keeps_only_package_imports() {
+    let scratch = scratch_or_skip!("legacy_objects_imports");
+    run_migrations_with(&scratch.db, MigrationOptions::default())
+        .await
+        .expect("a fresh database migrates cleanly");
+    let db = &scratch.db;
+    let present = |relation: &'static str| async move {
+        db.query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT to_regclass($1) IS NOT NULL AS present",
+            vec![relation.into()],
+        ))
+        .await
+        .expect("probe query runs")
+        .expect("probe query returns a row")
+        .try_get::<bool>("", "present")
+        .expect("present column")
+    };
+    assert!(!present("pages").await, "the legacy pages table is gone");
+    assert!(
+        !present("form_plugin_layouts").await,
+        "the retired plugin layout table is gone"
+    );
+
+    let user = insert_user(db).await;
+    let workspace = insert_workspace(db, user).await;
+    let insert_job = |kind: &'static str, key: &'static str| async move {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO flow_import_jobs (workspace_id, kind, mapping_hash, idempotency_key, request_body_hash) \
+             VALUES ($1, $2, 'h', $3, repeat('0', 64))",
+            vec![workspace.into(), kind.into(), key.into()],
+        ))
+        .await
+    };
+    assert!(
+        insert_job("legacy_pages", "legacy").await.is_err(),
+        "a legacy import job is refused by the check"
+    );
+    insert_job("flow_package", "package")
+        .await
+        .expect("a package import job is stored");
+
+    // A legacy row that predates the check stops the migration and nothing is deleted.
+    db.execute_unprepared("ALTER TABLE flow_import_jobs DROP CONSTRAINT flow_import_jobs_kind_check")
+        .await
+        .expect("the check is lifted for the fixture");
+    insert_job("legacy_pages", "legacy")
+        .await
+        .expect("the legacy row is stored");
+    let sql = MIGRATIONS
+        .iter()
+        .find(|(name, _)| *name == "0127_retire_legacy_objects.sql")
+        .map(|(_, sql)| *sql)
+        .expect("0127 is registered");
+    let refusal = db
+        .execute_unprepared(sql)
+        .await
+        .expect_err("a legacy import row stops the migration");
+    assert!(refusal.to_string().contains("legacy_pages"), "{refusal}");
+    let rows = db
+        .query_one(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT count(*) AS n FROM flow_import_jobs".to_string(),
+        ))
+        .await
+        .expect("count query runs")
+        .expect("count query returns a row")
+        .try_get::<i64>("", "n")
+        .expect("n column");
+    assert_eq!(rows, 2, "the refusal deletes nothing");
+
+    db.execute_unprepared("DELETE FROM flow_import_jobs WHERE kind = 'legacy_pages'")
+        .await
+        .expect("the legacy row is resolved");
+    db.execute_unprepared(sql)
+        .await
+        .expect("0127 runs again once it is resolved");
+    assert!(insert_job("legacy_pages", "again").await.is_err(), "the check is back");
     scratch.drop_self().await;
 }

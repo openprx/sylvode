@@ -1,0 +1,30 @@
+{
+	"notificationPrefs": {
+		"title": "Notification preferences",
+		"email": "E-mail me about notifications",
+		"digest": "Send one daily summary instead",
+		"digestNeedsEmail": "The daily summary needs e-mail notifications to be on.",
+		"mentionOnly": "Only notify me when I am mentioned",
+		"mentionOnlyHelp": "Assignments and changes to the state or priority of your work items are then not sent to you, in the inbox or by e-mail. Alerts still are.",
+		"emailUnavailable": "E-mail delivery is not set up on this server.",
+		"languageNote": "E-mails are written in the language this page is shown in ({language}). It is saved when you save the preferences.",
+		"save": "Save preferences",
+		"saved": "Notification preferences saved",
+		"testEmail": {
+			"title": "Test e-mail",
+			"description": "Send a test message to your own address to check the e-mail delivery of this server.",
+			"send": "Send a test e-mail",
+			"queued": "The test e-mail is queued. It is sent in the background, so it may take a moment to arrive.",
+			"forbidden": "Only instance administrators can send a test e-mail.",
+			"failed": "The test e-mail could not be queued."
+		}
+	},
+	"notification": {
+		"issueStateChangedTitle": "State changed",
+		"issueStateChangedContent": "{title}: state changed from {old} to {new}",
+		"issueStateChangedFallback": "The state of a work item changed",
+		"issuePriorityChangedTitle": "Priority changed",
+		"issuePriorityChangedContent": "{title}: priority changed from {old} to {new}",
+		"issuePriorityChangedFallback": "The priority of a work item changed"
+	}
+}

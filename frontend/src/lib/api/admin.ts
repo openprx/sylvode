@@ -10,6 +10,11 @@ export interface AdminUser extends Omit<User, 'role' | 'status'> {
 }
 
 export const adminApi = {
+	/** Queues a test e-mail to the signed-in administrator; 409 `feature_disabled` when the server has no e-mail. */
+	sendTestEmail(): Promise<ApiResult<{ queued: boolean }>> {
+		return apiClient.post<{ queued: boolean }>('/api/v1/admin/email/test', {});
+	},
+
 	async listUsers(
 		params: {
 			search?: string;

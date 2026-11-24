@@ -244,7 +244,7 @@ def main() -> int:
         },
     }
     result["conditional_surface_observation"] = {
-        "code": "conditional_legacy_pages_surface_asymmetry",
+        "code": "conditional_surface_asymmetry",
         "non_failing": True,
         "reason": "conditional surfaces do not become required until their activation condition is satisfied",
         **{

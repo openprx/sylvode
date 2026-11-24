@@ -2,7 +2,7 @@
 //!
 //! The Flow write path's CPU budget work (`decode_apply_cpu_ms_max`) rewrites how the editor
 //! document is read; it must not change what is read. For every corpus document this test records
-//! the result (value or typed error) of `semantic_snapshot`, the frozen `legacy_package_*` readers,
+//! the result (value or typed error) of `semantic_snapshot`, the package v4 reader,
 //! and `minimum_editor_model`, then compares a SHA-256 digest per document with
 //! `tests/fixtures/semantic-digest.txt`, which was generated from the implementation as it stood
 //! before that work.
@@ -44,10 +44,7 @@ fn record<T: serde::Serialize>(out: &mut String, label: &str, result: Result<T, 
 fn describe(engine: &LoroCollabEngine) -> String {
     let mut out = String::new();
     record(&mut out, "semantic", engine.semantic_snapshot());
-    record(&mut out, "v1", engine.legacy_package_semantic_snapshot_v1());
-    record(&mut out, "v2", engine.legacy_package_semantic_snapshot_v2());
-    record(&mut out, "v3", engine.legacy_package_semantic_snapshot_v3());
-    record(&mut out, "v4", engine.legacy_package_semantic_snapshot_v4());
+    record(&mut out, "v4", engine.package_semantic_snapshot_v4());
     record(&mut out, "floor", engine.minimum_editor_model());
     out
 }

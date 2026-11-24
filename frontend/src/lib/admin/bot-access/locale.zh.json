@@ -1,0 +1,38 @@
+{
+	"botAccess": {
+		"title": "{name} 的项目访问范围",
+		"column": "项目访问",
+		"button": "项目访问",
+		"saved": "项目访问范围已保存",
+		"managed": "由项目连接管理",
+		"managedHelp": "此令牌的访问范围由管理它的项目连接决定，请在项目的“执行”设置中修改。",
+		"scope": "令牌可以在哪里操作",
+		"scopeWorkspace": "所有项目（使用令牌权限）",
+		"scopeWorkspaceHelp": "令牌在工作区的所有项目中，按创建时的权限操作。",
+		"scopeProjects": "指定项目",
+		"scopeProjectsHelp": "令牌只能在下面给了级别的项目中操作，其他项目使用“其他项目”的级别。",
+		"otherProjects": "其他项目",
+		"projects": "项目",
+		"noProjects": "此工作区还没有项目。",
+		"levelFor": "在 {name} 中的级别",
+		"likeOthers": "与其他项目相同",
+		"defaultLevel": {
+			"none": "无权访问",
+			"read": "读取",
+			"comment": "读取并评论"
+		},
+		"grantLevel": {
+			"read": "读取",
+			"comment": "读取并评论",
+			"write": "写入"
+		},
+		"needsWrite": "允许评论或写入的级别，只对拥有“写入”权限的令牌生效。此令牌没有该权限，因此仍然只能读取。",
+		"summary": {
+			"workspace": "所有项目",
+			"projects": "{count}；其他项目：{level}",
+			"grants": {
+				"other": "已选 {count} 个项目"
+			}
+		}
+	}
+}
