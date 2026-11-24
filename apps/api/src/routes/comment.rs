@@ -422,6 +422,98 @@ pub async fn list_comments(
     Ok(ApiResponse::success(PaginatedData::from_items(response)))
 }
 
+/// One comment with the project it belongs to, for callers that resolve the owner of a comment id.
+#[derive(Debug, Serialize)]
+pub struct CommentDetailResponse {
+    pub id: Uuid,
+    pub work_item_id: Uuid,
+    pub project_id: Uuid,
+    pub author_id: Option<Uuid>,
+    pub author_name: Option<String>,
+    pub content: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// GET /`api/v1/comments/:id` - Read one comment
+pub async fn get_comment(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path(comment_id): Path<Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let _user_id = Uuid::parse_str(&claims.sub).map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))?;
+    let extensions = build_auth_extensions(claims, bot);
+
+    #[derive(Debug, FromQueryResult)]
+    struct CommentOwner {
+        workspace_id: Uuid,
+    }
+
+    let owner = CommentOwner::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r"
+            SELECT p.workspace_id
+            FROM comments c
+            INNER JOIN work_items wi ON c.work_item_id = wi.id
+            INNER JOIN projects p ON wi.project_id = p.id
+            WHERE c.id = $1
+        ",
+        vec![comment_id.into()],
+    ))
+    .one(&state.db)
+    .await?
+    .ok_or_else(|| ApiError::NotFound("comment not found".to_string()))?;
+
+    require_workspace_access(&state, &extensions, owner.workspace_id).await?;
+
+    #[derive(Debug, FromQueryResult)]
+    struct CommentRow {
+        id: Uuid,
+        work_item_id: Uuid,
+        project_id: Uuid,
+        author_id: Option<Uuid>,
+        author_name: Option<String>,
+        body: String,
+        created_at: platform::timestamp::Timestamp,
+        updated_at: platform::timestamp::Timestamp,
+    }
+
+    // The author is named by the same rule as in the list of an issue's comments.
+    let comment = CommentRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r"
+            SELECT c.id, c.work_item_id, wi.project_id, c.author_id,
+                   CASE WHEN $2 AND m.user_id IS NULL THEN NULL ELSE u.name END AS author_name,
+                   c.body, c.created_at, c.updated_at
+            FROM comments c
+            INNER JOIN work_items wi ON c.work_item_id = wi.id
+            LEFT JOIN users u ON c.author_id = u.id
+            LEFT JOIN workspace_members m ON m.workspace_id = $3 AND m.user_id = c.author_id
+            WHERE c.id = $1
+        ",
+        vec![
+            comment_id.into(),
+            crate::oauth::delegated::current().is_some().into(),
+            owner.workspace_id.into(),
+        ],
+    ))
+    .one(&state.db)
+    .await?
+    .ok_or_else(|| ApiError::NotFound("comment not found".to_string()))?;
+
+    Ok(ApiResponse::success(CommentDetailResponse {
+        id: comment.id,
+        work_item_id: comment.work_item_id,
+        project_id: comment.project_id,
+        author_id: comment.author_id,
+        author_name: comment.author_name,
+        content: comment.body,
+        created_at: comment.created_at.to_rfc3339(),
+        updated_at: comment.updated_at.to_rfc3339(),
+    }))
+}
+
 /// PUT /api/v1/comments/:id - Update a comment
 pub async fn update_comment(
     State(state): State<AppState>,

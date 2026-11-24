@@ -3145,6 +3145,20 @@ pub async fn list_form_attachments(
     }))
 }
 
+/// GET /api/v1/form-attachments/:attachment_id - Read one attachment, archived or not, with the
+/// form and project it belongs to.
+pub async fn get_form_attachment(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path(attachment_id): Path<Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let attachment = find_attachment(&state, attachment_id).await?;
+    let form = find_form(&state, attachment.form_id).await?;
+    require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "form.view").await?;
+    Ok(ApiResponse::success(attachment))
+}
+
 pub async fn create_form_attachment_signed_url(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,

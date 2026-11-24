@@ -385,6 +385,16 @@ change or delete it. A sprint has `name`, `description`, `start_date` and `end_d
 - Deleting a sprint moves all its work items to the backlog the same way (with the activity), then
   deletes it.
 - A body with a field the route does not know is refused with HTTP 422.
+- Each sprint in `GET /projects/{project_id}/sprints` carries `progress: {total, done}`: the work
+  items in the sprint and how many of them are finished (same rule as above). Other answers do not
+  carry `progress`.
+
+### Comments
+
+`GET /comments/{id}` reads one comment: `{id, work_item_id, project_id, author_id, author_name,
+content, created_at, updated_at}`. It needs access to the workspace of the comment's project, like
+the list at `GET /issues/{issue_id}/comments`; an unknown id or a caller outside the workspace gets
+`404`. The route tells a caller which project owns a comment id.
 
 ### Labels
 
@@ -398,6 +408,15 @@ A body with an unknown field is refused with HTTP 422, and `null` on `name`, `co
 a label is already attached, and `DELETE /issues/{issue_id}/labels/{label_id}` succeeds when it is
 not; the `label.added` and `label.removed` events are sent only for a real change, once per label in
 a batch. Deleting a label sends `label.removed` for each work item it was on.
+
+### Workflow states
+
+`POST /workflows/{workflow_id}/states` and `PUT /workflow-states/{state_id}` take an optional
+`position`, the 0-based place of the state in the workflow. A position below 0 is `400 position
+must be 0 or greater`. A position that is already taken puts the state there and moves the states
+from that place on down by one (an update takes the state out of its old place first); a position
+past the end, or none on create, appends. Positions stay consecutive and the request never fails on
+a taken place. `PUT /workflows/{workflow_id}/states/reorder` still sets the whole order at once.
 
 ### Routes open to users and bots
 
@@ -509,6 +528,8 @@ The OAuth endpoints (`/api/v1/oauth/token`, `/api/v1/oauth/revoke`,
 `/api/v1/oauth/connection`), the connected-apps endpoints (`/api/v1/me/connected-apps`,
 `/api/v1/workspaces/{workspace_id}/connected-apps`, `/api/v1/admin/oauth-clients`) and the discovery
 documents are described in [OAuth](oauth.md). They use OAuth error bodies and real HTTP statuses.
+On a server without an `[oauth]` section the connected-apps endpoints answer `error_code:
+"feature_disabled"` (`connected applications are not enabled on this server`).
 
 ## Other areas
 
@@ -521,7 +542,7 @@ The remaining endpoints follow the conventions above. Their paths, relative to `
 | Projects and work items | `/workspaces/{workspace_id}/projects`, `/projects/{id}`, `/projects/{project_id}/issues`, `/issues/{id}`, `/issues/{issue_id}/comments`, `/comments/{id}`, `/projects/{project_id}/board`, `/projects/{project_id}/sprints`, `/sprints/{id}`, `/workspaces/{workspace_id}/labels`, `/labels/{id}`, `/my/issues`, `/my/activities` |
 | Workflows | `/workspaces/{workspace_id}/workflows`, `/workflows/{workflow_id}`, `/workflow-states/{state_id}`, `/projects/{project_id}/workflow` |
 | Project types, templates and context | `/project-types`, `/scenario-templates`, `/projects/{project_id}/resources`, `/projects/{project_id}/context`, `/projects/{project_id}/release-readiness`, `/projects/{project_id}/check-results`, `/check-results/{check_result_id}` |
-| Forms | `/projects/{project_id}/forms`, `/forms/{form_id}`, `/form-records/{record_id}`, `/form-views/{view_id}`, `/form-attachments/{attachment_id}`, `/form-export-jobs/{job_id}`, `/form-import-jobs/{job_id}`, `/form-attachment-package-jobs/{job_id}`, `/form-import-mapping-templates/{template_id}`; see the [forms guide](../guide/forms.md) |
+| Forms | `/projects/{project_id}/forms`, `/forms/{form_id}`, `/form-records/{record_id}`, `/form-views/{view_id}`, `/form-attachments/{attachment_id}`, `/form-export-jobs/{job_id}`, `/form-import-jobs/{job_id}`, `/form-attachment-package-jobs/{job_id}`, `/form-import-mapping-templates/{template_id}`; see the [forms guide](../guide/forms.md); `GET /form-attachments/{attachment_id}` reads one attachment (archived ones too) with its `form_id` and `project_id` |
 | Plugins | `/projects/{project_id}/plugins`, `/plugins/{plugin_id}`, `/projects/{project_id}/plugin-packages`, `/me/form-plugin-packages`; see [plugins](../plugins/README.md) |
 | Governance | `/proposals`, `/proposal-comments/{id}`, `/proposal-templates`, `/decisions`, `/decision-domains`, `/projects/{project_id}/domains`, `/governance/config`, `/governance/audit-logs`, `/trust-scores`, `/users/{id}/trust`, `/impact-reviews`, `/vetoers`, `/projects/{pid}/audit-reports`, `/ai-learning/{review_id}/feedback`, `/projects/{project_id}/ai-participants/{bot_id}/learning`; see the [governance guide](../guide/governance.md) |
 | Flow | `/workspaces/{workspace_id}/flow/...`, `/workspaces/{workspace_id}/features/flow`, `/flow/...`, `/collab/...`, and `/api/v2/flow/`; see the [Flow guide](../guide/flow.md) and the Flow command groups of the [`sylvode` command line](cli.md) |

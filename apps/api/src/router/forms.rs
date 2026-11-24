@@ -164,10 +164,12 @@ pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
         )
         .route(
             "/api/v1/form-attachments/{attachment_id}",
-            delete(routes::form::archive_form_attachment).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
+            get(routes::form::get_form_attachment)
+                .delete(routes::form::archive_form_attachment)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
         )
         .route(
             "/api/v1/form-attachments/{attachment_id}/signed-url",

@@ -8,6 +8,7 @@ pub static ROUTES: &[RunnerRoute] = &[
     r("GET", "/api/v1/form-attachment-package-jobs/{job_id}", Class::Project(Find::Table("form_attachment_package_jobs","job_id"))),
     r("GET", "/api/v1/form-attachment-package-jobs/{job_id}/download", Class::Project(Find::Table("form_attachment_package_jobs","job_id"))),
     r("DELETE", "/api/v1/form-attachments/{attachment_id}", Class::Project(Find::Table("form_attachments","attachment_id"))),
+    r("GET", "/api/v1/form-attachments/{attachment_id}", Class::Project(Find::Table("form_attachments","attachment_id"))),
     r("POST", "/api/v1/form-attachments/{attachment_id}/restore", Class::Project(Find::Table("form_attachments","attachment_id"))),
     r("GET", "/api/v1/form-attachments/{attachment_id}/signed-url", Class::Project(Find::Table("form_attachments","attachment_id"))),
     r("GET", "/api/v1/form-export-jobs/{job_id}", Class::Project(Find::Table("form_export_jobs","job_id"))),
@@ -83,7 +84,7 @@ mod tests {
     fn the_classes_of_the_area() {
         assert_eq!(
             class_counts(ROUTES),
-            BTreeMap::from([("project-resolved", 65)]),
+            BTreeMap::from([("project-resolved", 66)]),
             "the classes of the forms routes changed"
         );
     }

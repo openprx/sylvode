@@ -41,7 +41,8 @@ pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
         )
         .route(
             "/api/v1/comments/{id}",
-            axum::routing::put(routes::comment::update_comment)
+            get(routes::comment::get_comment)
+                .put(routes::comment::update_comment)
                 .delete(routes::comment::delete_comment)
                 .route_layer(axum_middleware::from_fn_with_state(
                     auth_state.clone(),

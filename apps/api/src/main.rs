@@ -157,6 +157,9 @@ mod sprint_api_tests;
 mod workflow_api_tests;
 
 #[cfg(test)]
+mod owner_lookup_api_tests;
+
+#[cfg(test)]
 mod label_api_tests;
 
 #[cfg(test)]
