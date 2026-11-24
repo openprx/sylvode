@@ -2,6 +2,7 @@
 
 <script lang="ts">
 	import { t } from 'svelte-i18n';
+	import { directoryName } from '#lib/people/display.js';
 	import { FileDown, FileText, FileUp, Pencil, Plus, X } from '@lucide/svelte';
 	import Button from '#lib/ui/button/Button.svelte';
 	import FormsSessionNotice from '#lib/components/forms/page/FormsSessionNotice.svelte';
@@ -260,9 +261,7 @@
 								</option>
 
 								{#each s.workspaceMembers as member (member.user_id)}
-									<option value={member.user_id}
-										>{member.name || member.email || member.user_id}</option
-									>
+									<option value={member.user_id}>{directoryName(member, $t)}</option>
 								{/each}
 							</select>
 						{:else if ['attachment', 'image'].includes(fieldType(field))}

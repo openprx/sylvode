@@ -5,6 +5,7 @@
 	import { describeResult } from '#lib/i18n/describe.js';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
+	import { directoryName } from '#lib/people/display.js';
 	import { locale, t } from 'svelte-i18n';
 	import { page } from '$app/state';
 	import { botsApi, type Bot, type CreateBotResponse } from '#lib/api/bots.js';
@@ -135,7 +136,7 @@
 	}
 
 	async function removeMember(member: WorkspaceMember) {
-		const name = member.name || member.email || member.user_id;
+		const name = directoryName(member, get(t));
 		if (
 			!(await confirmAction({
 				tone: 'destructive',
@@ -390,7 +391,7 @@
 										{#if isBotMember(member)}
 											<BotIcon class="h-4 w-4 text-fg-muted" title={$t('admin.botBadge')} />
 										{/if}
-										<span>{member.name || member.user_id}</span>
+										<span>{directoryName(member, $t)}</span>
 									</div>
 								</td>
 								<td class="px-4 py-3 text-sm text-fg-muted">{member.email || '-'}</td>

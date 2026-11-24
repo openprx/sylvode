@@ -128,10 +128,10 @@ await suite.checkAsync('EmptyState keeps title, description and action slot', as
 });
 
 // Avatar
-suite.check('Avatar names itself from name, then user id', async () => {
+suite.check('Avatar names itself from the name only', async () => {
 	const { avatarName } = await comp('Avatar');
-	assertEqual(avatarName(' Ada Lovelace ', 'u1'), 'Ada Lovelace', 'name');
-	assertEqual(avatarName(undefined, ' u1 '), 'u1', 'user id');
+	assertEqual(avatarName(' Ada Lovelace '), 'Ada Lovelace', 'name');
+	assertEqual(avatarName(' '), '', 'blank name is not replaced by an id');
 	assertEqual(avatarName(), '', 'none');
 });
 await suite.checkAsync('Avatar passes size and a title', async () => {
@@ -142,7 +142,7 @@ await suite.checkAsync('Avatar passes size and a title', async () => {
 		html
 	);
 	const none = await renderToHtml(Avatar, {});
-	assert(none.includes('>?<') && none.includes('common.unassigned'), none);
+	assert(none.includes('>?<') && none.includes('people.someone'), none);
 });
 
 // ProgressBar

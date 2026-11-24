@@ -1092,10 +1092,7 @@
 											>
 												<div class="flex flex-wrap items-center justify-between gap-2">
 													<span class="font-medium text-fg">
-														{comment.author_name ||
-															comment.author_email ||
-															comment.author_id?.slice(0, 8) ||
-															'system'}
+														{comment.author_name || comment.author_email || $t('people.someone')}
 													</span>
 													<span class="font-mono text-[11px] text-fg-muted">
 														{formatDate(comment.created_at)}

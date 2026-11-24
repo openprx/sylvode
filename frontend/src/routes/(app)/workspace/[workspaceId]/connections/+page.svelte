@@ -12,6 +12,7 @@
 	import Input from '#lib/components/Input.svelte';
 	import { toast } from '#lib/stores/toast.js';
 	import { requireRouteParam } from '#lib/utils/route-params.js';
+	import { get } from 'svelte/store';
 	import { locale, t } from 'svelte-i18n';
 
 	const workspaceId = requireRouteParam(page.params.workspaceId, 'workspaceId');
@@ -81,7 +82,7 @@
 	}
 
 	function botLabel(log: BotOperationLog): string {
-		return log.bot_name || log.bot_id.slice(0, 8);
+		return log.bot_name || get(t)('people.someone');
 	}
 </script>
 
@@ -181,7 +182,6 @@
 								>
 								<td class="px-4 py-3">
 									<div class="font-medium text-fg">{botLabel(log)}</div>
-									<div class="font-mono text-xs text-fg-muted">{log.bot_id.slice(0, 8)}</div>
 								</td>
 								<td class="px-4 py-3">
 									<div class="font-mono text-xs font-medium text-fg">

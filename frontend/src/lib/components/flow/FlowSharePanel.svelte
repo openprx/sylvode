@@ -4,6 +4,7 @@
 	// forwards user actions.
 	import { flowApi } from '#lib/api/flow.js';
 	import { t } from 'svelte-i18n';
+	import { nameOrSomeone } from '#lib/people/display.js';
 	import Modal from '#lib/components/Modal.svelte';
 	import {
 		FLOW_GRANT_LEVELS,
@@ -88,7 +89,7 @@
 		const entry = snapshot?.directory.find(
 			(candidate) => candidate.principal_kind === kind && candidate.principal_id === id
 		);
-		return entry ? entry.label : `${id.slice(0, 8)}…`;
+		return nameOrSomeone(entry?.label, $t);
 	}
 
 	function kindLabel(kind: string): string {
@@ -329,7 +330,7 @@
 							<optgroup label={$t('flow.share.add.members')}>
 								{#each memberCandidates as entry (`${entry.principal_kind}:${entry.principal_id}`)}
 									<option value={`${entry.principal_kind}:${entry.principal_id}`}
-										>{entry.label}</option
+										>{nameOrSomeone(entry.label, $t)}</option
 									>
 								{/each}
 							</optgroup>
@@ -338,7 +339,7 @@
 							<optgroup label={$t('flow.share.add.bots')}>
 								{#each botCandidates as entry (`${entry.principal_kind}:${entry.principal_id}`)}
 									<option value={`${entry.principal_kind}:${entry.principal_id}`}
-										>{entry.label}</option
+										>{nameOrSomeone(entry.label, $t)}</option
 									>
 								{/each}
 							</optgroup>

@@ -116,9 +116,13 @@ export function orderTasks(tasks: readonly AiTask[]): AiTask[] {
 		.map((entry) => entry.task);
 }
 
-/** The bot's name from the members list, else the first 8 characters of its id. */
-export function botName(names: Readonly<Record<string, string>>, participantId: string): string {
-	return names[participantId] || participantId.slice(0, 8);
+/** The bot's name from the members list, else the given neutral text (never its id). */
+export function botName(
+	names: Readonly<Record<string, string>>,
+	participantId: string,
+	neutral: string
+): string {
+	return names[participantId] || neutral;
 }
 
 export interface Clamped {

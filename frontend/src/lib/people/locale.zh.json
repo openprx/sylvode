@@ -1,0 +1,9 @@
+{
+	"people": {
+		"someone": "某人",
+		"removedUser": "已移除的用户",
+		"bot": "机器人",
+		"botLabel": "{name}（机器人）",
+		"unknownSprint": "未知迭代"
+	}
+}

@@ -18,6 +18,7 @@
 import { apiClient, type ApiResult, type UploadProgress } from './client';
 import { transportFailure } from './transport';
 import { bodyBinaryResult } from '../flow/body/bytes';
+import type { Person } from '../people/display';
 import type { BodyAssetKind, BodyAssetLimits, BodyAssetReceipt } from '../flow/body/assets';
 
 export type { UploadProgress };
@@ -907,11 +908,15 @@ export interface FlowComment {
 	block_id?: string | null;
 	parent_id?: string | null;
 	author_id?: string | null;
+	/** The author as a person to show; null when no author remains. */
+	author?: Person | null;
 	body: string;
-	mentions: string[];
+	/** The people the saved comment mentions: render and highlight from this list. */
+	mentions: Person[];
 	created_at: string;
 	updated_at: string;
 	resolved_at?: string | null;
+	/** A bare user id, never text to show: look the person up in the comments' people. */
 	resolved_by?: string | null;
 }
 
@@ -982,6 +987,7 @@ export interface FlowPublicShare {
 
 export interface FlowMentionCandidate {
 	user_id: string;
+	/** Empty for a user without a name: show the neutral text, never the id. */
 	name: string;
 	kind: 'member' | 'guest' | string;
 }

@@ -20,6 +20,7 @@
 	import { draftStringFrom } from '#lib/forms/record-draft-values.js';
 	import { signatureImageValue } from '#lib/forms/attachment-files.js';
 	import { t } from 'svelte-i18n';
+	import { directoryName } from '#lib/people/display.js';
 	import { getFormsPageContext } from '#lib/forms/state/context.js';
 
 	const fp = getFormsPageContext();
@@ -181,9 +182,7 @@
 							</option>
 
 							{#each s.workspaceMembers as member (member.user_id)}
-								<option value={member.user_id}
-									>{member.name || member.email || member.user_id}</option
-								>
+								<option value={member.user_id}>{directoryName(member, $t)}</option>
 							{/each}
 						</select>
 					{:else if fieldType(childField) === 'textarea' || fieldType(childField) === 'rich_text'}

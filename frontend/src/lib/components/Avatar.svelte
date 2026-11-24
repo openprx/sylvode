@@ -1,7 +1,7 @@
 <script module lang="ts">
-	/** What the avatar is called: the name, else the user id, else nothing (shown as "?"). */
-	export function avatarName(name?: string, userId?: string): string {
-		return name?.trim() || userId?.trim() || '';
+	/** What the avatar is called: the name, else nothing (shown as "?"). Never an id. */
+	export function avatarName(name?: string): string {
+		return name?.trim() || '';
 	}
 </script>
 
@@ -11,13 +11,12 @@
 
 	interface Props {
 		name?: string;
-		userId?: string;
 		size?: 'sm' | 'md';
 	}
 
-	let { name, userId, size = 'sm' }: Props = $props();
+	let { name, size = 'sm' }: Props = $props();
 
-	const label = $derived(avatarName(name, userId));
+	const label = $derived(avatarName(name));
 </script>
 
-<UiAvatar name={label || '?'} {size} title={label || $t('common.unassigned')} />
+<UiAvatar name={label || '?'} {size} title={label || $t('people.someone')} />

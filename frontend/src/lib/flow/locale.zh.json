@@ -12,6 +12,9 @@
 		},
 		"trash": {
 			"noItems": "回收站的这一部分没有页面或集合。"
+		},
+		"comments": {
+			"resolvedBy": "由 {name} 解决"
 		}
 	}
 }

@@ -13,6 +13,7 @@
 	} from '#lib/api/notifications.js';
 	import { projectsApi } from '#lib/api/projects.js';
 	import { TITLE_KEYS, changeContentText, isChangeKind } from '#lib/notifications/change-text.js';
+	import { nameOrSomeone } from '#lib/people/display.js';
 	import { toast } from '#lib/stores/toast.js';
 	import { timeAgo } from '#lib/utils/timeago.js';
 
@@ -144,7 +145,8 @@
 		}
 
 		if (notification.content.startsWith('mentioned_by:')) {
-			const actor = notification.content.substring('mentioned_by:'.length);
+			// An empty name is "Someone": the server never sends an id here.
+			const actor = nameOrSomeone(notification.content.substring('mentioned_by:'.length), get(t));
 			return get(t)('notification.mentionedContent', { values: { actor } });
 		}
 

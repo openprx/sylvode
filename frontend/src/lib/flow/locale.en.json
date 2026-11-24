@@ -12,6 +12,9 @@
 		},
 		"trash": {
 			"noItems": "No pages or collections in this part of the trash."
+		},
+		"comments": {
+			"resolvedBy": "Resolved by {name}"
 		}
 	}
 }

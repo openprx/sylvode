@@ -54,10 +54,6 @@
 			: `display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:${lines};overflow:hidden;`;
 	}
 
-	function shortId(id: string): string {
-		return id.length > 8 ? id.slice(0, 8) : id;
-	}
-
 	function openRelation(event: MouseEvent, recordId: string, sameForm: boolean) {
 		if (!onopenrelation) return;
 		if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0)
@@ -176,14 +172,13 @@
 	</span>
 {:else if display.kind === 'member'}
 	<span class="inline-flex min-w-0 max-w-full items-center gap-2">
-		<Avatar name={display.name || undefined} userId={display.userId} />
+		<Avatar name={display.name || undefined} />
 		<span class="min-w-0">
 			<span class="block truncate">
 				{#if display.known}
 					{display.name}
 				{:else}
 					{$t('forms.fieldValue.unknownMember')}
-					<span class="font-mono text-xs text-fg-muted" dir="ltr">{shortId(display.userId)}</span>
 				{/if}
 			</span>
 			{#if panel && display.email && display.email !== display.name}

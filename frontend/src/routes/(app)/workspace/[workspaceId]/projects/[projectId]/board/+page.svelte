@@ -3,6 +3,7 @@
 	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
+	import { directoryName, someoneText } from '#lib/people/display.js';
 	import { t } from 'svelte-i18n';
 	import { workflowStateLabel } from '#lib/utils/workflow-state.js';
 	import { page } from '$app/state';
@@ -127,7 +128,7 @@
 					const entityMap: Record<string, string> = {};
 					for (const m of (res.data.items ?? []) as Array<WorkspaceMember & { id: string }>) {
 						const memberId = m.user_id || m.id;
-						nameMap[memberId] = m.name || m.email || memberId.substring(0, 8);
+						nameMap[memberId] = directoryName(m, get(t));
 						entityMap[memberId] = m.entity_type || 'human';
 					}
 					memberNameMap = nameMap;
@@ -204,7 +205,7 @@
 	}
 
 	function getAssigneeLabel(assigneeId: string): string {
-		const name = memberNameMap[assigneeId] || assigneeId.substring(0, 8);
+		const name = memberNameMap[assigneeId] || someoneText(get(t));
 		return isBotAssignee(assigneeId) ? `[Bot] ${name}` : name;
 	}
 
@@ -521,7 +522,7 @@
 										</div>
 										{#if issue.assignee_id}
 											<div class="flex items-center gap-1.5">
-												<Avatar userId={issue.assignee_id} />
+												<Avatar name={memberNameMap[issue.assignee_id]} />
 												{#if isBotAssignee(issue.assignee_id)}
 													<BotIcon class="h-3.5 w-3.5 text-fg-muted" title={$t('admin.botBadge')} />
 												{/if}

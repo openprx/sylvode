@@ -16,6 +16,7 @@
 	import EmptyState from '#lib/components/EmptyState.svelte';
 	import { timeAgo } from '#lib/utils/timeago.js';
 	import { milestoneActivityText } from '#lib/milestones/rules.js';
+	import { nameOrSomeone, someoneText } from '#lib/people/display.js';
 
 	type InputEventHandler = (
 		event: Event & { currentTarget: EventTarget & HTMLInputElement }
@@ -288,22 +289,24 @@
 		return map[priority] || 'bg-surface text-fg';
 	}
 
+	// The activity feed names its actors but not the people an entry is about, so the person of an
+	// assignment is shown as the neutral text rather than an id.
 	function getMemberDisplay(userId: string | undefined): string {
 		if (!userId) {
 			return '';
 		}
-		return userId.substring(0, 8);
+		return someoneText(get(t));
 	}
 
 	function getSprintDisplay(sprintId: string | undefined): string {
 		if (!sprintId) {
 			return '';
 		}
-		return sprintId.substring(0, 8);
+		return get(t)('people.unknownSprint');
 	}
 
 	function getActivityAuthor(activity: MyActivity): string {
-		return activity.author_name || getMemberDisplay(activity.user_id) || get(t)('common.user');
+		return nameOrSomeone(activity.author_name, get(t));
 	}
 
 	function formatActivity(activity: MyActivity): string {

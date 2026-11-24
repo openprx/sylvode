@@ -1,0 +1,9 @@
+{
+	"people": {
+		"someone": "Someone",
+		"removedUser": "Removed user",
+		"bot": "Bot",
+		"botLabel": "{name} (Bot)",
+		"unknownSprint": "Unknown cycle"
+	}
+}

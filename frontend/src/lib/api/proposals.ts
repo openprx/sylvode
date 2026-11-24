@@ -1,6 +1,7 @@
 import { apiClient, type ApiResult, type PaginatedData } from './client';
 import { get } from 'svelte/store';
 import { t } from 'svelte-i18n';
+import { readPeople, readPerson, type Person } from '../people/display';
 
 export type ProposalType =
 	| 'feature'
@@ -55,6 +56,10 @@ export interface ProposalComment {
 	proposal_id: string;
 	author_id: string;
 	author_name?: string;
+	/** The author as a person to show; null when the id is not an account. */
+	author: Person | null;
+	/** The people the saved comment mentions: render and highlight from this list. */
+	mentions: Person[];
 	author_avatar?: string;
 	author_type: 'human' | 'ai';
 	comment_type: string;
@@ -306,6 +311,8 @@ export const proposalsApi = {
 							proposal_id: String(raw.proposal_id ?? ''),
 							author_id: String(raw.author_id ?? ''),
 							author_name: raw.author_name ? String(raw.author_name) : undefined,
+							author: readPerson(raw.author),
+							mentions: readPeople(raw.mentions),
 							author_avatar: raw.author_avatar ? String(raw.author_avatar) : undefined,
 							author_type: (raw.author_type ?? 'human') as 'human' | 'ai',
 							comment_type: String(raw.comment_type ?? 'general'),
@@ -342,6 +349,8 @@ export const proposalsApi = {
 						proposal_id: String(res.data.proposal_id ?? ''),
 						author_id: String(res.data.author_id ?? ''),
 						author_name: res.data.author_name ? String(res.data.author_name) : undefined,
+						author: readPerson(res.data.author),
+						mentions: readPeople(res.data.mentions),
 						author_avatar: res.data.author_avatar ? String(res.data.author_avatar) : undefined,
 						author_type: (res.data.author_type ?? 'human') as 'human' | 'ai',
 						comment_type: String(res.data.comment_type ?? 'general'),

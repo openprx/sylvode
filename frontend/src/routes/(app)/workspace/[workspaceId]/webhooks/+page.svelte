@@ -248,7 +248,7 @@
 	function getBotName(botId: string | null | undefined): string {
 		if (!botId) return '';
 		const bot = botUsers.find((item) => item.user_id === botId);
-		return bot?.name || botId.slice(0, 8);
+		return bot?.name || get(t)('people.someone');
 	}
 
 	function getBotType(botId: string | null | undefined): string {

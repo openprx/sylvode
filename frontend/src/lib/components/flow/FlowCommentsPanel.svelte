@@ -14,6 +14,15 @@
 	import { flowApi, type FlowComment, type FlowMentionCandidate } from '#lib/api/flow.js';
 	import { flowErrorFromResult } from '#lib/flow/command-service.js';
 	import { flowErrorDetailKey } from '#lib/flow/errors.js';
+	import { nameOrSomeone, personLabel, personLabelById, type Person } from '#lib/people/display.js';
+	import {
+		insertMentionText,
+		mentionSegments,
+		mentionTrigger,
+		pickedIds,
+		withPicked,
+		type PickedMention
+	} from '#lib/people/mentions.js';
 
 	interface Props {
 		objectId: string;
@@ -49,7 +58,7 @@
 	let anchor = $state<string | null>(null);
 	let people = $state<FlowMentionCandidate[]>([]);
 	let mentionOpen = $state(false);
-	let picked = $state<FlowMentionCandidate[]>([]);
+	let picked = $state<PickedMention[]>([]);
 	let editingId = $state<string | null>(null);
 	let editBody = $state('');
 	let failureKey = $state<string | null>(null);
@@ -66,6 +75,17 @@
 	function operation(kind: string, id = '') {
 		return `${get(authStore).user?.id ?? ''}:${objectId}:${kind}:${id}`;
 	}
+
+	// The people the answer carries (authors and mentioned), by id: `resolved_by` is a bare id and is
+	// shown through these, else as the neutral text.
+	const knownPeople = $derived.by(() => {
+		const byId: Record<string, Person> = {};
+		for (const item of items) {
+			if (item.author) byId[item.author.id] = item.author;
+			for (const person of item.mentions ?? []) byId[person.id] ??= person;
+		}
+		return byId;
+	});
 
 	const roots = $derived(items.filter((item) => !item.parent_id));
 	const visibleRoots = $derived(
@@ -87,8 +107,8 @@
 	}
 
 	function mentionQuery(value: string): string | null {
-		const match = value.match(/(?:^|\s)@([^\s@]*)$/);
-		return match ? match[1] : null;
+		const trigger = mentionTrigger(value, value.length);
+		return trigger.start === null ? null : trigger.filter;
 	}
 
 	async function refreshPeople(query: string): Promise<void> {
@@ -103,8 +123,9 @@
 	}
 
 	function pickPerson(person: FlowMentionCandidate): void {
-		if (!picked.some((item) => item.user_id === person.user_id)) picked = [...picked, person];
-		body = body.replace(/(^|\s)@[^\s@]*$/, (_match, lead: string) => `${lead}@${person.name} `);
+		const text = nameOrSomeone(person.name, get(t));
+		picked = withPicked(picked, { id: person.user_id, text });
+		body = insertMentionText(body, mentionTrigger(body, body.length).start, body.length, text).text;
 		mentionOpen = false;
 	}
 
@@ -126,7 +147,7 @@
 				editingId: string | null;
 				editBody: string;
 				anchor: string | null;
-				picked: FlowMentionCandidate[];
+				picked: PickedMention[];
 			}>(`flow:${id}::comment-draft`)
 		);
 		body = saved?.body ?? '';
@@ -188,7 +209,7 @@
 			body,
 			parent_id: replyTo,
 			block_id: commentCreationAnchor(anchor, replyTo, items),
-			mentions: picked.map((person) => person.user_id)
+			mentions: pickedIds(body, picked)
 		};
 		const op = operation('create');
 		const result = await flowApi.createComment(objectId, payload, intents.key(op, payload));
@@ -262,6 +283,15 @@
 	}
 </script>
 
+{#snippet commentText(comment: FlowComment)}
+	{#each mentionSegments(comment.body, comment.mentions ?? []) as segment, index (index)}
+		{#if segment.mention}<span
+				class="rounded bg-surface px-0.5 font-semibold"
+				title={personLabel(segment.mention, $t)}>{segment.text}</span
+			>{:else}{segment.text}{/if}
+	{/each}
+{/snippet}
+
 {#if !canComment}<p class="mb-3 text-xs text-fg-muted" role="status">
 		{$t('flow.personal.commentsReadOnly')}
 	</p>{/if}
@@ -294,9 +324,14 @@
 						>
 						<button type="button" onclick={() => (editingId = null)}>{$t('common.cancel')}</button>
 					{:else}
-						<p class="whitespace-pre-wrap text-fg">{comment.body}</p>
+						<p class="whitespace-pre-wrap text-fg">{@render commentText(comment)}</p>
 						{#if comment.resolved_at}
-							<p class="text-xs text-fg-muted">{$t('flow.comments.resolved')}</p>
+							<p class="text-xs text-fg-muted">
+								{$t('flow.comments.resolved')}{#if comment.resolved_by}
+									· {$t('flow.comments.resolvedBy', {
+										values: { name: personLabelById(knownPeople, comment.resolved_by, $t) }
+									})}{/if}
+							</p>
 						{/if}
 						{#if canComment}
 							<div class="mt-1 flex flex-wrap gap-2 text-xs">
@@ -327,7 +362,7 @@
 						<ul class="mt-2 space-y-2 border-l border-line pl-3">
 							{#each repliesOf(comment.id) as reply (reply.id)}
 								<li>
-									<p class="whitespace-pre-wrap text-fg">{reply.body}</p>
+									<p class="whitespace-pre-wrap text-fg">{@render commentText(reply)}</p>
 									{#if reply.anchor_status === 'orphaned'}<p
 											class="text-xs text-fg-muted"
 											data-comment-anchor-status="orphaned"
@@ -402,7 +437,7 @@
 							class="block w-full px-2 py-1 text-left hover:bg-surface"
 							onclick={() => pickPerson(person)}
 						>
-							{person.name || person.user_id}
+							{nameOrSomeone(person.name, $t)}
 							<span class="text-xs text-fg-muted"
 								>{person.kind === 'guest'
 									? $t('flow.comments.guest')
@@ -416,8 +451,8 @@
 	</label>
 	{#if picked.length > 0}
 		<ul class="flex flex-wrap gap-1 text-xs">
-			{#each picked as person (person.user_id)}
-				<li class="rounded bg-surface px-2 py-1">@{person.name}</li>
+			{#each picked as person (person.id)}
+				<li class="rounded bg-surface px-2 py-1">@{person.text}</li>
 			{/each}
 		</ul>
 	{/if}

@@ -50,6 +50,21 @@
 	import AlertPanel from '#lib/project/alert-panel/AlertPanel.svelte';
 	import LinkedPages from '#lib/project/page-links/LinkedPages.svelte';
 	import { pageActivityText } from '#lib/project/page-links/rules.js';
+	import {
+		directoryName,
+		personLabel,
+		personLabelById,
+		someoneText,
+		type Person
+	} from '#lib/people/display.js';
+	import {
+		highlightMentions,
+		insertMentionText,
+		mentionTrigger,
+		pickedIds,
+		withPicked,
+		type PickedMention
+	} from '#lib/people/mentions.js';
 
 	type SelectOption = {
 		label: string;
@@ -80,6 +95,8 @@
 	let issue = $state<Issue | null>(null);
 	let comments = $state<Comment[]>([]);
 	let activities = $state<Activity[]>([]);
+	// The people the activity entries name, by user id (from the activity answer).
+	let activityPeople = $state<Record<string, Person>>({});
 	let projectLabels = $state<Label[]>([]);
 	let issueLabels = $state<Label[]>([]);
 	let sprints = $state<Sprint[]>([]);
@@ -128,6 +145,9 @@
 	let editMentionAnchorIndex = $state<number | null>(null);
 	let editTextareaEl = $state<HTMLTextAreaElement | null>(null);
 	let commentAttachments = $state<UploadedAttachment[]>([]);
+	// People picked from the `@` picker; typed `@Name` needs no pick (the server resolves it).
+	let pickedNew = $state<PickedMention[]>([]);
+	let pickedEdit = $state<PickedMention[]>([]);
 
 	onMount(async () => {
 		await loadPageData();
@@ -263,6 +283,7 @@
 			toast.error(describeResult(activityResponse));
 		} else if (activityResponse.data) {
 			activities = [...(activityResponse.data.items ?? [])].sort(sortByCreatedDesc);
+			activityPeople = activityResponse.data.people;
 		}
 
 		if (labelsResponse.code !== 0) {
@@ -306,8 +327,7 @@
 					const map: Record<string, string> = {};
 					const entityMap: Record<string, string> = {};
 					for (const member of res.data.items ?? []) {
-						const fallback = member.user_id.substring(0, 8);
-						map[member.user_id] = member.name || member.email || fallback;
+						map[member.user_id] = directoryName(member, get(t));
 						entityMap[member.user_id] = member.entity_type || 'human';
 					}
 					memberNameMap = map;
@@ -664,52 +684,10 @@
 		return Boolean(currentUserId && currentUserId === comment.user_id);
 	}
 
-	function parseMentionAtCursor(
-		text: string,
-		cursorPos: number
-	): { start: number | null; filter: string } {
-		const beforeCursor = text.slice(0, cursorPos);
-		const atMatch = beforeCursor.match(/(^|\s)@([^\s@]*)$/);
-		if (!atMatch) {
-			return { start: null, filter: '' };
-		}
-		return {
-			start: beforeCursor.lastIndexOf('@'),
-			filter: atMatch[2] ?? ''
-		};
-	}
-
-	function extractMentionIds(text: string): string[] {
-		let content = text.toLowerCase();
-		const ids: string[] = [];
-		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch collection, not reactive state
-		const seen = new Set<string>();
-
-		// Sort by name length descending to match longest names first
-		const sorted = [...mentionCandidates].sort((a, b) => b.name.length - a.name.length);
-
-		for (const member of sorted) {
-			const name = member.name.toLowerCase();
-			const marker = `@${name}`;
-			// Word-boundary check: marker must be followed by non-word char or end
-			const escapedMarker = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-			const regex = new RegExp(`${escapedMarker}(?=[\\s\\n,;.!?)\\]}>]|$)`, 'i');
-			if (!regex.test(content) || seen.has(member.user_id)) {
-				continue;
-			}
-			seen.add(member.user_id);
-			ids.push(member.user_id);
-			// Remove matched mention to prevent substring re-matching
-			content = content.replace(regex, '');
-		}
-
-		return ids;
-	}
-
 	function handleNewCommentInput(event: Event) {
 		const textarea = event.target as HTMLTextAreaElement;
 		commentTextareaEl = textarea;
-		const mentionState = parseMentionAtCursor(textarea.value, textarea.selectionStart ?? 0);
+		const mentionState = mentionTrigger(textarea.value, textarea.selectionStart ?? 0);
 		mentionAnchorIndex = mentionState.start;
 		mentionFilter = mentionState.filter;
 		showMentionDropdown = mentionState.start !== null;
@@ -718,7 +696,7 @@
 	function handleEditCommentInput(event: Event) {
 		const textarea = event.target as HTMLTextAreaElement;
 		editTextareaEl = textarea;
-		const mentionState = parseMentionAtCursor(textarea.value, textarea.selectionStart ?? 0);
+		const mentionState = mentionTrigger(textarea.value, textarea.selectionStart ?? 0);
 		editMentionAnchorIndex = mentionState.start;
 		editMentionFilter = mentionState.filter;
 		showEditMentionDropdown = mentionState.start !== null;
@@ -731,17 +709,13 @@
 		member: WorkspaceMember
 	): { nextText: string; cursorPos: number } {
 		const cursorPos = textarea.selectionStart ?? currentText.length;
-		const atStart = anchorIndex ?? currentText.lastIndexOf('@', Math.max(0, cursorPos - 1));
-		if (atStart < 0) {
-			return { nextText: currentText, cursorPos };
-		}
-
-		const before = currentText.slice(0, atStart);
-		const after = currentText.slice(cursorPos);
-		const mentionText = `@${member.name} `;
-		const nextText = `${before}${mentionText}${after}`;
-		const nextCursorPos = before.length + mentionText.length;
-		return { nextText, cursorPos: nextCursorPos };
+		const inserted = insertMentionText(
+			currentText,
+			anchorIndex,
+			cursorPos,
+			directoryName(member, get(t))
+		);
+		return { nextText: inserted.text, cursorPos: inserted.cursor };
 	}
 
 	async function selectMention(member: WorkspaceMember) {
@@ -750,6 +724,10 @@
 		}
 		const inserted = insertMention(commentTextareaEl, newComment, mentionAnchorIndex, member);
 		newComment = inserted.nextText;
+		pickedNew = withPicked(pickedNew, {
+			id: member.user_id,
+			text: directoryName(member, get(t))
+		});
 		await tick();
 		commentTextareaEl.focus();
 		commentTextareaEl.setSelectionRange(inserted.cursorPos, inserted.cursorPos);
@@ -769,6 +747,10 @@
 			member
 		);
 		editingCommentContent = inserted.nextText;
+		pickedEdit = withPicked(pickedEdit, {
+			id: member.user_id,
+			text: directoryName(member, get(t))
+		});
 		await tick();
 		editTextareaEl.focus();
 		editTextareaEl.setSelectionRange(inserted.cursorPos, inserted.cursorPos);
@@ -881,7 +863,7 @@
 		}
 
 		commentSubmitting = true;
-		const mentionIds = extractMentionIds(newComment);
+		const mentionIds = pickedIds(newComment, pickedNew);
 		const response = await commentsApi.create(issueId, {
 			content,
 			mentions: mentionIds.length > 0 ? mentionIds : undefined
@@ -897,6 +879,7 @@
 			comments = [...comments, response.data].sort(sortByCreatedAsc);
 			agentTasksRefresh += 1;
 			newComment = '';
+			pickedNew = [];
 			commentAttachments = [];
 			showMentionDropdown = false;
 			mentionFilter = '';
@@ -911,11 +894,15 @@
 		}
 		editingCommentId = comment.id;
 		editingCommentContent = comment.content;
+		pickedEdit = comment.mentions.flatMap((person) =>
+			person.name ? [{ id: person.id, text: person.name }] : []
+		);
 	}
 
 	function cancelEditComment() {
 		editingCommentId = null;
 		editingCommentContent = '';
+		pickedEdit = [];
 		showEditMentionDropdown = false;
 		editMentionFilter = '';
 		editMentionAnchorIndex = null;
@@ -928,7 +915,7 @@
 		}
 
 		commentBusyId = editingCommentId;
-		const mentionIds = extractMentionIds(editingCommentContent);
+		const mentionIds = pickedIds(editingCommentContent, pickedEdit);
 		const response = await commentsApi.update(editingCommentId, {
 			content: editingCommentContent.trim(),
 			mentions: mentionIds.length > 0 ? mentionIds : undefined
@@ -997,20 +984,22 @@
 		return map[priority] || priority;
 	}
 
+	// Who made an activity entry or got an item: the person the answer carries, else the member
+	// list, else the neutral text. Never an id.
 	function getMemberDisplay(userId: string | undefined): string {
 		if (!userId) {
 			return '';
 		}
-		return memberNameMap[userId] || userId.substring(0, 8);
+		const person = activityPeople[userId];
+		if (person) {
+			return personLabel(person, get(t));
+		}
+		return memberNameMap[userId] || someoneText(get(t));
 	}
 
-	function renderCommentContent(content: string): string {
-		const rendered = renderMarkdown(content);
-		return rendered.replace(
-			/(^|[\s>])@([^\s@<]+)/g,
-			(_matched, prefix: string, mention: string) =>
-				`${prefix}<span class="comment-mention">@${mention}</span>`
-		);
+	// Highlights only the people the saved comment mentions; a plain `@word` stays plain.
+	function renderCommentContent(comment: Comment): string {
+		return highlightMentions(renderMarkdown(comment.content), comment.mentions, get(t));
 	}
 
 	function isBotMember(member: WorkspaceMember): boolean {
@@ -1021,18 +1010,19 @@
 		if (!sprintId) {
 			return '';
 		}
-		return sprints.find((item) => item.id === sprintId)?.name || sprintId.substring(0, 8);
+		return sprints.find((item) => item.id === sprintId)?.name || get(t)('people.unknownSprint');
 	}
 
 	async function reloadActivities() {
 		const response = await activityApi.list(issueId);
 		if (response.code === 0 && response.data) {
 			activities = [...(response.data.items ?? [])].sort(sortByCreatedDesc);
+			activityPeople = response.data.people;
 		}
 	}
 
 	function getActivityAuthor(activity: Activity): string {
-		return activity.author_name || getMemberDisplay(activity.user_id) || get(t)('common.user');
+		return personLabelById(activityPeople, activity.user_id, get(t));
 	}
 
 	function formatActivity(activity: Activity): string {
@@ -1045,7 +1035,7 @@
 		switch (activity.action) {
 			case 'assigned':
 				if (to) {
-					return get(t)('activity.assigned', { values: { name: toName || getMemberDisplay(to) } });
+					return get(t)('activity.assigned', { values: { name: getMemberDisplay(to) } });
 				}
 				return get(t)('activity.unassigned');
 			case 'status_changed':
@@ -1276,7 +1266,7 @@
 										<div class="mb-2 flex items-start justify-between gap-3">
 											<div>
 												<p class="text-sm font-medium text-fg">
-													{comment.author_name || comment.user_id}
+													{personLabel(comment.author, $t)}
 												</p>
 												<p class="text-xs text-fg-muted">
 													{formatDate(comment.created_at)}
@@ -1318,7 +1308,7 @@
 																			title={$t('admin.botBadge')}
 																		/>
 																	{/if}
-																	<span>{member.name}</span>
+																	<span>{directoryName(member, $t)}</span>
 																</span>
 																<span class="ml-1 text-fg-muted">{member.email}</span>
 															</button>
@@ -1348,7 +1338,7 @@
 										{:else}
 											<div class="prose prose-sm max-w-none markdown-body text-sm text-fg">
 												<!-- eslint-disable-next-line svelte/no-at-html-tags -- renderMarkdown escapes its input before it builds markup (tests/markdown-sanitize.test.ts) -->
-												{@html renderCommentContent(comment.content)}
+												{@html renderCommentContent(comment)}
 											</div>
 										{/if}
 									</div>
@@ -1519,7 +1509,7 @@
 										{#if isBotMember(member)}
 											<BotIcon class="h-3.5 w-3.5 text-fg-muted" title={$t('admin.botBadge')} />
 										{/if}
-										<span>{member.name}</span>
+										<span>{directoryName(member, $t)}</span>
 									</span>
 									<span class="ml-1 text-fg-muted">{member.email}</span>
 								</button>

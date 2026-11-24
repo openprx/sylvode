@@ -112,10 +112,7 @@
 				>
 					<div class="flex flex-wrap items-center justify-between gap-2">
 						<span class="font-medium text-fg" data-record-detail-comment-author={comment.id}
-							>{comment.author_name ||
-								comment.author_email ||
-								comment.author_id?.slice(0, 8) ||
-								'system'}</span
+							>{comment.author_name || comment.author_email || $t('people.someone')}</span
 						>
 
 						<span

@@ -37,6 +37,16 @@
 		UPLOAD_ACCEPT_ATTR
 	} from '#lib/utils/upload.js';
 
+	import { directoryName, personLabel, someoneText, type Person } from '#lib/people/display.js';
+	import {
+		highlightMentions,
+		insertMentionText,
+		mentionTrigger,
+		pickedIds,
+		withPicked,
+		type PickedMention
+	} from '#lib/people/mentions.js';
+
 	type MentionCandidate = {
 		id: string;
 		name: string;
@@ -73,6 +83,8 @@
 	let showMentionDropdown = $state(false);
 	let mentionFilter = $state('');
 	let mentionAnchorIndex = $state<number | null>(null);
+	// People picked from the `@` picker; typed `@Name` needs no pick (the server resolves it).
+	let pickedMentions = $state<PickedMention[]>([]);
 	let uploadingCommentImage = $state(false);
 	let workspaceMembers = $state<WorkspaceMember[]>([]);
 
@@ -179,39 +191,28 @@
 
 	const meId = $derived($authStore.user?.id || '');
 	const meName = $derived($authStore.user?.name || '');
-	const meAvatar = $derived($authStore.user?.avatar_url || '');
 	const isAuthor = $derived(Boolean(proposal && meId && proposal.author_id === meId));
 
-	const authorMetaMap = $derived.by<Record<string, { name: string; avatar?: string }>>(() => {
-		const map: Record<string, { name: string; avatar?: string }> = {};
-		for (const comment of comments) {
-			if (!comment.author_id) {
-				continue;
-			}
-			map[comment.author_id] = {
-				name: comment.author_name || comment.author_id.slice(0, 8),
-				avatar: comment.author_avatar
-			};
+	// Who an author is: the person a comment carries, the signed-in user, a workspace member, else
+	// the neutral text. Never an id.
+	function authorNameOf(authorId: string): string {
+		const translate = get(t);
+		if (authorId && authorId === meId && meName) {
+			return meName;
 		}
-		if (meId) {
-			map[meId] = {
-				name: meName || map[meId]?.name || meId.slice(0, 8),
-				avatar: meAvatar || map[meId]?.avatar
-			};
+		const commentAuthor = comments.find((comment) => comment.author?.id === authorId)?.author;
+		if (commentAuthor) {
+			return personLabel(commentAuthor, translate);
 		}
-		if (proposal?.author_id && !map[proposal.author_id]) {
-			map[proposal.author_id] = {
-				name: proposal.author_id.slice(0, 8)
-			};
-		}
-		return map;
-	});
+		const member = workspaceMembers.find((item) => item.user_id === authorId);
+		return member ? directoryName(member, translate) : someoneText(translate);
+	}
 
 	const proposalAuthorName = $derived.by(() => {
 		if (!proposal) {
 			return '';
 		}
-		return authorMetaMap[proposal.author_id]?.name || proposal.author_id.slice(0, 8);
+		return authorNameOf(proposal.author_id);
 	});
 
 	const mentionCandidates = $derived.by<MentionCandidate[]>(() => {
@@ -219,7 +220,7 @@
 			.filter((member) => Boolean(member.user_id) && member.user_id !== meId)
 			.map((member) => ({
 				id: member.user_id,
-				name: member.name || member.email || member.user_id.slice(0, 8)
+				name: directoryName(member, get(t))
 			}))
 			.slice(0, 20);
 	});
@@ -231,41 +232,10 @@
 			.slice(0, 8);
 	});
 
-	function parseMentionAtCursor(
-		text: string,
-		cursorPos: number
-	): { start: number | null; filter: string } {
-		const beforeCursor = text.slice(0, cursorPos);
-		const atMatch = beforeCursor.match(/(^|\s)@([^\s@]*)$/);
-		if (!atMatch) {
-			return { start: null, filter: '' };
-		}
-		return {
-			start: beforeCursor.lastIndexOf('@'),
-			filter: atMatch[2] ?? ''
-		};
-	}
-
-	function extractMentionIds(text: string): string[] {
-		const content = text.toLowerCase();
-		const ids: string[] = [];
-		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch collection, not reactive state
-		const seen = new Set<string>();
-		for (const member of mentionCandidates) {
-			const marker = `@${member.name}`.toLowerCase();
-			if (!content.includes(marker) || seen.has(member.id)) {
-				continue;
-			}
-			seen.add(member.id);
-			ids.push(member.id);
-		}
-		return ids;
-	}
-
 	function handleNewCommentInput(event: Event) {
 		const textarea = event.target as HTMLTextAreaElement;
 		commentTextareaEl = textarea;
-		const mentionState = parseMentionAtCursor(textarea.value, textarea.selectionStart ?? 0);
+		const mentionState = mentionTrigger(textarea.value, textarea.selectionStart ?? 0);
 		mentionAnchorIndex = mentionState.start;
 		mentionFilter = mentionState.filter;
 		showMentionDropdown = mentionState.start !== null;
@@ -276,15 +246,10 @@
 			return;
 		}
 		const cursorPos = commentTextareaEl.selectionStart ?? newComment.length;
-		const atStart = mentionAnchorIndex ?? newComment.lastIndexOf('@', Math.max(0, cursorPos - 1));
-		if (atStart < 0) {
-			return;
-		}
-		const before = newComment.slice(0, atStart);
-		const after = newComment.slice(cursorPos);
-		const mentionText = `@${member.name} `;
-		newComment = `${before}${mentionText}${after}`;
-		const nextCursorPos = before.length + mentionText.length;
+		const inserted = insertMentionText(newComment, mentionAnchorIndex, cursorPos, member.name);
+		newComment = inserted.text;
+		pickedMentions = withPicked(pickedMentions, { id: member.id, text: member.name });
+		const nextCursorPos = inserted.cursor;
 		await tick();
 		commentTextareaEl?.focus();
 		commentTextareaEl?.setSelectionRange(nextCursorPos, nextCursorPos);
@@ -387,9 +352,7 @@
 	}
 
 	function commentAuthorName(comment: ProposalComment): string {
-		return (
-			comment.author_name || authorMetaMap[comment.author_id]?.name || comment.author_id.slice(0, 8)
-		);
+		return comment.author ? personLabel(comment.author, get(t)) : authorNameOf(comment.author_id);
 	}
 
 	function commentAvatarText(comment: ProposalComment): string {
@@ -397,13 +360,20 @@
 		return name.charAt(0).toUpperCase() || '?';
 	}
 
-	function renderCommentContent(content: string): string {
-		const rendered = renderMarkdown(content);
-		return rendered.replace(
-			/(^|[\s>])@([^\s@<]+)/g,
-			(_matched, prefix: string, mention: string) =>
-				`${prefix}<span class="comment-mention">@${mention}</span>`
-		);
+	// Highlights only the people the saved comment mentions; a plain `@word` stays plain.
+	function renderCommentContent(comment: ProposalComment): string {
+		return highlightMentions(renderMarkdown(comment.content), comment.mentions, get(t));
+	}
+
+	// The preview of the comment being written: the people picked so far count as mentioned.
+	function renderPendingContent(text: string): string {
+		const pending: Person[] = pickedMentions.map((item) => ({
+			id: item.id,
+			name: item.text,
+			is_bot: false,
+			state: 'active'
+		}));
+		return highlightMentions(renderMarkdown(text), pending, get(t));
 	}
 
 	async function actSubmit() {
@@ -482,7 +452,7 @@
 
 	async function addComment() {
 		if (!proposal || !newComment.trim()) return;
-		const mentionIds = extractMentionIds(newComment);
+		const mentionIds = pickedIds(newComment, pickedMentions);
 		const res = await proposalsApi.comment(
 			proposal.id,
 			newComment.trim(),
@@ -494,6 +464,7 @@
 			return;
 		}
 		newComment = '';
+		pickedMentions = [];
 		showMentionDropdown = false;
 		mentionFilter = '';
 		mentionAnchorIndex = null;
@@ -776,7 +747,7 @@
 								</div>
 								<div class="prose prose-sm max-w-none markdown-body text-sm text-fg">
 									<!-- eslint-disable-next-line svelte/no-at-html-tags -- renderMarkdown escapes its input before it builds markup (tests/markdown-sanitize.test.ts) -->
-									{@html renderCommentContent(comment.content)}
+									{@html renderCommentContent(comment)}
 								</div>
 							</div>
 						{/each}
@@ -836,7 +807,7 @@
 							{#if newComment.trim()}
 								<div class="prose prose-sm max-w-none markdown-body text-sm text-fg">
 									<!-- eslint-disable-next-line svelte/no-at-html-tags -- renderMarkdown escapes its input before it builds markup (tests/markdown-sanitize.test.ts) -->
-									{@html renderMarkdown(newComment)}
+									{@html renderPendingContent(newComment)}
 								</div>
 							{:else}
 								<p class="text-sm text-fg-muted">{$t('issue.noDescriptionPreview')}</p>

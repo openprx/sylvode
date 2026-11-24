@@ -291,9 +291,9 @@ suite.check('active tasks come first, then newest first, ties keep server order'
 });
 
 suite.check('bot name falls back to the first 8 characters of the id', () => {
-	assertEqual(botName({ abc12345678: 'Builder' }, 'abc12345678'), 'Builder', 'known');
-	assertEqual(botName({}, 'abc12345678'), 'abc12345', 'unknown');
-	assertEqual(botName({ x: '' }, 'x'), 'x', 'empty name');
+	assertEqual(botName({ abc12345678: 'Builder' }, 'abc12345678', 'Someone'), 'Builder', 'known');
+	assertEqual(botName({}, 'abc12345678', 'Someone'), 'Someone', 'unknown');
+	assertEqual(botName({ x: '' }, 'x', 'Someone'), 'Someone', 'empty name');
 });
 
 suite.check('clamp cuts long text by code points and leaves short text alone', () => {

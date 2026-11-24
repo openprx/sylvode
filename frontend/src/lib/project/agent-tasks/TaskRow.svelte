@@ -58,7 +58,7 @@
 		<div class="who">
 			<span class="name"
 				>{$t('agentTasks.agent', {
-					values: { name: botName(names, task.ai_participant_id) }
+					values: { name: botName(names, task.ai_participant_id, $t('people.someone')) }
 				})}</span
 			>
 			<StatusChip tone={status.tone}>{$t(status.labelKey, { values: status.values })}</StatusChip>

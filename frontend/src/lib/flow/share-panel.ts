@@ -226,6 +226,7 @@ export function selfLockoutDetails(envelope: {
 export interface ShareDirectoryEntry {
 	readonly principal_kind: FlowPrincipalKind;
 	readonly principal_id: string;
+	/** Empty when there is neither name nor e-mail: shown as the neutral text, never an id. */
 	readonly label: string;
 }
 
@@ -262,7 +263,7 @@ export async function listShareDirectory(
 							.map((member) => ({
 								principal_kind: 'user' as const,
 								principal_id: member.user_id,
-								label: member.name || member.email || member.user_id
+								label: member.name || member.email || ''
 							}))
 					: []
 			)
@@ -276,7 +277,7 @@ export async function listShareDirectory(
 							.map((bot) => ({
 								principal_kind: 'bot' as const,
 								principal_id: bot.id,
-								label: bot.name || bot.id
+								label: bot.name || ''
 							}))
 					: []
 			)
@@ -589,7 +590,7 @@ async function listObjectShareDirectory(objectId: string): Promise<ShareDirector
 					{
 						principal_kind: 'user' as const,
 						principal_id: id,
-						label: user.name ?? user.email ?? id
+						label: user.name || user.email || ''
 					}
 				]
 			: [];

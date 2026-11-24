@@ -1,6 +1,7 @@
 import { apiClient, type ApiResult, type PaginatedData } from './client';
 import { get } from 'svelte/store';
 import { t } from 'svelte-i18n';
+import { readPeopleById, type Person } from '../people/display';
 
 export interface Activity {
 	id: string;
@@ -13,6 +14,9 @@ export interface Activity {
 	details?: unknown;
 	created_at: string;
 }
+
+/** The activity answer: the entries and the people they name, by user id. */
+export type ActivityList = PaginatedData<Activity> & { people: Record<string, Person> };
 
 function normalizeDetail(raw: Record<string, unknown>): Record<string, unknown> {
 	const detail = raw.detail ?? raw.details ?? raw.payload;
@@ -39,7 +43,7 @@ function mapActivity(raw: Record<string, unknown>, issueId: string): Activity {
 }
 
 export const activityApi = {
-	async list(issueId: string): Promise<ApiResult<PaginatedData<Activity>>> {
+	async list(issueId: string): Promise<ApiResult<ActivityList>> {
 		const result = await apiClient.get<PaginatedData<Record<string, unknown>>>(
 			`/api/v1/issues/${issueId}/activities`
 		);
@@ -57,7 +61,8 @@ export const activityApi = {
 				...result.data,
 				items: Array.isArray(result.data.items)
 					? result.data.items.map((item) => mapActivity(item, issueId))
-					: []
+					: [],
+				people: readPeopleById((result.data as { people?: unknown }).people)
 			}
 		};
 	}
