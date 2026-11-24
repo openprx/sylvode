@@ -6,11 +6,11 @@
 
 [2m[49m• [0mI’ll create [38;2;166;227;161mhello.txt[39m and verify its contents.
 
-[2m• [0;1mStarted [0m[38;2;99;168;248m`/root/write_file`[39m
+[2m• [0;1mStarted [0m[38;2;99;168;248m`/tool/write_file`[39m
 
 [2m• [0;1mWaiting for agents[0m
 
-[2m• [0;1mCompleted [0m[38;2;99;168;248m`/root/write_file`
+[2m• [0;1mCompleted [0m[38;2;99;168;248m`/tool/write_file`
 
 [2m[39m• [0;1mFinished waiting[0m
 [2m  └ [0mNo agents completed yet
@@ -25,7 +25,7 @@
 
 [2m[49m• [0mI’ll get the result from a single [38;2;166;227;161mprobe_ping[39m call.
 
-[2m• [0;1mStarted [0m[38;2;99;168;248m`/root/ping`[39m
+[2m• [0;1mStarted [0m[38;2;99;168;248m`/tool/ping`[39m
 
 [2m• [0;1mWaiting for agents[0m
 

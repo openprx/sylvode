@@ -6,11 +6,11 @@
 
 • I’ll create hello.txt and verify its contents.
 
-• Started `/root/write_file`
+• Started `/tool/write_file`
 
 • Waiting for agents
 
-• Completed `/root/write_file`
+• Completed `/tool/write_file`
 
 • Finished waiting
   └ No agents completed yet
@@ -25,7 +25,7 @@
 
 • I’ll get the result from a single probe_ping call.
 
-• Started `/root/ping`
+• Started `/tool/ping`
 
 • Waiting for agents
 

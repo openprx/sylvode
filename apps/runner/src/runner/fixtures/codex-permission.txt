@@ -17,14 +17,14 @@
 
 • I’ll create hello.txt and verify its contents.
 
-• Started `/root/write_file`
+• Started `/tool/write_file`
 
 • Waiting for agents
 
 
   Would you like to run the following command?
 
-  Thread: /root/write_file
+  Thread: /tool/write_file
 
   Environment: local
 
