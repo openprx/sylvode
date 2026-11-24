@@ -185,7 +185,7 @@ channel.
    for every project.
 4. Choose the **CLI** (**Claude Code**, **Codex (experimental)** or **opencode (experimental)**),
    the **Channel** (**Interactive session (tmux)** or **One-shot (headless)**; tmux is for Claude
-   Code only) and the **Working directory** on the runner host.
+   Code and Codex only) and the **Working directory** on the runner host.
 5. For a new bot, copy the configuration block shown under **Copy this configuration now**
    (**Copy configuration** or **Download file**) and confirm **I have stored this configuration**.
    Sylvode keeps no copy and cannot show it again; **Rotate credentials** issues a new one.
@@ -199,7 +199,7 @@ channel.
 
 | Setting | Values |
 |---|---|
-| Channel | `tmux` (default) or `headless`; `tmux` only with `claude` |
+| Channel | `tmux` (default) or `headless`; `tmux` only with `claude` or `codex` |
 | CLI | `claude`, `codex` or `opencode` |
 | Working directory | an absolute path of 2 to 1024 bytes, without `#`, control characters, empty segments, or `.` and `..` segments |
 | On completion | `auto` (default), `none`, or a state of the project's workflow |
@@ -209,8 +209,11 @@ channel.
 A project can have several connected bots, but at most one tmux connection per CLI: a second
 tmux connection for the same CLI is refused with 409
 `channel: project already has a tmux connection for <cli> (bot <holder>)`. Headless connections
-are not limited. On the runner a tmux connection uses the session `<KEY>-<cli>` (for Claude Code,
-`<KEY>-claude`).
+are not limited. On the runner a tmux connection uses the session `<KEY>-<cli>` (`<KEY>-claude` for Claude
+Code, `<KEY>-codex` for Codex). A runner-created Codex session starts with
+`codex --no-daemon --no-alt-screen --dangerously-bypass-approvals-and-sandbox`, which turns off all of Codex's
+permission checks (see the [runner security notes](../../apps/runner/SECURITY.md)); Codex asks once to
+trust a new folder, and the runner never answers that dialog: attach to the session and answer it.
 
 Every change names the version of the connection it was made against. If someone else changed
 the connection meanwhile, the change is refused (`connection changed; reload`) and the page says
@@ -221,7 +224,7 @@ the connection meanwhile, the change is refused (`connection changed; reload`) a
 The connection shows what the runner last reported: **Online**, **Waiting for the runner**,
 **Not reporting** or **Unreachable**; the readiness of tmux and each CLI; the project's tmux
 session; a protocol mismatch; and **Permission checks off** when the runner's launch command or
-headless arguments turn off the CLI's permission checks (the default does).
+headless arguments turn off the CLI's permission checks (the default does, for each CLI on its own).
 
 ### Disable, rotate, remove
 

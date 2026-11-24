@@ -61,6 +61,29 @@ the advisory unless you prefer otherwise.
   operator's credentials. Put the flags you want in `launch_command` and `headless_args` (a
   permission mode that asks, a tool list, `--strict-mcp-config`, `--setting-sources`); the
   start-up posture line, `doctor` and the connection's status in Sylvode warn while checks are off.
+- codex in a tmux session starts by default with `--dangerously-bypass-approvals-and-sandbox`: no
+  approval prompts and no sandbox, so every task runs with the full rights of the runner's OS user,
+  as with claude above. This is the operator's responsibility: run the runner on a host that is
+  sandboxed from outside (a dedicated user, container or virtual machine), or change
+  `[runner.cli.codex] launch_command`; the default is needed because the approval prompts of
+  codex refuse every MCP tool call while approvals are off. The start-up posture line, `doctor`
+  and the connection's status in Sylvode show `bypass` for it. Headless codex runs take the
+  operator's `headless_args` and are not changed.
+- The runner gives a codex session it creates the Sylvode MCP server and the turn hook as `-c`
+  overrides on the command line: they name the bot's MCP file (mode 0600) and the hook socket,
+  never a token. The operator's `~/.codex/config.toml` is not changed, but the session's `notify`
+  replaces the operator's own. The notify program receives the turn summary as its last argument,
+  visible in the process table to the same user for the life of that short process; the runner
+  reads only its `type` and `client` and never logs or stores the rest. codex also starts a
+  second MCP server process of the same bot for subagents.
+- codex reads project files (`AGENTS.md`, `.codex/`, and may import `CLAUDE.md` and `.claude`
+  settings); the runner's managed `AGENTS.md` section is written into the project (no git exclude).
+- The runner never answers a codex dialog (folder trust, login, hook review, command or tool
+  approval) and never sends Escape or Ctrl-C to a session; the operator answers them in the
+  attached session.
+- A hook message is applied only to the session of its own CLI.
+- `--no-daemon` is part of the codex default: a shared daemon would run work outside the pane the
+  runner checks.
 - opencode's permissions are not controlled by the runner; the start-up log warns when it is
   enabled.
 - `allowed_roots` keep a project from naming a directory outside them, and the state directory

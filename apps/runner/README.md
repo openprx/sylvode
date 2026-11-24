@@ -575,7 +575,7 @@ never contains a path (the path is in the runner log at `info`).
 | The project key matches `^[A-Z0-9]{1,32}$` | `invalid_project_key` |
 | No other project on this runner uses the key | `session_name_collision` |
 | The channel is `tmux` or `headless` | `delivery_mismatch` |
-| tmux channel: the CLI is `claude` | `cli_unverified` |
+| tmux channel: the CLI is `claude` or `codex` (opencode is refused) | `cli_unverified` |
 | tmux channel: tmux is found and at least `[runner.tmux] min_version`; the session can be looked up | `tmux_unavailable` |
 | The working directory, unless the tmux session already exists (always for a headless run) | `path_outside_allowlist`, `path_missing`, `path_unreadable`, `path_not_directory` |
 | The CLI is enabled (`[runner.cli.codex] enabled`, `[runner.cli.opencode] enabled`; claude always is) | `cli_disabled` |
@@ -595,15 +595,18 @@ the queue position, or `headless`).
 ### tmux sessions
 
 A project's tmux connection has one session, `<KEY>-<cli>`: the project key exactly as Sylvode
-stores it, a hyphen, and the CLI. The tmux channel accepts `claude` only (codex and opencode are
-refused with `cli_unverified`), so the session is `<KEY>-claude`. The session lives on the
-operator's default tmux server (`[runner.tmux] socket_name = ""`), with the operator's
-`tmux.conf`, environment and login. Attach with `tmux attach -t <KEY>-claude`.
+stores it, a hyphen, and the CLI. The tmux channel accepts `claude` and `codex` (opencode is
+refused with `cli_unverified`), so the session is `<KEY>-claude` or `<KEY>-codex`; the two sessions
+of one project run side by side. The session lives on the operator's default tmux server
+(`[runner.tmux] socket_name = ""`), with the operator's `tmux.conf`, environment and login. Attach
+with `tmux attach -t <KEY>-claude` or `tmux attach -t <KEY>-codex`. Everything below that names
+claude holds for codex with its own `[runner.cli.codex]` settings, except where a paragraph says
+otherwise.
 
 On every task the runner:
 
 - **uses the session if it exists, whoever started it.** The one pane whose foreground command is
-  one of `[runner.cli.claude] process_names` receives the task. A session whose CLI is not running
+  one of the CLI's `process_names` (`[runner.cli.claude]` or `[runner.cli.codex]`) receives the task. A session whose CLI is not running
   (a shell is left, or the pane is dead) fails the task, retryably, with
   `the CLI is not running in tmux session <name>; attach with tmux attach -t <name> and start it,
   or end the session so the runner starts it`. More than one pane running the CLI fails it without
@@ -620,16 +623,51 @@ On every task the runner:
   task text and `send-keys Enter`, addressed to the exact session name and to the CLI's pane by
   pane id and process id, checked at every push.
 
-The runner records each session it uses in `<state_dir>/sessions/<KEY>-claude/session.json`
+The runner records each session it uses in `<state_dir>/sessions/<KEY>-<cli>/session.json`
 (bot, pane id and process id, directory, who started it).
 
 A session the operator starts gets the Sylvode MCP server and the hooks through
-[`setup claude`](#setup-claude-for-a-session-you-start-yourself). The first start of the CLI in a
+[`setup claude`](#setup-claude-for-a-session-you-start-yourself) or
+[`setup codex`](#setup-codex-for-a-session-you-start-yourself). The first start of the CLI in a
 new directory or account shows dialogs (trusting the folder, the bypass-permissions confirmation,
 login). The runner answers none: it fails the waiting task, retryably, with
 `the CLI in tmux session <name> shows a dialog; attach with tmux attach -t <name> and answer it`
 (or `... is not logged in; attach and log in`), leaves the session running, and the next attempt
 goes in after you answered.
+
+### Codex in a tmux session
+
+A session the runner creates for codex starts with `[runner.cli.codex] launch_command`, by default
+
+```text
+codex --no-daemon --no-alt-screen --dangerously-bypass-approvals-and-sandbox
+```
+
+so, as with claude, every task runs with the CLI's permission checks off, as the runner's OS user
+(see [SECURITY.md](SECURITY.md); run the runner on a host that is sandboxed from outside). The
+runner appends the Sylvode MCP server and the turn hook as `-c` overrides
+(`mcp_servers.sylvode.command=...`, `mcp_servers.sylvode.args=[...]`, `notify=[...]`); they name
+the bot's MCP file and the hook socket, never a token, and your `~/.codex/config.toml` is not
+changed. The session's `notify` replaces your own `notify` for that session. A whole word of
+`launch_command` that is `{mcp_command_override}`, `{mcp_args_override}` or `{notify_override}` is
+replaced by that override's value (write the `-c` yourself) and nothing is then appended for it.
+
+- The enabling key is `[runner.cli.codex] enabled = true`, as for headless runs.
+- codex takes a paste a moment before Enter submits it: the pause is the longer of
+  `[runner.tmux] push_settle_ms` and `[runner.cli.codex] push_settle_ms` (default 700, at least
+  500). A retry of Enter is made only while the pasted text is still in the input line, at least
+  one second after the previous Enter, at most twice.
+- Turn ends come from codex's `notify` program, which runs `sylvode-runner hook --cli codex`. Only
+  a notification that is an `agent-turn-complete` and carries a `client` key counts; others are
+  dropped. The hook reads only those two fields and nothing else of the message. A turn closes
+  when the screen shows an idle, empty prompt. Task completion stays with the Sylvode task tools.
+- codex asks once to trust a folder (a git directory). The runner never answers it, and never
+  sends Escape or Ctrl-C (they open codex's agent command center): the task fails, retryably, with
+  the dialog text, and the next attempt goes in after you attached and chose 1. `doctor --project
+  KEY` shows the state in `trusted`.
+- codex may hand tool work to subagents, which start a second MCP server process of the same bot.
+- codex reads `AGENTS.md`; the runner's managed section is written into the project as for headless
+  codex.
 
 ### `setup claude` for a session you start yourself
 
@@ -653,6 +691,23 @@ the runner creates gets. It never touches a tmux session.
 `--dir` defaults to the directory recorded for the project's session; `--bot` is needed only when
 the runner serves several bots and has no session record for the project.
 
+### `setup codex` for a session you start yourself
+
+```bash
+sylvode-runner setup codex --project KEY [--dir D] [--bot ID] [--apply] [--config PATH]
+```
+
+- Without `--apply` it prints and writes nothing: the session name, a
+  `tmux new-session -d -s <KEY>-codex -c <dir>` line, the full launch line (as a session the
+  runner creates would run it), the one-time trust step, the MCP server entry for
+  `~/.codex/config.toml` (it names the file that holds the bot's token, never the token) and the
+  turn hook, which replaces any `notify` you have.
+- With `--apply` it runs `codex mcp add` in the directory, only when no `sylvode` entry exists (an
+  entry that points elsewhere is reported and left alone, exit status 2). The turn hook is never
+  written to your configuration: start codex with the printed line to get it.
+
+`--dir` and `--bot` are as for `setup claude`.
+
 ### Typing a task
 
 A task is typed only when the CLI is idle, its prompt is on the screen and empty, and no attached
@@ -674,7 +729,8 @@ task is typed and not ended, input in the session is the operator's responsibili
 
 ### Hooks and turn tracking
 
-Turn events come from claude's hooks (`SessionStart` for `startup`, `UserPromptSubmit`, `Stop`,
+Turn events of codex are described under [Codex in a tmux session](#codex-in-a-tmux-session).
+Those of claude come from its hooks (`SessionStart` for `startup`, `UserPromptSubmit`, `Stop`,
 and `Notification` for permission prompts), which run
 `sylvode-runner hook --cli claude --event <event> --socket <state_dir>/hook.sock`. They are in the
 settings file of a session the runner creates (`--settings`, unless `[runner.cli.claude] hooks =
@@ -719,6 +775,7 @@ short by its time limit or shutdown.
 
 | Channel and CLI | Command |
 |---|---|
+| tmux, codex (a session the runner creates) | the words of `[runner.cli.codex] launch_command`, then `-c mcp_servers.sylvode.command=...`, `-c mcp_servers.sylvode.args=[...]` and, with `hooks = true`, `-c notify=[...]` |
 | tmux, claude (a session the runner creates) | the words of `[runner.cli.claude] launch_command`, then `--mcp-config <state_dir>/mcp/<bot>.claude.json` and, with `hooks = true`, `--settings <state_dir>/sessions/<KEY>-claude/claude-settings.json` |
 | headless, claude | `claude -p <prompt> <headless_args...> --mcp-config <file> --allowedTools <the Sylvode tools>` |
 | headless, codex | `codex exec --skip-git-repo-check -c mcp_servers.sylvode.command=... -c mcp_servers.sylvode.args=... <headless_args...> <prompt>` |
@@ -768,7 +825,8 @@ directory is added to `.git/info/exclude` when the project has a `.git` director
 A `runner` agent keeps a CLI running as the runner's OS user. Anyone who can assign an issue to
 the bot, mention it, or request its vote can make that CLI act, and anyone who can edit an issue
 or comment can put text in front of it. With the default `launch_command` and `headless_args`
-(`--permission-mode bypassPermissions`) every permission check of the CLI is off. Read
+(`--permission-mode bypassPermissions` for claude, `--dangerously-bypass-approvals-and-sandbox` for a codex
+session) every permission check of the CLI is off. Read
 [SECURITY.md](SECURITY.md) before connecting a bot; at start-up one `runner CLI posture` line per
 CLI states what it may do, with a warning while checks are off, and `doctor` and the connection's
 status in Sylvode say the same.
@@ -777,8 +835,8 @@ status in Sylvode say the same.
 
 At start-up and every report interval, the runner calls `GET /api/v1/ai/protocol` with each
 runner bot's token and compares `task_protocol` with its own (1), then sends
-`PUT /api/v1/ai/runner/report`: component names, statuses and versions, the sessions and the
-posture. The report interval is the one Sylvode advertises, kept between 60 and 3600 seconds, or
+`PUT /api/v1/ai/runner/report`: component names, statuses and versions, the sessions and one
+posture row per CLI (`cli`, `status` and whether each channel runs with permission checks off). The report interval is the one Sylvode advertises, kept between 60 and 3600 seconds, or
 `[runner] report_interval_secs`. A session that is created or recovered, and the first delivery to
 a session after the runner starts, also send a report at once (after two seconds, so several
 together are one report) instead of waiting for the next interval; reports are never closer than
@@ -978,9 +1036,13 @@ valid values (`runner, openclaw, openprx, webhook, custom`).
 | `claude.headless_args` | `["--permission-mode", "bypassPermissions"]` | arguments of a headless run, after the prompt |
 | `claude.hooks` | `true` | pass the hook settings to a session the runner creates |
 | `claude.process_names` | `["claude", "claude.exe"]` | foreground command names that identify the CLI's pane |
-| `codex.enabled` | `false` | allow codex (headless only) |
-| `codex.binary` | `codex` | |
+| `codex.enabled` | `false` | allow codex (tmux and headless) |
+| `codex.binary` | `codex` | the program of a headless run and of `setup` |
+| `codex.launch_command` | `["codex", "--no-daemon", "--no-alt-screen", "--dangerously-bypass-approvals-and-sandbox"]` | the command of a session the runner creates; must start with a program; whole-word placeholders `{mcp_command_override}`, `{mcp_args_override}`, `{notify_override}` |
 | `codex.headless_args` | `[]` | arguments before the prompt (a `--sandbox` choice, say) |
+| `codex.hooks` | `true` | pass the turn hook (`-c notify=[...]`) to a session the runner creates |
+| `codex.process_names` | `["codex"]` | foreground command names that identify the CLI's pane |
+| `codex.push_settle_ms` | `700` | wait between paste and Enter for codex (500 to 10000); the longer of this and `[runner.tmux] push_settle_ms` applies |
 | `opencode.enabled` | `false` | allow opencode (headless only) |
 | `opencode.binary` | `opencode` | |
 
@@ -1012,6 +1074,7 @@ sylvode-runner config check [--json] [--config PATH]
 sylvode-runner sessions [--config PATH]
 sylvode-runner release KEY [--config PATH]
 sylvode-runner setup claude --project KEY [--dir D] [--bot ID] [--apply] [--config PATH]
+sylvode-runner setup codex --project KEY [--dir D] [--bot ID] [--apply] [--config PATH]
 sylvode-runner --help | --version
 ```
 
@@ -1022,7 +1085,7 @@ A config path that starts with `-` is written `./-name`.
   works while the runner is stopped.
 - **`release KEY`** frees a project key bound on this runner, only when no tmux session of the key
   exists and the runner is stopped.
-- **`setup claude`**: see [above](#setup-claude-for-a-session-you-start-yourself).
+- **`setup claude`**, **`setup codex`**: see [above](#setup-claude-for-a-session-you-start-yourself) and [here](#setup-codex-for-a-session-you-start-yourself).
 - **`config check`** says whether the configuration loads, naming the keys that do not, never
   printing a value.
 
@@ -1040,8 +1103,9 @@ With `--project KEY`:
 
 - `project.<KEY>`: the directory from the runner's session record against the allowed roots, and
   the state of the agent guide (`current`, `stale`, `conflict`, `absent`). The row also carries a
-  `trusted` field that is always `unknown`, so the row is at best a warning.
-- `session.<KEY>-claude`: state (`running`, `absent`, `cli_not_running`, `ambiguous`, `dialog`),
+  `trusted` field: `yes` or `no` as the CLI's own files say (claude `~/.claude.json`, codex
+  `~/.codex/config.toml`), otherwise `unknown`.
+- `session.<KEY>-<cli>`, one for every CLI recorded for the key: state (`running`, `absent`, `cli_not_running`, `ambiguous`, `dialog`),
   who started it, pane, foreground command, hooks seen, `permissions` (`bypass`, `normal`,
   `unknown`) and `mcp` (`ok`, `missing`, `other`, `stale`), each with a hint.
 - a warning when the project is a git worktree, which cannot get its exclude line.
