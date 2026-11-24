@@ -63,9 +63,9 @@ A webhook can subscribe to these events:
 | `issue.assigned` | A work item is created with an assignee, or its assignee changes, including to nobody. | `issue`, `changes.assignee_ids` (`old`, `new`, `added`, `removed`; `new` is empty after an unassignment) |
 | `issue.state_changed` | A work item moves to another state. | `issue`, `changes.state` (`old`, `new`) |
 | `issue.deleted` | A work item is deleted. | `issue` as it was before the delete, labels included |
-| `comment.created` | A comment is added to a work item. | `comment`, `issue`, `mentions` (user ids) |
-| `comment.updated` | A comment is edited. | `comment`, `issue` |
-| `comment.deleted` | A comment is deleted. | `comment`, `issue` |
+| `comment.created` | A comment is added to a work item. | `comment`, `issue`, `mentions` (`[{id, name}]`) |
+| `comment.updated` | A comment is edited. | `comment`, `issue`, `mentions` |
+| `comment.deleted` | A comment is deleted. | `comment`, `issue`, `mentions` (those it had) |
 | `label.added` | A label is added to a work item that did not have it. | `issue` (`id`, `key`, `title`), `label` (`id`, `name`, `color`) |
 | `label.removed` | A label is removed from a work item that had it, and once for every work item that had it when the label is deleted. | `issue`, `label` (the name and colour it had) |
 | `sprint.started` | A sprint starts. | `sprint` (`id`, `name`, `description`, `status`, `start_date`, `end_date`, timestamps) |
@@ -80,7 +80,7 @@ item's workspace that every ordinary member can read, and is `null` for a restri
 personal page placed into the workspace (a delivery has no reader to check the title against). A `comment` object has `id`, `issue_id`,
 `content`, `author_id`, `author_name`, `created_at` and `updated_at`; the `issue` next to it has
 `id`, `key` and `title`, in `comment.deleted` too, where the `comment` is the one that was deleted,
-with its author and its original timestamps. In these payloads `key` is the work item's identifier: the project key and the
+with its author and its original timestamps. `author_name` is empty, never an id, when the author has no name. In `mentions`, `name` is the person's current name, the name the mention was written with for someone who has left, or `null`. In these payloads `key` is the work item's identifier: the project key and the
 work item's number, for example `WEB-12`.
 
 The work items that completing, cancelling or deleting a sprint moves out of it each send an
