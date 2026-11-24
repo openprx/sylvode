@@ -269,6 +269,10 @@ const TOOL_POLICY_SCOPES: &[(&str, PolicyScope)] = &[
     ("work_items.delete", PolicyScope::OwnedBy(OwnerLookup::WorkItem)),
     ("work_items.search", PolicyScope::WorkspaceWide),
     ("work_items.add_labels", PolicyScope::OwnedBy(OwnerLookup::WorkItem)),
+    ("work_items.link_page", PolicyScope::OwnedBy(OwnerLookup::WorkItem)),
+    ("work_items.unlink_page", PolicyScope::OwnedBy(OwnerLookup::WorkItem)),
+    ("work_items.list_pages", PolicyScope::OwnedBy(OwnerLookup::WorkItem)),
+    ("objects.list_work_items", PolicyScope::OwnedBy(OwnerLookup::FlowObject)),
     ("comments.list", PolicyScope::OwnedBy(OwnerLookup::WorkItem)),
     ("comments.create", PolicyScope::OwnedBy(OwnerLookup::WorkItem)),
     ("comments.delete", PolicyScope::OwnedBy(OwnerLookup::Comment)),
@@ -1108,6 +1112,10 @@ impl McpServer {
             "work_items.delete" => tools::work_items::handle_delete_work_item(&self.client, args).await,
             "work_items.search" => tools::work_items::search_work_items(&self.client, args).await,
             "work_items.add_labels" => tools::work_items::add_labels_to_work_item(&self.client, args).await,
+            "work_items.link_page" => tools::page_links::link_page(&self.client, args).await,
+            "work_items.unlink_page" => tools::page_links::unlink_page(&self.client, args).await,
+            "work_items.list_pages" => tools::page_links::list_pages(&self.client, args).await,
+            "objects.list_work_items" => tools::page_links::list_work_items_of_page(&self.client, args).await,
 
             // Comments
             "comments.list" => tools::comments::list_comments(&self.client, args).await,

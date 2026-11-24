@@ -445,6 +445,26 @@
     "name": "work_items.add_labels"
   },
   {
+    "access": "write",
+    "category": "work_items",
+    "name": "work_items.link_page"
+  },
+  {
+    "access": "write",
+    "category": "work_items",
+    "name": "work_items.unlink_page"
+  },
+  {
+    "access": "read",
+    "category": "work_items",
+    "name": "work_items.list_pages"
+  },
+  {
+    "access": "read",
+    "category": "flow",
+    "name": "objects.list_work_items"
+  },
+  {
     "access": "read",
     "category": "workspace",
     "name": "search.all"

@@ -7,10 +7,12 @@
 //! against, so that adding a tool to the registry without deciding it fails
 //! `every_registered_tool_has_a_decision`.
 //!
-//! First release: delegated callers get read tools only. The write tools that the contract maps to
-//! `work_items:write` and `forms:write` are withheld whatever scopes the token carries, because a
-//! delegated caller must never change data through this surface yet. The write scopes keep their
-//! hierarchy (a `:write` scope implies its `:read` scope) so that a token carrying one still reads.
+//! A delegated caller reads work items, projects, comments and the linked pages of a work item,
+//! and reads and writes the records of forms. Only tools whose API routes are on the delegated
+//! allow-list (`apps/api/src/oauth/delegated.rs`, `DELEGATED_ROUTES`) are opened, each under the scope
+//! of its route. The tools that map to `work_items:write` stay withheld whatever scopes the token
+//! carries: no delegated route changes a work item through this surface yet. The write scopes keep
+//! their hierarchy (a `:write` scope implies its `:read` scope) so that a token carrying one still reads.
 
 use api::oauth::scopes::{Scope, ScopeSet};
 
@@ -33,35 +35,42 @@ pub const SCOPED_TOOLS: &[(&str, Scope)] = &[
     ("work_items.get_by_identifier", Scope::WorkItemsRead),
     ("work_items.list_labels", Scope::WorkItemsRead),
     ("comments.list", Scope::WorkItemsRead),
+    ("work_items.list_pages", Scope::WorkItemsRead),
+    // The six form routes that are delegated: list a project's forms, read a form, list, read,
+    // create and update records. Each route authorizes as a member and applies the form's own field
+    // policies. Every other form tool (design, permissions, attachments, views, children, import,
+    // export, links, aggregates, events) has no delegated route and stays withheld.
+    ("forms.list", Scope::FormsRead),
+    ("forms.get", Scope::FormsRead),
+    ("form_records.list", Scope::FormsRead),
+    ("form_records.get", Scope::FormsRead),
+    ("form_records.create", Scope::FormsWrite),
+    ("form_records.update", Scope::FormsWrite),
 ];
 
 /// Registered tools that no delegated caller may use.
 ///
-/// The first ten change data and are mapped to a write scope in the contract; they are withheld in
-/// the first release. The rest are administration, deletion, agent dispatch, import and export,
-/// plugins, Flow and anything else outside the first release's read surface. The last two names
-/// belong to the Flow-only registry, which delegated callers cannot reach at all.
+/// The tools that change work items, labels or comments are mapped to a write scope in the contract
+/// and are withheld. The rest are administration, deletion, agent dispatch, import and export,
+/// plugins, Flow and anything else whose API route is not delegated. The last two names belong to
+/// the Flow-only registry, which delegated callers cannot reach at all.
 pub const WITHHELD_TOOLS: &[&str] = &[
     // Read tools whose API routes are not on the delegated allow-list, so they could only fail
     // closed: search is not scoped to a grant's projects, the project label list is bot-only, and
-    // the form routes decide permissions through paths that do not read the grant.
+    // the remaining form reads (schema summary, views, children) have no delegated route.
     "work_items.search",
     "labels.list_by_project",
-    "forms.list",
-    "forms.get",
     "forms.schema_summary",
     "form_views.list",
-    "form_records.list",
-    "form_records.get",
     "form_records.children",
     "work_items.create",
     "work_items.update",
     "work_items.add_label",
     "work_items.add_labels",
+    "work_items.link_page",
+    "work_items.unlink_page",
     "work_items.remove_label",
     "comments.create",
-    "form_records.create",
-    "form_records.update",
     "form_records.child_create",
     "form_records.child_update",
     "projects.create",
@@ -137,6 +146,7 @@ pub const WITHHELD_TOOLS: &[&str] = &[
     "flow.feature_get",
     "flow.feature_set",
     "objects.get",
+    "objects.list_work_items",
     "objects.query",
     "objects.history",
     "objects.create",
@@ -195,7 +205,7 @@ pub const WITHHELD_TOOLS: &[&str] = &[
     "sylvode_task_complete",
     "sylvode_task_fail",
     // The search mode entry tools. A delegated server ignores the tool mode, and the wrappers would
-    // only re-expose the eight read tools under another name.
+    // only re-expose the delegated tools under another name.
     "sylvode_overview",
     "sylvode_search",
     "sylvode_read",
@@ -279,12 +289,12 @@ mod tests {
 
     #[test]
     fn the_first_release_exposes_exactly_these_totals() {
-        assert_eq!(SCOPED_TOOLS.len(), 8);
-        assert_eq!(WITHHELD_TOOLS.len(), 152);
-        // The main registry (154 tools) and the four search mode entry tools are fully covered; the two
+        assert_eq!(SCOPED_TOOLS.len(), 15);
+        assert_eq!(WITHHELD_TOOLS.len(), 149);
+        // The main registry (158 tools) and the four search mode entry tools are fully covered; the two
         // extra names are Flow-only.
-        assert_eq!(crate::tools::get_all_tool_definitions().len(), 154);
-        assert_eq!(SCOPED_TOOLS.len() + WITHHELD_TOOLS.len(), 154 + 4 + 2);
+        assert_eq!(crate::tools::get_all_tool_definitions().len(), 158);
+        assert_eq!(SCOPED_TOOLS.len() + WITHHELD_TOOLS.len(), 158 + 4 + 2);
     }
 
     /// The five task tools are closed to every connected application, whatever its scopes, and
@@ -319,31 +329,36 @@ mod tests {
         }
     }
 
-    /// The delegated tool set is exactly the eight read tools, under every grant: nothing else in
-    /// the registry is listed, task tools included.
+    /// The delegated tool set is exactly the fifteen tools of the table, under every grant: nothing
+    /// else in the registry is listed, task tools included.
     #[test]
-    fn the_delegated_listing_is_exactly_the_eight_read_tools() {
+    fn the_delegated_listing_is_exactly_the_scoped_tools() {
         let listed = |scopes: ScopeSet| -> BTreeSet<String> {
             registered().into_iter().filter(|name| allowed(scopes, name)).collect()
         };
-        let eight = SCOPED_TOOLS
+        let scoped = SCOPED_TOOLS
             .iter()
             .map(|(name, _)| (*name).to_string())
             .collect::<BTreeSet<_>>();
-        assert_eq!(eight.len(), 8);
-        assert_eq!(listed(ScopeSet::all()), eight);
+        assert_eq!(scoped.len(), 15);
+        assert_eq!(listed(ScopeSet::all()), scoped);
         for scopes in scope_sets() {
-            assert!(listed(scopes).is_subset(&eight), "{}", scopes.to_scope_string());
+            assert!(listed(scopes).is_subset(&scoped), "{}", scopes.to_scope_string());
         }
     }
 
+    /// Only the two form record writes are opened under a write scope; every other write tool,
+    /// the work item and page link writes included, stays withheld.
     #[test]
-    fn only_read_scopes_unlock_tools() {
+    fn only_the_form_record_writes_unlock_under_a_write_scope() {
         for (name, scope) in SCOPED_TOOLS {
-            assert!(
-                matches!(scope, Scope::ProjectsRead | Scope::WorkItemsRead | Scope::FormsRead),
-                "{name} requires {scope:?}"
-            );
+            let expected = match *name {
+                "form_records.create" | "form_records.update" => Scope::FormsWrite,
+                "forms.list" | "forms.get" | "form_records.list" | "form_records.get" => Scope::FormsRead,
+                "projects.list" | "projects.get" | "context.get_project" => Scope::ProjectsRead,
+                _ => Scope::WorkItemsRead,
+            };
+            assert_eq!(*scope, expected, "{name}");
         }
         let writes = [
             "work_items.create",
@@ -351,9 +366,9 @@ mod tests {
             "work_items.add_label",
             "work_items.add_labels",
             "work_items.remove_label",
+            "work_items.link_page",
+            "work_items.unlink_page",
             "comments.create",
-            "form_records.create",
-            "form_records.update",
             "form_records.child_create",
             "form_records.child_update",
         ];
@@ -418,7 +433,7 @@ mod tests {
     }
 
     #[test]
-    fn the_filter_per_scope_set_is_the_contract_table_for_reads() {
+    fn the_filter_per_scope_set_is_the_contract_table() {
         let names = |scopes: ScopeSet| -> Vec<&'static str> {
             SCOPED_TOOLS
                 .iter()
@@ -431,10 +446,25 @@ mod tests {
             names(ScopeSet::from_scopes(&[Scope::ProjectsRead])),
             ["projects.list", "projects.get", "context.get_project"]
         );
-        assert_eq!(names(ScopeSet::all()).len(), 8);
+        assert_eq!(names(ScopeSet::all()).len(), 15);
         // Write scopes imply their read scope.
-        assert!(names(ScopeSet::from_scopes(&[Scope::FormsWrite])).is_empty());
-        assert_eq!(names(ScopeSet::from_scopes(&[Scope::WorkItemsWrite])).len(), 5);
+        assert_eq!(
+            names(ScopeSet::from_scopes(&[Scope::FormsRead])),
+            ["forms.list", "forms.get", "form_records.list", "form_records.get"]
+        );
+        assert_eq!(
+            names(ScopeSet::from_scopes(&[Scope::FormsWrite])),
+            [
+                "forms.list",
+                "forms.get",
+                "form_records.list",
+                "form_records.get",
+                "form_records.create",
+                "form_records.update"
+            ]
+        );
+        assert_eq!(names(ScopeSet::from_scopes(&[Scope::WorkItemsWrite])).len(), 6);
+        assert_eq!(names(ScopeSet::from_scopes(&[Scope::WorkItemsRead])).len(), 6);
         // Scopes that belong to the API only unlock nothing here.
         assert!(names(ScopeSet::from_scopes(&[Scope::NotificationsRead, Scope::TasksRead])).is_empty());
     }

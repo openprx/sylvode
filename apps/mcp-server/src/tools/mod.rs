@@ -16,6 +16,7 @@ pub mod members;
 pub mod milestones;
 pub mod objects;
 pub mod operation_logs;
+pub mod page_links;
 pub mod plugins;
 pub mod project_types;
 pub mod projects;
@@ -129,6 +130,10 @@ pub fn get_all_tool_definitions() -> Vec<ToolDefinition> {
         labels::update_label_tool(),
         labels::delete_label_tool(),
         work_items::add_labels_to_work_item_tool(),
+        page_links::link_page_tool(),
+        page_links::unlink_page_tool(),
+        page_links::list_pages_tool(),
+        page_links::list_work_items_of_page_tool(),
         search::search_all_tool(),
         // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
         // scenario_tools::code_resources_list_tool(),

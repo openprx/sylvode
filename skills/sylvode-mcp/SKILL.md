@@ -2,7 +2,7 @@
 name: sylvode-mcp
 description: Work on Sylvode tasks and data through the Sylvode MCP server. Use when a message starts with "[Sylvode task]" or "[Sylvode reminder]", or when you need to read or change Sylvode projects, issues, comments, forms, proposals or Flow objects.
 ---
-<!-- sylvode-skill v=0.5.0 h=1a69d092775f -->
+<!-- sylvode-skill v=0.5.0 h=a8f86385c02f -->
 
 # Sylvode MCP
 
@@ -105,7 +105,7 @@ Full mode is an explicit choice of whoever configured the server. Then the tool 
 ## Tools
 
 <!-- BEGIN GENERATED: tool-overview (sylvode-skillgen; do not edit) -->
-Sylvode has 154 tools in 20 categories. In search mode (the default) the tool list holds only `sylvode_overview`, `sylvode_search`, `sylvode_read`, `sylvode_write` and the task tools. Find a tool with `sylvode_search`, call a `read` tool with `sylvode_read` and a `write` tool with `sylvode_write`. The five task tools are called directly.
+Sylvode has 158 tools in 20 categories. In search mode (the default) the tool list holds only `sylvode_overview`, `sylvode_search`, `sylvode_read`, `sylvode_write` and the task tools. Find a tool with `sylvode_search`, call a `read` tool with `sylvode_read` and a `write` tool with `sylvode_write`. The five task tools are called directly.
 
 | Category | Tools | Read | Write | Covers |
 |---|---:|---:|---:|---|
@@ -115,7 +115,7 @@ Sylvode has 154 tools in 20 categories. In search mode (the default) the tool li
 | `context`: Context | 3 | 3 | 0 | Read project context, governance and the agent policy |
 | `forms`: Universal forms | 34 | 16 | 18 | Forms, records, attachments, permissions, imports and business events |
 | `plugins`: Plugins | 5 | 3 | 2 | Install, inspect and invoke WASM plugins |
-| `work_items`: Work items | 11 | 5 | 6 | Issues of a project: list, read, create, update, label |
+| `work_items`: Work items | 14 | 6 | 8 | Issues of a project: list, read, create, update, label |
 | `comments`: Comments | 3 | 1 | 2 | Discuss work items |
 | `files`: Files | 1 | 0 | 1 | Upload files and get their URLs |
 | `labels`: Labels | 5 | 2 | 3 | Workspace and project labels |
@@ -127,7 +127,7 @@ Sylvode has 154 tools in 20 categories. In search mode (the default) the tool li
 | `documents`: Documents | 3 | 0 | 3 | Governed document summaries, risk reviews and approvals |
 | `operations`: Operations | 2 | 0 | 2 | Governed inspection reports and corrective actions |
 | `workspace`: Workspace | 3 | 3 | 0 | Members, global search and bot operation records |
-| `flow`: Flow | 52 | 19 | 33 | Pages, collections, shares, comments, imports, exports and maintenance of Flow |
+| `flow`: Flow | 53 | 20 | 33 | Pages, collections, shares, comments, imports, exports and maintenance of Flow |
 | `tasks`: Agent tasks | 5 | 1 | 4 | The protocol of tasks assigned to a bot: get, acknowledge, report progress, complete, fail |
 <!-- END GENERATED: tool-overview -->
 
@@ -135,7 +135,7 @@ The full list with one line per tool is in [reference/tools.md](reference/tools.
 
 ## Connected applications
 
-An application connected through Sylvode's OAuth authorization (for example Ramflux) sees a smaller surface than a bot does: eight read tools in its own workspace, no search tools, no task tools and nothing that changes data. A refusal naming `insufficient_scope` or `tool not available to connected applications` is final; do not retry it.
+An application connected through Sylvode's OAuth authorization (for example Ramflux) sees a smaller surface than a bot does, in its own workspace only: the read tools for projects, work items, comments and the pages linked to a work item, and the form tools `forms.list`, `forms.get`, `form_records.list`, `form_records.get` (scope `forms:read`) and `form_records.create`, `form_records.update` (scope `forms:write`). It gets no search tools, no task tools and no tool that changes a work item, a comment or a label. A refusal naming `insufficient_scope` or `tool not available to connected applications` is final; do not retry it.
 
 ## Install and troubleshooting
 
