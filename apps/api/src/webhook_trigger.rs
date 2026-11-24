@@ -39,6 +39,9 @@ pub enum WebhookEvent {
     LabelRemoved,
     SprintStarted,
     SprintCompleted,
+    MilestoneCreated,
+    MilestoneUpdated,
+    MilestoneDeleted,
     ProposalCreated,
     ProposalUpdated,
     ProposalDeleted,
@@ -75,6 +78,9 @@ impl WebhookEvent {
             Self::LabelRemoved => "label.removed",
             Self::SprintStarted => "sprint.started",
             Self::SprintCompleted => "sprint.completed",
+            Self::MilestoneCreated => "milestone.created",
+            Self::MilestoneUpdated => "milestone.updated",
+            Self::MilestoneDeleted => "milestone.deleted",
             Self::ProposalCreated => "proposal.created",
             Self::ProposalUpdated => "proposal.updated",
             Self::ProposalDeleted => "proposal.deleted",
@@ -596,7 +602,10 @@ async fn build_event_data(
                 assignee_ids: Vec::new(),
             })
         }
-        WebhookEvent::ProposalCreated
+        WebhookEvent::MilestoneCreated
+        | WebhookEvent::MilestoneUpdated
+        | WebhookEvent::MilestoneDeleted
+        | WebhookEvent::ProposalCreated
         | WebhookEvent::ProposalUpdated
         | WebhookEvent::ProposalDeleted
         | WebhookEvent::ProposalSubmitted
@@ -640,6 +649,7 @@ pub(crate) async fn issue_snapshot(
         priority: String,
         assignee_id: Option<Uuid>,
         sprint_id: Option<Uuid>,
+        milestone_id: Option<Uuid>,
         due_at: Option<Timestamp>,
         created_at: Timestamp,
         updated_at: Timestamp,
@@ -654,7 +664,8 @@ pub(crate) async fn issue_snapshot(
         DbBackend::Postgres,
         r"
             SELECT wi.id, p.key AS project_key, wi.sequence_number, wi.title, wi.description, wi.state,
-                   wi.priority, wi.assignee_id, wi.sprint_id, wi.due_at, wi.created_at, wi.updated_at
+                   wi.priority, wi.assignee_id, wi.sprint_id, wi.milestone_id, wi.due_at, wi.created_at,
+                   wi.updated_at
             FROM work_items wi
             INNER JOIN projects p ON p.id = wi.project_id
             WHERE wi.id = $1
@@ -695,6 +706,7 @@ pub(crate) async fn issue_snapshot(
             "assignee_ids": assignee_id_values,
             "label_ids": label_ids,
             "sprint_id": issue.sprint_id.map(|v| v.to_string()),
+            "milestone_id": issue.milestone_id.map(|v| v.to_string()),
             "due_at": issue.due_at.map(Timestamp::to_rfc3339),
             "created_at": issue.created_at.to_rfc3339(),
             "updated_at": issue.updated_at.to_rfc3339(),

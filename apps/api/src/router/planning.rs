@@ -1,4 +1,4 @@
-//! Workflows and sprints.
+//! Workflows, sprints and milestones.
 
 use api::{middleware, routes};
 use axum::{
@@ -80,6 +80,26 @@ pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
             axum::routing::get(routes::sprint::get_sprint)
                 .put(routes::sprint::update_sprint)
                 .delete(routes::sprint::delete_sprint)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        // Milestone routes (protected)
+        .route(
+            "/api/v1/workspaces/{workspace_id}/milestones",
+            post(routes::milestone::create_milestone)
+                .get(routes::milestone::list_milestones)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/milestones/{id}",
+            get(routes::milestone::get_milestone)
+                .put(routes::milestone::update_milestone)
+                .delete(routes::milestone::delete_milestone)
                 .route_layer(axum_middleware::from_fn_with_state(
                     auth_state.clone(),
                     middleware::bot_auth::bot_or_user_auth_middleware,

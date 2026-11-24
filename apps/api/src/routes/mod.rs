@@ -26,6 +26,7 @@ pub mod inbound_events;
 pub mod issue;
 pub mod label;
 pub mod member;
+pub mod milestone;
 pub mod my;
 pub mod notification;
 pub mod plugin;

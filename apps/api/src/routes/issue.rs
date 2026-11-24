@@ -18,6 +18,7 @@ use crate::{
     error::ApiError,
     request::nullable,
     response::{ApiResponse, PaginatedData},
+    routes::milestone::ensure_open_milestone,
     services::{
         ai_task_service::{CreateAiTaskInput, DispatchOrigin, DispatchOutcome, dispatch_ai_task, runner_bot_block},
         bot_identity::is_bot_user,
@@ -41,10 +42,11 @@ pub struct CreateIssueRequest {
     pub assignee_id: Option<Uuid>,
     pub due_at: Option<String>,
     pub sprint_id: Option<Uuid>,
+    pub milestone_id: Option<Uuid>,
 }
 
-/// `PUT /issues/{id}`: a key that is absent leaves the field alone. `assignee_id`, `sprint_id` and
-/// `due_at` also accept `null`, which clears them; `null` on any other field is refused.
+/// `PUT /issues/{id}`: a key that is absent leaves the field alone. `assignee_id`, `sprint_id`,
+/// `milestone_id` and `due_at` also accept `null`, which clears them; `null` on any other field is refused.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[allow(
@@ -66,6 +68,8 @@ pub struct UpdateIssueRequest {
     pub due_at: Option<Option<String>>,
     #[serde(default, deserialize_with = "nullable")]
     pub sprint_id: Option<Option<Uuid>>,
+    #[serde(default, deserialize_with = "nullable")]
+    pub milestone_id: Option<Option<Uuid>>,
 }
 
 /// The value of a field that cannot be cleared: `null` is a request error, not "no change".
@@ -91,6 +95,8 @@ pub struct ListIssuesQuery {
     pub priority: Option<String>,
     /// A sprint id, or `none` for the items that are in no sprint.
     pub sprint_id: Option<String>,
+    /// A milestone id, or `none` for the items that are in no milestone.
+    pub milestone_id: Option<String>,
     pub search: Option<String>,
     pub label_ids: Option<String>,
     pub sort_by: Option<String>,
@@ -342,6 +348,9 @@ pub async fn create_issue(
     };
 
     let tx = state.db.begin().await?;
+    if let Some(milestone_id) = req.milestone_id {
+        ensure_open_milestone(&tx, milestone_id, project.workspace_id).await?;
+    }
     insert_work_item(
         &tx,
         &NewWorkItem {
@@ -359,6 +368,14 @@ pub async fn create_issue(
         },
     )
     .await?;
+    if let Some(milestone_id) = req.milestone_id {
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE work_items SET milestone_id = $1 WHERE id = $2",
+            vec![milestone_id.into(), issue_id.into()],
+        ))
+        .await?;
+    }
     if let Some(assignee_id) = req.assignee_id {
         notify_assignment(
             &tx,
@@ -514,6 +531,18 @@ pub async fn list_issues(
         }
     }
 
+    if let Some(milestone) = query.milestone_id {
+        if milestone == "none" {
+            where_clauses.push("milestone_id IS NULL".to_string());
+        } else {
+            let milestone_id = Uuid::parse_str(&milestone)
+                .map_err(|_| ApiError::BadRequest("milestone_id must be a UUID or none".to_string()))?;
+            where_clauses.push(format!("milestone_id = ${param_idx}"));
+            values.push(milestone_id.into());
+            param_idx += 1;
+        }
+    }
+
     if let Some(search) = query.search {
         let search_text = search.trim();
         if !search_text.is_empty() {
@@ -596,7 +625,7 @@ pub async fn list_issues(
     let total: i64 = count_result.try_get("", "count")?;
 
     let sql = format!(
-        "SELECT id, project_id, sequence_number, sprint_id, title, description, state, priority, assignee_id, due_at, created_by, created_at, updated_at, proposal_id, governance_exempt, governance_exempt_reason FROM work_items WHERE {} ORDER BY {} LIMIT ${} OFFSET ${}",
+        "SELECT id, project_id, sequence_number, sprint_id, milestone_id, title, description, state, priority, assignee_id, due_at, created_by, created_at, updated_at, proposal_id, governance_exempt, governance_exempt_reason FROM work_items WHERE {} ORDER BY {} LIMIT ${} OFFSET ${}",
         where_sql,
         order_by,
         param_idx,
@@ -611,6 +640,7 @@ pub async fn list_issues(
         project_id: Uuid,
         sequence_number: i32,
         sprint_id: Option<Uuid>,
+        milestone_id: Option<Uuid>,
         title: String,
         description: String,
         state: String,
@@ -639,6 +669,7 @@ pub async fn list_issues(
             identifier: identifier(&project.key, i.sequence_number),
             project_id: i.project_id,
             sprint_id: i.sprint_id,
+            milestone_id: i.milestone_id,
             title: i.title,
             description: i.description,
             state: i.state,
@@ -707,6 +738,7 @@ pub async fn update_issue(
         assignee_id: requested_assignee,
         due_at: requested_due_at,
         sprint_id: requested_sprint,
+        milestone_id: requested_milestone,
     } = req;
     let requested_title = not_null(requested_title, "title")?;
     let requested_description = not_null(requested_description, "description")?;
@@ -724,13 +756,14 @@ pub async fn update_issue(
         priority: String,
         assignee_id: Option<Uuid>,
         sprint_id: Option<Uuid>,
+        milestone_id: Option<Uuid>,
         due_at: Option<platform::timestamp::Timestamp>,
     }
 
     let current_issue = CurrentIssue::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
-            SELECT wi.project_id, p.workspace_id, wi.title, wi.description, wi.state, wi.priority, wi.assignee_id, wi.sprint_id, wi.due_at
+            SELECT wi.project_id, p.workspace_id, wi.title, wi.description, wi.state, wi.priority, wi.assignee_id, wi.sprint_id, wi.milestone_id, wi.due_at
             FROM work_items wi
             INNER JOIN projects p ON wi.project_id = p.id
             WHERE wi.id = $1
@@ -838,6 +871,12 @@ pub async fn update_issue(
         param_idx += 1;
     }
 
+    if let Some(milestone_id) = requested_milestone {
+        updates.push(format!("milestone_id = ${param_idx}"));
+        values.push(milestone_id.into());
+        param_idx += 1;
+    }
+
     if updates.is_empty() {
         return Err(ApiError::BadRequest("no fields to update".to_string()));
     }
@@ -852,6 +891,14 @@ pub async fn update_issue(
     let query = format!("UPDATE work_items SET {} WHERE id = ${}", updates.join(", "), param_idx);
 
     let tx = state.db.begin().await?;
+
+    // Keeping the milestone the item already has is not an assignment: a closed milestone does
+    // not block the other edits of its items.
+    if let Some(Some(milestone_id)) = requested_milestone
+        && Some(milestone_id) != current_issue.milestone_id
+    {
+        ensure_open_milestone(&tx, milestone_id, current_issue.workspace_id).await?;
+    }
 
     tx.execute(Statement::from_sql_and_values(DbBackend::Postgres, &query, values))
         .await?;
@@ -915,6 +962,17 @@ pub async fn update_issue(
             }),
         );
     }
+    if let Some(new_milestone_id) = requested_milestone
+        && new_milestone_id != current_issue.milestone_id
+    {
+        updated_fields.insert(
+            "milestone_id".to_string(),
+            json!({
+                "old": current_issue.milestone_id.map(|id| id.to_string()),
+                "new": new_milestone_id.map(|id| id.to_string()),
+            }),
+        );
+    }
     if let Some(new_due_at) = requested_due_at
         && new_due_at != current_issue.due_at
     {
@@ -973,6 +1031,18 @@ pub async fn update_issue(
             detail: serde_json::json!({
                 "from": current_issue.sprint_id.map(|id| id.to_string()),
                 "to": new_sprint_id.map(|id| id.to_string())
+            }),
+        });
+    }
+
+    if let Some(new_milestone_id) = requested_milestone
+        && new_milestone_id != current_issue.milestone_id
+    {
+        changes.push(ActivityChange {
+            action: "milestone_changed",
+            detail: serde_json::json!({
+                "from": current_issue.milestone_id.map(|id| id.to_string()),
+                "to": new_milestone_id.map(|id| id.to_string())
             }),
         });
     }
@@ -1730,6 +1800,7 @@ mod bot_task_dispatch_tests {
             assignee_id: assignee.map(Some),
             due_at: None,
             sprint_id: None,
+            milestone_id: None,
         }
     }
 
@@ -1767,6 +1838,7 @@ mod bot_task_dispatch_tests {
                 assignee_id: Some(f.bot_a),
                 due_at: None,
                 sprint_id: None,
+                milestone_id: None,
             }),
         )
         .await
