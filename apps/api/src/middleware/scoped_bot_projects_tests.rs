@@ -29,7 +29,7 @@ use crate::scratch_or_skip;
 use crate::services::bots::{self, NewBot};
 
 /// A bot of the cast's workspace with a token, the given permissions, and a project scope.
-async fn scoped_bot(
+pub(super) async fn scoped_bot(
     db: &DatabaseConnection,
     c: &Cast,
     name: &str,
@@ -236,10 +236,9 @@ async fn refused_class_follows_the_default_level_and_admin_never_opens() {
     let (token, bot) = scoped_bot(db, &c, "lister", &["read", "write", "admin"], "none", &[]).await;
     let app = router(db, &[]);
     let ws = c.w.tenant.workspace_id;
-    let listing = "/api/v1/my/issues";
+    let listing = "/api/v1/proposals";
     let collab = "/api/v2/flow/collab/tickets";
     let members = format!("/api/v1/workspaces/{ws}/members");
-    let search_without_project = "/api/v1/search?q=x";
 
     for (default, listing_open) in [("none", false), ("read", true), ("comment", true)] {
         exec(
@@ -265,10 +264,12 @@ async fn refused_class_follows_the_default_level_and_admin_never_opens() {
             refused(&call(&app, "POST", &members, &token, Some(json!({}))).await),
             "an Admin route at default {default}, even for an admin token"
         );
-        assert!(
-            refused(&call(&app, "GET", search_without_project, &token, None).await),
-            "search without a project at default {default}"
-        );
+        for path in ["/api/v1/search?q=x", "/api/v1/my/issues", "/api/v1/my/activities"] {
+            assert!(
+                allowed(&call(&app, "GET", path, &token, None).await),
+                "the Filtered route {path} at default {default}: its handler limits the rows"
+            );
+        }
         for path in ["/api/v1/notifications", "/api/v1/auth/me", "/api/v1/project-types"] {
             assert!(
                 allowed(&call(&app, "GET", path, &token, None).await),

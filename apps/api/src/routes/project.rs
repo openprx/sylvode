@@ -1866,11 +1866,23 @@ pub async fn list_projects(
 
     // A connected application sees the projects of its grant only: a grant limited to some
     // projects adds the id filter to every statement that reads or counts the list.
-    let granted_projects: Option<Vec<Uuid>> =
+    let oauth_projects: Option<Vec<Uuid>> =
         crate::oauth::delegated::current().and_then(|context| match &context.projects {
             crate::oauth::scopes::ProjectScope::All => None,
             crate::oauth::scopes::ProjectScope::Selected(ids) => Some(ids.to_vec()),
         });
+    // A scoped bot sees the projects it can read (a runner bot: where it has an enabled connection).
+    let bot_projects = match extensions.get::<BotAuthContext>() {
+        Some(bot_ctx) => crate::middleware::scoped_bot::readable_projects(&state.db, bot_ctx.bot_id)
+            .await?
+            .ids(),
+        None => None,
+    };
+    let granted_projects: Option<Vec<Uuid>> = match (oauth_projects, bot_projects) {
+        (Some(oauth), Some(bot)) => Some(oauth.into_iter().filter(|id| bot.contains(id)).collect()),
+        (Some(ids), None) | (None, Some(ids)) => Some(ids),
+        (None, None) => None,
+    };
     let project_filter = if granted_projects.is_some() {
         " AND id = ANY($2)"
     } else {

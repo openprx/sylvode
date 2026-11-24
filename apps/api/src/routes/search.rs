@@ -9,7 +9,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    error::ApiError, middleware::bot_auth::BotAuthContext, response::ApiResponse, services::issue_view::identifier,
+    error::ApiError,
+    middleware::{bot_auth::BotAuthContext, scoped_bot::readable_projects},
+    response::ApiResponse,
+    services::issue_view::identifier,
 };
 
 #[derive(Debug, Deserialize)]
@@ -83,11 +86,13 @@ pub struct SearchResponse {
 ///
 /// `project_id` narrows the scope further and is validated against the tenant
 /// scope before any result query runs.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct SearchScope {
     member_user: Option<Uuid>,
     bot_workspace: Option<Uuid>,
     project: Option<Uuid>,
+    /// The projects a scoped bot can read; `None` is no limit.
+    projects: Option<Vec<Uuid>>,
 }
 
 impl SearchScope {
@@ -96,6 +101,7 @@ impl SearchScope {
             member_user: Some(user_id),
             bot_workspace: None,
             project: None,
+            projects: None,
         }
     }
 
@@ -104,6 +110,7 @@ impl SearchScope {
             member_user: None,
             bot_workspace: Some(workspace_id),
             project: None,
+            projects: None,
         }
     }
 
@@ -112,9 +119,19 @@ impl SearchScope {
         self
     }
 
-    /// Bind values for `$1`, `$2` and `$3` of [`SCOPE_FILTER_SQL`].
-    fn params(self) -> Vec<sea_orm::Value> {
-        vec![self.member_user.into(), self.bot_workspace.into(), self.project.into()]
+    fn with_projects(mut self, projects: Option<Vec<Uuid>>) -> Self {
+        self.projects = projects;
+        self
+    }
+
+    /// Bind values for `$1` to `$4` of [`SCOPE_FILTER_SQL`].
+    fn params(&self) -> Vec<sea_orm::Value> {
+        vec![
+            self.member_user.into(),
+            self.bot_workspace.into(),
+            self.project.into(),
+            self.projects.clone().into(),
+        ]
     }
 }
 
@@ -122,7 +139,8 @@ impl SearchScope {
 ///
 /// The outer query must expose `projects` under the alias `p`. Placeholders:
 /// `$1` member user id (NULL for bots), `$2` bot workspace id (NULL for users),
-/// `$3` optional project filter (NULL means "every visible project").
+/// `$3` optional project filter (NULL means "every visible project"), `$4` the projects a scoped bot
+/// can read (NULL means no limit).
 const SCOPE_FILTER_SQL: &str = r"
         (
             ($1::uuid IS NOT NULL AND EXISTS (
@@ -134,6 +152,7 @@ const SCOPE_FILTER_SQL: &str = r"
             OR ($2::uuid IS NOT NULL AND p.workspace_id = $2)
         )
         AND ($3::uuid IS NULL OR p.id = $3)
+        AND ($4::uuid[] IS NULL OR p.id = ANY($4))
 ";
 
 /// GET /api/v1/search
@@ -144,7 +163,8 @@ pub async fn search(
     Query(query): Query<SearchQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let base_scope = match bot {
-        Some(Extension(bot_ctx)) => SearchScope::for_bot(bot_ctx.workspace_id),
+        Some(Extension(bot_ctx)) => SearchScope::for_bot(bot_ctx.workspace_id)
+            .with_projects(readable_projects(&state.db, bot_ctx.bot_id).await?.ids()),
         None => SearchScope::for_user(
             Uuid::parse_str(&claims.sub).map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))?,
         ),
@@ -157,7 +177,7 @@ pub async fn search(
 
     // Reject an out-of-scope project explicitly instead of silently returning
     // an empty result set, so callers cannot probe foreign project ids.
-    ensure_project_in_scope(&state.db, scope).await?;
+    ensure_project_in_scope(&state.db, &scope).await?;
 
     let limit = i64::from(query.limit.unwrap_or(50).min(100));
     let search_type = query.search_type.as_deref();
@@ -166,7 +186,7 @@ pub async fn search(
 
     // Search issues
     if search_type.is_none() || search_type == Some("issue") {
-        match search_issues(&state.db, scope, &query.q, limit).await {
+        match search_issues(&state.db, &scope, &query.q, limit).await {
             Ok(issues) => results.extend(issues.into_iter().map(SearchResult::Issue)),
             Err(err) => tracing::warn!(error = %err, "issue search failed"),
         }
@@ -174,7 +194,7 @@ pub async fn search(
 
     // Search projects
     if search_type.is_none() || search_type == Some("project") {
-        match search_projects(&state.db, scope, &query.q, limit).await {
+        match search_projects(&state.db, &scope, &query.q, limit).await {
             Ok(projects) => results.extend(projects.into_iter().map(SearchResult::Project)),
             Err(err) => tracing::warn!(error = %err, "project search failed"),
         }
@@ -182,7 +202,7 @@ pub async fn search(
 
     // Search comments
     if search_type.is_none() || search_type == Some("comment") {
-        match search_comments(&state.db, scope, &query.q, limit).await {
+        match search_comments(&state.db, &scope, &query.q, limit).await {
             Ok(comments) => results.extend(comments.into_iter().map(SearchResult::Comment)),
             Err(err) => tracing::warn!(error = %err, "comment search failed"),
         }
@@ -198,7 +218,7 @@ pub async fn search(
 }
 
 /// Verifies that an explicitly requested project exists inside the caller's scope.
-async fn ensure_project_in_scope(db: &DatabaseConnection, scope: SearchScope) -> Result<(), ApiError> {
+async fn ensure_project_in_scope(db: &DatabaseConnection, scope: &SearchScope) -> Result<(), ApiError> {
     if scope.project.is_none() {
         return Ok(());
     }
@@ -233,7 +253,7 @@ struct IssueSearchRow {
 
 async fn search_issues(
     db: &DatabaseConnection,
-    scope: SearchScope,
+    scope: &SearchScope,
     query: &str,
     limit: i64,
 ) -> Result<Vec<IssueSearchResult>, ApiError> {
@@ -245,9 +265,9 @@ async fn search_issues(
         FROM work_items wi
         INNER JOIN projects p ON wi.project_id = p.id
         WHERE {SCOPE_FILTER_SQL}
-          AND (wi.title ILIKE $4 OR wi.description ILIKE $4)
+          AND (wi.title ILIKE $5 OR wi.description ILIKE $5)
         ORDER BY wi.updated_at DESC
-        LIMIT $5
+        LIMIT $6
     "
     );
 
@@ -278,7 +298,7 @@ async fn search_issues(
 
 async fn search_projects(
     db: &DatabaseConnection,
-    scope: SearchScope,
+    scope: &SearchScope,
     query: &str,
     limit: i64,
 ) -> Result<Vec<ProjectSearchResult>, ApiError> {
@@ -288,9 +308,9 @@ async fn search_projects(
         SELECT p.id, p.key, p.name, p.description, p.workspace_id
         FROM projects p
         WHERE {SCOPE_FILTER_SQL}
-          AND (p.name ILIKE $4 OR p.key ILIKE $4 OR p.description ILIKE $4)
+          AND (p.name ILIKE $5 OR p.key ILIKE $5 OR p.description ILIKE $5)
         ORDER BY p.updated_at DESC
-        LIMIT $5
+        LIMIT $6
     "
     );
 
@@ -310,7 +330,7 @@ async fn search_projects(
 
 async fn search_comments(
     db: &DatabaseConnection,
-    scope: SearchScope,
+    scope: &SearchScope,
     query: &str,
     limit: i64,
 ) -> Result<Vec<CommentSearchResult>, ApiError> {
@@ -322,9 +342,9 @@ async fn search_comments(
         INNER JOIN work_items wi ON c.work_item_id = wi.id
         INNER JOIN projects p ON wi.project_id = p.id
         WHERE {SCOPE_FILTER_SQL}
-          AND c.body ILIKE $4
+          AND c.body ILIKE $5
         ORDER BY c.created_at DESC
-        LIMIT $5
+        LIMIT $6
     "
     );
 
@@ -382,7 +402,7 @@ mod tests {
         let project_id = Uuid::new_v4();
         let scope = SearchScope::for_user(Uuid::new_v4()).with_project(Some(project_id));
         assert_eq!(scope.project, Some(project_id));
-        assert_eq!(scope.params().len(), 3);
+        assert_eq!(scope.params().len(), 4);
     }
 
     #[test]
@@ -390,6 +410,7 @@ mod tests {
         assert!(SCOPE_FILTER_SQL.contains("wm.user_id = $1"));
         assert!(SCOPE_FILTER_SQL.contains("p.workspace_id = $2"));
         assert!(SCOPE_FILTER_SQL.contains("$3::uuid IS NULL OR p.id = $3"));
+        assert!(SCOPE_FILTER_SQL.contains("$4::uuid[] IS NULL OR p.id = ANY($4)"));
     }
 
     fn legacy_result_discriminator(result: &SearchResult) -> &'static str {
@@ -481,6 +502,27 @@ mod tests {
         project_a2: Uuid,
         project_b1: Uuid,
         bot_id: Uuid,
+        bot_b_id: Uuid,
+    }
+
+    /// A workspace-scoped bot of `workspace_id`.
+    async fn insert_bot(db: &DatabaseConnection, workspace_id: Uuid, owner: Uuid, name: &str) -> Uuid {
+        let tx = sea_orm::TransactionTrait::begin(db).await.expect("begin");
+        let bot = crate::services::bots::create(
+            &tx,
+            crate::services::bots::NewBot {
+                workspace_id,
+                created_by: owner,
+                name,
+                permissions: vec!["read".to_string()],
+                transport_surface: "mcp_stdio".to_string(),
+                expires_at: None,
+            },
+        )
+        .await
+        .expect("bot");
+        tx.commit().await.expect("commit");
+        bot.id
     }
 
     /// Caller identity used to invoke the handler.
@@ -591,7 +633,6 @@ mod tests {
         let token = format!("sq{}", Uuid::new_v4().simple());
         let alice_id = Uuid::new_v4();
         let bob_id = Uuid::new_v4();
-        let bot_id = Uuid::new_v4();
         let workspace_a = Uuid::new_v4();
         let workspace_b = Uuid::new_v4();
         let project_a1 = Uuid::new_v4();
@@ -603,6 +644,8 @@ mod tests {
         insert_user(&db, bob_id).await;
         insert_workspace(&db, workspace_a, alice_id).await;
         insert_workspace(&db, workspace_b, bob_id).await;
+        let bot_id = insert_bot(&db, workspace_a, alice_id, "search bot a").await;
+        let bot_b_id = insert_bot(&db, workspace_b, bob_id, "search bot b").await;
 
         insert_project(&db, project_a1, workspace_a, "A1", &token).await;
         insert_project(&db, project_a2, workspace_a, "A2", &token).await;
@@ -624,6 +667,7 @@ mod tests {
             project_a2,
             project_b1,
             bot_id,
+            bot_b_id,
         }
     }
 
@@ -787,8 +831,8 @@ mod tests {
     async fn db_bot_search_is_scoped_by_token_workspace() {
         let fx = seed(scratch_or_skip!("search_bot_scope")).await;
 
-        // The bot id has no workspace_members row at all: its reach comes purely
-        // from the workspace its token was issued for.
+        // The bots have no workspace_members row at all: their reach comes purely
+        // from the workspace their token was issued for.
         let bot_a = Caller::Bot(fx.bot_id, fx.workspace_a);
         let body = call_search(&fx, bot_a, &format!("/api/v1/search?q={}", fx.token))
             .await
@@ -827,7 +871,7 @@ mod tests {
         // alice (a member of A) is not involved in the request at all.
         let body = call_search(
             &fx,
-            Caller::Bot(fx.bot_id, fx.workspace_b),
+            Caller::Bot(fx.bot_b_id, fx.workspace_b),
             &format!("/api/v1/search?q={}", fx.token),
         )
         .await

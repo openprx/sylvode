@@ -8,8 +8,8 @@ pub static ROUTES: &[RunnerRoute] = &[
     r("DELETE", "/api/v1/labels/{id}", Class::Admin),
     r("PUT", "/api/v1/labels/{id}", Class::Admin),
     r("POST", "/api/v1/workspaces/{workspace_id}/labels", Class::Admin),
-    r("GET", "/api/v1/my/activities", Class::Refused),
-    r("GET", "/api/v1/my/issues", Class::Refused),
+    r("GET", "/api/v1/my/activities", Class::Filtered),
+    r("GET", "/api/v1/my/issues", Class::Filtered),
     r("GET", "/api/v1/workspaces/{workspace_id}/activities", Class::Refused),
     r("GET", "/api/v1/workspaces/{workspace_id}/labels", Class::Refused),
     rc("DELETE", "/api/v1/comments/{id}", Class::Project(Find::Comment("id"))),
@@ -48,7 +48,7 @@ mod tests {
     fn the_classes_of_the_area() {
         assert_eq!(
             class_counts(ROUTES),
-            BTreeMap::from([("admin", 3), ("project-resolved", 23), ("refused", 4)]),
+            BTreeMap::from([("admin", 3), ("filtered", 2), ("project-resolved", 23), ("refused", 2)]),
             "the classes of the issues routes changed"
         );
     }

@@ -15,6 +15,7 @@ use uuid::Uuid;
 
 use crate::{
     error::ApiError,
+    middleware::{bot_auth::BotAuthContext, scoped_bot::readable_projects},
     response::{ApiResponse, PaginatedData},
     services::{
         issue_view::identifier,
@@ -84,6 +85,7 @@ pub struct MyActivityList {
 pub async fn get_my_issues(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
     Query(pagination): Query<PaginationQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let user_id = Uuid::parse_str(&claims.sub).map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))?;
@@ -91,6 +93,12 @@ pub async fn get_my_issues(
     let page = pagination.page.max(1);
     let per_page = pagination.per_page.clamp(1, 100);
     let offset = (page - 1) * per_page;
+    // A scoped bot sees the rows of the projects it can read only; the count and the page use the
+    // same filter.
+    let readable = match &bot {
+        Some(Extension(bot_ctx)) => readable_projects(&state.db, bot_ctx.bot_id).await?.ids(),
+        None => None,
+    };
 
     #[derive(Debug, FromQueryResult)]
     struct MyIssueRow {
@@ -119,6 +127,7 @@ pub async fn get_my_issues(
             FROM work_items wi
             INNER JOIN projects p ON wi.project_id = p.id
             WHERE wi.assignee_id = $1
+              AND ($2::uuid[] IS NULL OR p.id = ANY($2))
               AND (
                 EXISTS (
                     SELECT 1
@@ -134,7 +143,7 @@ pub async fn get_my_issues(
                 )
               )
         ",
-        vec![user_id.into()],
+        vec![user_id.into(), readable.clone().into()],
     ))
     .one(&state.db)
     .await?;
@@ -158,6 +167,7 @@ pub async fn get_my_issues(
             FROM work_items wi
             INNER JOIN projects p ON wi.project_id = p.id
             WHERE wi.assignee_id = $1
+              AND ($2::uuid[] IS NULL OR p.id = ANY($2))
               AND (
                 EXISTS (
                     SELECT 1
@@ -173,9 +183,9 @@ pub async fn get_my_issues(
                 )
               )
             ORDER BY wi.updated_at DESC
-            LIMIT $2 OFFSET $3
+            LIMIT $3 OFFSET $4
         ",
-        vec![user_id.into(), per_page.into(), offset.into()],
+        vec![user_id.into(), readable.into(), per_page.into(), offset.into()],
     ))
     .all(&state.db)
     .await?;
@@ -243,6 +253,7 @@ async fn people_of_feed(
 pub async fn get_my_activities(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
     Query(pagination): Query<PaginationQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let user_id = Uuid::parse_str(&claims.sub).map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))?;
@@ -250,6 +261,12 @@ pub async fn get_my_activities(
     let page = pagination.page.max(1);
     let per_page = pagination.per_page.clamp(1, 100);
     let offset = (page - 1) * per_page;
+    // A scoped bot sees the rows of the projects it can read only; the count and the page use the
+    // same filter.
+    let readable = match &bot {
+        Some(Extension(bot_ctx)) => readable_projects(&state.db, bot_ctx.bot_id).await?.ids(),
+        None => None,
+    };
 
     #[derive(Debug, FromQueryResult)]
     struct MyActivityRow {
@@ -280,7 +297,8 @@ pub async fn get_my_activities(
             FROM activities a
             INNER JOIN work_items wi ON wi.id = COALESCE(a.issue_id, CASE WHEN a.resource_type = 'issue' THEN a.resource_id END)
             INNER JOIN projects p ON wi.project_id = p.id
-            WHERE (
+            WHERE ($2::uuid[] IS NULL OR p.id = ANY($2))
+              AND (
                 EXISTS (
                     SELECT 1
                     FROM workspace_members wm
@@ -295,7 +313,7 @@ pub async fn get_my_activities(
                 )
             )
         ",
-        vec![user_id.into()],
+        vec![user_id.into(), readable.clone().into()],
     ))
     .one(&state.db)
     .await?;
@@ -322,7 +340,8 @@ pub async fn get_my_activities(
             INNER JOIN work_items wi ON wi.id = COALESCE(a.issue_id, CASE WHEN a.resource_type = 'issue' THEN a.resource_id END)
             INNER JOIN projects p ON wi.project_id = p.id
             LEFT JOIN users u ON u.id = COALESCE(a.user_id, a.actor_id)
-            WHERE (
+            WHERE ($2::uuid[] IS NULL OR p.id = ANY($2))
+              AND (
                 EXISTS (
                     SELECT 1
                     FROM workspace_members wm
@@ -337,9 +356,9 @@ pub async fn get_my_activities(
                 )
             )
             ORDER BY a.created_at DESC
-            LIMIT $2 OFFSET $3
+            LIMIT $3 OFFSET $4
         ",
-        vec![user_id.into(), per_page.into(), offset.into()],
+        vec![user_id.into(), readable.into(), per_page.into(), offset.into()],
     ))
     .all(&state.db)
     .await?;

@@ -29,7 +29,7 @@ pub static ROUTES: &[RunnerRoute] = &[
     r("GET", "/api/v1/workspaces/{workspace_id}/webhooks/{webhook_id}/deliveries/{delivery_id}", Class::Admin),
     r("POST", "/api/v1/workspaces/{workspace_id}/webhooks/{webhook_id}/rotate-secret", Class::Admin),
     r("GET", "/api/v1/projects/{project_id}/export", Class::Project(Find::Project("project_id"))),
-    r("GET", "/api/v1/search", Class::Project(Find::Query("project_id"))),
+    r("GET", "/api/v1/search", Class::Filtered),
 ];
 
 #[cfg(test)]
@@ -43,7 +43,12 @@ mod tests {
     fn the_classes_of_the_area() {
         assert_eq!(
             class_counts(ROUTES),
-            BTreeMap::from([("admin", 15), ("own resource", 8), ("project-resolved", 2)]),
+            BTreeMap::from([
+                ("admin", 15),
+                ("filtered", 1),
+                ("own resource", 8),
+                ("project-resolved", 1)
+            ]),
             "the classes of the integrations routes changed"
         );
     }

@@ -188,7 +188,7 @@ async fn every_route_is_handled_by_its_class() {
         )
         .await;
         match entry.class {
-            Class::NoProject | Class::Own => assert!(allowed(&runner), "{what}: {runner:?}"),
+            Class::NoProject | Class::Own | Class::Filtered => assert!(allowed(&runner), "{what}: {runner:?}"),
             Class::Admin | Class::Refused | Class::Project(_) => assert!(refused(&runner), "{what}: {runner:?}"),
         }
         let plain = call(
@@ -371,7 +371,10 @@ async fn each_resolver_allows_the_connected_project_only() {
             serde_json::json!({"object_type": "page", "project_id": project, "title": "t", "idempotency_key": "k"});
         let answer = call(&app, "POST", "/api/v2/flow/objects", &c.token, Some(body)).await;
         assert_eq!(allowed(&answer), expect_allowed, "body project {project}: {answer:?}");
-        let path = format!("/api/v1/search?q=x&project_id={project}");
+        let path = format!(
+            "/api/v1/workspaces/{}/flow/search?q=x&project_id={project}",
+            c.w.tenant.workspace_id
+        );
         let answer = call(&app, "GET", &path, &c.token, None).await;
         assert_eq!(allowed(&answer), expect_allowed, "query project {project}: {answer:?}");
     }
@@ -384,7 +387,8 @@ async fn each_resolver_allows_the_connected_project_only() {
             &call(&app, "POST", "/api/v2/flow/objects", &c.token, Some(body)).await
         ));
     }
-    assert!(refused(&call(&app, "GET", "/api/v1/search?q=x", &c.token, None).await));
+    let no_query = format!("/api/v1/workspaces/{}/flow/search?q=x", c.w.tenant.workspace_id);
+    assert!(refused(&call(&app, "GET", &no_query, &c.token, None).await));
     // The body still reaches the handler intact.
     let echoed = call(
         &app,

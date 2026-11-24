@@ -1718,8 +1718,9 @@ mod tests {
         ("project_types.list", "lists the workspace's project types"),
         ("flow.feature_get", "reads the workspace's Flow switch"),
         ("flow.feature_set", "changes the workspace's Flow switch"),
-        // Workspace-wide listings: the project-scoped tool is the one to use.
-        ("projects.list", "lists every project of the workspace"),
+        // Workspace-wide listings: the project-scoped tool is the one to use. `projects.list`,
+        // `search.all` and `work_items.search` are not here: a runner bot gets the connected
+        // projects only.
         (
             "labels.list",
             "lists the workspace's labels; labels.list_by_project is allowed",

@@ -36,7 +36,7 @@ pub static ROUTES: &[RunnerRoute] = &[
     r("GET", "/api/v1/trust-scores/{user_id}/history", Class::Refused),
     r("GET", "/api/v1/trust-scores/{user_id}/{domain}", Class::Refused),
     r("GET", "/api/v1/users/{id}/trust", Class::Refused),
-    r("GET", "/api/v1/workspaces/{workspace_id}/projects", Class::Refused),
+    r("GET", "/api/v1/workspaces/{workspace_id}/projects", Class::Filtered),
     r("GET", "/api/v1/check-results/{check_result_id}", Class::Project(Find::Table("check_results","check_result_id"))),
     r("POST", "/api/v1/check-results/{check_result_id}/proposal", Class::Project(Find::Table("check_results","check_result_id"))),
     r("GET", "/api/v1/issues/{issue_id}/ai-tasks", Class::Project(Find::Issue("issue_id"))),
@@ -82,8 +82,9 @@ mod tests {
             BTreeMap::from([
                 ("admin", 13),
                 ("no project", 12),
+                ("filtered", 1),
                 ("project-resolved", 29),
-                ("refused", 7)
+                ("refused", 6)
             ]),
             "the classes of the projects routes changed"
         );

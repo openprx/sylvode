@@ -23,6 +23,9 @@
 //! * `Admin`: workspace administration (members, roles, bots, tokens, webhooks, connections and
 //!   execution settings, workspace settings, project creation and deletion, alert sources and
 //!   rules, ...): refused;
+//! * `Filtered`: a workspace-level read (the project list, search, the caller's own issues and
+//!   activities) that a scoped bot may make with safe methods only; its handler limits the rows to
+//!   [`readable_projects`], so what the bot sees is exactly what it could read project by project;
 //! * `Refused`: everything else that spans projects or belongs to none (workspace-wide listings,
 //!   workspace-scoped Flow, trust scores, ...): refused, except that a project-scoped bot whose
 //!   default level is at least `read` may make safe requests to them.
@@ -82,6 +85,8 @@ pub enum Class {
     Project(Find),
     Own,
     Admin,
+    /// Safe methods only; the handler limits the rows to the projects the bot can read.
+    Filtered,
     Refused,
 }
 
@@ -94,6 +99,7 @@ impl Class {
             Self::Project(_) => "project-resolved",
             Self::Own => "own resource",
             Self::Admin => "admin",
+            Self::Filtered => "filtered",
             Self::Refused => "refused",
         }
     }
@@ -242,6 +248,84 @@ pub async fn bot_level_in_project(db: &DatabaseConnection, bot_id: Uuid, project
         }
         None => Ok(Level::None),
     }
+}
+
+/// The projects a handler of a `Filtered` route may show to a caller.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProjectFilter {
+    /// No limit beyond the caller's workspace: a bot that is neither a runner bot nor project-scoped.
+    All,
+    /// Only these projects.
+    Only(Vec<Uuid>),
+}
+
+impl ProjectFilter {
+    /// The ids to bind as `ANY($n)`, `None` when there is no limit.
+    #[must_use]
+    pub fn ids(&self) -> Option<Vec<Uuid>> {
+        match self {
+            Self::All => None,
+            Self::Only(ids) => Some(ids.clone()),
+        }
+    }
+
+    /// Whether `project_id` may be shown.
+    #[must_use]
+    pub fn allows(&self, project_id: Uuid) -> bool {
+        match self {
+            Self::All => true,
+            Self::Only(ids) => ids.contains(&project_id),
+        }
+    }
+}
+
+/// The projects the bot `bot_id` can read, from its stored access.
+///
+/// A runner bot reads the projects where it has an enabled connection; a project-scoped bot reads the projects whose grant, else its
+/// default level, is at least `read`; any other bot is not limited.
+///
+/// # Errors
+/// A database failure.
+pub async fn readable_projects(db: &DatabaseConnection, bot_id: Uuid) -> Result<ProjectFilter, ApiError> {
+    #[derive(FromQueryResult)]
+    struct AccessRow {
+        runner: bool,
+        project_scope: String,
+    }
+    #[derive(FromQueryResult)]
+    struct Id {
+        id: Uuid,
+    }
+    let row: Option<AccessRow> = one(
+        db,
+        "SELECT project_scope, \
+                EXISTS (SELECT 1 FROM bot_runners r WHERE r.bot_id = workspace_bots.id) AS runner \
+         FROM workspace_bots WHERE id = $1",
+        vec![bot_id.into()],
+    )
+    .await?;
+    let Some(row) = row else {
+        return Ok(ProjectFilter::Only(Vec::new()));
+    };
+    let sql = if row.runner {
+        "SELECT project_id AS id FROM project_bot_connections WHERE bot_id = $1 AND enabled"
+    } else if row.project_scope == "projects" {
+        "SELECT p.id FROM projects p JOIN workspace_bots b ON b.workspace_id = p.workspace_id \
+         WHERE b.id = $1 AND COALESCE( \
+               (SELECT g.level FROM bot_project_grants g WHERE g.bot_id = b.id AND g.project_id = p.id), \
+               b.default_project_level) IN ('read', 'comment', 'write')"
+    } else {
+        return Ok(ProjectFilter::All);
+    };
+    let ids = Id::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        sql,
+        vec![bot_id.into()],
+    ))
+    .all(db)
+    .await
+    .map_err(ApiError::internal_database_failure)?;
+    Ok(ProjectFilter::Only(ids.into_iter().map(|row| row.id).collect()))
 }
 
 /// The largest body read to find the project of a request that names it there.
@@ -610,6 +694,7 @@ pub async fn authorize(
     let find = match entry.class {
         Class::NoProject | Class::Own => return Ok(body),
         Class::Admin => return Err(refuse()),
+        Class::Filtered => return if safe { Ok(body) } else { Err(refuse()) },
         Class::Refused => {
             return match access {
                 BotAccess::Projects { default } if safe && default >= Level::Read => Ok(body),
@@ -793,7 +878,7 @@ mod tests {
     /// count per class (printed with `--nocapture`).
     #[test]
     fn the_classes_of_the_routes_that_matter() {
-        use Class::{Admin, NoProject, Own, Refused};
+        use Class::{Admin, Filtered, NoProject, Own, Refused};
         let class = |method: &str, pattern: &str| {
             lookup(method, pattern)
                 .unwrap_or_else(|| panic!("{method} {pattern} is not classified"))
@@ -842,9 +927,8 @@ mod tests {
         }
         // Refused: workspace-wide listings and anything that belongs to no project.
         for (method, pattern) in [
-            ("GET", "/api/v1/workspaces/{workspace_id}/projects"),
             ("GET", "/api/v1/proposals"),
-            ("GET", "/api/v1/my/issues"),
+            ("GET", "/api/v1/workspaces/{workspace_id}/activities"),
             ("GET", "/api/v2/flow/block-share-placements"),
             ("POST", "/api/v2/flow/collab/tickets"),
             ("GET", "/api/v1/workspaces/{workspace_id}/flow/projection-lag"),
@@ -852,6 +936,19 @@ mod tests {
             ("GET", "/api/v2/flow/workspaces/{workspace_id}/scope"),
         ] {
             assert_eq!(class(method, pattern), Refused, "{method} {pattern}");
+        }
+        // Filtered: the workspace-level reads whose handler limits the rows to the readable projects.
+        for (method, pattern) in [
+            ("GET", "/api/v1/workspaces/{workspace_id}/projects"),
+            ("GET", "/api/v1/search"),
+            ("GET", "/api/v1/my/issues"),
+            ("GET", "/api/v1/my/activities"),
+        ] {
+            assert_eq!(class(method, pattern), Filtered, "{method} {pattern}");
+        }
+        // Filtered routes are reads: a Filtered route with an unsafe method would be refused.
+        for entry in all_routes().filter(|entry| entry.class == Filtered) {
+            assert_eq!(entry.method, "GET", "{} {}", entry.method, entry.pattern);
         }
         // Project-resolved: every route whose target is a project's resource.
         for (method, pattern) in [
@@ -866,7 +963,6 @@ mod tests {
             ("POST", "/api/v2/flow/objects"),
             ("POST", "/api/v1/flow/conversions"),
             ("GET", "/api/v2/flow/records/{record_id}/context"),
-            ("GET", "/api/v1/search"),
         ] {
             assert!(project(class(method, pattern)), "{method} {pattern}");
         }
@@ -875,7 +971,14 @@ mod tests {
             *counts.entry(entry.class.name()).or_default() += 1;
         }
         // The count per class of each area is asserted next to its table (`bot_routes/<area>.rs`).
-        for name in ["no project", "project-resolved", "own resource", "admin", "refused"] {
+        for name in [
+            "no project",
+            "project-resolved",
+            "own resource",
+            "admin",
+            "filtered",
+            "refused",
+        ] {
             assert!(counts.get(name).copied().unwrap_or(0) > 0, "no route is {name}");
         }
         // The workspace Flow reads that take the project from the query: allowed only for a named project.
