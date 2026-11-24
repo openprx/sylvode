@@ -253,7 +253,7 @@ pub async fn route_completion<C: ConnectionTrait>(
                 mention_prefix(task)
             };
             let body = format!("{prefix}{}", compose_body(&input.summary, &input.artifacts));
-            let comment = insert_comment(txn, issue.id, bot_id, &body).await?;
+            let comment = insert_comment(txn, issue.id, bot_id, &body, &[]).await?;
             routed.report.comment_id = Some(comment.id);
             routed.triggers.push(comment_trigger(&issue, bot_id, comment.id));
 
@@ -388,7 +388,14 @@ pub async fn route_failure<C: ConnectionTrait>(
     } else {
         mention_prefix(task)
     };
-    let comment = insert_comment(txn, issue.id, bot_id, &format!("{prefix}{lead}: {}", reason.trim())).await?;
+    let comment = insert_comment(
+        txn,
+        issue.id,
+        bot_id,
+        &format!("{prefix}{lead}: {}", reason.trim()),
+        &[],
+    )
+    .await?;
     routed.report.comment_id = Some(comment.id);
     routed.triggers.push(comment_trigger(&issue, bot_id, comment.id));
 

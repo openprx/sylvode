@@ -3,16 +3,20 @@
 //! Listing needs `view`. Creating and replying need `comment`. An author with `comment` may edit
 //! or delete their own row. Resolving a top-level thread needs `edit`, and so does deleting
 //! someone else's row only when the caller has `full_access`. Replies are one level deep and stay
-//! on the same object. Mentions are an explicit user-id list; notifications require current object access and never create membership.
+//! on the same object. Mentions are people picked by id plus `@Name` typed in the body (resolved by `scope_social`), each stored
+//! as `{id, label}`. Notifications require current object access and never create membership.
 
 use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use uuid::Uuid;
 
 use super::collab::authz::PermissionLevel;
-use crate::error::ApiError;
+use crate::{
+    error::ApiError,
+    services::mentions::{self, Audience, Mention, Person, PersonState},
+};
 
 const BODY_MAX_CHARS: usize = 8_000;
 const BLOCK_ID_MAX_CHARS: usize = 128;
@@ -43,8 +47,10 @@ pub struct FlowCommentView {
     pub block_id: Option<String>,
     pub parent_id: Option<Uuid>,
     pub author_id: Option<Uuid>,
+    /// The author as a person to show; `null` when no author remains.
+    pub author: Option<Person>,
     pub body: String,
-    pub mentions: Vec<Uuid>,
+    pub mentions: Vec<Person>,
     pub created_at: String,
     pub updated_at: String,
     pub resolved_at: Option<String>,
@@ -105,6 +111,7 @@ pub async fn list_comments(db: &DatabaseConnection, object_id: Uuid) -> Result<F
         .map(view_of)
         .collect();
     super::block_anchors::decorate(db, &mut items).await?;
+    decorate_people(db, &mut items).await?;
     Ok(FlowCommentList { items, truncated })
 }
 
@@ -164,7 +171,7 @@ pub(crate) async fn create_comment_on<C: ConnectionTrait>(
         return Err(ApiError::forbidden("comment permission is required".to_string()));
     }
     let body = normalize_body(&input.body)?;
-    let mentions = normalize_mentions(&input.mentions)?;
+    let mentions = label_mentions(db, &normalize_mentions(&input.mentions)?).await?;
     let (parent_id, block_id) = match input.parent_id {
         Some(parent_id) => {
             let parent = load_parent(db, parent_id).await?;
@@ -180,7 +187,7 @@ pub(crate) async fn create_comment_on<C: ConnectionTrait>(
     };
     let id = Uuid::new_v4();
     let now = Timestamp::now();
-    let mentions_json = json!(mentions.iter().map(Uuid::to_string).collect::<Vec<_>>());
+    let mentions_json = mentions::to_json(&mentions);
     let row = CommentRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "INSERT INTO flow_comments ( \
@@ -207,6 +214,7 @@ pub(crate) async fn create_comment_on<C: ConnectionTrait>(
     super::block_anchors::bind_new(db, id, object_id, row.block_id.as_deref(), row.parent_id).await?;
     let mut view = view_of(row);
     super::block_anchors::decorate(db, std::slice::from_mut(&mut view)).await?;
+    decorate_people(db, std::slice::from_mut(&mut view)).await?;
     Ok(view)
 }
 
@@ -227,10 +235,10 @@ pub(crate) async fn update_comment_on<C: ConnectionTrait>(
     }
     let body = normalize_body(body)?;
     let next_mentions = match mentions {
-        Some(ids) => normalize_mentions(&ids)?,
-        None => parse_mentions(&existing.mentions),
+        Some(ids) => label_mentions(db, &normalize_mentions(&ids)?).await?,
+        None => mentions::from_json(&existing.mentions),
     };
-    let mentions_json = json!(next_mentions.iter().map(Uuid::to_string).collect::<Vec<_>>());
+    let mentions_json = mentions::to_json(&next_mentions);
     let now = Timestamp::now();
     let row = CommentRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -251,6 +259,7 @@ pub(crate) async fn update_comment_on<C: ConnectionTrait>(
     .ok_or_else(|| ApiError::not_found("flow comment not found".to_string()))?;
     let mut view = view_of(row);
     super::block_anchors::decorate(db, std::slice::from_mut(&mut view)).await?;
+    decorate_people(db, std::slice::from_mut(&mut view)).await?;
     Ok(view)
 }
 
@@ -325,6 +334,7 @@ pub(crate) async fn set_resolved_on<C: ConnectionTrait>(
     .ok_or_else(|| ApiError::not_found("flow comment not found".to_string()))?;
     let mut view = view_of(row);
     super::block_anchors::decorate(db, std::slice::from_mut(&mut view)).await?;
+    decorate_people(db, std::slice::from_mut(&mut view)).await?;
     Ok(view)
 }
 
@@ -400,15 +410,37 @@ pub(crate) fn normalize_mentions(raw: &[Uuid]) -> Result<Vec<Uuid>, ApiError> {
     Ok(mentions)
 }
 
-pub(crate) fn parse_mentions(value: &Value) -> Vec<Uuid> {
-    let Some(items) = value.as_array() else {
-        return Vec::new();
-    };
-    items
+/// The stored mentions for picked ids, in the order given. An id without an account is dropped.
+async fn label_mentions<C: ConnectionTrait>(db: &C, ids: &[Uuid]) -> Result<Vec<Mention>, ApiError> {
+    let known = mentions::existing_users(db, ids).await?;
+    Ok(ids
         .iter()
-        .filter_map(Value::as_str)
-        .filter_map(|text| Uuid::parse_str(text).ok())
-        .collect()
+        .filter_map(|id| known.iter().find(|user| user.id == *id))
+        .map(|user| Mention {
+            id: user.id,
+            label: user.name.trim().to_string(),
+        })
+        .collect())
+}
+
+/// The ids already stored as mentions of a comment (empty for a comment that is gone).
+pub(crate) async fn stored_mention_ids<C: ConnectionTrait>(
+    db: &C,
+    object_id: Uuid,
+    comment_id: Uuid,
+) -> Result<Vec<Uuid>, ApiError> {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT mentions FROM flow_comments WHERE id = $1 AND object_id = $2 AND deleted_at IS NULL",
+            vec![comment_id.into(), object_id.into()],
+        ))
+        .await?;
+    let Some(row) = row else {
+        return Ok(Vec::new());
+    };
+    let stored: Value = row.try_get("", "mentions")?;
+    Ok(mentions::ids(&mentions::from_json(&stored)))
 }
 
 fn view_of(row: CommentRow) -> FlowCommentView {
@@ -419,8 +451,23 @@ fn view_of(row: CommentRow) -> FlowCommentView {
         block_id: row.block_id,
         parent_id: row.parent_id,
         author_id: row.author_id,
+        // Placeholders: `decorate_people` replaces them with the people as they are now.
+        author: row.author_id.map(|id| Person {
+            id,
+            name: None,
+            is_bot: false,
+            state: PersonState::Removed,
+        }),
         body: row.body,
-        mentions: parse_mentions(&row.mentions),
+        mentions: mentions::from_json(&row.mentions)
+            .into_iter()
+            .map(|mention| Person {
+                id: mention.id,
+                name: Some(mention.label).filter(|label| !label.trim().is_empty()),
+                is_bot: false,
+                state: PersonState::Removed,
+            })
+            .collect(),
         created_at: row.created_at.to_rfc3339(),
         updated_at: row.updated_at.to_rfc3339(),
         resolved_at: row.resolved_at.map(platform::timestamp::Timestamp::to_rfc3339),
@@ -428,25 +475,26 @@ fn view_of(row: CommentRow) -> FlowCommentView {
     }
 }
 
-pub(crate) async fn actor_label<C: ConnectionTrait>(db: &C, actor_id: Uuid) -> Result<String, ApiError> {
-    #[derive(FromQueryResult)]
-    struct NameRow {
-        name: String,
+/// Shows the authors and mentioned people of `views` as they are now. The names a placeholder
+/// carries are the stored labels, kept for people who have left.
+pub(crate) async fn decorate_people<C: ConnectionTrait>(db: &C, views: &mut [FlowCommentView]) -> Result<(), ApiError> {
+    let mut ids = Vec::new();
+    let mut hints = std::collections::HashMap::new();
+    for person in views.iter().flat_map(|view| view.author.iter().chain(&view.mentions)) {
+        ids.push(person.id);
+        if let Some(name) = &person.name {
+            hints.insert(person.id, name.clone());
+        }
     }
-    let name = NameRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT name FROM users WHERE id = $1",
-        vec![actor_id.into()],
-    ))
-    .one(db)
-    .await?
-    .map_or_else(|| "someone".to_string(), |row| row.name);
-    let collapsed: String = name.chars().filter(|ch| !ch.is_control()).take(80).collect();
-    if collapsed.is_empty() {
-        Ok("someone".to_string())
-    } else {
-        Ok(collapsed)
+    let shown = mentions::people(db, Audience::Anyone, &ids, &hints).await?;
+    for view in views {
+        for person in view.author.iter_mut().chain(view.mentions.iter_mut()) {
+            if let Some(current) = shown.get(&person.id) {
+                person.clone_from(current);
+            }
+        }
     }
+    Ok(())
 }
 
 const MENTION_CANDIDATE_CAP: i64 = 50;
@@ -487,7 +535,30 @@ pub async fn list_mention_candidates(
         vec![workspace_id.into(), query.clone().into(), MENTION_CANDIDATE_CAP.into()],
     )
     .await?;
-    let guests = candidate_rows(
+    let guests = guest_rows(db, workspace_id, object_id, &query, MENTION_CANDIDATE_CAP).await?;
+    let mut items = members;
+    for guest in guests {
+        if items.iter().any(|item| item.user_id == guest.user_id) {
+            continue;
+        }
+        items.push(guest);
+        if items.len() >= usize::try_from(MENTION_CANDIDATE_CAP).unwrap_or(50) {
+            break;
+        }
+    }
+    Ok(MentionCandidateList { items })
+}
+
+/// Users who are not members but hold a grant on this page or an ancestor it still inherits from,
+/// whose name contains `query` (all of them for an empty query).
+async fn guest_rows(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    object_id: Uuid,
+    query: &str,
+    cap: i64,
+) -> Result<Vec<MentionCandidate>, ApiError> {
+    candidate_rows(
         db,
         "WITH RECURSIVE chain AS ( \
             SELECT id, parent_id, inherit_from_parent, 0 AS depth \
@@ -512,25 +583,25 @@ pub async fn list_mention_candidates(
            AND ($3 = '' OR strpos(lower(COALESCE(u.name, '')), lower($3)) > 0) \
          ORDER BY name, u.id \
          LIMIT $4",
-        vec![
-            object_id.into(),
-            workspace_id.into(),
-            query.into(),
-            MENTION_CANDIDATE_CAP.into(),
-        ],
+        vec![object_id.into(), workspace_id.into(), query.into(), cap.into()],
     )
-    .await?;
-    let mut items = members;
-    for guest in guests {
-        if items.iter().any(|item| item.user_id == guest.user_id) {
-            continue;
-        }
-        items.push(guest);
-        if items.len() >= usize::try_from(MENTION_CANDIDATE_CAP).unwrap_or(50) {
-            break;
-        }
+    .await
+}
+
+/// The people `@Name` in a comment of a workspace page can name: members and guests of the page.
+pub(crate) async fn workspace_name_pool(
+    db: &DatabaseConnection,
+    workspace_id: Uuid,
+    object_id: Uuid,
+) -> Result<Vec<mentions::Member>, ApiError> {
+    let mut pool = mentions::workspace_members(db, workspace_id).await?;
+    for guest in guest_rows(db, workspace_id, object_id, "", i64::try_from(LIST_CAP).unwrap_or(500)).await? {
+        pool.push(mentions::Member {
+            id: guest.user_id,
+            name: guest.name,
+        });
     }
-    Ok(MentionCandidateList { items })
+    Ok(pool)
 }
 
 pub(crate) fn normalize_mention_query(query: &str) -> Result<String, ApiError> {

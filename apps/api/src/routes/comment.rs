@@ -2,7 +2,7 @@
 // Local SQL row types stay beside the queries whose column shapes they mirror.
 #![allow(clippy::items_after_statements, clippy::struct_field_names)]
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use axum::{
     Extension, Json,
@@ -24,6 +24,7 @@ use crate::{
         ai_task_service::{CreateAiTaskInput, DispatchOrigin, DispatchOutcome, dispatch_ai_task, runner_bot_block},
         comments::insert_comment,
         issue_view::identifier,
+        mentions::{self, Audience, Mention, Person},
         notifications::{self, NewNotification},
     },
     webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks, trigger_webhooks_after_ai_tasks},
@@ -36,6 +37,10 @@ pub struct CommentResponse {
     pub author_id: Option<Uuid>,
     pub author_name: Option<String>,
     pub author_email: Option<String>,
+    /// The author as a person to show; `null` when the account is gone and no id remains.
+    pub author: Option<Person>,
+    /// The people the comment mentions, in the order they were stored.
+    pub mentions: Vec<Person>,
     pub body: String,
     pub created_at: String,
     pub updated_at: String,
@@ -67,14 +72,22 @@ impl UpdateCommentRequest {
     }
 }
 
-fn normalize_mentions(mentions: Option<Vec<Uuid>>, actor_id: Uuid) -> Vec<Uuid> {
-    let mut seen = HashSet::new();
-    mentions
-        .unwrap_or_default()
+/// Who is told about a comment: the resolved mentions without the author.
+fn people_to_tell(resolved: &[Mention], actor_id: Uuid) -> Vec<Uuid> {
+    mentions::ids(resolved)
         .into_iter()
         .filter(|id| *id != actor_id)
-        .filter(|id| seen.insert(*id))
         .collect()
+}
+
+/// The authors and mentioned people of `comments` as shown to this caller.
+async fn show_people<C: ConnectionTrait>(
+    db: &C,
+    workspace_id: Uuid,
+    authors: impl IntoIterator<Item = Uuid>,
+    stored: &[&[Mention]],
+) -> Result<HashMap<Uuid, Person>, ApiError> {
+    mentions::people_of_comments(db, Audience::of_workspace(workspace_id), authors, stored).await
 }
 
 fn build_auth_extensions(claims: JwtClaims, bot: Option<Extension<BotAuthContext>>) -> axum::http::Extensions {
@@ -95,24 +108,9 @@ async fn create_mention_notifications<C: ConnectionTrait>(
     issue_id: Uuid,
     comment_id: Uuid,
 ) -> Result<(), ApiError> {
-    if mention_user_ids.is_empty() {
-        return Ok(());
-    }
-
     let link = format!("/workspace/{workspace_id}/projects/{project_id}/issues/{issue_id}");
+    // The ids come from `mentions::resolve`, which keeps workspace members only.
     for mention_user_id in mention_user_ids {
-        let is_workspace_member = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT 1 FROM workspace_members WHERE workspace_id = $1 AND user_id = $2",
-                vec![workspace_id.into(), (*mention_user_id).into()],
-            ))
-            .await?;
-
-        if is_workspace_member.is_none() {
-            continue;
-        }
-
         notifications::create(
             db,
             NewNotification {
@@ -120,7 +118,7 @@ async fn create_mention_notifications<C: ConnectionTrait>(
                 workspace_id: Some(workspace_id),
                 kind: notifications::MENTIONED,
                 title_key: "notification.mentionedTitle",
-                content: format!("mentioned_by:{actor_name}"),
+                content: mentions::notification_content(actor_name),
                 link: Some(link.clone()),
                 related_issue_id: Some(issue_id),
                 related_comment_id: Some(comment_id),
@@ -224,9 +222,16 @@ pub async fn create_comment(
     .one(&state.db)
     .await?;
 
-    let actor_name = author.as_ref().map_or_else(|| "User".to_string(), |u| u.name.clone());
+    let actor_name = mentions::actor_display_name(&state.db, user_id).await?;
 
-    let mention_user_ids = normalize_mentions(req.mentions, user_id);
+    let resolved = mentions::resolve_in_workspace(
+        &state.db,
+        issue_context.workspace_id,
+        &content,
+        &req.mentions.unwrap_or_default(),
+    )
+    .await?;
+    let mention_user_ids = people_to_tell(&resolved, user_id);
 
     // A connected application may not mention an agent: that would start its task. Refused before
     // the comment is written.
@@ -234,7 +239,7 @@ pub async fn create_comment(
 
     let tx = state.db.begin().await?;
 
-    let inserted = insert_comment(&tx, issue_id, user_id, &content).await?;
+    let inserted = insert_comment(&tx, issue_id, user_id, &content, &resolved).await?;
     let comment_id = inserted.id;
     let now = inserted.created_at;
 
@@ -253,7 +258,7 @@ pub async fn create_comment(
 
     // A mention of a bot is queued as that bot's AI task, which is its one bot task for this
     // comment: the `comment.created` delivery below reaches that bot's webhook without
-    // `bot_context`. The author is never among the mentions (`normalize_mentions`).
+    // `bot_context`. The author is never among the people told (`people_to_tell`).
     let mentioned_bots = mentioned_bot_ids(&state.db, &mention_user_ids, issue_context.workspace_id).await?;
     let mut task_bots = Vec::with_capacity(mentioned_bots.len());
     for &bot_id in &mentioned_bots {
@@ -317,12 +322,15 @@ pub async fn create_comment(
         task_bots,
     );
 
+    let shown = show_people(&state.db, issue_context.workspace_id, [user_id], &[&resolved]).await?;
     Ok(ApiResponse::success(CommentResponse {
         id: comment_id,
         work_item_id: issue_id,
         author_id: Some(user_id),
         author_name: author.as_ref().map(|a| a.name.clone()),
         author_email: author.as_ref().map(|a| a.email.clone()),
+        author: shown.get(&user_id).cloned(),
+        mentions: mentions::mention_people(&resolved, &shown),
         body: content,
         created_at: now.to_rfc3339(),
         updated_at: now.to_rfc3339(),
@@ -368,6 +376,7 @@ pub async fn list_comments(
         author_name: Option<String>,
         author_email: Option<String>,
         body: String,
+        mentions: serde_json::Value,
         created_at: platform::timestamp::Timestamp,
         updated_at: platform::timestamp::Timestamp,
     }
@@ -378,7 +387,7 @@ pub async fn list_comments(
             SELECT c.id, c.work_item_id, c.author_id,
                    CASE WHEN $2 AND m.user_id IS NULL THEN NULL ELSE u.name END AS author_name,
                    CASE WHEN $2 AND m.user_id IS NULL THEN NULL ELSE u.email END AS author_email,
-                   c.body, c.created_at, c.updated_at
+                   c.body, c.mentions, c.created_at, c.updated_at
             FROM comments c
             LEFT JOIN users u ON c.author_id = u.id
             LEFT JOIN workspace_members m ON m.workspace_id = $3 AND m.user_id = c.author_id
@@ -396,14 +405,26 @@ pub async fn list_comments(
     .all(&state.db)
     .await?;
 
+    let stored: Vec<Vec<Mention>> = comments.iter().map(|c| mentions::from_json(&c.mentions)).collect();
+    let stored_refs: Vec<&[Mention]> = stored.iter().map(Vec::as_slice).collect();
+    let shown = show_people(
+        &state.db,
+        issue.workspace_id,
+        comments.iter().filter_map(|c| c.author_id),
+        &stored_refs,
+    )
+    .await?;
     let response: Vec<CommentResponse> = comments
         .into_iter()
-        .map(|c| CommentResponse {
+        .zip(&stored)
+        .map(|(c, mentioned)| CommentResponse {
             id: c.id,
             work_item_id: c.work_item_id,
             author_id: c.author_id,
             author_name: c.author_name,
             author_email: c.author_email,
+            author: c.author_id.and_then(|id| shown.get(&id).cloned()),
+            mentions: mentions::mention_people(mentioned, &shown),
             body: c.body,
             created_at: c.created_at.to_rfc3339(),
             updated_at: c.updated_at.to_rfc3339(),
@@ -421,6 +442,8 @@ pub struct CommentDetailResponse {
     pub project_id: Uuid,
     pub author_id: Option<Uuid>,
     pub author_name: Option<String>,
+    pub author: Option<Person>,
+    pub mentions: Vec<Person>,
     pub content: String,
     pub created_at: String,
     pub updated_at: String,
@@ -466,6 +489,7 @@ pub async fn get_comment(
         author_id: Option<Uuid>,
         author_name: Option<String>,
         body: String,
+        mentions: serde_json::Value,
         created_at: platform::timestamp::Timestamp,
         updated_at: platform::timestamp::Timestamp,
     }
@@ -476,7 +500,7 @@ pub async fn get_comment(
         r"
             SELECT c.id, c.work_item_id, wi.project_id, c.author_id,
                    CASE WHEN $2 AND m.user_id IS NULL THEN NULL ELSE u.name END AS author_name,
-                   c.body, c.created_at, c.updated_at
+                   c.body, c.mentions, c.created_at, c.updated_at
             FROM comments c
             INNER JOIN work_items wi ON c.work_item_id = wi.id
             LEFT JOIN users u ON c.author_id = u.id
@@ -493,12 +517,16 @@ pub async fn get_comment(
     .await?
     .ok_or_else(|| ApiError::NotFound("comment not found".to_string()))?;
 
+    let stored = mentions::from_json(&comment.mentions);
+    let shown = show_people(&state.db, owner.workspace_id, comment.author_id, &[&stored]).await?;
     Ok(ApiResponse::success(CommentDetailResponse {
         id: comment.id,
         work_item_id: comment.work_item_id,
         project_id: comment.project_id,
         author_id: comment.author_id,
         author_name: comment.author_name,
+        author: comment.author_id.and_then(|id| shown.get(&id).cloned()),
+        mentions: mentions::mention_people(&stored, &shown),
         content: comment.body,
         created_at: comment.created_at.to_rfc3339(),
         updated_at: comment.updated_at.to_rfc3339(),
@@ -528,12 +556,13 @@ pub async fn update_comment(
         work_item_id: Uuid,
         project_id: Uuid,
         workspace_id: Uuid,
+        mentions: serde_json::Value,
     }
 
     let comment = CommentContext::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
-            SELECT c.author_id, c.work_item_id, wi.project_id, p.workspace_id
+            SELECT c.author_id, c.work_item_id, wi.project_id, p.workspace_id, c.mentions
             FROM comments c
             INNER JOIN work_items wi ON c.work_item_id = wi.id
             INNER JOIN projects p ON wi.project_id = p.id
@@ -549,22 +578,21 @@ pub async fn update_comment(
         return Err(ApiError::Forbidden("only the comment author can update it".to_string()));
     }
 
-    #[derive(Debug, FromQueryResult)]
-    struct UserInfo {
-        name: String,
-    }
+    let actor_name = mentions::actor_display_name(&state.db, user_id).await?;
 
-    let author = UserInfo::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT name FROM users WHERE id = $1",
-        vec![user_id.into()],
-    ))
-    .one(&state.db)
+    let resolved = mentions::resolve_in_workspace(
+        &state.db,
+        comment.workspace_id,
+        &content,
+        &req.mentions.unwrap_or_default(),
+    )
     .await?;
-
-    let actor_name = author.as_ref().map_or_else(|| "User".to_string(), |u| u.name.clone());
-
-    let mention_user_ids = normalize_mentions(req.mentions, user_id);
+    // An edit tells only the people it adds; the others were told when they were first mentioned.
+    let before = mentions::ids(&mentions::from_json(&comment.mentions));
+    let mention_user_ids: Vec<Uuid> = people_to_tell(&resolved, user_id)
+        .into_iter()
+        .filter(|id| !before.contains(id))
+        .collect();
 
     let now = platform::timestamp::Timestamp::now();
     let detail = serde_json::json!({
@@ -576,8 +604,13 @@ pub async fn update_comment(
 
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "UPDATE comments SET body = $1, updated_at = $2 WHERE id = $3",
-        vec![content.clone().into(), now.into(), comment_id.into()],
+        "UPDATE comments SET body = $1, updated_at = $2, mentions = $4::jsonb WHERE id = $3",
+        vec![
+            content.clone().into(),
+            now.into(),
+            comment_id.into(),
+            mentions::to_json(&resolved).into(),
+        ],
     ))
     .await?;
 
@@ -661,17 +694,20 @@ pub async fn update_comment(
             label_id: None,
             sprint_id: None,
             changes: None,
-            mentions: Vec::new(),
+            mentions: people_to_tell(&resolved, user_id),
             extra_data: None,
         },
     );
 
+    let shown = show_people(&state.db, comment.workspace_id, updated.author_id, &[&resolved]).await?;
     Ok(ApiResponse::success(CommentResponse {
         id: updated.id,
         work_item_id: updated.work_item_id,
         author_id: updated.author_id,
         author_name: updated.author_name,
         author_email: updated.author_email,
+        author: updated.author_id.and_then(|id| shown.get(&id).cloned()),
+        mentions: mentions::mention_people(&resolved, &shown),
         body: updated.body,
         created_at: updated.created_at.to_rfc3339(),
         updated_at: updated.updated_at.to_rfc3339(),
@@ -697,6 +733,7 @@ pub async fn delete_comment(
         work_item_id: Uuid,
         body: String,
         author_name: Option<String>,
+        mentions: serde_json::Value,
         created_at: platform::timestamp::Timestamp,
         updated_at: platform::timestamp::Timestamp,
         title: String,
@@ -708,7 +745,7 @@ pub async fn delete_comment(
         DbBackend::Postgres,
         r"
             SELECT c.author_id, p.workspace_id, wi.project_id, c.work_item_id, c.body,
-                   u.name AS author_name, c.created_at, c.updated_at,
+                   u.name AS author_name, c.mentions, c.created_at, c.updated_at,
                    wi.title, wi.sequence_number, p.key AS project_key
             FROM comments c
             INNER JOIN work_items wi ON c.work_item_id = wi.id
@@ -809,7 +846,7 @@ pub async fn delete_comment(
             label_id: None,
             sprint_id: None,
             changes: None,
-            mentions: Vec::new(),
+            mentions: mentions::ids(&mentions::from_json(&comment_info.mentions)),
             extra_data: Some(deleted_comment_payload),
         },
     );

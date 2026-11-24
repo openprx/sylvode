@@ -12,6 +12,7 @@ pub mod governance_audit_service;
 pub mod impact_review_service;
 pub mod issue_view;
 pub mod issues;
+pub mod mentions;
 pub mod notifications;
 pub mod object_storage;
 pub mod permission_service;

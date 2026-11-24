@@ -37,6 +37,7 @@ pub mod project;
 pub mod project_bot_connection;
 pub mod project_type;
 pub mod proposal;
+mod proposal_mentions;
 pub mod proposal_template;
 pub mod release_readiness;
 pub mod scenario_template;

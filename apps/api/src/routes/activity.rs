@@ -1,6 +1,8 @@
 // Local SQL row types stay beside the queries whose column shapes they mirror.
 #![allow(clippy::items_after_statements)]
 
+use std::collections::HashMap;
+
 use axum::{
     Extension,
     extract::{Path, Query, State},
@@ -15,7 +17,10 @@ use crate::middleware::bot_auth::{BotAuthContext, require_workspace_access};
 use crate::{
     error::ApiError,
     response::{ApiResponse, PaginatedData},
-    services::issue_view::{PageCaller, activity_pages},
+    services::{
+        issue_view::{PageCaller, activity_pages},
+        mentions::{self, Audience, Person},
+    },
 };
 
 #[derive(Debug, Serialize)]
@@ -41,6 +46,16 @@ pub struct IssueActivityResponse {
     pub action: String,
     pub detail: serde_json::Value,
     pub created_at: String,
+}
+
+/// The activity answer of one work item: the entries (paged shape) and the people they refer to.
+#[derive(Serialize)]
+pub struct IssueActivityList {
+    #[serde(flatten)]
+    pub page: PaginatedData<IssueActivityResponse>,
+    /// Every person an entry names (actor, assignee before and after), by id. The client shows
+    /// `name`, or its own wording for `state: removed` without a name; it never shows an id.
+    pub people: HashMap<Uuid, Person>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -348,8 +363,40 @@ pub async fn get_issue_activities(
         .collect();
 
     resolve_page_entries(&state.db, &caller, &mut response).await?;
+    let people = people_of_entries(&state.db, issue.workspace_id, &response).await?;
 
-    Ok(ApiResponse::success(PaginatedData::from_items(response)))
+    Ok(ApiResponse::success(IssueActivityList {
+        page: PaginatedData::from_items(response),
+        people,
+    }))
+}
+
+/// The ids an entry names as people: who acted, and for an assignment who had the item before
+/// and after.
+fn people_ids(entry: &IssueActivityResponse) -> Vec<Uuid> {
+    let mut ids: Vec<Uuid> = entry.actor_id.into_iter().chain(entry.user_id).collect();
+    if entry.action == "assigned" {
+        for side in ["from", "to"] {
+            if let Some(id) = entry
+                .detail
+                .get(side)
+                .and_then(serde_json::Value::as_str)
+                .and_then(|raw| Uuid::parse_str(raw).ok())
+            {
+                ids.push(id);
+            }
+        }
+    }
+    ids
+}
+
+async fn people_of_entries(
+    db: &sea_orm::DatabaseConnection,
+    workspace_id: Uuid,
+    entries: &[IssueActivityResponse],
+) -> Result<HashMap<Uuid, Person>, ApiError> {
+    let ids: Vec<Uuid> = entries.iter().flat_map(people_ids).collect();
+    mentions::people(db, Audience::of_workspace(workspace_id), &ids, &HashMap::new()).await
 }
 
 /// The page named by a `page_linked` / `page_unlinked` entry is stored as an id only. Each such

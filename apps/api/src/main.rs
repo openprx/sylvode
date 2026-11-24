@@ -157,6 +157,9 @@ mod issue_page_api_tests;
 mod milestone_api_tests;
 
 #[cfg(test)]
+mod mention_api_tests;
+
+#[cfg(test)]
 mod notification_api_tests;
 
 #[cfg(test)]
