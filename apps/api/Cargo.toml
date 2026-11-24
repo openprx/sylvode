@@ -57,6 +57,10 @@ tokio-tungstenite = "0.26"
 # Builds hostile document bytes (a root container with a reserved name and the wrong type) for the
 # package-ingestion tests; the same exact pin as `collab-core`.
 loro = "=1.18.0"
+# The fixed-rate stand-in for the text measure's CPU reading and the host entry that injects a
+# synthetic workload into the debug worker, for the Flow write tests. A dev-dependency only: a build
+# of the API (or of the isolated worker) for release does not enable it.
+collab-core = { path = "../../crates/collab-core", features = ["test-injection"] }
 
 [lints]
 workspace = true

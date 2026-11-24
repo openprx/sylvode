@@ -708,6 +708,32 @@ fn text_budget_check_skipped_for(document_id: Uuid) -> bool {
     TEXT_BUDGET_CHECK_SKIPPED.lock().contains(&document_id)
 }
 
+/// The documents whose per-text CPU cost the host's text measure takes from a fixed rate (cost =
+/// operations of the candidate document times the rate) instead of the thread's CPU clock, so the
+/// scenarios that grow a text up to its budget do not depend on the speed of the machine. Keyed by
+/// document: the window runs on a blocking thread of its own. Test builds only.
+#[cfg(test)]
+static TEXT_COST_METERS: LazyLock<Mutex<std::collections::HashMap<Uuid, collab_core::setup_guard::FixedRateMeter>>> =
+    LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+
+#[cfg(test)]
+fn text_cost_meter_for(document_id: Uuid) -> Option<collab_core::setup_guard::FixedRateMeter> {
+    TEXT_COST_METERS.lock().get(&document_id).copied()
+}
+
+/// Whether a text of one of `blocks` is over the per-text decode budget in `candidate` (a fresh
+/// load of the candidate document): the measure of the thread's CPU clock. Under `cfg(test)` a
+/// document registered in [`TEXT_COST_METERS`] is measured at its fixed rate instead.
+fn candidate_text_over_budget(candidate: &LoroCollabEngine, blocks: &[String], document_id: Uuid) -> bool {
+    #[cfg(test)]
+    if let Some(meter) = text_cost_meter_for(document_id) {
+        return candidate.first_text_over_budget_metered(blocks, &meter).is_some();
+    }
+    #[cfg(not(test))]
+    let _ = document_id;
+    candidate.first_text_over_budget(blocks).is_some()
+}
+
 /// How a disagreement is answered, for the log line.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DivergenceAnswer {
@@ -1017,7 +1043,7 @@ fn window_attempt(
     if text_budget_check
         && success.window_report.is_some()
         && !success.touched_blocks.is_empty()
-        && candidate.first_text_over_budget(&success.touched_blocks).is_some()
+        && candidate_text_over_budget(&candidate, &success.touched_blocks, document_id)
     {
         return Ok(WindowAttempt::Rejected(RefusedAttempt {
             error: collab_core::isolation::IsolatedApplyError::Collab(text_decode_cost_refusal()),
@@ -2384,9 +2410,39 @@ fn apply_isolated(
             collab_core::isolation::WorkerObservation::default(),
         );
     }
+    #[cfg(all(test, target_os = "linux"))]
+    if let Some(inject) = injected_window_burn_for(document_id, base) {
+        return collab_core::isolation::isolated_apply_injected_observed(
+            base,
+            update,
+            mode,
+            setup_cpu_budget_ms(),
+            &inject,
+        );
+    }
     #[cfg(not(test))]
     let _ = document_id;
     collab_core::isolation::isolated_apply_with_observed(base, update, mode, setup_cpu_budget_ms())
+}
+
+/// The worker's synthetic workload for a window on `base`, for a document registered in
+/// [`TEXT_COST_METERS`] whose text is over its decode budget at the registered rate: a burn of twice
+/// the window's CPU ceiling. It is what the full window does to a page whose text costs more than
+/// its ceiling to decode, made exact: the real decode of the few marks such a test writes costs next
+/// to nothing, and the page that the measure keeps out of the document must not depend on how fast
+/// the machine decodes. The debug build of the worker runs the burn in its metered window, where the
+/// real ceiling kills it. Test builds on Linux only.
+#[cfg(all(test, target_os = "linux"))]
+fn injected_window_burn_for(document_id: Uuid, base: &[u8]) -> Option<String> {
+    let meter = text_cost_meter_for(document_id)?;
+    let doc = loro::LoroDoc::new();
+    doc.import(base).ok()?;
+    (meter.text_nanos(doc.len_ops()) > collab_core::setup_guard::TEXT_CPU_BUDGET_NANOS).then(|| {
+        format!(
+            "cpu_burn_micros={}",
+            collab_core::isolation::DECODE_APPLY_CPU_MS_MAX * 2_000
+        )
+    })
 }
 
 /// Scripted answers of the isolated apply for the tests of the write path: each attempt on a
