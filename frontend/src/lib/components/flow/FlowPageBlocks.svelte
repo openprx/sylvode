@@ -4,7 +4,6 @@
 	// provisional block of a Collection embed in flight. Also hosts the slash-menu dialogs for those
 	// entries. All intent, key and classification logic lives in `#lib/flow/slash-bridge.js`; this
 	// component only keeps dialog state.
-	import { FLOW_COLLECTION_UI_ENABLED } from '#lib/flow/product-mode.js';
 	import { getContext, onDestroy, onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
@@ -113,7 +112,6 @@
 	export function open(action: SlashBridgeAction): void {
 		if (readOnly) return;
 		if (action === 'collection') {
-			if (!FLOW_COLLECTION_UI_ENABLED) return;
 			collectionTitle = get(t)('flow.canvas.slashMenu.collectionDefaultTitle');
 			collectionInvalid = null;
 			collectionOpen = true;
@@ -223,16 +221,7 @@
 	<div class="mx-auto max-w-3xl" data-testid="flow-page-blocks">
 		{#each cards as card (card.kind === 'collection' ? card.blockId : card.kind === 'provisional' ? `provisional-${card.provisional.localId}` : card.key)}
 			{#if card.kind === 'collection'}
-				{#if FLOW_COLLECTION_UI_ENABLED}
-					<EmbeddedCollection {scopeId} collectionId={card.collectionId} blockId={card.blockId} />
-				{:else}
-					<section
-						class="not-prose my-4 rounded border border-line p-4 text-sm text-fg-muted"
-						data-testid="flow-hidden-collection"
-					>
-						{$t('flow.pageOnly.embedHidden')}
-					</section>
-				{/if}
+				<EmbeddedCollection {scopeId} collectionId={card.collectionId} blockId={card.blockId} />
 			{:else if card.kind === 'provisional'}
 				<section
 					class="not-prose my-4 rounded-card border border-dashed border-line-strong bg-surface p-4"

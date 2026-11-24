@@ -204,7 +204,11 @@ await suite.checkAsync(
 			assertEqual(outcome.feature.authz_epoch, 7, 'the epoch did not move');
 		}
 		assertEqual(ctl.propose({ field: 'bridge_enabled', value: false }), null, 'already off');
-		assertEqual(ctl.propose({ field: 'enabled', value: false })?.requiresConfirmation, true);
+		assertEqual(
+			ctl.propose({ field: 'enabled', value: false })?.requiresConfirmation,
+			true,
+			'disable still asks'
+		);
 	}
 );
 

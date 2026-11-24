@@ -10,10 +10,7 @@
 	import { FLOW_TASK_SESSIONS, type FlowTaskSessions } from '#lib/workbench/flow-sessions.js';
 	import { TaskWorkbench, WORKBENCH_CONTEXT } from '#lib/workbench/tabs.js';
 	import { conversionAvailability } from '#lib/flow/convert-availability.js';
-	import {
-		FLOW_COLLECTION_UI_ENABLED,
-		FLOW_PROCESS_READER_COMPATIBILITY
-	} from '#lib/flow/product-mode.js';
+	import { FLOW_PROCESS_READER_COMPATIBILITY } from '#lib/flow/product-mode.js';
 	import { getContext, onDestroy, onMount, untrack } from 'svelte';
 	import { t } from 'svelte-i18n';
 	import { page } from '$app/state';
@@ -88,7 +85,6 @@
 	// the registry's `collection:table|board` / `record:panel` renderers over typed reads, never
 	// through `repository.open` (no engine doc, no WebSocket).
 	let collectionObject = $state<FlowObjectView | null>(null);
-	let hiddenTypedObject = $state(false);
 	let legacyEditorObject = $state<FlowObjectView | null>(null);
 	let enablingEditor = $state(false);
 	let sharedBlocksReady = $state(false);
@@ -235,7 +231,6 @@
 		runtimeError = null;
 		unsupportedObject = null;
 		collectionObject = null;
-		hiddenTypedObject = false;
 		legacyEditorObject = null;
 		legacyEditorError = null;
 
@@ -259,11 +254,6 @@
 			return;
 		}
 		if (object && (object.object_type === 'collection' || object.object_type === 'record')) {
-			if (!FLOW_COLLECTION_UI_ENABLED) {
-				hiddenTypedObject = true;
-				taskWorkbench?.close(`flow:${objectId}`, true);
-				return;
-			}
 			const kind = registryObjectType(object.object_type);
 
 			const registered =
@@ -820,17 +810,6 @@
 		/>
 		{@render pageToolPane(legacyEditorObject, null)}
 	</div>
-{:else if hiddenTypedObject}
-	<section
-		class="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center"
-		data-testid="flow-typed-unavailable"
-	>
-		<h1 class="text-lg font-semibold">{$t('flow.pageOnly.title')}</h1>
-		<p class="text-sm text-fg-muted">{$t('flow.pageOnly.body')}</p>
-		<a class="min-h-11 py-2 text-fg underline" href={resolve('/(app)/flow')}
-			>{$t('flow.pageOnly.back')}</a
-		>
-	</section>
 {:else if collectionObject}
 	{@const routeScopeId = collectionObject.scope_id}
 	<div class="flex items-center justify-between border-b border-line px-6 py-3">

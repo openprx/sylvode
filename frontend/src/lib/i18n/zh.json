@@ -4120,13 +4120,6 @@
 			"recordCurrentValue": "当前已保存的值",
 			"recordContainerReadonly": "所属容器未激活时，记录内容为只读。如有权限，仍可归档此记录以完成清理。"
 		},
-		"pageOnly": {
-			"title": "此功能暂未开放",
-			"body": "Flow 当前只开放 Page，原有集合和记录数据已保留。",
-			"back": "返回 Page",
-			"embedHidden": "集合暂未开放，原有数据已保留。",
-			"trashEmpty": "此页暂无 Page 回收记录。"
-		},
 		"layout": {
 			"more": "更多",
 			"resizeNavigation": "调整导航宽度：方向键调整，回车或双击重置",

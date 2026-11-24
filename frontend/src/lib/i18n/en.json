@@ -4120,13 +4120,6 @@
 			"recordCurrentValue": "Current saved value",
 			"recordContainerReadonly": "Record content is read-only while its container is inactive. Authorized archive cleanup remains available."
 		},
-		"pageOnly": {
-			"title": "This feature is not currently available",
-			"body": "Flow currently focuses on Pages. Existing Collection and Record data is preserved.",
-			"back": "Back to Pages",
-			"embedHidden": "Collection is currently hidden. Its existing data is preserved.",
-			"trashEmpty": "No Page items in this trash page."
-		},
 		"layout": {
 			"more": "More",
 			"resizeNavigation": "Resize navigation: arrows adjust, Enter or double-click resets",

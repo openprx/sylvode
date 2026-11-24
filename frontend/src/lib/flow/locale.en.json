@@ -9,6 +9,9 @@
 				"turnOff": "Turn off",
 				"saved": "Saved."
 			}
+		},
+		"trash": {
+			"noItems": "No pages or collections in this part of the trash."
 		}
 	}
 }
