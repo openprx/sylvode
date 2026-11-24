@@ -1,4 +1,5 @@
 import { apiClient, type ApiResult, type PaginatedData } from './client';
+import type { PageLink } from './page-links';
 import { get } from 'svelte/store';
 import { t } from 'svelte-i18n';
 
@@ -32,6 +33,10 @@ export interface Issue {
 	/** The due date as the API stores it (midnight UTC of the day); see `utils/due-date.ts`. */
 	due_at?: string | null;
 	type?: string;
+	/** Linked Flow pages; on single-item answers only. */
+	page_links?: PageLink[];
+	/** Number of linked Flow pages; on list answers. */
+	page_link_count?: number;
 }
 
 export interface CreateIssueInput {

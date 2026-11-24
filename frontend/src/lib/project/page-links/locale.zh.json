@@ -1,0 +1,48 @@
+{
+	"pageLinks": {
+		"title": "关联页面",
+		"thing": "关联页面",
+		"restricted": "受限页面",
+		"untitled": "页面",
+		"inTrash": "已在回收站",
+		"open": "打开页面",
+		"empty": "此工作项尚未关联任何页面。",
+		"count": "已关联 {count} / {max}",
+		"link": "关联页面",
+		"unlink": "取消关联",
+		"unlinkLabel": "取消关联 {title}",
+		"unlinked": "已取消关联页面",
+		"linked": "已关联页面",
+		"limitReached": "此工作项已达到关联页面数量上限（{max}）。请先取消一个关联再添加。",
+		"picker": {
+			"label": "按标题搜索页面",
+			"placeholder": "搜索页面",
+			"hint": "输入关键字，搜索你能看到的页面。",
+			"searching": "正在搜索...",
+			"none": "没有可关联的匹配页面。",
+			"failed": "搜索失败，请重试。",
+			"choose": "关联 {title}",
+			"close": "关闭"
+		},
+		"workItems": {
+			"title": "工作项",
+			"thing": "工作项",
+			"empty": "没有工作项关联到此页面。",
+			"hidden": "另有 {count} 个你无权查看",
+			"truncated": "关联的工作项多于此处显示的数量。",
+			"unlink": "取消关联",
+			"unlinkLabel": "取消 {identifier} 与此页面的关联",
+			"unlinked": "已取消关联工作项"
+		},
+		"activity": {
+			"linked": "关联了页面“{title}”",
+			"linkedRestricted": "关联了一个受限页面",
+			"linkedRemoved": "关联了一个已被移除的页面",
+			"linkedGeneric": "关联了一个页面",
+			"unlinked": "取消关联了页面“{title}”",
+			"unlinkedRestricted": "取消关联了一个受限页面",
+			"unlinkedRemoved": "取消关联了一个已被移除的页面",
+			"unlinkedGeneric": "取消关联了一个页面"
+		}
+	}
+}

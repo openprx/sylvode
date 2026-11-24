@@ -193,6 +193,13 @@ cannot be chosen. **Due date** is a calendar date with a picker and a clear acti
 the start of that day in UTC and shown as the same date to everyone, so a date set in one time zone
 does not move to another day in another.
 
+**Linked pages** lists the Flow pages tied to the issue (up to 50). **Link a page** searches the
+pages you can see by title; **Unlink** removes a link from the issue page or from the page's
+**Relations** tab. A page you cannot read is listed as **Restricted page**, a page in the trash as
+**In trash**; a link to a page that was deleted for good disappears. Linking needs the right to edit
+the issue and to view the page; unlinking needs the right to edit the issue. The issue activity
+records each link and unlink.
+
 Assigning an issue to a bot, or mentioning a bot, can start agent work; see [Agents](agents.md).
 
 ### Labels

@@ -35,6 +35,7 @@
 	import FlowMountPanel from './FlowMountPanel.svelte';
 	import FlowSharePanel from './FlowSharePanel.svelte';
 	import FlowRelationsPanel from './FlowRelationsPanel.svelte';
+	import LinkedWorkItems from '#lib/project/page-links/LinkedWorkItems.svelte';
 	import FlowHistoryDiff from './FlowHistoryDiff.svelte';
 
 	const panelId = $props.id();
@@ -669,6 +670,9 @@
 		</h2>
 		{#if visited.relations}
 			<FlowRelationsPanel objectId={object.id} scopeId={object.scope_id} />
+			{#if object.object_type === 'page'}
+				<LinkedWorkItems objectId={object.id} workspaceId={object.workspace_id ?? null} />
+			{/if}
 		{/if}
 	</div>
 

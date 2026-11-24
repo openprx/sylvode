@@ -89,7 +89,7 @@ The panel beside a page has five tabs:
 | **Info** | Object ID, dates, **Convert to Forms…**, archive and package tools, and **Export this object**. |
 | **Comments** | Page and block comments. |
 | **Share** | Access, public links and team placements. |
-| **Relations** | Links to and from other pages and objects, filtered by direction and type. |
+| **Relations** | Links to and from other pages and objects, filtered by direction and type. On a page it also lists the work items linked to it, with **Unlink**; items you cannot read are only counted ("N more you cannot see"). |
 | **History** | Earlier versions of the page. |
 
 ### Comments

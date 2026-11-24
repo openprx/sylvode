@@ -1,0 +1,48 @@
+{
+	"pageLinks": {
+		"title": "Linked pages",
+		"thing": "linked pages",
+		"restricted": "Restricted page",
+		"untitled": "Page",
+		"inTrash": "In trash",
+		"open": "Open page",
+		"empty": "No pages are linked to this work item.",
+		"count": "{count} of {max} linked",
+		"link": "Link a page",
+		"unlink": "Unlink",
+		"unlinkLabel": "Unlink {title}",
+		"unlinked": "Page unlinked",
+		"linked": "Page linked",
+		"limitReached": "This work item already has the most linked pages ({max}). Unlink one to add another.",
+		"picker": {
+			"label": "Search pages by title",
+			"placeholder": "Search pages",
+			"hint": "Type to search the pages you can see.",
+			"searching": "Searching...",
+			"none": "No linkable page matches.",
+			"failed": "The search did not work. Try again.",
+			"choose": "Link {title}",
+			"close": "Close"
+		},
+		"workItems": {
+			"title": "Work items",
+			"thing": "work items",
+			"empty": "No work items are linked to this page.",
+			"hidden": "{count} more you cannot see",
+			"truncated": "More work items are linked than are shown here.",
+			"unlink": "Unlink",
+			"unlinkLabel": "Unlink {identifier} from this page",
+			"unlinked": "Work item unlinked"
+		},
+		"activity": {
+			"linked": "linked the page \"{title}\"",
+			"linkedRestricted": "linked a restricted page",
+			"linkedRemoved": "linked a page that has since been removed",
+			"linkedGeneric": "linked a page",
+			"unlinked": "unlinked the page \"{title}\"",
+			"unlinkedRestricted": "unlinked a restricted page",
+			"unlinkedRemoved": "unlinked a page that has since been removed",
+			"unlinkedGeneric": "unlinked a page"
+		}
+	}
+}

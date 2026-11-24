@@ -48,6 +48,8 @@
 	import BotIcon from '#lib/components/BotIcon.svelte';
 	import AgentTasksPanel from '#lib/project/agent-tasks/AgentTasksPanel.svelte';
 	import AlertPanel from '#lib/project/alert-panel/AlertPanel.svelte';
+	import LinkedPages from '#lib/project/page-links/LinkedPages.svelte';
+	import { pageActivityText } from '#lib/project/page-links/rules.js';
 
 	type SelectOption = {
 		label: string;
@@ -1022,6 +1024,13 @@
 		return sprints.find((item) => item.id === sprintId)?.name || sprintId.substring(0, 8);
 	}
 
+	async function reloadActivities() {
+		const response = await activityApi.list(issueId);
+		if (response.code === 0 && response.data) {
+			activities = [...(response.data.items ?? [])].sort(sortByCreatedDesc);
+		}
+	}
+
 	function getActivityAuthor(activity: Activity): string {
 		return activity.author_name || getMemberDisplay(activity.user_id) || get(t)('common.user');
 	}
@@ -1071,6 +1080,9 @@
 					? get(t)('activity.commentDeletedWithPreview', { values: { preview } })
 					: get(t)('activity.commentDeleted');
 			}
+			case 'page_linked':
+			case 'page_unlinked':
+				return pageActivityText(get(t), activity.action, detail) ?? '';
 			default:
 				return activity.action || get(t)('common.unknownAction');
 		}
@@ -1248,6 +1260,8 @@
 					/>
 
 					<AgentTasksPanel {issueId} names={memberNameMap} refreshKey={agentTasksRefresh} />
+
+					<LinkedPages {issueId} {workspaceId} onchange={reloadActivities} />
 
 					<div class="rounded-card border border-line bg-raised p-5">
 						<h2 class="mb-4 text-lg font-semibold text-fg">
