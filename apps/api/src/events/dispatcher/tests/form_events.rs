@@ -32,7 +32,7 @@ async fn seed_form(db: &DatabaseConnection, workspace_id: Uuid) -> (FormResponse
     exec(
         db,
         "INSERT INTO form_records (id, workspace_id, project_id, form_id, title, values, created_by) \
-         VALUES ($1, $2, $3, $4, 'Ada earns 9000', '{}'::jsonb, $5)",
+         VALUES ($1, $2, $3, $4, 'Ada earns 9000kr', '{}'::jsonb, $5)",
         vec![
             record.into(),
             workspace_id.into(),
@@ -111,7 +111,7 @@ async fn the_four_form_record_events_reach_a_subscriber_with_ids_and_field_keys_
     // a signature audit entry that must not travel.
     let source =
         json!({ "type": "user", "actor_id": Uuid::new_v4(), "signature_media": { "entries": [{ "url": "/secret" }] } });
-    let values = json!({ "name": "Ada", "salary": "9000" });
+    let values = json!({ "name": "Ada", "salary": "9000kr" });
     let tx = scratch.db.begin().await.expect("transaction begins");
     insert_form_event_with_idempotency(
         &tx,
@@ -146,7 +146,7 @@ async fn the_four_form_record_events_reach_a_subscriber_with_ids_and_field_keys_
             event_type,
             None,
             source.clone(),
-            json!({ "record_id": record, "title": "Ada earns 9000" }),
+            json!({ "record_id": record, "title": "Ada earns 9000kr" }),
             None,
         )
         .await
@@ -193,7 +193,7 @@ async fn the_four_form_record_events_reach_a_subscriber_with_ids_and_field_keys_
     let mut seen = std::collections::BTreeMap::new();
     for request in &requests {
         let (_, body) = request.split_once("\r\n\r\n").expect("request body");
-        for secret in ["9000", "Ada", "/secret", "signature_media"] {
+        for secret in ["9000kr", "Ada", "/secret", "signature_media"] {
             assert!(!body.contains(secret), "{secret} reached the receiver: {body}");
         }
         let body: Value = serde_json::from_str(body).expect("body is JSON");
