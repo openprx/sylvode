@@ -65,7 +65,9 @@ pub fn list_comments_tool() -> ToolDefinition {
     ToolDefinition {
         annotations: None,
         name: "flow.comments.list".to_string(),
-        description: "List comment threads on a Flow object. Requires view access. Deleted comments are omitted."
+        description: "List comment threads on a Flow object. Requires view access. Deleted comments are omitted. \
+`author` and `mentions` of each comment are person objects {id, name|null, is_bot, state}; show the name, \
+never the id."
             .to_string(),
         input_schema: object_schema(&[], &[]),
     }
@@ -88,8 +90,11 @@ pub fn create_comment_tool() -> ToolDefinition {
     ToolDefinition {
         annotations: None,
         name: "flow.comments.create".to_string(),
-        description: "Create a comment or a one-level reply on a Flow object. Requires comment access. \
-mentions are user UUIDs; only workspace members are notified."
+        description: "Create a comment or a one-level reply on a Flow object. Requires comment access. Write \
+@Name in body to mention a member: the server resolves it (exact name, case-insensitive; a name that two \
+members share mentions nobody). `mentions` (user UUIDs, optional) is still accepted for people you picked \
+by id. Only people with access to the object are notified. The answer carries `author` and `mentions` as \
+person objects {id, name|null, is_bot, state}; state removed with name null is a removed user."
             .to_string(),
         input_schema: object_schema(
             &[
@@ -137,7 +142,11 @@ pub fn update_comment_tool() -> ToolDefinition {
     ToolDefinition {
         annotations: None,
         name: "flow.comments.update".to_string(),
-        description: "Edit the caller's own Flow comment. Requires comment access.".to_string(),
+        description: "Edit the caller's own Flow comment. Requires comment access. Typed @Name in body is resolved \
+by the server as on flow.comments.create (exact name, case-insensitive; a name two members share mentions \
+nobody); `mentions` (user UUIDs) is optional, and without it the comment keeps its existing mentions. The \
+answer carries `author` and `mentions` as person objects {id, name|null, is_bot, state}."
+            .to_string(),
         input_schema: object_schema(
             &[
                 ("flow_comment_id", json!({ "type": "string" })),

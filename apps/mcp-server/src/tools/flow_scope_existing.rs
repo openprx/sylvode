@@ -61,7 +61,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
     {"required":["workspace_id"],"not":{"anyOf":[{"required":["personal"]},{"required":["scope_id"]}]}}
    ]));
   }
-  if tool.name=="flow.comments.create"{tool.description=tool.description.replace("only workspace members are notified.","only eligible resource participants are notified.");}
+  if tool.name=="flow.comments.create"{tool.description=tool.description.replace("Only people with access to the object are notified.","Only eligible resource participants are notified.");}
   if tool.name=="flow.mentions.list"{tool.description="List bounded eligible people for mentions on this object. Resource visibility and recipient policy apply; this is not a global directory.".into();}
   if tool.name=="objects.move"{tool.description="Move an eligible Page/Collection within its canonical scope, preserving typed Record association. Source management and target edit are required; cross-scope ownership changes are refused. Genuine legacy workspace uses its original move service.".into();}
   if tool.name=="collab.projection_lag"{tool.description="Read actual policy-filtered projection lag. Personal scope accepts cursor and limit1..100, has no project filter, and enforces the published scan budget; genuine legacy workspace retains its original query contract.".into();}

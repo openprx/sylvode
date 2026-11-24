@@ -1,14 +1,15 @@
 use crate::client::OpenPrClient;
 use crate::protocol::{CallToolResult, ToolDefinition};
 use serde::Deserialize;
-use serde_json::{Value, json};
-use std::collections::HashSet;
+use serde_json::json;
 
 pub fn list_comments_tool() -> ToolDefinition {
     ToolDefinition {
         annotations: None,
         name: "comments.list".to_string(),
-        description: "List all comments on a work item".to_string(),
+        description: "List all comments on a work item. `author` and `mentions` of each comment are person objects \
+{id, name|null, is_bot, state}; show the name, never the id (state removed with name null is a removed user)."
+            .to_string(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -47,7 +48,11 @@ pub fn create_comment_tool() -> ToolDefinition {
     ToolDefinition {
         annotations: None,
         name: "comments.create".to_string(),
-        description: "Create a new comment on a work item. @mentions in content (e.g. @Codex CLI) are automatically resolved to user UUIDs.".to_string(),
+        description: "Create a new comment on a work item. Write @Name in content to mention a member: the server \
+resolves it (exact name, case-insensitive; a name that two members share mentions nobody, so pick that \
+person by id in `mentions`). The answer's `mentions` lists who was really mentioned, and `author` and \
+`mentions` are person objects {id, name|null, is_bot, state}."
+            .to_string(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -69,7 +74,7 @@ pub fn create_comment_tool() -> ToolDefinition {
                 },
                 "mentions": {
                     "type": "array",
-                    "description": "Optional extra user UUIDs to @mention (in addition to auto-resolved @mentions from content)",
+                    "description": "Optional user UUIDs of people to mention by id (in addition to the typed @Name mentions the server resolves)",
                     "items": {
                         "type": "string"
                     }
@@ -96,15 +101,11 @@ pub async fn create_comment(client: &OpenPrClient, args: serde_json::Value) -> C
 
     let content = append_attachments_to_content(input.content, input.attachments);
 
-    // Auto-resolve @mentions from content text, merging with any explicit UUIDs
-    let auto_mention_ids = resolve_mentions(&content, client).await;
-    let all_mentions = merge_mentions(input.mentions, auto_mention_ids);
-
     let mut body = json!({ "content": content });
-    if !all_mentions.is_empty()
+    if let Some(mentions) = input.mentions.filter(|ids| !ids.is_empty())
         && let Some(obj) = body.as_object_mut()
     {
-        obj.insert("mentions".to_string(), json!(all_mentions));
+        obj.insert("mentions".to_string(), json!(mentions));
     }
 
     match client.create_comment(&input.work_item_id, body).await {
@@ -140,140 +141,6 @@ fn attachment_name_from_url(url: &str) -> String {
         .to_string()
 }
 
-/// Extract `@mention` names from comment content.
-///
-/// Handles patterns like `@Codex CLI`, `@Claude Code`, `请 @admin 审查`.
-/// A mention starts with `@` and captures all subsequent characters until a
-/// delimiter is encountered: another `@`, a newline, or common punctuation
-/// that is unlikely to be part of a username (`,，。.!！?？;；:`).
-/// Trailing whitespace on each captured name is trimmed.
-fn extract_mention_names(content: &str) -> Vec<String> {
-    let mut names = Vec::new();
-    let delimiters: &[char] = &[
-        '@', '\n', '\r', ',', '，', '。', '.', '!', '！', '?', '？', ';', '；', ':',
-    ];
-    let chars: Vec<char> = content.chars().collect();
-    let len = chars.len();
-    let mut i = 0;
-
-    while i < len {
-        if chars.get(i).copied() == Some('@') {
-            i += 1; // skip the '@'
-            let start = i;
-            // Consume until delimiter or end
-            while i < len {
-                let c = chars.get(i).copied().unwrap_or('\0');
-                if delimiters.contains(&c) {
-                    break;
-                }
-                i += 1;
-            }
-            if i > start {
-                let name: String = chars.get(start..i).map_or_else(String::new, |s| s.iter().collect());
-                let trimmed = name.trim();
-                if !trimmed.is_empty() {
-                    names.push(trimmed.to_string());
-                }
-            }
-        } else {
-            i += 1;
-        }
-    }
-
-    names
-}
-
-/// Resolve `@name` references in content to user UUIDs by looking up workspace members.
-///
-/// On any error (network, parse), returns an empty vec so the comment is still created.
-async fn resolve_mentions(content: &str, client: &OpenPrClient) -> Vec<String> {
-    let mentioned_names = extract_mention_names(content);
-    if mentioned_names.is_empty() {
-        return Vec::new();
-    }
-
-    // Fetch workspace members
-    let members_value: Value = match client.list_members().await {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::warn!(error = %e, "Failed to fetch members for mention resolution");
-            return Vec::new();
-        }
-    };
-
-    // The API may return { "data": { "items": [...] } } (paginated),
-    // { "data": [...] } (array), or just [...] (root array).
-    let members_array = members_value
-        .get("data")
-        .and_then(|d| d.get("items"))
-        .and_then(Value::as_array)
-        .or_else(|| members_value.get("data").and_then(Value::as_array))
-        .or_else(|| members_value.as_array());
-
-    let Some(members) = members_array else {
-        tracing::warn!("Members response is not an array; skipping mention resolution");
-        return Vec::new();
-    };
-
-    // Build a lookup: lowercase name -> user id
-    let mut name_to_id: Vec<(String, String)> = Vec::new();
-    for member in members {
-        // Try nested user object first: { "user": { "id": "...", "name": "..." } }
-        let user_obj = member.get("user").unwrap_or(member);
-        let id = user_obj
-            .get("id")
-            .and_then(Value::as_str)
-            .or_else(|| user_obj.get("user_id").and_then(Value::as_str));
-        let name = user_obj.get("name").and_then(Value::as_str);
-
-        if let (Some(uid), Some(uname)) = (id, name) {
-            name_to_id.push((uname.to_lowercase(), uid.to_string()));
-        }
-    }
-
-    let mut resolved = Vec::new();
-    for mentioned in &mentioned_names {
-        let m_lower = mentioned.to_lowercase();
-        for (member_name_lower, member_id) in &name_to_id {
-            // Match if: exact match, or member name contains mention, or mention contains member name.
-            // e.g. @Codex CLI matches member "codex" because "codex cli" contains "codex".
-            if *member_name_lower == m_lower
-                || member_name_lower.contains(m_lower.as_str())
-                || m_lower.contains(member_name_lower.as_str())
-            {
-                resolved.push(member_id.clone());
-                break;
-            }
-        }
-    }
-
-    resolved
-}
-
-/// Merge explicit mention UUIDs with auto-resolved ones, deduplicating.
-fn merge_mentions(explicit: Option<Vec<String>>, auto_resolved: Vec<String>) -> Vec<String> {
-    let mut seen = HashSet::new();
-    let mut result = Vec::new();
-
-    // Explicit mentions first
-    if let Some(ids) = explicit {
-        for id in ids {
-            if seen.insert(id.clone()) {
-                result.push(id);
-            }
-        }
-    }
-
-    // Then auto-resolved
-    for id in auto_resolved {
-        if seen.insert(id.clone()) {
-            result.push(id);
-        }
-    }
-
-    result
-}
-
 pub fn delete_comment_tool() -> ToolDefinition {
     ToolDefinition {
         annotations: None,
@@ -307,5 +174,66 @@ pub async fn handle_delete_comment(client: &OpenPrClient, args: serde_json::Valu
     match client.delete_comment(&input.comment_id).await {
         Ok(_) => CallToolResult::success("Comment deleted"),
         Err(e) => CallToolResult::error(e),
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
+mod tests {
+    use super::{create_comment, list_comments};
+    use crate::client::test_api;
+    use crate::tools::test_support::{Api, Policy, UUID};
+    use axum::{Json, Router, routing::get};
+    use serde_json::{Value, json};
+
+    fn text(result: &crate::protocol::CallToolResult) -> Value {
+        let content = serde_json::to_value(&result.content).expect("content");
+        serde_json::from_str(content[0]["text"].as_str().expect("text")).expect("json")
+    }
+
+    /// The server resolves typed `@Name`: the tool sends the content as written and looks nobody up.
+    #[tokio::test]
+    async fn create_leaves_typed_mentions_to_the_server() {
+        let api = Api::spawn(Policy::Permissive).await.expect("stand-in api");
+        let client = api.client().expect("client");
+        let result = create_comment(
+            &client,
+            json!({ "work_item_id": UUID, "content": "hi @Codex CLI, look" }),
+        )
+        .await;
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+        let seen = api.seen();
+        assert_eq!(seen.len(), 1, "{seen:?}");
+        assert_eq!(seen[0].method, "POST");
+        assert_eq!(seen[0].body, json!({ "content": "hi @Codex CLI, look" }));
+    }
+
+    #[tokio::test]
+    async fn create_still_sends_mentions_picked_by_id() {
+        let api = Api::spawn(Policy::Permissive).await.expect("stand-in api");
+        let client = api.client().expect("client");
+        let args = json!({ "work_item_id": UUID, "content": "x", "mentions": [UUID] });
+        assert_ne!(create_comment(&client, args).await.is_error, Some(true));
+        assert_eq!(api.seen()[0].body, json!({ "content": "x", "mentions": [UUID] }));
+    }
+
+    #[tokio::test]
+    async fn list_passes_author_and_mentions_people_through() {
+        let person = json!({ "id": UUID, "name": null, "is_bot": false, "state": "removed" });
+        let answer = json!({ "code": 0, "message": "ok", "data": [
+            { "id": UUID, "content": "c", "author": person, "mentions": [person] }
+        ]});
+        let router = Router::new().route(
+            "/api/v1/issues/{id}/comments",
+            get(move || {
+                let answer = answer.clone();
+                async move { Json(answer) }
+            }),
+        );
+        let client = test_api::client(test_api::spawn(router).await.expect("api")).expect("client");
+        let out = text(&list_comments(&client, json!({ "work_item_id": UUID })).await);
+        assert_eq!(out["data"][0]["author"]["state"], "removed");
+        assert_eq!(out["data"][0]["author"]["name"], Value::Null);
+        assert_eq!(out["data"][0]["mentions"][0]["is_bot"], false);
     }
 }
