@@ -126,6 +126,8 @@ pub struct UpdateMilestoneRequest {
 #[serde(deny_unknown_fields)]
 pub struct ListMilestonesQuery {
     pub status: Option<String>,
+    pub page: Option<i64>,
+    pub per_page: Option<i64>,
 }
 
 /// The value of a field that cannot be cleared: `null` is a request error, not "no change".
@@ -430,27 +432,54 @@ pub async fn list_milestones(
         validate_status(status)?;
     }
 
+    // The same paging rules as the work item list.
+    let page = query.page.unwrap_or(1).max(1);
+    let per_page = query.per_page.unwrap_or(15).clamp(1, 100);
+    let offset = (page - 1).saturating_mul(per_page);
+
+    let total: i64 = state
+        .db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT COUNT(*)::bigint AS count FROM milestones WHERE workspace_id = $1 AND ($2::text IS NULL OR status = $2)",
+            vec![workspace_id.into(), query.status.clone().into()],
+        ))
+        .await?
+        .ok_or(ApiError::Internal)?
+        .try_get("", "count")?;
+
     let rows = MilestoneRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         format!(
             "SELECT {MILESTONE_COLUMNS} FROM milestones WHERE workspace_id = $1 AND ($2::text IS NULL OR status = $2) \
-             ORDER BY target_date ASC NULLS LAST, lower(name) ASC"
+             ORDER BY target_date ASC NULLS LAST, lower(name) ASC, id ASC LIMIT $3 OFFSET $4"
         ),
-        vec![workspace_id.into(), query.status.into()],
+        vec![workspace_id.into(), query.status.into(), per_page.into(), offset.into()],
     ))
     .all(&state.db)
     .await?;
 
     let ids: Vec<Uuid> = rows.iter().map(|row| row.id).collect();
     let mut progress = progress_of(&state, &ids).await?;
-    let response: Vec<MilestoneResponse> = rows
+    let items: Vec<MilestoneResponse> = rows
         .into_iter()
         .map(|row| {
             let progress = progress.remove(&row.id).unwrap_or_default();
             row.into_response(progress)
         })
         .collect();
-    Ok(ApiResponse::success(PaginatedData::from_items(response)))
+    let total_pages = if total == 0 {
+        0
+    } else {
+        total / per_page + i64::from(total % per_page != 0)
+    };
+    Ok(ApiResponse::success(PaginatedData {
+        items,
+        total,
+        page,
+        per_page,
+        total_pages,
+    }))
 }
 
 /// POST /`api/v1/workspaces/:workspace_id/milestones` - Create a milestone

@@ -401,7 +401,7 @@ A milestone has `name` (1 to 100 characters, unique in the workspace ignoring ca
 
 | Method | Path | Who | Notes |
 |---|---|---|---|
-| GET | `/workspaces/{workspace_id}/milestones` | members | Optional `?status=open` or `closed` (any other value is `400`). Ordered by target date, then name. |
+| GET | `/workspaces/{workspace_id}/milestones` | members | Optional `?status=open` or `closed` (any other value is `400`), `page` (default 1) and `per_page` (default 15, at most 100; larger values are cut to 100). Ordered by target date (none last), name, id. Unknown query parameters are `400`. |
 | POST | `/workspaces/{workspace_id}/milestones` | owners and admins | Body `{name, description?, target_date?}`. A new milestone is `open`. |
 | GET | `/milestones/{id}` | members | The milestone plus its work items. |
 | PUT | `/milestones/{id}` | owners and admins | Any of `name`, `description`, `target_date` (`null` clears it) and `status`. `null` on another field is `400`; a body with no field is `400`. |
@@ -409,7 +409,7 @@ A milestone has `name` (1 to 100 characters, unique in the workspace ignoring ca
 
 Every milestone answer carries `id`, `workspace_id`, `name`, `description`, `target_date`, `status`,
 `created_at`, `updated_at` and `progress: {total, done, by_project: [{project_id, project_key,
-total, done}]}`. The list answers `{items, total, ...}` like the other lists. A work item is done
+total, done}]}`. The list answers `{items, total, page, per_page, total_pages}` like the other lists, with `progress` for the returned page only. A work item is done
 when its state is finished in its own project's workflow (a terminal state, or one in the `done` or
 `completed` category). `GET /milestones/{id}` adds `items_by_project: [{project_id, project_key,
 items: [{id, identifier, title, state, done}]}]`, ordered by project key and item number, at most

@@ -564,3 +564,75 @@ async fn milestone_events_carry_changes() {
     );
     api.finish().await;
 }
+
+#[tokio::test]
+async fn the_list_pages() {
+    let Some(api) = Api::new("milestone_paging").await else {
+        return;
+    };
+    for name in ["m1", "m2", "m3", "m4", "m5"] {
+        api.new_milestone(name).await;
+    }
+    let closed = api.new_milestone("m6").await;
+    api.put(
+        &format!("/api/v1/milestones/{closed}"),
+        api.alice,
+        json!({"status": "closed"}),
+    )
+    .await;
+    let names = |answer: &super::item_api_tests::Answer| -> Vec<String> {
+        answer.data()["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .filter_map(|m| m["name"].as_str().map(str::to_string))
+            .collect()
+    };
+    let base = api.milestones_uri();
+
+    let first = api.get(&format!("{base}?page=1&per_page=4"), api.bob).await;
+    assert_eq!(first.code(), Some(0), "{}", first.body);
+    assert_eq!(names(&first), vec!["m1", "m2", "m3", "m4"]);
+    let data = first.data();
+    assert_eq!(
+        (
+            data["total"].clone(),
+            data["page"].clone(),
+            data["per_page"].clone(),
+            data["total_pages"].clone()
+        ),
+        (json!(6), json!(1), json!(4), json!(2))
+    );
+    let second = api.get(&format!("{base}?page=2&per_page=4"), api.bob).await;
+    assert_eq!(names(&second), vec!["m5", "m6"]);
+    // Past the last page: no items, the counts stay right.
+    let past = api.get(&format!("{base}?page=3&per_page=4"), api.bob).await;
+    assert!(names(&past).is_empty(), "{}", past.body);
+    assert_eq!(past.data()["total"], json!(6));
+    // The status filter counts only its own rows.
+    let open = api.get(&format!("{base}?status=open&per_page=2"), api.bob).await;
+    assert_eq!(names(&open), vec!["m1", "m2"]);
+    assert_eq!(
+        (open.data()["total"].clone(), open.data()["total_pages"].clone()),
+        (json!(5), json!(3))
+    );
+    // Defaults, and out-of-range values as the work item list treats them.
+    let default = api.get(&base, api.bob).await;
+    assert_eq!(
+        (default.data()["page"].clone(), default.data()["per_page"].clone()),
+        (json!(1), json!(15))
+    );
+    let big = api.get(&format!("{base}?per_page=1000"), api.bob).await;
+    assert_eq!(big.data()["per_page"], json!(100));
+    let accepted = api.get(&format!("{base}?per_page=100"), api.bob).await;
+    assert_eq!(accepted.data()["per_page"], json!(100));
+    let low = api.get(&format!("{base}?page=0&per_page=0"), api.bob).await;
+    assert_eq!(
+        (low.data()["page"].clone(), low.data()["per_page"].clone()),
+        (json!(1), json!(1))
+    );
+    // An unknown query parameter is still refused.
+    let unknown = api.get(&format!("{base}?sort=name"), api.bob).await;
+    assert_eq!(unknown.status, StatusCode::BAD_REQUEST, "{}", unknown.body);
+    api.finish().await;
+}
