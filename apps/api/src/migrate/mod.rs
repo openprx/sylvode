@@ -613,6 +613,10 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
         SchemaProbe::Relation("plugins_one_active_version"),
     ),
     (
+        "0121_milestones.sql",
+        SchemaProbe::Relation("milestones_workspace_lower_name"),
+    ),
+    (
         "0130_tmux_cli_codex.sql",
         SchemaProbe::ConstraintContains("project_bot_connections", "pbc_tmux_cli_check", "'codex'"),
     ),

@@ -21,6 +21,11 @@ pub static ROUTES: &[RunnerRoute] = &[
     r("GET", "/api/v1/sprints/{id}", Class::Project(Find::Table("sprints","id"))),
     r("DELETE", "/api/v1/sprints/{id}", Class::Project(Find::Table("sprints","id"))),
     r("PUT", "/api/v1/sprints/{id}", Class::Project(Find::Table("sprints","id"))),
+    r("GET", "/api/v1/workspaces/{workspace_id}/milestones", Class::Refused),
+    r("POST", "/api/v1/workspaces/{workspace_id}/milestones", Class::Refused),
+    r("DELETE", "/api/v1/milestones/{id}", Class::Refused),
+    r("GET", "/api/v1/milestones/{id}", Class::Refused),
+    r("PUT", "/api/v1/milestones/{id}", Class::Refused),
 ];
 
 #[cfg(test)]
@@ -34,7 +39,7 @@ mod tests {
     fn the_classes_of_the_area() {
         assert_eq!(
             class_counts(ROUTES),
-            BTreeMap::from([("admin", 10), ("project-resolved", 6)]),
+            BTreeMap::from([("admin", 10), ("project-resolved", 6), ("refused", 5)]),
             "the classes of the planning routes changed"
         );
     }

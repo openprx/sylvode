@@ -16,6 +16,8 @@ pub struct IssueResponse {
     pub identifier: String,
     pub project_id: Uuid,
     pub sprint_id: Option<Uuid>,
+    /// The workspace milestone the item belongs to.
+    pub milestone_id: Option<Uuid>,
     pub title: String,
     pub description: String,
     pub state: String,
@@ -60,6 +62,7 @@ struct IssueRow {
     project_key: String,
     sequence_number: i32,
     sprint_id: Option<Uuid>,
+    milestone_id: Option<Uuid>,
     title: String,
     description: String,
     state: String,
@@ -85,7 +88,7 @@ pub async fn load_issue(db: &impl ConnectionTrait, issue_id: Uuid) -> Result<Opt
         DbBackend::Postgres,
         r"
             SELECT wi.id, wi.project_id, p.workspace_id, p.key AS project_key, wi.sequence_number,
-                   wi.sprint_id, wi.title, wi.description, wi.state, wi.priority, wi.assignee_id,
+                   wi.sprint_id, wi.milestone_id, wi.title, wi.description, wi.state, wi.priority, wi.assignee_id,
                    wi.due_at, wi.created_by, wi.created_at, wi.updated_at,
                    wi.proposal_id, wi.governance_exempt, wi.governance_exempt_reason
             FROM work_items wi
@@ -107,6 +110,7 @@ pub async fn load_issue(db: &impl ConnectionTrait, issue_id: Uuid) -> Result<Opt
             identifier: identifier(&row.project_key, row.sequence_number),
             project_id: row.project_id,
             sprint_id: row.sprint_id,
+            milestone_id: row.milestone_id,
             title: row.title,
             description: row.description,
             state: row.state,
