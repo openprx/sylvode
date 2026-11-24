@@ -13,6 +13,7 @@ pub mod comment;
 pub mod context;
 pub mod decision;
 pub mod decision_domain;
+pub mod email_admin;
 pub mod export;
 pub mod flow;
 pub mod flow_surface;

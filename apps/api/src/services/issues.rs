@@ -7,7 +7,10 @@ use uuid::Uuid;
 
 use crate::{
     error::ApiError,
-    services::bot_identity::is_bot_user,
+    services::{
+        bot_identity::is_bot_user,
+        notifications::{self, NewNotification},
+    },
     webhook_trigger::{TriggerContext, WebhookEvent},
 };
 
@@ -36,13 +39,17 @@ pub struct NotifyAssignment<'a> {
     pub title: &'a str,
     pub assignee_id: Uuid,
     pub actor_id: Uuid,
-    pub now: Timestamp,
+}
+
+fn issue_link(workspace_id: Uuid, project_id: Uuid, issue_id: Uuid) -> String {
+    format!("/workspace/{workspace_id}/projects/{project_id}/issues/{issue_id}")
 }
 
 /// Tells a human assignee that an issue was assigned to them.
 ///
 /// Nothing is written when the assignee is the actor (your own actions never notify you) or a bot
-/// (a bot is told through its task, not a notification).
+/// (a bot is told through its task, not a notification). The recipient's preferences decide the
+/// rest (see [`notifications::create`]).
 ///
 /// # Errors
 /// A database failure.
@@ -50,32 +57,94 @@ pub async fn notify_assignment<C: ConnectionTrait>(db: &C, input: NotifyAssignme
     if input.assignee_id == input.actor_id || is_bot_user(db, input.assignee_id).await? {
         return Ok(());
     }
-    let link = format!(
-        "/workspace/{}/projects/{}/issues/{}",
-        input.workspace_id, input.project_id, input.issue_id
-    );
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        r"
-            INSERT INTO notifications (
-                id, user_id, workspace_id, type, kind, payload, title, content, link, related_issue_id, is_read, created_at
-            )
-            VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, false, $11)
-        ",
-        vec![
-            Uuid::new_v4().into(),
-            input.assignee_id.into(),
-            input.workspace_id.into(),
-            "assignment".into(),
-            "assignment".into(),
-            json!({}).into(),
-            "notification.issueAssignedTitle".into(),
-            format!("issue_assigned:{}", input.title).into(),
-            link.into(),
-            input.issue_id.into(),
-            input.now.into(),
-        ],
-    ))
+    notifications::create(
+        db,
+        NewNotification {
+            user_id: input.assignee_id,
+            workspace_id: Some(input.workspace_id),
+            kind: notifications::ASSIGNMENT,
+            title_key: "notification.issueAssignedTitle",
+            content: format!("issue_assigned:{}", input.title),
+            link: Some(issue_link(input.workspace_id, input.project_id, input.issue_id)),
+            related_issue_id: Some(input.issue_id),
+            related_comment_id: None,
+            related_project_id: None,
+            payload: json!({}),
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+/// What [`notify_state_change`] and [`notify_priority_change`] need to know about a change.
+#[derive(Debug, Clone, Copy)]
+pub struct NotifyChange<'a> {
+    pub workspace_id: Uuid,
+    pub project_id: Uuid,
+    pub issue_id: Uuid,
+    pub title: &'a str,
+    pub assignee_id: Uuid,
+    pub actor_id: Uuid,
+    pub old: &'a str,
+    pub new: &'a str,
+}
+
+/// Tells a human assignee that the state of their work item changed.
+///
+/// Nothing is written when the assignee made the change or is a bot.
+///
+/// # Errors
+/// A database failure.
+pub async fn notify_state_change<C: ConnectionTrait>(db: &C, input: NotifyChange<'_>) -> Result<(), ApiError> {
+    notify_change(
+        db,
+        input,
+        notifications::ISSUE_STATE_CHANGED,
+        "notification.issueStateChangedTitle",
+    )
+    .await
+}
+
+/// Tells a human assignee that the priority of their work item changed.
+///
+/// Nothing is written when the assignee made the change or is a bot.
+///
+/// # Errors
+/// A database failure.
+pub async fn notify_priority_change<C: ConnectionTrait>(db: &C, input: NotifyChange<'_>) -> Result<(), ApiError> {
+    notify_change(
+        db,
+        input,
+        notifications::ISSUE_PRIORITY_CHANGED,
+        "notification.issuePriorityChangedTitle",
+    )
+    .await
+}
+
+async fn notify_change<C: ConnectionTrait>(
+    db: &C,
+    input: NotifyChange<'_>,
+    kind: &'static str,
+    title_key: &'static str,
+) -> Result<(), ApiError> {
+    if input.assignee_id == input.actor_id || is_bot_user(db, input.assignee_id).await? {
+        return Ok(());
+    }
+    notifications::create(
+        db,
+        NewNotification {
+            user_id: input.assignee_id,
+            workspace_id: Some(input.workspace_id),
+            kind,
+            title_key,
+            content: format!("{kind}:{}|{}|{}", input.title, input.old, input.new),
+            link: Some(issue_link(input.workspace_id, input.project_id, input.issue_id)),
+            related_issue_id: Some(input.issue_id),
+            related_comment_id: None,
+            related_project_id: None,
+            payload: json!({ "old": input.old, "new": input.new }),
+        },
+    )
     .await?;
     Ok(())
 }

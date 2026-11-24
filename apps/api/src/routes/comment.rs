@@ -24,6 +24,7 @@ use crate::{
         ai_task_service::{CreateAiTaskInput, DispatchOrigin, DispatchOutcome, dispatch_ai_task, runner_bot_block},
         comments::insert_comment,
         issue_view::identifier,
+        notifications::{self, NewNotification},
     },
     webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks, trigger_webhooks_after_ai_tasks},
 };
@@ -99,8 +100,6 @@ async fn create_mention_notifications<C: ConnectionTrait>(
     }
 
     let link = format!("/workspace/{workspace_id}/projects/{project_id}/issues/{issue_id}");
-    let now = platform::timestamp::Timestamp::now();
-
     for mention_user_id in mention_user_ids {
         let is_workspace_member = db
             .query_one(Statement::from_sql_and_values(
@@ -114,29 +113,21 @@ async fn create_mention_notifications<C: ConnectionTrait>(
             continue;
         }
 
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            r"
-                INSERT INTO notifications (
-                    id, user_id, workspace_id, type, kind, payload, title, content, link, related_issue_id, related_comment_id, is_read, created_at
-                )
-                VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11, false, $12)
-            ",
-            vec![
-                Uuid::new_v4().into(),
-                (*mention_user_id).into(),
-                workspace_id.into(),
-                "mentioned".into(),
-                "mentioned".into(),
-                json!({}).into(),
-                "notification.mentionedTitle".into(),
-                format!("mentioned_by:{actor_name}").into(),
-                link.clone().into(),
-                issue_id.into(),
-                comment_id.into(),
-                now.into(),
-            ],
-        ))
+        notifications::create(
+            db,
+            NewNotification {
+                user_id: *mention_user_id,
+                workspace_id: Some(workspace_id),
+                kind: notifications::MENTIONED,
+                title_key: "notification.mentionedTitle",
+                content: format!("mentioned_by:{actor_name}"),
+                link: Some(link.clone()),
+                related_issue_id: Some(issue_id),
+                related_comment_id: Some(comment_id),
+                related_project_id: None,
+                payload: json!({}),
+            },
+        )
         .await?;
     }
 

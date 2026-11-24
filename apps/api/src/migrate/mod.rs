@@ -612,6 +612,7 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
         "0119_plugin_single_active_version.sql",
         SchemaProbe::Relation("plugins_one_active_version"),
     ),
+    ("0120_email_outbox.sql", SchemaProbe::Column("users", "last_digest_at")),
     (
         "0121_milestones.sql",
         SchemaProbe::Relation("milestones_workspace_lower_name"),

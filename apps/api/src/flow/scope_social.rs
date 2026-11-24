@@ -5,7 +5,10 @@ use super::{
     comments::{self, CommentActor, FlowCommentView, NewComment},
     scope,
 };
-use crate::error::{ApiError, ApiErrorKind};
+use crate::{
+    error::{ApiError, ApiErrorKind},
+    services::notifications::{self, NewNotification},
+};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, Statement, TransactionTrait};
 use serde_json::json;
 use uuid::Uuid;
@@ -79,7 +82,22 @@ async fn notify_mentions(
         if proof.principal_id == actor {
             continue;
         }
-        tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,"INSERT INTO notifications(id,user_id,workspace_id,type,kind,payload,title,content,link,is_read,created_at) VALUES($1,$2,$3,'mentioned','mentioned',$4,'notification.mentionedTitle',$5,$6,false,now())",vec![Uuid::new_v4().into(),proof.principal_id.into(),identity.workspace_id.into(),json!({"flow_object_id":identity.id,"source_flow_scope_id":identity.scope_id,"source_event_id":event}).into(),format!("mentioned_by:{actor_name}").into(),link.clone().into()])).await?;
+        notifications::create(
+            tx,
+            NewNotification {
+                user_id: proof.principal_id,
+                workspace_id: identity.workspace_id,
+                kind: notifications::MENTIONED,
+                title_key: "notification.mentionedTitle",
+                content: format!("mentioned_by:{actor_name}"),
+                link: Some(link.clone()),
+                related_issue_id: None,
+                related_comment_id: None,
+                related_project_id: None,
+                payload: json!({"flow_object_id":identity.id,"source_flow_scope_id":identity.scope_id,"source_event_id":event}),
+            },
+        )
+        .await?;
     }
     Ok(())
 }

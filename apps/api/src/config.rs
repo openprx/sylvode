@@ -18,8 +18,8 @@
 use std::sync::{Arc, OnceLock};
 
 use platform::config::{
-    AiTasksConfig, DEFAULT_STORAGE_DIR, FlowConfig, InboundConfig, IpCidr, OAuthConfig, OpenPrConfig, OutboundConfig,
-    StorageBackend, StorageConfig,
+    AiTasksConfig, DEFAULT_STORAGE_DIR, EmailConfig, FlowConfig, InboundConfig, IpCidr, OAuthConfig, OpenPrConfig,
+    OutboundConfig, StorageBackend, StorageConfig,
 };
 
 use crate::security::default_trusted_proxies;
@@ -38,6 +38,8 @@ pub struct RuntimeConfig {
     pub oauth: Option<Arc<OAuthConfig>>,
     /// The alert chain's inbound endpoint settings (`[inbound]`, off by default).
     pub inbound: InboundConfig,
+    /// The SMTP sender (`[email]`), `None` unless it is enabled.
+    pub email: Option<EmailConfig>,
 }
 
 impl RuntimeConfig {
@@ -55,6 +57,7 @@ impl RuntimeConfig {
                 .unwrap_or_else(default_trusted_proxies),
             oauth: config.oauth.clone().map(Arc::new),
             inbound: config.inbound,
+            email: config.email.clone(),
         }
     }
 
@@ -82,6 +85,7 @@ impl RuntimeConfig {
             trusted_proxies: default_trusted_proxies(),
             oauth: None,
             inbound: InboundConfig::default(),
+            email: None,
         }
     }
 }

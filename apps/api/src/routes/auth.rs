@@ -14,9 +14,8 @@ use platform::{
 };
 use sea_orm::{ConnectionTrait, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
-use crate::{error::ApiError, response::ApiResponse};
+use crate::{error::ApiError, response::ApiResponse, services::notifications::NotificationPreferences};
 
 #[derive(Debug, Serialize)]
 struct UserResponse {
@@ -64,13 +63,6 @@ pub struct UpdatePasswordRequest {
     new_password: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct NotificationPreferences {
-    email_notification: bool,
-    mention_only: bool,
-    daily_digest: bool,
-}
-
 #[derive(Debug, Deserialize)]
 pub struct UpdatePreferencesRequest {
     notification_prefs: NotificationPreferences,
@@ -99,6 +91,12 @@ pub struct MeResponse {
 #[derive(Debug, Serialize)]
 pub struct PreferencesResponse {
     notification_prefs: NotificationPreferences,
+    /// Whether this server can send e-mail (`[email]` is enabled).
+    email_available: bool,
+}
+
+fn email_available() -> bool {
+    crate::config::runtime().email.is_some()
 }
 
 /// Serializes the empty-database bootstrap. Two concurrent first registrations must not both
@@ -469,6 +467,7 @@ pub async fn get_preferences(
     let prefs = load_notification_preferences(&state, &claims.sub).await?;
     Ok(ApiResponse::success(PreferencesResponse {
         notification_prefs: prefs,
+        email_available: email_available(),
     }))
 }
 
@@ -492,6 +491,7 @@ pub async fn update_preferences(
 
     Ok(ApiResponse::success(PreferencesResponse {
         notification_prefs: req.notification_prefs,
+        email_available: email_available(),
     }))
 }
 
@@ -554,21 +554,9 @@ async fn load_notification_preferences(state: &AppState, user_id: &str) -> Resul
 
     let value = row
         .try_get::<serde_json::Value>("", "notification_prefs")
-        .unwrap_or_else(|_| default_notification_preferences_value());
+        .unwrap_or(serde_json::Value::Null);
 
-    Ok(serde_json::from_value(value).unwrap_or_else(|_| default_notification_preferences()))
-}
-
-const fn default_notification_preferences() -> NotificationPreferences {
-    NotificationPreferences {
-        email_notification: true,
-        mention_only: false,
-        daily_digest: true,
-    }
-}
-
-fn default_notification_preferences_value() -> serde_json::Value {
-    json!(default_notification_preferences())
+    Ok(NotificationPreferences::from_stored(value))
 }
 
 fn build_auth_response(

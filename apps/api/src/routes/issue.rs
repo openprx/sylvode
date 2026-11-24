@@ -23,7 +23,10 @@ use crate::{
         ai_task_service::{CreateAiTaskInput, DispatchOrigin, DispatchOutcome, dispatch_ai_task, runner_bot_block},
         bot_identity::is_bot_user,
         issue_view::{IssueResponse, identifier, issue_labels, load_issue},
-        issues::{IssueRef, NotifyAssignment, insert_activity, notify_assignment},
+        issues::{
+            IssueRef, NotifyAssignment, NotifyChange, insert_activity, notify_assignment, notify_priority_change,
+            notify_state_change,
+        },
         work_item_service::{NewWorkItem, insert_work_item},
         workflow_service::{allowed_state_values, default_project_state, resolve_effective_workflow_for_project},
     },
@@ -386,7 +389,6 @@ pub async fn create_issue(
                 title: &req.title,
                 assignee_id,
                 actor_id: user_id,
-                now,
             },
         )
         .await?;
@@ -1068,10 +1070,40 @@ pub async fn update_issue(
                 title: &updated.title,
                 assignee_id: new_assignee,
                 actor_id: user_id,
-                now,
             },
         )
         .await?;
+    }
+
+    // The assignee hears about a change of state or priority made by someone else. A new assignee
+    // was just told of the assignment, which already shows the item as it is now.
+    if let Some(assignee_id) = updated.assignee_id.filter(|_| !assignee_changed) {
+        let base = NotifyChange {
+            workspace_id: current_issue.workspace_id,
+            project_id: current_issue.project_id,
+            issue_id,
+            title: updated.title.as_str(),
+            assignee_id,
+            actor_id: user_id,
+            old: "",
+            new: "",
+        };
+        if updated.state != current_issue.state {
+            let change = NotifyChange {
+                old: &current_issue.state,
+                new: &updated.state,
+                ..base
+            };
+            notify_state_change(&tx, change).await?;
+        }
+        if updated.priority != current_issue.priority {
+            let change = NotifyChange {
+                old: &current_issue.priority,
+                new: &updated.priority,
+                ..base
+            };
+            notify_priority_change(&tx, change).await?;
+        }
     }
 
     tx.commit().await?;
