@@ -317,9 +317,33 @@ The worker runs these jobs in rounds: one round, then a pause of 5 seconds, then
 | Flow event delivery | every round | Expands pending Flow events into deliveries and sends them, up to `flow.dispatch_max_attempts` attempts. Logs a warning when the oldest pending event is too old. |
 | Flow maintenance | every round | Search index projection and rebuild jobs, quarantine and compaction queues, document compaction, projection rebuilds, integrity scans and retention of deleted objects. |
 | OAuth event feed | continuously | With `[oauth]` configured, moves events into the delegated event feed. With or without it, deletes feed rows older than `oauth.event_feed_retention_days` every 10 minutes, and once a day deletes OAuth audit events older than 180 days, OAuth operation logs older than 90 days, and authorization requests, codes and tokens that expired more than a day (tokens: seven days) ago. |
+| E-mail delivery | every 10 seconds, with `[email]` enabled | Sends the e-mails queued in the outbox (see [E-mail](#e-mail)). |
+| Daily digests | every 5 minutes, with `[email]` enabled | Queues one digest e-mail for each user on the daily summary who has not had today's yet, once `email.digest_hour_utc` has passed. |
 | Alert follow-up | every `inbound.followup_interval_secs` | Reports the outcome of alert tasks, starts queued alert tasks as capacity frees up, and closes finished alerts. Deletes stored inbound events older than `inbound.event_retention_days` once an hour. |
 
 `worker --concurrency <n>` (default 4) scales the batch sizes of these jobs.
+
+## E-mail
+
+With `[email] enabled = true` ([configuration.md](configuration.md#email)) the API queues a row in
+the `email_outbox` table in the same transaction that creates a notification, and the worker sends
+it. A row is `pending`, `sending`, `sent` or `failed`. The worker takes up to 20 due rows every 10
+seconds, with a lease of 2 minutes, so several workers can run. A failed attempt is tried again after
+1 minute, 5 minutes, 30 minutes and 2 hours; after the fifth the row is `failed`. A host that the
+[outbound address policy](#outbound-address-policy) refuses fails the row at once, with
+`last_error` "refused by the outbound address policy". `last_error` holds at most 500 characters and
+never the SMTP password. Rows stay after sending, as a record.
+
+To see what happened, query the table:
+
+```sql
+SELECT kind, status, attempts, next_attempt_at, last_error FROM email_outbox
+ WHERE status <> 'sent' ORDER BY created_at DESC LIMIT 20;
+```
+
+To check the setup, an instance administrator sends a test e-mail to their own address with
+`POST /api/v1/admin/email/test`; it answers `{"queued": true}` and the row of kind `test` shows the
+outcome a few seconds later. If `[email]` is not enabled the call answers 409 `feature_disabled`.
 
 ## Outbound address policy
 
@@ -327,5 +351,6 @@ Webhook deliveries, AI task deliveries, Flow event deliveries and the runner add
 connection are refused when the target resolves to a private, loopback or other internal address,
 and redirects are not followed. To reach internal services, list them in
 `outbound.allowed_hosts` as `host` or `host:port`. The generated Compose file allows the services of
-its own network: `runner:9090`, `api:8080`, `mcp-server:8090` and `frontend:80`. See
+its own network: `runner:9090`, `api:8080`, `mcp-server:8090` and `frontend:80`. The SMTP host of
+`[email]` is checked by the same rules; a relay on a private address has to be listed here. See
 [configuration.md](configuration.md#outbound) and [integrations/webhooks.md](integrations/webhooks.md).

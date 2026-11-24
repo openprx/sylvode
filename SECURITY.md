@@ -77,6 +77,13 @@ These areas carry the highest impact, and reports about them are especially welc
   unless listed in `[outbound] allowed_hosts`, and redirects are not followed. A forged or
   unverifiable signature, a way past the outbound address filter (SSRF), or a secret
   leaking into logs or stored delivery records is in scope.
+- **E-mail delivery.** The SMTP password in `[email]` is held as a secret: it is never logged,
+  never returned by the API or the configuration error messages, and never stored in the e-mail
+  outbox, and errors from the SMTP server are stored with the password removed. The SMTP host is
+  resolved through the outbound address policy and the connection goes to the checked addresses
+  only; `tls = "none"` is accepted for loopback hosts only. E-mails are plain text, and user-supplied
+  text placed in them is stripped of control characters and cut to 200 characters. Leaking the password, reaching an address the policy refuses, or
+  injecting a header or an extra recipient through user-supplied text is in scope.
 - **Runner.** `sylvode-runner` receives task deliveries and runs agents and commands on the host
   where it is installed. Its [security notes](apps/runner/SECURITY.md) describe what it verifies
   and how it runs agents; a way to make it run something its configuration does not allow is in

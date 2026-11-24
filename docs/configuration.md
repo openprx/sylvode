@@ -41,6 +41,7 @@ The `api`, `worker` and `mcp-server` binaries, and the `sylvode` command line, r
 | `[flow]` | `api`, `worker` |
 | `[oauth]` | `api`, `worker`; when both `[oauth]` and `[mcp]` are in one file, their shared values must agree |
 | `[inbound]` | `api`, `worker` |
+| `[email]` | `api` (whether e-mail is available, the links), `worker` (sends the e-mails) |
 
 ## `[server]`
 
@@ -48,6 +49,7 @@ The `api`, `worker` and `mcp-server` binaries, and the `sylvode` command line, r
 |---|---|---|---|
 | `app_name` | string | the binary's own name | Service name in log lines and in the `/health` response. Must be concrete. Leave it out of a file shared by `api` and `worker`, so each keeps its own name. |
 | `bind_addr` | string | `0.0.0.0:8081` | `host:port` the `api` listens on. IPv6 hosts in brackets. Port 1 to 65535. |
+| `public_url` | string | none | Absolute `http` or `https` origin without a path, for example `https://sylvode.example.com`, that people reach the server at. Links in e-mails start with it. Required when `[email] enabled = true`. |
 | `trusted_proxies` | array of strings | `["127.0.0.0/8", "::1/128", "172.16.0.0/12"]` | IP addresses or CIDR blocks of reverse proxies whose `X-Forwarded-For` and `X-Real-IP` headers the `api` believes when it needs the client address (per-address rate limits and allow-lists). Headers from any other peer are ignored. Setting the key replaces the default list. The default covers loopback and the address range Docker gives the Compose bridge network; Podman and custom networks use other ranges. |
 
 ## `[database]`
@@ -222,6 +224,32 @@ be tightened but not removed.
 | `max_alerts_per_rule_per_hour` | integer | `60` | 1 to 10000. Work items one rule may open per hour. |
 | `event_retention_days` | integer | `30` | 1 to 365. Days stored inbound events are kept. |
 | `followup_interval_secs` | integer | `2` | 1 to 60. How often the `worker` checks alert tasks for outcomes and starts queued ones. |
+
+## `[email]`
+
+Notification e-mails over SMTP, plain text only. The section is optional and off by default. With
+`enabled = false` nothing is sent, the notification settings tell people that e-mail is not set up on
+this server, and the test e-mail endpoint answers 409 `feature_disabled`. With `enabled = true` the
+`api` and the `worker` refuse to start unless `smtp_host`, `from` and `[server] public_url` are
+present and well formed; messages name the key and never repeat its value.
+
+| Key | Type | Default | Accepted values and notes |
+|---|---|---|---|
+| `enabled` | boolean | `false` | Turns delivery on. |
+| `smtp_host` | string | none | Host name or IP address of the SMTP server, without scheme, port or path. Required when enabled. |
+| `smtp_port` | integer | 587 for `starttls`, 465 for `implicit`, 25 for `none` | 1 to 65535. |
+| `tls` | string | `starttls` | `starttls` (the upgrade is required, the connection fails without it), `implicit` (TLS from the first byte) or `none`. `none` is accepted only when `smtp_host` is `localhost` or a loopback address. |
+| `username` | string | none | With `password`, logs in to the server. |
+| `password` | string | none | Needs `username`. Never logged, never shown in an error, never stored in the outbox. |
+| `from` | string | none | RFC 5322 mailbox, for example `Sylvode <sylvode@example.com>`. Required when enabled. |
+| `ca_file` | string | none | PEM file with certificates added to the trust roots, for a server with a private CA. The `worker` fails to start if it cannot read it. |
+| `digest_hour_utc` | integer | `8` | 0 to 23. Hour (UTC) after which each day's digest is sent. |
+
+The `worker` resolves `smtp_host` through the [`[outbound]`](#outbound) address rules and connects
+only to addresses that pass them, checking the certificate against `smtp_host`. A relay on a private
+or loopback address must be listed in `outbound.allowed_hosts` (as `host` or `host:port`); a message
+for a host the rules refuse is marked `failed` at once. See [operations.md](operations.md#e-mail)
+for the outbox.
 
 ## Environment variables read by the server binaries
 

@@ -154,6 +154,9 @@ mod item_api_tests;
 mod milestone_api_tests;
 
 #[cfg(test)]
+mod notification_api_tests;
+
+#[cfg(test)]
 mod sprint_api_tests;
 
 #[cfg(test)]

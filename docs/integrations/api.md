@@ -59,7 +59,7 @@ for how codes are carried).
 | GET | `/api/v1/auth/me` | none | The signed-in user: `{"user", "bot"}`. `bot` is `null` for a person; for a bot token it is `{"bot_id", "workspace_id", "permissions", "project_scope"}` (`permissions` as the token acts: a project-scoped bot's `admin` shows as `write`). |
 | PUT | `/api/v1/auth/me/profile` | `{"name", "email", "avatar_url"}` | |
 | PUT | `/api/v1/auth/me/password` | `{"current_password", "new_password"}` | |
-| GET, PUT | `/api/v1/auth/me/preferences` | `{"notification_prefs": {"email_notification", "mention_only", "daily_digest"}}` | |
+| GET, PUT | `/api/v1/auth/me/preferences` | `{"notification_prefs": {"email_notification", "mention_only", "daily_digest", "language"}}` | `language` is `en` or `zh` (default `en`), the language of e-mails; an unknown key or language is refused. Both methods answer `{"notification_prefs", "email_available"}`; `email_available` is `false` when the server has no e-mail delivery. |
 
 Register, login and refresh answer `{"user": {...}, "tokens": {"access_token", "refresh_token",
 "token_type": "Bearer", "access_expires_in", "refresh_expires_in"}}` and also set the
@@ -331,10 +331,22 @@ A notification has `id`, `user_id`, `type`, `title`, `content`, `link`, `related
 |---|---|
 | `mentioned` | Someone mentions the user in a work item comment or in Flow. For a comment, `related_comment_id` is that comment. |
 | `assignment` | A work item is assigned to the user by someone else, when it is created or later. Assigning yourself, or a bot, sends none. |
+| `issue_state_changed` | Someone else changes the state of a work item assigned to the user. `content` is `issue_state_changed:<title>\|<old>\|<new>`. Not sent when the same request also assigns the item to the user (the assignment shows it). |
+| `issue_priority_changed` | The same for the priority: `issue_priority_changed:<title>\|<old>\|<new>`. |
 | `alert_opened`, `alert_escalated`, `alert_task_completed`, `alert_task_failed`, `alert_suppressed`, `alert_source_throttled` | Milestones of an alert; see [Alerts](alerts.md#notifications). |
 
 `title` is a message key for the web UI (for example `notification.mentionedTitle`) and `content`
 holds its parameters.
+
+A person's preferences apply when a notification is created. With `mention_only` only `mentioned`
+and the alert types are created; the other types are not created at all. When the server has e-mail
+delivery (`[email]` in [configuration.md](../configuration.md#email)), a human user with
+`email_notification` also gets an e-mail for each notification, or, with `daily_digest`, one e-mail
+a day. Bots never get e-mail.
+
+`POST /api/v1/admin/email/test` (instance administrators) queues a test e-mail to the caller's own
+address and answers `{"queued": true}`; it answers 409 with `error_code` `feature_disabled` when
+e-mail delivery is not set up. The answer means queued, not delivered.
 
 ## Work items, sprints and labels
 

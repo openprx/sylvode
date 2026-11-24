@@ -44,6 +44,7 @@
 //! worker's single entry point — reports the missing database *and* auth values together.
 
 mod cidr;
+mod email;
 mod error;
 mod inbound;
 mod oauth;
@@ -56,6 +57,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 pub use cidr::IpCidr;
+pub use email::{DEFAULT_EMAIL_DIGEST_HOUR_UTC, EmailConfig, EmailTls, MAX_EMAIL_DIGEST_HOUR_UTC};
 pub use error::{ConfigError, EXAMPLE_CONFIG_PATH};
 pub use inbound::InboundConfig;
 pub use oauth::{
@@ -184,6 +186,8 @@ pub struct OpenPrConfig {
     pub oauth: Option<OAuthConfig>,
     /// `[inbound]`: the alert chain's inbound endpoint, off unless `enabled = true`.
     pub inbound: InboundConfig,
+    /// `[email]`: `Some` only when `enabled = true`, with every value it needs validated.
+    pub email: Option<EmailConfig>,
 }
 
 impl OpenPrConfig {
@@ -267,6 +271,8 @@ pub struct ServerConfig {
     /// Reverse proxies whose `X-Forwarded-For` / `X-Real-IP` headers may be believed.
     /// `None` means the key was absent and the API applies its built-in default.
     pub trusted_proxies: Option<Vec<IpCidr>>,
+    /// Absolute `http(s)` origin that links in e-mails start with, without a trailing slash.
+    pub public_url: Option<String>,
 }
 
 /// What a binary that opens a database connection is told when `database.url` is absent.

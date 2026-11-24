@@ -1561,3 +1561,155 @@ fn every_inbound_limit_has_an_accepted_range() {
         "an unknown inbound key is refused"
     );
 }
+
+// ---- [email] and [server] public_url ----
+
+const EMAIL_ON: &str = "[server]\npublic_url = \"https://sylvode.example.com\"\n\n[email]\nenabled = true\n\
+     smtp_host = \"smtp.example.com\"\nfrom = \"Sylvode <sylvode@example.com>\"\n";
+
+#[test]
+fn email_is_off_by_default() {
+    let config = parse("").expect("an empty file validates");
+    assert!(config.email.is_none());
+    assert!(config.server.public_url.is_none());
+    let disabled = parse("[email]\nenabled = false\n").expect("a disabled section needs nothing");
+    assert!(disabled.email.is_none());
+}
+
+#[test]
+fn a_valid_email_section_resolves_its_defaults() {
+    let config = parse(EMAIL_ON).expect("valid");
+    let email = config.email.expect("enabled");
+    assert_eq!(email.smtp_host, "smtp.example.com");
+    assert_eq!(email.smtp_port, 587);
+    assert_eq!(email.tls, super::EmailTls::Starttls);
+    assert_eq!(email.from, "Sylvode <sylvode@example.com>");
+    assert_eq!(email.digest_hour_utc, 8);
+    assert_eq!(email.public_url, "https://sylvode.example.com");
+    assert!(email.username.is_none() && email.password.is_none() && email.ca_file.is_none());
+}
+
+#[test]
+fn every_email_key_is_read() {
+    let source = "[server]\npublic_url = \"HTTPS://Sylvode.Example.com/\"\n\n[email]\nenabled = true\n\
+         smtp_host = \"Mail.Example.com\"\nsmtp_port = 2465\ntls = \"implicit\"\nusername = \"sylvode\"\n\
+         password = \"hunter2-hunter2\"\nfrom = \"sylvode@example.com\"\nca_file = \"/etc/sylvode/ca.pem\"\n\
+         digest_hour_utc = 23\n";
+    let email = parse(source).expect("valid").email.expect("enabled");
+    assert_eq!(email.public_url, "https://sylvode.example.com");
+    assert_eq!(email.smtp_host, "mail.example.com");
+    assert_eq!(email.smtp_port, 2465);
+    assert_eq!(email.tls, super::EmailTls::Implicit);
+    assert_eq!(email.username.as_deref(), Some("sylvode"));
+    assert_eq!(
+        email.password.as_ref().map(super::Secret::expose),
+        Some("hunter2-hunter2")
+    );
+    assert_eq!(email.ca_file, Some(PathBuf::from("/etc/sylvode/ca.pem")));
+    assert_eq!(email.digest_hour_utc, 23);
+    assert!(
+        !format!("{email:?}").contains("hunter2"),
+        "the password is redacted in Debug"
+    );
+}
+
+#[test]
+fn email_enabled_without_public_url_is_refused() {
+    let source = "[email]\nenabled = true\nsmtp_host = \"smtp.example.com\"\nfrom = \"sylvode@example.com\"\n";
+    let reported = issues(source);
+    assert!(reported.iter().any(|i| i.contains("server.public_url")), "{reported:?}");
+}
+
+#[test]
+fn email_enabled_needs_a_host_and_a_sender() {
+    let reported = issues("[server]\npublic_url = \"https://a.example\"\n[email]\nenabled = true\n");
+    assert!(reported.iter().any(|i| i.contains("email.smtp_host")), "{reported:?}");
+}
+
+#[test]
+fn tls_none_is_accepted_only_for_a_loopback_host() {
+    let remote = EMAIL_ON.to_string() + "tls = \"none\"\n";
+    let reported = issues(&remote);
+    assert!(reported.iter().any(|i| i.contains("email.tls")), "{reported:?}");
+    for host in ["127.0.0.1", "localhost", "[::1]"] {
+        let local = EMAIL_ON.replace("smtp.example.com", host) + "tls = \"none\"\n";
+        let email = parse(&local).expect("loopback may skip TLS").email.expect("enabled");
+        assert_eq!(email.tls, super::EmailTls::None);
+        assert_eq!(email.smtp_port, 25);
+    }
+}
+
+#[test]
+fn bad_email_values_are_refused_by_key() {
+    for (key, value) in [
+        ("tls", "\"plain\""),
+        ("smtp_port", "0"),
+        ("smtp_port", "70000"),
+        ("digest_hour_utc", "24"),
+        ("from", "\"not a mailbox\""),
+        ("smtp_host", "\"smtp.example.com:587\""),
+        ("username", "\"\""),
+        ("ca_file", "\"\""),
+    ] {
+        let source = format!("{EMAIL_ON}{key} = {value}\n");
+        // A duplicate key is a TOML error, so build the section with the key replaced instead.
+        let source = if source.matches(&format!("\n{key} = ")).count() > 1 {
+            EMAIL_ON
+                .lines()
+                .filter(|line| !line.starts_with(&format!("{key} =")))
+                .collect::<Vec<_>>()
+                .join("\n")
+                + &format!("\n{key} = {value}\n")
+        } else {
+            source
+        };
+        let reported = issues(&source);
+        assert!(
+            reported.iter().any(|i| i.contains(&format!("email.{key}"))),
+            "{key} = {value} should be refused by name, got {reported:?}"
+        );
+    }
+}
+
+#[test]
+fn public_url_must_be_an_origin() {
+    for bad in [
+        "sylvode.example.com",
+        "ftp://sylvode.example.com",
+        "https://sylvode.example.com/app",
+        "https://user:pw@sylvode.example.com",
+        "https://sylvode.example.com?x=1",
+        "https://",
+        "https://sylvode.example.com:0",
+    ] {
+        let reported = issues(&format!("[server]\npublic_url = \"{bad}\"\n"));
+        assert!(
+            reported.iter().any(|i| i.contains("server.public_url")),
+            "{bad}: {reported:?}"
+        );
+        assert!(
+            reported.iter().all(|i| !i.contains("user:pw")),
+            "the value must not appear in the message: {reported:?}"
+        );
+    }
+}
+
+#[test]
+fn the_password_and_the_mailbox_never_appear_in_an_error() {
+    let source = "[server]\npublic_url = \"https://a.example\"\n[email]\nenabled = true\n\
+         smtp_host = \"smtp.example.com\"\nfrom = \"hunter2-hunter2\"\nusername = \"u\"\npassword = \"hunter2-hunter2\"\n\
+         tls = \"bogus-hunter2\"\n";
+    let error = parse(source).expect_err("invalid");
+    let text = format!("{error} {error:?}");
+    assert!(!text.contains("hunter2"), "{text}");
+    let malformed = parse("[email]\npassword = \"hunter2-hunter2\"\nenabled = \"yes\"\n").expect_err("wrong type");
+    let text = format!("{malformed} {malformed:?}");
+    assert!(!text.contains("hunter2"), "{text}");
+}
+
+#[test]
+fn a_password_needs_a_username_and_unknown_email_keys_are_refused() {
+    let reported = issues(&(EMAIL_ON.to_string() + "password = \"abc\"\n"));
+    assert!(reported.iter().any(|i| i.contains("email.password")), "{reported:?}");
+    assert!(parse("[email]\nbogus = 1\n").is_err());
+}

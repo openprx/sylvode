@@ -73,8 +73,19 @@ Settings open as their own mode with a list of groups. Which groups you see depe
 and avatar URL, password change, theme and language. It also lists the applications you have
 connected through OAuth; see [OAuth](../integrations/oauth.md).
 
-The **Notification Preferences** on this page are saved with your profile. Sylvode does not send
-email, so they do not change what you receive; notifications appear in the web interface only.
+The **Notification Preferences** on this page are saved with your profile and decide what you are
+notified about and how:
+
+- **E-mail me about notifications** sends each notification to the address of your account. It is
+  available only when the administrator has set up e-mail delivery on the server; otherwise the
+  switch is off and the page says so.
+- **Send one daily summary instead** replaces the single e-mails by one e-mail a day that lists your
+  unread notifications since the last summary. It needs the e-mail switch.
+- **Only notify me when I am mentioned** limits notifications, in the inbox and by e-mail, to
+  mentions and alerts. Assignments and changes of state or priority are then not created for you.
+
+E-mails are plain text, in the language you use in the interface when you save the preferences. Bot
+accounts never receive e-mail.
 
 ## Workspaces
 
@@ -172,8 +183,9 @@ Every issue has an identifier made of the project key and a running number, such
 lists, the board and the issue page show it. An issue has a title, a Markdown description, a state,
 a priority (**Urgent**, **High**, **Medium**, **Low**), an assignee, labels, a sprint, attachments
 and comments. The issue page also shows its
-activity. Assigning someone else, or mentioning them in a comment, sends them a notification; your
-own actions never notify you.
+activity. Assigning someone else, or mentioning them in a comment, sends them a notification. When
+someone else changes the state or the priority of an issue assigned to you, you are notified too;
+your own actions never notify you.
 
 On the issue page, **Sprint** moves the issue into a planned or active sprint, or back to the
 backlog with **No Sprint**; a sprint that has ended is shown only while the issue is still in it and
@@ -269,8 +281,9 @@ The same operations are available as `GET /api/v1/projects/{project_id}/export` 
 The secondary column of **Home** has **Overview**, **Notifications**, **My work** and **Recent**.
 
 - **Notifications** (`/inbox`) lists your notifications in **Unread** and **Read** tabs, with
-  **Mark all as read**. You are notified when you are mentioned in a comment or assigned to an
-  issue, and about alerts that concern you (an alert opened or escalated, a bot finishing or
+  **Mark all as read**. You are notified when you are mentioned in a comment, assigned to an
+  issue, or when someone else changes the state or priority of an issue assigned to you, and about
+  alerts that concern you (an alert opened or escalated, a bot finishing or
   failing its work on an alert, alert handling suppressed by a safety limit, an inbound source
   throttled). Alerts are described in [Alerts](../integrations/alerts.md).
 - **My work** (`/my-work`) lists every work item assigned to you across workspaces.

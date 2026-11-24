@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use uuid::Uuid;
 
+use super::email::{RawEmail, validate_public_url};
 use super::inbound::RawInbound;
 use super::oauth::{RawOAuth, UrlRole, validate_forward_secret, validate_url};
 use super::secret::Secret;
@@ -83,6 +84,8 @@ pub(super) struct RawConfig {
     oauth: RawOAuth,
     #[serde(default)]
     inbound: RawInbound,
+    #[serde(default)]
+    email: RawEmail,
 }
 
 #[derive(Deserialize, Default)]
@@ -91,6 +94,7 @@ struct RawServer {
     app_name: Option<String>,
     bind_addr: Option<String>,
     trusted_proxies: Option<Vec<String>>,
+    public_url: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -252,6 +256,7 @@ impl RawConfig {
         let flow = self.flow.validate(&mut issues);
         let oauth = self.oauth.validate(&mut issues);
         let inbound = self.inbound.validate(&mut issues);
+        let email = self.email.validate(server.public_url.as_deref(), &mut issues);
         cross_check_oauth_and_mcp(oauth.as_ref(), &mcp, &mut issues);
 
         issues.into_result(origin)?;
@@ -280,6 +285,7 @@ impl RawConfig {
             flow,
             oauth,
             inbound,
+            email,
         })
     }
 }
@@ -305,10 +311,12 @@ impl RawServer {
                 })
                 .collect()
         });
+        let public_url = self.public_url.and_then(|url| issues.record(validate_public_url(&url)));
         ServerConfig {
             app_name,
             bind_addr,
             trusted_proxies,
+            public_url,
         }
     }
 }

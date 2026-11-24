@@ -90,6 +90,13 @@ pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
             ),
         )
         .route(
+            "/api/v1/admin/email/test",
+            post(routes::email_admin::send_test_email).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::admin::admin_middleware,
+            )),
+        )
+        .route(
             "/api/v1/admin/stats",
             get(routes::admin::get_stats).route_layer(axum_middleware::from_fn_with_state(
                 auth_state.clone(),

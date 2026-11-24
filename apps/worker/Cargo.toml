@@ -9,6 +9,7 @@ anyhow.workspace = true
 api = { path = "../api" }
 time.workspace = true
 clap.workspace = true
+lettre = { workspace = true, features = ["builder", "smtp-transport", "tokio1", "tokio1-rustls-tls"] }
 platform = { path = "../../crates/platform" }
 reqwest.workspace = true
 sea-orm.workspace = true

@@ -10,7 +10,10 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::{auth::SourceRow, severity::Severity};
-use crate::error::ApiError;
+use crate::{
+    error::ApiError,
+    services::notifications::{self, NewNotification},
+};
 
 /// The kinds of notification the alert chain writes. The wire `type` is [`Self::as_type`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -114,8 +117,8 @@ pub struct Subject {
     pub work_item_id: Option<Uuid>,
 }
 
-/// Inserts one notification of `kind` for each recipient that is a current human member of the
-/// workspace. Returns how many were written.
+/// Creates one notification of `kind` for each recipient that is a current human member of the
+/// workspace. Returns how many were created (a recipient's preferences may decline one).
 pub async fn send<C: ConnectionTrait>(
     db: &C,
     kind: AlertNotification,
@@ -131,28 +134,27 @@ pub async fn send<C: ConnectionTrait>(
             subject.workspace_id, subject.project_id
         )
     });
+    let mut written = 0;
     for user_id in &recipients {
-        db.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "INSERT INTO notifications (id, user_id, workspace_id, type, kind, payload, title, content, link, \
-             related_issue_id, related_project_id, is_read, created_at) \
-             VALUES ($1, $2, $3, $4, $4, $5::jsonb, $6, $7, $8, $9, $10, false, now())",
-            vec![
-                Uuid::new_v4().into(),
-                (*user_id).into(),
-                subject.workspace_id.into(),
-                kind.as_type().into(),
-                payload.clone().into(),
-                kind.title_key().into(),
-                content.to_owned().into(),
-                link.clone().into(),
-                subject.work_item_id.into(),
-                subject.project_id.into(),
-            ],
-        ))
+        let created = notifications::create(
+            db,
+            NewNotification {
+                user_id: *user_id,
+                workspace_id: Some(subject.workspace_id),
+                kind: kind.as_type(),
+                title_key: kind.title_key(),
+                content: content.to_owned(),
+                link: link.clone(),
+                related_issue_id: subject.work_item_id,
+                related_comment_id: None,
+                related_project_id: Some(subject.project_id),
+                payload: payload.clone(),
+            },
+        )
         .await?;
+        written += usize::from(created.is_some());
     }
-    Ok(recipients.len())
+    Ok(written)
 }
 
 /// Tells the person a source acts for that the source is being throttled, at most once an hour.

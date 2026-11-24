@@ -11,6 +11,7 @@ use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
 mod ai_tasks;
 mod alert_followup;
+mod email;
 mod flow;
 mod oauth_feed;
 
@@ -68,6 +69,14 @@ async fn main() -> anyhow::Result<()> {
     api::flow::scope_runtime::spawn(db.clone(), "maintenance").await?;
     tokio::spawn(oauth_feed::run(db.clone(), runtime.oauth.clone()));
     tokio::spawn(alert_followup::run(db.clone(), runtime.inbound));
+    if let Some(email_config) = config.email.clone() {
+        let sender = email::Sender::new(
+            email_config,
+            runtime.outbound.allowlist_csv(),
+            runtime.outbound.allow_private,
+        )?;
+        tokio::spawn(email::run(db.clone(), sender));
+    }
     let state = AppState {
         cfg: cfg.clone(),
         db: db.clone(),

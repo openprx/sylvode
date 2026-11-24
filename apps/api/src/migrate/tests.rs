@@ -129,6 +129,7 @@ fn the_adoption_cutoff_names_a_registered_migration() {
             "0117_sprint_rules.sql",
             "0118_label_rules.sql",
             "0119_plugin_single_active_version.sql",
+            "0120_email_outbox.sql",
             "0121_milestones.sql",
             "0122_bot_project_access.sql",
             "0126_retire_unused_columns.sql",

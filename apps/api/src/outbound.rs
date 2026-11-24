@@ -199,6 +199,56 @@ pub async fn resolve_outbound_target_with(
     })
 }
 
+/// Why [`resolve_outbound_host`] gave no address.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OutboundHostError {
+    /// The address policy forbids the target. Retrying cannot help until the policy changes.
+    Refused,
+    /// The name did not resolve. A later attempt may succeed.
+    Unresolved,
+}
+
+impl std::fmt::Display for OutboundHostError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Refused => "refused by the outbound address policy",
+            Self::Unresolved => "the host name could not be resolved",
+        })
+    }
+}
+
+/// The checked addresses of a `host` and `port` that is not a URL (an SMTP relay), against an
+/// explicit allowlist (comma-separated hosts, each optionally with a port) and private-address
+/// switch.
+///
+/// Applies the rules of [`validate_outbound_url_with`]: with `allow_private` or an allow listed
+/// host the addresses are used as they resolve; otherwise a literal or resolved address that is
+/// private, loopback or otherwise blocked refuses the whole target. The caller must connect to
+/// exactly these addresses.
+pub async fn resolve_outbound_host(
+    host: &str,
+    port: u16,
+    allowlist: &str,
+    allow_private: bool,
+) -> Result<Vec<std::net::SocketAddr>, OutboundHostError> {
+    let exempt = allow_private || host_is_allowlisted(host, Some(port), allowlist);
+    let addresses = if let Some(ip) = literal_host_ip(host) {
+        vec![std::net::SocketAddr::new(ip, port)]
+    } else {
+        tokio::net::lookup_host((normalize_host(host).as_str(), port))
+            .await
+            .map_err(|_| OutboundHostError::Unresolved)?
+            .collect()
+    };
+    if addresses.is_empty() {
+        return Err(OutboundHostError::Unresolved);
+    }
+    if !exempt && addresses.iter().any(|address| is_blocked_ip(address.ip())) {
+        return Err(OutboundHostError::Refused);
+    }
+    Ok(addresses)
+}
+
 /// The client for one delivery: no redirects, the given timeouts, and, for a host name that was
 /// resolved and checked, connecting only to the addresses the check saw (see [`OutboundTarget`]).
 pub fn delivery_client(
@@ -265,6 +315,32 @@ mod tests {
         assert_eq!(checked_addresses("h", vec![public]).expect("public"), vec![public]);
         assert!(checked_addresses("h", vec![public, private]).is_err());
         assert!(checked_addresses("h", Vec::new()).is_err());
+    }
+
+    #[tokio::test]
+    async fn a_host_target_follows_the_address_rules() {
+        use super::{OutboundHostError, resolve_outbound_host};
+        let refused = resolve_outbound_host("127.0.0.1", 25, "", false).await;
+        assert_eq!(refused, Err(OutboundHostError::Refused));
+        let private = resolve_outbound_host("10.1.2.3", 587, "", false).await;
+        assert_eq!(private, Err(OutboundHostError::Refused));
+        let public = resolve_outbound_host("93.184.216.34", 587, "", false).await;
+        assert_eq!(public.map(|found| found.len()), Ok(1));
+        // An allow listed host, with or without its port, and the private switch lift the refusal.
+        assert!(
+            resolve_outbound_host("127.0.0.1", 2525, "127.0.0.1:2525", false)
+                .await
+                .is_ok()
+        );
+        assert_eq!(
+            resolve_outbound_host("127.0.0.1", 25, "127.0.0.1:2525", false).await,
+            Err(OutboundHostError::Refused)
+        );
+        assert!(resolve_outbound_host("127.0.0.1", 25, "", true).await.is_ok());
+        assert_eq!(
+            resolve_outbound_host("name.invalid", 25, "", false).await,
+            Err(OutboundHostError::Unresolved)
+        );
     }
 
     #[test]
