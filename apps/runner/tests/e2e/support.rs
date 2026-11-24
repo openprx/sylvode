@@ -340,14 +340,27 @@ impl Drop for StubApi {
 /// Waits until `file` has at least `count` lines.
 pub fn wait_lines(file: &Path, count: usize, timeout: Duration) -> Vec<String> {
     let deadline = Instant::now() + timeout;
-    loop {
-        let lines: Vec<String> = std::fs::read_to_string(file)
+    let read = || -> Vec<String> {
+        std::fs::read_to_string(file)
             .unwrap_or_default()
             .lines()
             .map(str::to_owned)
-            .collect();
-        if lines.len() >= count || Instant::now() >= deadline {
+            .collect()
+    };
+    loop {
+        let lines = read();
+        if Instant::now() >= deadline {
             return lines;
+        }
+        if lines.len() >= count {
+            // The writer appends line by line: return only once it has stopped, so a caller never
+            // sees a record cut off in the middle.
+            std::thread::sleep(Duration::from_millis(150));
+            let settled = read();
+            if settled == lines {
+                return settled;
+            }
+            continue;
         }
         std::thread::sleep(Duration::from_millis(25));
     }
