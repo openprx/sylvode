@@ -191,6 +191,19 @@ such as `#2563eb`, and label names are unique in the workspace ignoring case (`B
 the same name). Adding a label that is already on the issue, or removing one that is not, changes
 nothing.
 
+### Milestones
+
+A milestone is a goal that spans the projects of a workspace, such as "Beta". It has a name (unique
+in the workspace, ignoring case), a description, an optional target date and a status, open or
+closed. An issue is in at most one milestone, and the issues of every project of the workspace can
+be in the same one. Owners and admins create, edit, close and delete milestones; members read them
+and choose an issue's milestone when they can edit the issue. Only an open milestone can be chosen;
+an issue that is already in a closed milestone keeps it until it is moved out.
+
+A milestone shows its progress: how many of its issues are done (in a finished state of their own
+project's workflow), in total and per project. Deleting a milestone takes it off its issues, and
+each of them records the change in its activity.
+
 ### Board
 
 **Board** (**Issue Board**) shows the issues in one column per state. Drag a card to another column

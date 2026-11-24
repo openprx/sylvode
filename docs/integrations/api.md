@@ -335,22 +335,26 @@ by identifier), the project issue list, the board (`columns[].issues[]`), `/my/i
 issue results of `/search`. The same value is the `key` of the issue object in
 [webhook payloads](webhooks.md). The full item answers (single item, create, update, list and by
 identifier) also carry `labels`, an array of `{id, name, color}` sorted by name that is empty when
-the item has no label.
+the item has no label. They also carry `milestone_id`, the id of the item's [milestone](#milestones)
+or `null`.
 
 ### Listing and updating work items
 
 `GET /projects/{project_id}/issues` filters by `state`, `priority`, `assignee_id`, `label_ids`,
-`search` and `sprint_id`, and sorts with `sort_by` and `sort_order`. `sprint_id` is a sprint id, or
-`none` for the items that are in no sprint; any other value is `400`. A query parameter the route
-does not know is refused with HTTP 400.
+`search`, `sprint_id` and `milestone_id`, and sorts with `sort_by` and `sort_order`. `sprint_id` is a
+sprint id, or `none` for the items that are in no sprint; `milestone_id` works the same way for
+[milestones](#milestones); any other value is `400`. A query parameter the route does not know is
+refused with HTTP 400.
 
 `PUT /issues/{id}` changes only the fields that are present in the body. For `assignee_id`,
-`sprint_id` and `due_at`, `null` clears the value: `{"sprint_id": null}` moves the item back to the
-backlog, `{"assignee_id": null}` unassigns it and `{"due_at": null}` removes the due date. `null` on
+`sprint_id`, `milestone_id` and `due_at`, `null` clears the value: `{"sprint_id": null}` moves the
+item back to the backlog, `{"assignee_id": null}` unassigns it, `{"milestone_id": null}` takes it
+out of its milestone and `{"due_at": null}` removes the due date. `null` on
 `title`, `description`, `state` or `priority` is `400` with the message `<field> cannot be null`. A
 body that names a field the route does not know, here and on create, is refused with HTTP 422 before
-anything is written. The activity log records an unassignment as `assigned` and a removal from a
-sprint as `sprint_changed`, each with `"to": null`.
+anything is written. The activity log records an unassignment as `assigned`, a removal from a
+sprint as `sprint_changed` and a removal from a milestone as `milestone_changed`, each with
+`"to": null`.
 
 ### Sprints
 
@@ -388,6 +392,44 @@ change or delete it. A sprint has `name`, `description`, `start_date` and `end_d
 - Each sprint in `GET /projects/{project_id}/sprints` carries `progress: {total, done}`: the work
   items in the sprint and how many of them are finished (same rule as above). Other answers do not
   carry `progress`.
+
+### Milestones
+
+A milestone belongs to a workspace and spans its projects ("Beta"); a work item is in at most one.
+A milestone has `name` (1 to 100 characters, unique in the workspace ignoring case), `description`,
+`target_date` (`YYYY-MM-DD` or `null`) and `status`, `open` or `closed`.
+
+| Method | Path | Who | Notes |
+|---|---|---|---|
+| GET | `/workspaces/{workspace_id}/milestones` | members | Optional `?status=open` or `closed` (any other value is `400`). Ordered by target date, then name. |
+| POST | `/workspaces/{workspace_id}/milestones` | owners and admins | Body `{name, description?, target_date?}`. A new milestone is `open`. |
+| GET | `/milestones/{id}` | members | The milestone plus its work items. |
+| PUT | `/milestones/{id}` | owners and admins | Any of `name`, `description`, `target_date` (`null` clears it) and `status`. `null` on another field is `400`; a body with no field is `400`. |
+| DELETE | `/milestones/{id}` | owners and admins | Its work items lose the milestone. |
+
+Every milestone answer carries `id`, `workspace_id`, `name`, `description`, `target_date`, `status`,
+`created_at`, `updated_at` and `progress: {total, done, by_project: [{project_id, project_key,
+total, done}]}`. The list answers `{items, total, ...}` like the other lists. A work item is done
+when its state is finished in its own project's workflow (a terminal state, or one in the `done` or
+`completed` category). `GET /milestones/{id}` adds `items_by_project: [{project_id, project_key,
+items: [{id, identifier, title, state, done}]}]`, ordered by project key and item number, at most
+500 items in all, and `truncated: true` when there were more; `progress` always counts every item.
+
+- A taken name is `409` with `error_code: "milestone_name_taken"`. A body with a field the route
+  does not know is refused with HTTP 422; a name that is empty after trimming or longer than 100
+  characters, and a `target_date` that is not a calendar date, are `400`.
+- Members cannot create, change or delete milestones (`403`); they read them, and set an item's
+  milestone with `milestone_id` on create and update when they may edit the item. The milestone
+  must exist in the item's workspace and be `open`, otherwise `400 milestone must be an open
+  milestone of this workspace` (the same answer for a missing, foreign and closed milestone). An
+  item that already is in a closed milestone keeps it, and may be edited with the same value or
+  moved out of it.
+- Changing an item's milestone records a `milestone_changed` activity (`{from, to}`) and sends
+  `issue.updated` with `changes.milestone_id: {old, new}`. Issue payloads carry `milestone_id`.
+- Deleting a milestone clears it from its items in one transaction, records `milestone_changed`
+  (`to: null`) on each, and sends `issue.updated` for each item after the commit.
+- Runner and project-scoped bot tokens cannot use the milestone routes, and connected applications
+  cannot reach them.
 
 ### Comments
 
