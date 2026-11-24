@@ -254,9 +254,20 @@ Its token is limited to what a runner needs, in the projects where the bot has a
 connection: the task protocol and its own resources (notifications, uploads, preferences, personal
 Flow space), and project resources (issues, comments, forms, records, proposals, Flow objects and
 the like) whose project has such a connection. Administration routes and workspace-wide listings
-are refused. Every refusal answers 403 `this bot may act only in projects it is connected to`. A
+are refused. Every refusal answers 403 `this bot may not do this in this project`. A
 task that was running when its connection was disabled can still report how it ended while its
-token works. Token bots and bot users created by an administrator are not limited this way.
+token works. Token bots and bot users created by an administrator are not limited this way unless
+an owner or admin gives the token project access (below).
+
+### Project access of a token bot
+
+A workspace bot token reaches every project of its workspace by default. An owner or admin can limit
+it to selected projects (`project-access` in the [API reference](../integrations/api.md#bot-tokens)):
+a level per project (`read`, `comment` or `write`) and a default level (`none`, `read` or `comment`)
+for every other project. A bot at `comment` can read and comment but not change items; the token's
+own `read`/`write` permission remains a ceiling. A limited bot is never an administrator and cannot
+reach administration routes; workspace-wide listings are open to it only when its default level is
+at least `read`. Bots made by a project connection are not set here: their reach is the connection's.
 
 On the runner the CLI agent runs as the runner's OS user with that user's permissions; read the
 runner's [security notes](../../apps/runner/SECURITY.md) before connecting a bot.

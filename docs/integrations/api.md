@@ -56,7 +56,7 @@ for how codes are carried).
 | POST | `/api/v1/auth/login` | `{"email", "password"}` | Bot users cannot log in with a password. |
 | POST | `/api/v1/auth/refresh` | `{"refresh_token"}` (optional) | Without a body field the `refresh_token` cookie is used. |
 | POST | `/api/v1/auth/logout` | none | Clears both cookies. |
-| GET | `/api/v1/auth/me` | none | The signed-in user. |
+| GET | `/api/v1/auth/me` | none | The signed-in user: `{"user", "bot"}`. `bot` is `null` for a person; for a bot token it is `{"bot_id", "workspace_id", "permissions", "project_scope"}` (`permissions` as the token acts: a project-scoped bot's `admin` shows as `write`). |
 | PUT | `/api/v1/auth/me/profile` | `{"name", "email", "avatar_url"}` | |
 | PUT | `/api/v1/auth/me/password` | `{"current_password", "new_password"}` | |
 | GET, PUT | `/api/v1/auth/me/preferences` | `{"notification_prefs": {"email_notification", "mention_only", "daily_digest"}}` | |
@@ -93,6 +93,20 @@ only its prefix is shown afterwards.
   surface, which the Sylvode MCP server does for its own tokens.
 - A bot made by a project bot connection reaches only the routes and projects its connections
   allow. See [Bots and agent work](../guide/agents.md).
+- A bot is workspace-wide (its permissions apply to every project) or project-scoped: a level per
+  project, `read`, `comment` or `write`, and a default level (`none`, `read` or `comment`) for every
+  other project. `GET` and `PUT /api/v1/workspaces/{workspace_id}/bots/{bot_id}/project-access`
+  (owners and admins) read and replace it as `{"project_scope": "workspace" | "projects",
+  "default_level", "grants": [{"project_id", "level"}]}` in one transaction; a workspace-wide bot
+  carries no levels (`default_level` `none`, no grants). A project outside the workspace is a 400;
+  a bot made by a project bot connection is a 409. `read` lets a safe method through,
+  `comment` also the comment routes (creating, editing, deleting and resolving comments), `write` every
+  other route. The token's permissions stay a ceiling: a token without `write` never changes
+  anything, so a bot that comments needs `write` in its permissions and a `comment` level. A
+  project-scoped bot is never an administrator and never reaches administration routes. Workspace-wide
+  listings are open for safe methods only when the default level is at least `read`. The bot list
+  (`GET .../bots`) shows `project_scope`, `default_project_level` and `grant_count`. Every
+  refusal answers 403 `this bot may not do this in this project`.
 - Instance administration (`/admin/users`, `/admin/stats` under `/api/v1/`) and a few other
   user-only areas refuse bot tokens.
 
