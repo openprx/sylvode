@@ -916,8 +916,8 @@ export interface FlowComment {
 	created_at: string;
 	updated_at: string;
 	resolved_at?: string | null;
-	/** A bare user id, never text to show: look the person up in the comments' people. */
-	resolved_by?: string | null;
+	/** Who resolved the comment, as a person to show; null while it is open. */
+	resolved_by?: Person | null;
 }
 
 export interface FlowCommentList {

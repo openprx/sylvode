@@ -54,7 +54,8 @@ pub struct FlowCommentView {
     pub created_at: String,
     pub updated_at: String,
     pub resolved_at: Option<String>,
-    pub resolved_by: Option<Uuid>,
+    /// Who resolved the comment, as a person to show; `null` while it is open.
+    pub resolved_by: Option<Person>,
 }
 
 #[derive(Debug, Serialize)]
@@ -474,7 +475,13 @@ fn view_of(row: CommentRow) -> FlowCommentView {
         created_at: row.created_at.to_rfc3339(),
         updated_at: row.updated_at.to_rfc3339(),
         resolved_at: row.resolved_at.map(platform::timestamp::Timestamp::to_rfc3339),
-        resolved_by: row.resolved_by,
+        // A placeholder, like the author: `decorate_people` shows the person as they are now.
+        resolved_by: row.resolved_by.map(|id| Person {
+            id,
+            name: None,
+            is_bot: false,
+            state: PersonState::Removed,
+        }),
     }
 }
 
@@ -486,6 +493,7 @@ pub(crate) async fn decorate_people<C: ConnectionTrait>(db: &C, views: &mut [Flo
     for person in views.iter().flat_map(|view| {
         view.author
             .iter()
+            .chain(view.resolved_by.iter())
             .chain(view.mentions.iter().map(|mentioned| &mentioned.person))
     }) {
         ids.push(person.id);
@@ -498,6 +506,7 @@ pub(crate) async fn decorate_people<C: ConnectionTrait>(db: &C, views: &mut [Flo
         for person in view
             .author
             .iter_mut()
+            .chain(view.resolved_by.iter_mut())
             .chain(view.mentions.iter_mut().map(|mentioned| &mut mentioned.person))
         {
             if let Some(current) = shown.get(&person.id) {
@@ -666,7 +675,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mentions_carry_their_label() {
+    #[allow(clippy::indexing_slicing)]
+    async fn views_show_resolver_as_a_person_and_mentions_with_their_label() {
         let scratch = scratch_or_skip!("flow_comment_people");
         let db = &scratch.db;
         let (alice, bob, gone) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
@@ -695,6 +705,11 @@ mod tests {
         let mut views = vec![view_of(row(Some(bob))), view_of(row(None))];
         decorate_people(db, &mut views).await.expect("people are readable");
         let shown = serde_json::to_value(&views).expect("json");
+        assert_eq!(
+            shown[0]["resolved_by"],
+            json!({"id": bob, "name": "Bob Renamed", "is_bot": false, "state": "active"})
+        );
+        assert_eq!(shown[1]["resolved_by"], json!(null));
         assert_eq!(
             shown[0]["mentions"],
             json!([

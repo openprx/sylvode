@@ -14,7 +14,7 @@
 	import { flowApi, type FlowComment, type FlowMentionCandidate } from '#lib/api/flow.js';
 	import { flowErrorFromResult } from '#lib/flow/command-service.js';
 	import { flowErrorDetailKey } from '#lib/flow/errors.js';
-	import { nameOrSomeone, personLabel, personLabelById, type Person } from '#lib/people/display.js';
+	import { nameOrSomeone, personLabel } from '#lib/people/display.js';
 	import {
 		insertMentionText,
 		mentionSegments,
@@ -75,17 +75,6 @@
 	function operation(kind: string, id = '') {
 		return `${get(authStore).user?.id ?? ''}:${objectId}:${kind}:${id}`;
 	}
-
-	// The people the answer carries (authors and mentioned), by id: `resolved_by` is a bare id and is
-	// shown through these, else as the neutral text.
-	const knownPeople = $derived.by(() => {
-		const byId: Record<string, Person> = {};
-		for (const item of items) {
-			if (item.author) byId[item.author.id] = item.author;
-			for (const person of item.mentions ?? []) byId[person.id] ??= person;
-		}
-		return byId;
-	});
 
 	const roots = $derived(items.filter((item) => !item.parent_id));
 	const visibleRoots = $derived(
@@ -329,7 +318,7 @@
 							<p class="text-xs text-fg-muted">
 								{$t('flow.comments.resolved')}{#if comment.resolved_by}
 									· {$t('flow.comments.resolvedBy', {
-										values: { name: personLabelById(knownPeople, comment.resolved_by, $t) }
+										values: { name: personLabel(comment.resolved_by, $t) }
 									})}{/if}
 							</p>
 						{/if}

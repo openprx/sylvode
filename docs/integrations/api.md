@@ -546,7 +546,8 @@ answers, typed `@Name` resolved by the server, `mentioned` notifications. For a 
 are the members of its workspace and the notification link is `/proposals/{id}`. For a Flow page
 they are the members of the workspace and the guests of the page (a personal page: the people who
 already take part in it); picked ids are accepted as before, and `state` is `active` for an enabled
-account. A Flow comment's `mentions` are the same person objects (they were ids before).
+account. A Flow comment's `mentions` are the same person objects (they were ids before), and its
+`resolved_by` is a person `{id, name, is_bot, state}` too, `null` while the comment is open.
 
 The activity of a work item (`GET /issues/{issue_id}/activities`) adds `people` to the paged answer:
 an object keyed by user id with `{id, name, is_bot, state}` for every person an entry names (its
