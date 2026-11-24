@@ -93,12 +93,10 @@ if isinstance(node, str):
 # inbound secret any more, every request presents a workspace bot token in `Authorization: Bearer
 # opr_...`, and the MCP server forwards it to the API, which authenticates it. /health is exempt.
 #
-# The identity has to be a bot of the workspace this MCP server is bound to -- it scopes every API
-# call to mcp.workspace_id, and a bot from anywhere else is answered "bot not authorized for this
-# workspace". mcp.bot_token in the same file is exactly that bot, which makes it the one source
-# that cannot disagree with mcp.workspace_id. Minting a fresh bot here instead would put it in
-# some other workspace and fail. scripts/bootstrap-restaurant-demo.sh is what puts a real pair in
-# the file; before it runs, both values are placeholders that name nothing.
+# The identity is any workspace bot: the server acts in the workspace of the bot token the request
+# presents. mcp.bot_token in the same file is the demo bot, which is the one source that cannot
+# disagree with the demo data. scripts/bootstrap-restaurant-demo.sh is what puts a real bot in the
+# file; before it runs, the value is a placeholder that names nothing.
 MCP_BOT_TOKEN="${OPENPR_MCP_BOT_TOKEN:-}"
 if [ -z "$MCP_BOT_TOKEN" ]; then
   MCP_BOT_TOKEN="$(read_config_value mcp.bot_token "$CONFIG_FILE")"
@@ -116,8 +114,8 @@ case "$MCP_BOT_TOKEN" in
   opr_local_*)
     echo "❌ mcp.bot_token in $CONFIG_FILE is still the placeholder scripts/start.sh generated"
     echo "   It belongs to no workspace, so the API rejects it. Run"
-    echo "   bash scripts/bootstrap-restaurant-demo.sh to replace it, and mcp.workspace_id with"
-    echo "   it, or export OPENPR_MCP_BOT_TOKEN for a bot of the configured workspace."
+    echo "   bash scripts/bootstrap-restaurant-demo.sh to replace it, or export"
+    echo "   OPENPR_MCP_BOT_TOKEN for a workspace bot."
     environment_unavailable "caller_bot_token_placeholder"
     ;;
 esac
@@ -209,11 +207,7 @@ for required_tool in \
   "flow.feature_set" \
   "objects.get" \
   "objects.query" \
-  "objects.history" \
-  "legacy_pages.inventory" \
-  "legacy_pages.import_preview" \
-  "legacy_pages.import_commit" \
-  "legacy_pages.import_status"; do
+  "objects.history"; do
   if ! printf '%s\n' "$tool_names" | grep -Fxq "$required_tool"; then
     echo "❌ Missing required MCP tool: $required_tool"
     echo "$tool_names"

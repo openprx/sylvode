@@ -301,14 +301,15 @@ output = "stderr"
 # The api service inside the compose network, not the published host port.
 api_url = "http://api:8080"
 
-# Bootstrap placeholders that satisfy validation so the container starts. They are NOT credentials
-# of a real workspace yet -- scripts/bootstrap-restaurant-demo.sh replaces both with a bot token
-# it creates through the API, then recreates this service.
+# Bootstrap placeholder that satisfies validation so the container starts. It is NOT a credential
+# of a real workspace -- scripts/bootstrap-restaurant-demo.sh replaces it with a bot token it
+# creates through the API, then recreates this service.
 # bot_token is what the stdio transport and the CLI subcommands act as. docker-compose.yml serves
 # http, where it is unused: every inbound request carries its own caller's bot token in
-# \`Authorization: Bearer opr_...\` and the server forwards that one to the API.
+# \`Authorization: Bearer opr_...\` and the server forwards that one to the API, acting in the
+# workspace that token belongs to. So there is no workspace_id here: only stdio and the CLI need
+# one (add \`workspace_id = "<uuid>"\` for them).
 bot_token = "opr_local_$(random_hex 24)"
-workspace_id = "$(random_uuid)"
 
 # There is no inbound shared secret. An http/sse request without a caller bot token is refused
 # with 401; /health stays open so the healthcheck keeps working.
@@ -467,9 +468,11 @@ if mcp is not None:
             issues.append(f"{label}: mcp.bot_token is empty or still a placeholder")
         elif not token.strip().startswith("opr_"):
             issues.append(f"{label}: mcp.bot_token must use the opr_ token prefix")
+    # workspace_id is needed by the stdio transport and the CLI only; http takes the workspace
+    # from each caller bot token. When the file states one, it has to be a real UUID.
     workspace = get(mcp, "mcp", "workspace_id")
     if workspace is None:
-        issues.append(f"{label}: mcp.workspace_id is required to run the MCP server")
+        pass
     elif not concrete(workspace) or not UUID_RE.match(workspace.strip()):
         issues.append(f"{label}: mcp.workspace_id must be a UUID")
     elif workspace.strip() == NIL_UUID:

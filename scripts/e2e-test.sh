@@ -159,9 +159,8 @@ echo ""
 
 # Step 3b: Give the MCP server a real workspace and a real bot to be reached as.
 # There is no shared inbound secret any more: an MCP HTTP request is served as the bot whose token
-# it presents, and that bot has to belong to the workspace the server is bound to through
-# mcp.workspace_id. Step 1 wrote placeholders for both, which name nothing. This bootstrap creates
-# the workspace and the bot through the API, writes the pair into
+# it presents, in the workspace that bot belongs to. Step 1 wrote a placeholder bot token, which
+# names nothing. This bootstrap creates the workspace and the bot through the API, writes them into
 # config/sylvode.compose.mcp.toml, and restarts the mcp-server container so it picks them up —
 # after which step 4 can authenticate as that bot.
 echo "📋 Step 3b: Seeding a workspace and the MCP bot the server is reached as"
