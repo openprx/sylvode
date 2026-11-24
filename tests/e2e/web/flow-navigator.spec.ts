@@ -321,7 +321,7 @@ test('navigator: Flow search, lag badge, Page create and typed Collection bounda
 	await input.fill('');
 	await expect(page.getByTestId('flow-search-panel')).toHaveCount(0);
 
-	// The current navigator makes Pages. Its accessible menu deliberately omits Collections.
+	// The navigator makes Pages and Collections; both are in its accessible menu.
 	const newButton = page.getByTestId('flow-nav-new');
 	const newBox = await newButton.boundingBox();
 	expect(newBox?.height ?? 0).toBeGreaterThanOrEqual(44);
@@ -329,7 +329,7 @@ test('navigator: Flow search, lag badge, Page create and typed Collection bounda
 	await expect(newButton).toHaveAttribute('aria-expanded', 'true');
 	const newPage = page.getByRole('menuitem', { name: 'New Page' });
 	await expect(newPage).toBeFocused();
-	await expect(page.getByRole('menuitem', { name: 'New Collection' })).toHaveCount(0);
+	await expect(page.getByRole('menuitem', { name: 'New Collection' })).toBeVisible();
 	const pageCreate = page.waitForResponse(
 		(res) => new URL(res.url()).pathname === '/api/v2/flow/objects' && res.request().method() === 'POST'
 	);
@@ -383,8 +383,7 @@ test('navigator: Flow search, lag badge, Page create and typed Collection bounda
 	]);
 
 	await page.goto(`/workspace/${workspace.id}/flow/${collectionId}`);
-	await expect(page.getByTestId('flow-typed-unavailable')).toBeVisible();
-	await expect(page.getByTestId('collection-renderer')).toHaveCount(0);
-	await expect(page.getByRole('treeitem', { name: collectionTitle })).toHaveCount(0);
+	await expect(page.getByTestId('collection-renderer')).toBeVisible();
+	await expect(page.getByRole('treeitem', { name: collectionTitle })).toBeVisible();
 	await context.close();
 });

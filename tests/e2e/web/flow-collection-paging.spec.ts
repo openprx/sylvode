@@ -63,7 +63,7 @@ async function signInAs(page: Page, session: LoginData): Promise<void> {
 	);
 }
 
-test('collection: typed records page by 50 and the retired routes direct the owner back to Pages', async ({
+test('collection: typed records page by 50 and the collection and record routes open in the browser', async ({
 	browser,
 	request
 }) => {
@@ -130,20 +130,12 @@ test('collection: typed records page by 50 and the retired routes direct the own
 	await signInAs(page, ownerLogin);
 	const reads: string[] = [];
 	page.on('request', (req) => reads.push(new URL(req.url()).pathname));
-	for (const id of [collectionId, recordIds[3]]) {
-		await page.goto(`/workspace/${workspace.id}/flow/${id}`);
-		const retired = page.getByTestId('flow-typed-unavailable');
-		await expect(retired.getByRole('heading')).toHaveText(
-			'This feature is not currently available'
-		);
-		await expect(retired).toContainText('Existing Collection and Record data is preserved.');
-		await expect(retired.getByRole('link', { name: 'Back to Pages' })).toHaveAttribute(
-			'href',
-			'/flow'
-		);
-		await expect(page.getByTestId('collection-table')).toHaveCount(0);
-		await expect(page.getByTestId('flow-record-route')).toHaveCount(0);
-	}
+	await page.goto(`/workspace/${workspace.id}/flow/${collectionId}`);
+	await expect(page.getByTestId('collection-renderer')).toBeVisible();
+	await expect(page.getByTestId('collection-table')).toBeVisible();
+	await page.goto(`/workspace/${workspace.id}/flow/${recordIds[3]}`);
+	await expect(page.getByTestId('flow-record-route')).toBeVisible();
+	await expect(page.getByTestId('record-panel')).toBeVisible();
 	expect(reads).not.toContain(`/api/v2/flow/objects/${collectionId}/bootstrap`);
 	type RecordsPage = { items: Array<{ record: { id: string } }>; next_cursor?: string | null };
 	const url = `/api/v1/flow/collections/${collectionId}/records`;
