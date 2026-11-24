@@ -6,10 +6,18 @@
  * rather than a half-rendered section. Codes the server may add later (outcomes, reasons, queue
  * causes, verdicts) stay plain strings; `status.ts` turns known ones into words.
  *
- * The shapes follow ALERT-STAGE-2-UI-RULES.md section 2.0 and the backend gaps of section 2.9:
- * G1 (`{sources, inbound_enabled, endpoint_url}` and `endpoint_url` on create and rotate), G3
- * (`suspended`, `acting_user_name` on a source; both may be absent until it is built), G4
- * (`work_item` on an event row) and G5 (`draft` on a verdict).
+ * PENDING-B6 (the one place that lists what is written ahead of the server). The shapes below
+ * follow the alert chain API with its five additions G1-G5. The server side arrives with batch B6;
+ * until then these fields are read tolerantly, and the fallbacks listed here are the marked mocks.
+ * The switch to the real answers (batch C5) searches for `PENDING-B6`, makes each field required
+ * and deletes the fallback:
+ *  - G1 `{sources, inbound_enabled, endpoint_url}` on the list and `endpoint_url` on create and
+ *    rotate: `parseSourceList`, `parseSecretsAnswer`; `Cache-Control: no-store` is server-side only.
+ *  - G3 `suspended`, `acting_user_name` on a source: optional in `parseSource`; the fallback is
+ *    derived from the members list in `status.ts` (`isSuspended`, `actingUserName`).
+ *  - G4 `work_item: {id, identifier}` on an event row: `parseEvent`.
+ *  - G5 `draft_rule` / `replaces` in the rule test request (`TestInput` in `lib/api/inbound.ts`,
+ *    `test-view.ts`) and `draft` on a verdict: optional in `parseVerdict`.
  */
 import { isRecord } from '#lib/project/connection/wire.js';
 
