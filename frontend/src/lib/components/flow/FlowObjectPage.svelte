@@ -737,6 +737,13 @@
 		).includes('manage')}
 	/>{/if}
 
+<!-- The panel fills its container (`w-full`), so beside the typed object it needs a box of its own: without one it takes the whole row and leaves the collection or record no width. -->
+{#snippet typedContextPane(contextObject: FlowObjectView)}
+	<div class="w-full shrink-0 lg:w-80 lg:overflow-auto" data-testid="flow-typed-context">
+		<FlowContextPanel object={contextObject} />
+	</div>
+{/snippet}
+
 {#snippet pageToolPane(toolObject: FlowObjectView, toolActions: readonly string[] | null)}
 	{#if lastTool}
 		<div hidden={!activeTool} class="flow-tool-pane" data-testid="flow-tool-panel">
@@ -835,7 +842,7 @@
 				</div>
 			{/if}
 		{/key}
-		<FlowContextPanel object={collectionObject} />
+		{@render typedContextPane(collectionObject)}
 	</div>
 {:else if unsupportedObject}
 	<div class="flex items-center justify-between border-b border-line px-6 py-3">
@@ -857,7 +864,7 @@
 				)}
 			</p>
 		</div>
-		<FlowContextPanel object={unsupportedObject} />
+		{@render typedContextPane(unsupportedObject)}
 	</div>
 {:else if !entry}
 	<div class="flex flex-1 items-center justify-center p-8">
