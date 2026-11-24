@@ -89,6 +89,7 @@ fn install_config(receiver_port: u16) {
         flow: FlowConfig::default(),
         oauth: None,
         inbound: platform::config::InboundConfig::default(),
+        email: None,
     })
     .expect("the configuration is installed once");
 }

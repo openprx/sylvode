@@ -1,7 +1,8 @@
 {
   "comment": "The configuration keys the api, worker and mcp-server binaries accept (crates/platform/src/config/raw.rs; every section denies unknown keys). Read by scripts/start.sh --check-config. The platform test config::schema_tests compares this file with the Rust types and fails when either side gains or loses a key.",
   "sections": {
-    "server": ["app_name", "bind_addr", "trusted_proxies"],
+    "server": ["app_name", "bind_addr", "trusted_proxies", "public_url"],
+    "email": ["enabled", "smtp_host", "smtp_port", "tls", "username", "password", "from", "ca_file", "digest_hour_utc"],
     "database": [
       "url",
       "max_connections",

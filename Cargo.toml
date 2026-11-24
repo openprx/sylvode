@@ -29,6 +29,9 @@ anyhow = "1.0"
 axum = { version = "0.8", features = ["ws", "multipart"] }
 time = { version = "0.3", features = ["formatting", "large-dates", "macros", "parsing", "serde", "serde-well-known"] }
 clap = { version = "4.5.38", features = ["derive"] }
+# SMTP protocol library for notification e-mails. Only the message builder is linked into crates
+# that build messages; the worker adds the transport with rustls (ring) and the bundled web roots.
+lettre = { version = "0.11", default-features = false }
 reqwest = { version = "0.12", features = ["json", "multipart", "rustls-tls", "stream"], default-features = false }
 sea-orm = { version = "1", default-features = false, features = [
   "sqlx-postgres",

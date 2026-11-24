@@ -46,6 +46,10 @@
 # networks use other ranges: list yours here.
 # trusted_proxies = ["127.0.0.0/8", "::1/128", "172.16.0.0/12"]
 
+# The address people reach this server at, as an absolute http or https origin without a path.
+# Links in e-mails start with it. Required when [email] is enabled.
+# public_url = "https://sylvode.example.com"
+
 
 # ---------------------------------------------------------------------------------------------
 # [database] — PostgreSQL connection and pool shape.
@@ -374,3 +378,24 @@ enabled = false
 # max_alerts_per_rule_per_hour = 60               # [1, 10000] work items one rule may open per hour
 # event_retention_days = 30                       # [1, 365] how long stored events are kept
 # followup_interval_secs = 2                      # [1, 60] how often the worker looks for ended alert tasks
+
+
+# ---------------------------------------------------------------------------------------------
+# [email] — notification e-mails over SMTP (plain text only). Optional; off by default.
+#
+# With enabled = false nothing is sent and the notification settings page says that e-mail is not
+# set up. With enabled = true, smtp_host and from are required, and so is [server] public_url.
+# The worker sends the e-mails; it connects only to addresses the [outbound] rules allow, so a
+# relay on a private or loopback address has to be listed in [outbound] allowed_hosts.
+# Validation messages name the key, never the value. The password is never logged.
+# ---------------------------------------------------------------------------------------------
+[email]
+enabled = false
+# smtp_host = "smtp.example.com"
+# smtp_port = 587                       # default: 587 for starttls, 465 for implicit, 25 for none
+# tls = "starttls"                      # starttls | implicit | none (none only for a loopback host)
+# username = "sylvode"                  # optional; with password, authenticates to the server
+# password = "replace_with_smtp_password"
+# from = "Sylvode <sylvode@example.com>"
+# ca_file = "/etc/sylvode/smtp-ca.pem"  # optional PEM added to the trust roots (a private CA)
+# digest_hour_utc = 8                   # [0, 23] hour after which each day's digest is sent

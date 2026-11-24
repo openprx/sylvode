@@ -397,6 +397,7 @@ fn install_config(receiver_port: u16) -> Result<(), String> {
         flow: FlowConfig::default(),
         oauth: None,
         inbound: platform::config::InboundConfig::default(),
+        email: None,
     })
 }
 
