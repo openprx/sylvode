@@ -73,7 +73,7 @@ Settings open as their own mode with a list of groups. Which groups you see depe
 and avatar URL, password change, theme and language. It also lists the applications you have
 connected through OAuth; see [OAuth](../integrations/oauth.md).
 
-The **Notification Preferences** on this page are saved with your profile and decide what you are
+The **Notification preferences** on this page are saved with your profile and decide what you are
 notified about and how:
 
 - **E-mail me about notifications** sends each notification to the address of your account. It is
@@ -296,7 +296,7 @@ Instance administrators see the **Instance** settings group:
 |---|---|---|
 | **Dashboard** | `/admin` | Overview of the instance. |
 | **Users** | `/admin/users` | Create users, edit them, reset passwords, enable and disable accounts, create bot users. |
-| **System** | `/admin/settings` | Read-only view of the running deployment's configuration. |
+| **System** | `/admin/settings` | Read-only view of the running deployment's configuration, and **Send a test e-mail**: queues a message to your own address to check the e-mail delivery. The page says when e-mail delivery is not set up on the server; "queued" means the message is sent in the background, not that it has arrived. |
 
 Installing Sylvode and creating the first administrator are covered in the
 [installation guide](../install.md).

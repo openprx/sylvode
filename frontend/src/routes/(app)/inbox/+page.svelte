@@ -12,6 +12,7 @@
 		type NotificationType
 	} from '#lib/api/notifications.js';
 	import { projectsApi } from '#lib/api/projects.js';
+	import { TITLE_KEYS, changeContentText, isChangeKind } from '#lib/notifications/change-text.js';
 	import { toast } from '#lib/stores/toast.js';
 	import { timeAgo } from '#lib/utils/timeago.js';
 
@@ -63,6 +64,8 @@
 				'M15 10l4.55-2.28A1 1 0 0121 8.62v6.76a1 1 0 01-1.45.9L15 14m-8 5a4 4 0 01-4-4V9a4 4 0 014-4h4a4 4 0 014 4v6a4 4 0 01-4 4H7z',
 			assignment: 'M16 7V4H8v3M5 7h14l-1 13H6L5 7z',
 			comment_reply: 'M8 10h8M8 14h5m8-3a9 9 0 11-4.18-7.6A9 9 0 0121 11.5z',
+			issue_state_changed: 'M4.93 4.93A10 10 0 1119.07 19.07M20 4v5h-5',
+			issue_priority_changed: 'M5 15l7-7 7 7',
 			issue_update: 'M4.93 4.93A10 10 0 1119.07 19.07M20 4v5h-5',
 			project_update: 'M3 11l18-5-5 18-2-7-7-2z',
 			info: 'M12 8h.01M11 12h2v4h-2m9-4a10 10 0 11-20 0 10 10 0 0120 0z'
@@ -75,6 +78,11 @@
 	}
 
 	function getNotificationTitle(notification: Notification): string {
+		// A change notification is titled by its kind: the item's title is in its content.
+		if (isChangeKind(notification.type)) {
+			return get(t)(TITLE_KEYS[notification.type]);
+		}
+
 		// Prefer issue title when available
 		if (notification.issue_title) {
 			return notification.issue_title;
@@ -121,6 +129,10 @@
 	}
 
 	function getNotificationContent(notification: Notification): string {
+		if (isChangeKind(notification.type)) {
+			return changeContentText(notification.type, notification.content, get(t));
+		}
+
 		if (notification.content.startsWith('issue_assigned:')) {
 			const issue = notification.content.substring('issue_assigned:'.length);
 			return get(t)('notification.issueAssignedContent', { values: { issue } });

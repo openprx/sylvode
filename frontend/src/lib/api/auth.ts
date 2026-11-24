@@ -45,10 +45,21 @@ export interface UpdatePasswordRequest {
 	new_password: string;
 }
 
+/** The language of the e-mails the server sends; it follows the interface language. */
+export type NotificationLanguage = 'en' | 'zh';
+
 export interface NotificationPreferences {
 	email_notification: boolean;
 	mention_only: boolean;
 	daily_digest: boolean;
+	/** The server refuses a body without it: every save sends it. */
+	language: NotificationLanguage;
+}
+
+export interface PreferencesAnswer {
+	notification_prefs: NotificationPreferences;
+	/** False when the server has no e-mail delivery set up. */
+	email_available: boolean;
 }
 
 export const authApi = {
@@ -92,21 +103,16 @@ export const authApi = {
 		return apiClient.put<null>('/api/v1/auth/me/password', data);
 	},
 
-	getPreferences(): Promise<ApiResult<{ notification_prefs: NotificationPreferences }>> {
-		return apiClient.get<{ notification_prefs: NotificationPreferences }>(
-			'/api/v1/auth/me/preferences'
-		);
+	getPreferences(): Promise<ApiResult<PreferencesAnswer>> {
+		return apiClient.get<PreferencesAnswer>('/api/v1/auth/me/preferences');
 	},
 
 	updatePreferences(
 		notification_prefs: NotificationPreferences
-	): Promise<ApiResult<{ notification_prefs: NotificationPreferences }>> {
-		return apiClient.put<{ notification_prefs: NotificationPreferences }>(
-			'/api/v1/auth/me/preferences',
-			{
-				notification_prefs
-			}
-		);
+	): Promise<ApiResult<PreferencesAnswer>> {
+		return apiClient.put<PreferencesAnswer>('/api/v1/auth/me/preferences', {
+			notification_prefs
+		});
 	},
 
 	async logout(): Promise<ApiResult<null>> {

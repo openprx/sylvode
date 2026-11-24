@@ -3,7 +3,7 @@
 	import { setLocale } from '#lib/i18n/index.js';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
-	import { authApi, type NotificationPreferences, type User } from '#lib/api/auth.js';
+	import { authApi, type User } from '#lib/api/auth.js';
 	import { authStore } from '#lib/stores/auth.js';
 	import { toast } from '#lib/stores/toast.js';
 	import { setTheme, theme, type Theme } from '#lib/theme.js';
@@ -11,12 +11,12 @@
 	import Input from '#lib/components/Input.svelte';
 	import Button from '#lib/ui/button/Button.svelte';
 	import ConnectedAppsPersonal from '#lib/oauth/ConnectedAppsPersonal.svelte';
+	import NotificationPreferences from '#lib/notifications/NotificationPreferences.svelte';
 	import { locale, t } from 'svelte-i18n';
 
 	let loading = $state(true);
 	let savingProfile = $state(false);
 	let savingPassword = $state(false);
-	let savingNotifications = $state(false);
 	let currentTheme = $state<Theme>('light');
 
 	let profileForm = $state({
@@ -28,11 +28,6 @@
 		currentPassword: '',
 		newPassword: '',
 		confirmPassword: ''
-	});
-	let notificationPrefs = $state({
-		emailNotification: true,
-		mentionOnly: false,
-		dailyDigest: true
 	});
 
 	onMount(async () => {
@@ -52,11 +47,6 @@
 				avatarUrl: user.avatar_url || ''
 			};
 			authStore.setUser(user);
-		}
-
-		const prefsResponse = await authApi.getPreferences();
-		if (prefsResponse.code === 0 && prefsResponse.data?.notification_prefs) {
-			notificationPrefs = fromApiPreferences(prefsResponse.data.notification_prefs);
 		}
 
 		loading = false;
@@ -112,34 +102,6 @@
 			toast.error(describeResult(response));
 		}
 		savingPassword = false;
-	}
-
-	async function saveNotificationPrefs() {
-		savingNotifications = true;
-		const response = await authApi.updatePreferences(toApiPreferences(notificationPrefs));
-		if (response.code === 0 && response.data?.notification_prefs) {
-			notificationPrefs = fromApiPreferences(response.data.notification_prefs);
-			toast.success($t('settings.notificationsSaved'));
-		} else {
-			toast.error(describeResult(response));
-		}
-		savingNotifications = false;
-	}
-
-	function toApiPreferences(prefs: typeof notificationPrefs): NotificationPreferences {
-		return {
-			email_notification: prefs.emailNotification,
-			mention_only: prefs.mentionOnly,
-			daily_digest: prefs.dailyDigest
-		};
-	}
-
-	function fromApiPreferences(prefs: NotificationPreferences) {
-		return {
-			emailNotification: prefs.email_notification,
-			mentionOnly: prefs.mention_only,
-			dailyDigest: prefs.daily_digest
-		};
 	}
 
 	function handleThemeChange(event: Event) {
@@ -240,30 +202,7 @@
 			</div>
 		</Card>
 
-		<Card>
-			<h2 class="text-lg font-semibold text-fg">
-				{$t('settings.notifications')}
-			</h2>
-			<div class="mt-4 space-y-3 text-sm text-fg">
-				<label class="flex items-center gap-2">
-					<input type="checkbox" bind:checked={notificationPrefs.emailNotification} />
-					{$t('settings.emailNotifications')}
-				</label>
-				<label class="flex items-center gap-2">
-					<input type="checkbox" bind:checked={notificationPrefs.mentionOnly} />
-					{$t('settings.mentionsOnly')}
-				</label>
-				<label class="flex items-center gap-2">
-					<input type="checkbox" bind:checked={notificationPrefs.dailyDigest} />
-					{$t('settings.dailyDigest')}
-				</label>
-			</div>
-			<div class="mt-4 flex justify-end">
-				<Button variant="primary" loading={savingNotifications} onclick={saveNotificationPrefs}
-					>{$t('settings.savePrefs')}</Button
-				>
-			</div>
-		</Card>
+		<NotificationPreferences />
 
 		<ConnectedAppsPersonal />
 	{/if}
