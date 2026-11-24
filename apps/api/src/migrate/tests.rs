@@ -224,7 +224,10 @@ fn the_retirement_migrations_drop_only_the_confirmed_relations() {
             "0114_multi_bot_connections.sql",
             ["project_execution_settings"].as_slice(),
         ),
-        ("0127_retire_legacy_objects.sql", ["pages"].as_slice()),
+        (
+            "0127_retire_legacy_objects.sql",
+            ["pages", "form_plugin_layouts"].as_slice(),
+        ),
     ] {
         let sql = MIGRATIONS
             .iter()

@@ -41,3 +41,6 @@ ALTER TABLE flow_import_lineage
     AND target_kind IN ('object', 'document', 'relation') AND target_id IS NOT NULL
     AND target_object_id IS NULL AND target_document_id IS NULL
   );
+
+-- Plugin protocol 3 is the only plugin protocol; the retired layout table goes.
+DROP TABLE IF EXISTS form_plugin_layouts;

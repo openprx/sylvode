@@ -1927,6 +1927,10 @@ async fn the_legacy_objects_migration_keeps_only_package_imports() {
         .expect("present column")
     };
     assert!(!present("pages").await, "the legacy pages table is gone");
+    assert!(
+        !present("form_plugin_layouts").await,
+        "the retired plugin layout table is gone"
+    );
 
     let user = insert_user(db).await;
     let workspace = insert_workspace(db, user).await;

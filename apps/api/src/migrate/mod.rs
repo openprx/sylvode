@@ -536,7 +536,7 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
     ),
     (
         "0100_form_plugin_layouts.sql",
-        SchemaProbe::Relation("form_plugin_layouts"),
+        SchemaProbe::RelationAbsent("form_plugin_layouts"),
     ),
     (
         "0101_form_plugin_library.sql",
