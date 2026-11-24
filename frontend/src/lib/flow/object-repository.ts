@@ -1,5 +1,6 @@
 import { randomUuid } from '#lib/utils/uuid.js';
 import { apiClient, authSessionChanged } from '#lib/api/client.js';
+import { transportFailure } from '#lib/api/transport.js';
 import { clearBodyClipboard } from './body/clipboard';
 import { PageBodyJobs, pageBodyJobs, disposePageBodyJobs } from './body/jobs';
 import { applyBodyIntent, bodyBlockPresent } from './body/doc-intents';
@@ -399,6 +400,7 @@ function fromBase64(value: string): Uint8Array {
 // TypeScript's structural typing would reject `open`'s covariant return.
 export class FlowObjectRepository {
 	private readonly open_ = new Map<string, OpenEntry>();
+	private readonly opening_ = new Map<string, Promise<OpenEntry>>();
 	private readonly transferHolds = new Map<string, Set<string>>();
 	private readonly options: FlowObjectRepositoryOptions;
 	private outboxStore: Promise<OutboxStore> | null = null;
@@ -469,7 +471,6 @@ export class FlowObjectRepository {
 		 * `object_type` first does not read it twice. */
 		object?: FlowObjectView;
 	}): Promise<OpenFlowObjectResult> {
-		const authEpoch = apiClient.getAuthSessionEpoch();
 		const existing = this.open_.get(input.objectId);
 		if (existing) {
 			if (!apiClient.isAuthSessionEpoch(existing.ownerAuthEpoch))
@@ -477,6 +478,37 @@ export class FlowObjectRepository {
 			existing.refCount += 1;
 			return existing;
 		}
+		// A second open of an object whose first open is still connecting joins it: an entry is
+		// registered only once its first snapshot arrived, so without this each caller built its
+		// own session and WebSocket and the earlier ones were never closed.
+		const joining = this.opening_.get(input.objectId);
+		if (joining) {
+			let entry: OpenEntry;
+			try {
+				entry = await joining;
+			} catch {
+				// The first open failed or was cancelled by its own caller: this one starts afresh.
+				return this.open(input);
+			}
+			if (!apiClient.isAuthSessionEpoch(entry.ownerAuthEpoch))
+				throw { code: 'unauthenticated', recoverable: true } satisfies FlowError;
+			entry.refCount += 1;
+			return entry;
+		}
+		const starting = this.openFresh(input).finally(() => {
+			if (this.opening_.get(input.objectId) === starting) this.opening_.delete(input.objectId);
+		});
+		this.opening_.set(input.objectId, starting);
+		return starting;
+	}
+
+	private async openFresh(input: {
+		scopeId: string;
+		objectId: string;
+		signal: AbortSignal;
+		object?: FlowObjectView;
+	}): Promise<OpenEntry> {
+		const authEpoch = apiClient.getAuthSessionEpoch();
 		// The user whose local databases this open reads and writes, fixed for its lifetime.
 		const userId = this.currentUserId();
 		if (userId && typeof localStorage !== 'undefined') {
@@ -924,7 +956,7 @@ export class FlowObjectRepository {
 						this.currentUserId() === entry.ownerUserId &&
 						apiClient.isAuthSessionEpoch(entry.ownerAuthEpoch)
 							? flowApi.cancelChildReservation(objectId, id)
-							: Promise.resolve({ code: 401, message: 'Session changed', data: null }),
+							: Promise.resolve(transportFailure(401, 'transport.sessionChanged')),
 					reservationStatus: (id, signal) =>
 						allowed()
 							? flowApi.childReservationStatus(objectId, id, signal)
@@ -942,7 +974,7 @@ export class FlowObjectRepository {
 						this.currentUserId() === entry.ownerUserId &&
 						apiClient.isAuthSessionEpoch(entry.ownerAuthEpoch)
 							? flowApi.discardBodyAsset(id, asset)
-							: Promise.resolve({ code: 401, message: 'Session changed', data: null })
+							: Promise.resolve(transportFailure(401, 'transport.sessionChanged'))
 				}
 			);
 			jobs.subscribe((snapshot) => entry.bodyPendingStore.set(snapshot.pending));
