@@ -8,7 +8,7 @@ use axum::{
     response::IntoResponse,
 };
 use platform::{app::AppState, auth::JwtClaims};
-use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
+use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -165,6 +165,66 @@ async fn get_editable_workflow(state: &AppState, workflow_id: Uuid) -> Result<(U
     }
 
     Ok((wf.id, wf.workspace_id))
+}
+
+/// Offset that parks shifted states out of the way of `UNIQUE(workflow_id, position)`.
+const SHIFT_PARK: i32 = 1_000_000;
+
+/// Rejects a negative requested position.
+fn validate_position(position: Option<i32>) -> Result<(), ApiError> {
+    if position.is_some_and(|p| p < 0) {
+        return Err(ApiError::BadRequest("position must be 0 or greater".to_string()));
+    }
+    Ok(())
+}
+
+/// Moves every state of the workflow at `from` or later by `delta` (two phases, so the unique
+/// position index never sees a duplicate).
+async fn shift_states<C: ConnectionTrait>(conn: &C, workflow_id: Uuid, from: i32, delta: i32) -> Result<(), ApiError> {
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE workflow_states SET position = position + $3, updated_at = NOW() WHERE workflow_id = $1 AND position >= $2",
+        vec![workflow_id.into(), from.into(), SHIFT_PARK.into()],
+    ))
+    .await?;
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE workflow_states SET position = position - $3 + $2 WHERE workflow_id = $1 AND position >= $3",
+        vec![workflow_id.into(), delta.into(), SHIFT_PARK.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// Highest position among the states of the workflow other than `except`, `-1` when there is none.
+async fn max_position<C: ConnectionTrait>(conn: &C, workflow_id: Uuid, except: Option<Uuid>) -> Result<i32, ApiError> {
+    #[derive(Debug, FromQueryResult)]
+    struct MaxPos {
+        max_pos: Option<i32>,
+    }
+    let row = MaxPos::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT MAX(position) AS max_pos FROM workflow_states WHERE workflow_id = $1 AND ($2::uuid IS NULL OR id <> $2)",
+        vec![workflow_id.into(), except.into()],
+    ))
+    .one(conn)
+    .await?
+    .ok_or(ApiError::Internal)?;
+    Ok(row.max_pos.unwrap_or(-1))
+}
+
+/// Opens the slot a state is about to take and returns its final position: an absent or too large
+/// request appends, an occupied one moves the later states down by one.
+async fn open_slot<C: ConnectionTrait>(
+    conn: &C,
+    workflow_id: Uuid,
+    requested: Option<i32>,
+    except: Option<Uuid>,
+) -> Result<i32, ApiError> {
+    let append = max_position(conn, workflow_id, except).await?.saturating_add(1);
+    let position = requested.map_or(append, |p| p.min(append));
+    shift_states(conn, workflow_id, position, 1).await?;
+    Ok(position)
 }
 
 /// Validate state key: lowercase letter start, then lowercase letters/digits/underscores, 1-50 chars.
@@ -807,68 +867,52 @@ pub async fn create_workflow_state(
         ));
     }
 
-    // Determine position
-    let position = if let Some(pos) = req.position {
-        pos
-    } else {
-        #[derive(Debug, FromQueryResult)]
-        struct MaxPos {
-            max_pos: Option<i32>,
-        }
-        let row = MaxPos::find_by_statement(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT MAX(position) AS max_pos FROM workflow_states WHERE workflow_id = $1",
-            vec![workflow_id.into()],
-        ))
-        .one(&state.db)
-        .await?
-        .ok_or(ApiError::Internal)?;
-
-        row.max_pos.map_or(0, |p| p + 1)
-    };
+    validate_position(req.position)?;
 
     let is_initial = req.is_initial.unwrap_or(false);
     let is_terminal = req.is_terminal.unwrap_or(false);
 
-    // Clear other is_initial flags if this state is initial
-    if is_initial {
-        state
-            .db
-            .execute(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "UPDATE workflow_states SET is_initial = FALSE, updated_at = NOW() WHERE workflow_id = $1",
-                vec![workflow_id.into()],
-            ))
-            .await?;
-    }
-
     let state_id = Uuid::new_v4();
     let now = platform::timestamp::Timestamp::now();
 
-    state
-        .db
-        .execute(Statement::from_sql_and_values(
+    let tx = state.db.begin().await?;
+
+    // Clear other is_initial flags if this state is initial
+    if is_initial {
+        tx.execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            r"
-                INSERT INTO workflow_states
-                    (id, workflow_id, key, display_name, category, position, color, is_initial, is_terminal, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            ",
-            vec![
-                state_id.into(),
-                workflow_id.into(),
-                req.key.clone().into(),
-                req.display_name.clone().into(),
-                category.clone().into(),
-                position.into(),
-                req.color.clone().into(),
-                is_initial.into(),
-                is_terminal.into(),
-                now.into(),
-                now.into(),
-            ],
+            "UPDATE workflow_states SET is_initial = FALSE, updated_at = NOW() WHERE workflow_id = $1",
+            vec![workflow_id.into()],
         ))
         .await?;
+    }
+
+    let position = open_slot(&tx, workflow_id, req.position, None).await?;
+
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r"
+            INSERT INTO workflow_states
+                (id, workflow_id, key, display_name, category, position, color, is_initial, is_terminal, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        ",
+        vec![
+            state_id.into(),
+            workflow_id.into(),
+            req.key.clone().into(),
+            req.display_name.clone().into(),
+            category.clone().into(),
+            position.into(),
+            req.color.clone().into(),
+            is_initial.into(),
+            is_terminal.into(),
+            now.into(),
+            now.into(),
+        ],
+    ))
+    .await?;
+
+    tx.commit().await?;
 
     Ok(ApiResponse::success(WorkflowStateResponse {
         id: state_id,
@@ -900,12 +944,13 @@ pub async fn update_workflow_state(
         workflow_id: Uuid,
         workspace_id: Option<Uuid>,
         is_system_default: bool,
+        position: i32,
     }
 
     let ctx = StateContext::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
-            SELECT ws.workflow_id, w.workspace_id, w.is_system_default
+            SELECT ws.workflow_id, w.workspace_id, w.is_system_default, ws.position
             FROM workflow_states ws
             INNER JOIN workflows w ON w.id = ws.workflow_id
             WHERE ws.id = $1
@@ -945,16 +990,18 @@ pub async fn update_workflow_state(
         validate_category(category)?;
     }
 
+    validate_position(req.position)?;
+
+    let tx = state.db.begin().await?;
+
     // If setting is_initial = true, clear others first
     if req.is_initial == Some(true) {
-        state
-            .db
-            .execute(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "UPDATE workflow_states SET is_initial = FALSE, updated_at = NOW() WHERE workflow_id = $1",
-                vec![ctx.workflow_id.into()],
-            ))
-            .await?;
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE workflow_states SET is_initial = FALSE, updated_at = NOW() WHERE workflow_id = $1",
+            vec![ctx.workflow_id.into()],
+        ))
+        .await?;
     }
 
     let mut updates: Vec<String> = Vec::new();
@@ -973,7 +1020,16 @@ pub async fn update_workflow_state(
         param_idx += 1;
     }
 
-    if let Some(position) = req.position {
+    if let Some(requested) = req.position {
+        // Take the state out of its slot, close the gap, then open the requested one.
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE workflow_states SET position = -1 WHERE id = $1",
+            vec![state_id.into()],
+        ))
+        .await?;
+        shift_states(&tx, ctx.workflow_id, ctx.position.saturating_add(1), -1).await?;
+        let position = open_slot(&tx, ctx.workflow_id, Some(requested), Some(state_id)).await?;
         updates.push(format!("position = ${param_idx}"));
         values.push(position.into());
         param_idx += 1;
@@ -1012,10 +1068,9 @@ pub async fn update_workflow_state(
         updates.join(", "),
         param_idx
     );
-    state
-        .db
-        .execute(Statement::from_sql_and_values(DbBackend::Postgres, &query, values))
+    tx.execute(Statement::from_sql_and_values(DbBackend::Postgres, &query, values))
         .await?;
+    tx.commit().await?;
 
     #[derive(Debug, FromQueryResult)]
     struct StateRow {
