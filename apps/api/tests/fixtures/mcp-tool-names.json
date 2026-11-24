@@ -101,6 +101,7 @@
   "objects.inheritance_set",
   "objects.integrity",
   "objects.link",
+  "objects.list_work_items",
   "objects.move",
   "objects.patch",
   "objects.purge",
@@ -148,9 +149,12 @@
   "work_items.delete",
   "work_items.get",
   "work_items.get_by_identifier",
+  "work_items.link_page",
   "work_items.list",
   "work_items.list_labels",
+  "work_items.list_pages",
   "work_items.remove_label",
   "work_items.search",
+  "work_items.unlink_page",
   "work_items.update"
 ]

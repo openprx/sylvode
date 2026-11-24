@@ -104,7 +104,7 @@ async fn tools_list_offers_nine_tools_in_search_mode_and_the_registry_in_full_mo
         ]
     );
     let full = listed_names(&rpc(&server(&api, McpToolMode::Full)?, "tools/list", None).await);
-    assert_eq!(full.len(), 154);
+    assert_eq!(full.len(), 158);
     assert_eq!(
         full.iter().cloned().collect::<BTreeSet<_>>(),
         registry().into_iter().map(|tool| tool.name).collect::<BTreeSet<_>>()
@@ -835,7 +835,7 @@ async fn a_delegated_server_ignores_the_mode_and_refuses_every_entry_and_task_to
         .map(|(name, _)| (*name).to_string())
         .collect::<BTreeSet<_>>();
     assert_eq!(listed.iter().cloned().collect::<BTreeSet<_>>(), scoped);
-    assert_eq!(listed.len(), 8);
+    assert_eq!(listed.len(), 15);
     for name in ENTRY_TOOL_NAMES.iter().copied().chain(TASK_TOOL_NAMES) {
         let result = server
             .call_tool(
@@ -852,7 +852,7 @@ async fn a_delegated_server_ignores_the_mode_and_refuses_every_entry_and_task_to
     // A registry tool of its own scope table is called by name, as before.
     let result = server.call_tool("projects.list", json!({})).await;
     assert!(!text(&result).contains("is not listed in"), "{}", text(&result));
-    // Through no wrapper: even the eight tools it may call directly.
+    // Through no wrapper: even the tools it may call directly.
     assert!(
         text(
             &server

@@ -1269,7 +1269,7 @@ mod tests {
         Ok(())
     }
 
-    /// A write scope unlocks the read tools it implies and nothing that changes data.
+    /// A write scope unlocks the read tools it implies; only the form record writes change data.
     #[test]
     fn a_write_scope_never_unlocks_a_write_tool() -> Result<(), api::oauth::scopes::ScopeError> {
         let all = grant("projects:read work_items:read work_items:write forms:read forms:write")?;
@@ -1277,8 +1277,8 @@ mod tests {
             "work_items.create",
             "work_items.update",
             "comments.create",
-            "form_records.create",
-            "form_records.update",
+            "work_items.link_page",
+            "form_records.child_create",
         ] {
             assert_eq!(
                 gate_tool_call(&all, tool, None),
@@ -1286,6 +1286,14 @@ mod tests {
                 "{tool}"
             );
         }
+        // The two record writes of the delegated form routes need `forms:write`, not a read scope.
+        let reads = grant("forms:read")?;
+        assert_eq!(
+            gate_tool_call(&reads, "form_records.create", None),
+            Err(ToolRefusal::InsufficientScope(Scope::FormsWrite))
+        );
+        assert_eq!(gate_tool_call(&all, "form_records.create", None), Ok(()));
+        assert_eq!(gate_tool_call(&all, "form_records.update", None), Ok(()));
         let write_only = grant("work_items:write")?;
         assert_eq!(gate_tool_call(&write_only, "work_items.get", None), Ok(()), "hierarchy");
         Ok(())

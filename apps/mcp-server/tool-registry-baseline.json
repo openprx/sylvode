@@ -1,9 +1,9 @@
 {
   "schema_version": "openpr.mcp-tool-registry-baseline.v1",
   "source": "mcp_server::get_all_tool_definitions",
-  "count": 154,
-  "names_sha256": "4685f1ae04ef68b7fe352326fa2b7fad4505f39818567e83f22cf69a19bbdf48",
-  "catalog_sha256": "d87b0dda8a1cc2b21bcd19e0483ed96d05e6b1f79f4ec55409539f4ee6eb7317",
+  "count": 158,
+  "names_sha256": "3d31c7d18059698edae0373642b3fa4c73379d372707f430703dd07e20605175",
+  "catalog_sha256": "35608e28eab8f474e2e4b0a5bc5045a86d14f462585914fbfb09f02af546e6d9",
   "v0_4_rebase": {
     "before_count": 107,
     "added": 15,
@@ -51,5 +51,11 @@
     "added": 5,
     "removed": 0,
     "after_count": 154
+  },
+  "v0_14_rebase": {
+    "before_count": 154,
+    "added": 4,
+    "removed": 0,
+    "after_count": 158
   }
 }

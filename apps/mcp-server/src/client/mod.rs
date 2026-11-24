@@ -1383,6 +1383,30 @@ impl OpenPrClient {
             .await
     }
 
+    // ---- Work item <-> Flow page links ----
+
+    pub async fn list_issue_pages(&self, issue_id: &str) -> Result<Value, String> {
+        self.get(&format!("/api/v1/issues/{}/pages", urlencoding::encode(issue_id)))
+            .await
+    }
+
+    pub async fn link_issue_page(&self, issue_id: &str, object_id: &str) -> Result<Value, String> {
+        self.post(
+            &format!("/api/v1/issues/{}/pages", urlencoding::encode(issue_id)),
+            &serde_json::json!({ "object_id": object_id }),
+        )
+        .await
+    }
+
+    pub async fn unlink_issue_page(&self, issue_id: &str, object_id: &str) -> Result<Value, String> {
+        self.delete(&format!(
+            "/api/v1/issues/{}/pages/{}",
+            urlencoding::encode(issue_id),
+            urlencoding::encode(object_id)
+        ))
+        .await
+    }
+
     // ---- Comments ----
 
     pub async fn list_comments(&self, issue_id: &str) -> Result<Value, String> {

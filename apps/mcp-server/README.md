@@ -395,7 +395,7 @@ navigator. `resources/read` reads one with the caller's credential.
 ## Tools
 
 <!-- BEGIN GENERATED: tool-table (sylvode-skillgen; do not edit) -->
-The MCP server registers 154 tools in 20 categories. By default it lists nine of them (search mode) and reaches the rest through `sylvode_search`, `sylvode_read` and `sylvode_write`. Every tool, with its category and access, is in [reference/tools.md](../../skills/sylvode-mcp/reference/tools.md).
+The MCP server registers 158 tools in 20 categories. By default it lists nine of them (search mode) and reaches the rest through `sylvode_search`, `sylvode_read` and `sylvode_write`. Every tool, with its category and access, is in [reference/tools.md](../../skills/sylvode-mcp/reference/tools.md).
 
 | Category | Tools | Read | Write | Covers |
 |---|---:|---:|---:|---|
@@ -405,7 +405,7 @@ The MCP server registers 154 tools in 20 categories. By default it lists nine of
 | `context`: Context | 3 | 3 | 0 | Read project context, governance and the agent policy |
 | `forms`: Universal forms | 34 | 16 | 18 | Forms, records, attachments, permissions, imports and business events |
 | `plugins`: Plugins | 5 | 3 | 2 | Install, inspect and invoke WASM plugins |
-| `work_items`: Work items | 11 | 5 | 6 | Issues of a project: list, read, create, update, label |
+| `work_items`: Work items | 14 | 6 | 8 | Issues of a project: list, read, create, update, label |
 | `comments`: Comments | 3 | 1 | 2 | Discuss work items |
 | `files`: Files | 1 | 0 | 1 | Upload files and get their URLs |
 | `labels`: Labels | 5 | 2 | 3 | Workspace and project labels |
@@ -417,7 +417,7 @@ The MCP server registers 154 tools in 20 categories. By default it lists nine of
 | `documents`: Documents | 3 | 0 | 3 | Governed document summaries, risk reviews and approvals |
 | `operations`: Operations | 2 | 0 | 2 | Governed inspection reports and corrective actions |
 | `workspace`: Workspace | 3 | 3 | 0 | Members, global search and bot operation records |
-| `flow`: Flow | 52 | 19 | 33 | Pages, collections, shares, comments, imports, exports and maintenance of Flow |
+| `flow`: Flow | 53 | 20 | 33 | Pages, collections, shares, comments, imports, exports and maintenance of Flow |
 | `tasks`: Agent tasks | 5 | 1 | 4 | The protocol of tasks assigned to a bot: get, acknowledge, report progress, complete, fail |
 
 Every tool, one line each, is in [skills/sylvode-mcp/reference/tools.md](../../skills/sylvode-mcp/reference/tools.md).

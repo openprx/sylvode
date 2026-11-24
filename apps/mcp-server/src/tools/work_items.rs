@@ -198,7 +198,7 @@ pub fn get_work_item_tool() -> ToolDefinition {
     ToolDefinition {
         annotations: None,
         name: "work_items.get".to_string(),
-        description: "Get details of a specific work item".to_string(),
+        description: "Get details of a specific work item, including its linked Flow pages (page_links; a link with access \"restricted\" has no title because you cannot open that page)".to_string(),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -225,7 +225,8 @@ pub async fn get_work_item(client: &OpenPrClient, args: serde_json::Value) -> Ca
     };
 
     match client.get_work_item(&input.work_item_id).await {
-        Ok(item) => {
+        Ok(mut item) => {
+            super::page_links::annotate_work_item_answer(&mut item);
             let json = serde_json::to_string_pretty(&item).unwrap_or_default();
             CallToolResult::success(json)
         }

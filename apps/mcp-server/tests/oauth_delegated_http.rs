@@ -359,24 +359,24 @@ fn names(items: &[&str]) -> BTreeSet<String> {
     items.iter().map(|name| (*name).to_string()).collect()
 }
 
-const WORK_ITEM_READS: [&str; 5] = [
+const WORK_ITEM_READS: [&str; 6] = [
     "work_items.list",
     "work_items.get",
     "work_items.get_by_identifier",
     "work_items.list_labels",
     "comments.list",
+    "work_items.list_pages",
 ];
+/// The form routes that are delegated: reads under `forms:read`, record writes under `forms:write`.
+const FORM_READS: [&str; 4] = ["forms.list", "forms.get", "form_records.list", "form_records.get"];
+const FORM_WRITES: [&str; 2] = ["form_records.create", "form_records.update"];
 /// Read tools that exist for bot and user tokens but that no delegated caller gets, because the
 /// API routes they call are not on the delegated allow-list.
-const WITHHELD_READS: [&str; 9] = [
+const WITHHELD_READS: [&str; 5] = [
     "work_items.search",
     "labels.list_by_project",
-    "forms.list",
-    "forms.get",
     "forms.schema_summary",
     "form_views.list",
-    "form_records.list",
-    "form_records.get",
     "form_records.children",
 ];
 const PROJECT_READS: [&str; 3] = ["projects.list", "projects.get", "context.get_project"];
@@ -599,17 +599,26 @@ async fn tools_list_contains_exactly_the_tools_the_scopes_allow() -> TestResult 
     let cases: Vec<(&str, BTreeSet<String>)> = vec![
         ("projects:read", names(&PROJECT_READS)),
         ("work_items:read", names(&WORK_ITEM_READS)),
-        ("forms:read", names(&[])),
+        ("forms:read", names(&FORM_READS)),
         (
             "projects:read work_items:read",
             names(&[&PROJECT_READS[..], &WORK_ITEM_READS[..]].concat()),
         ),
-        // A write scope implies its read scope, and unlocks nothing that changes data.
+        // A write scope implies its read scope. `work_items:write` unlocks nothing that changes a
+        // work item; `forms:write` unlocks the two record writes.
         ("work_items:write", names(&WORK_ITEM_READS)),
-        ("forms:write", names(&[])),
+        ("forms:write", names(&[&FORM_READS[..], &FORM_WRITES[..]].concat())),
         (
             "projects:read work_items:read work_items:write forms:read forms:write",
-            names(&[&PROJECT_READS[..], &WORK_ITEM_READS[..]].concat()),
+            names(
+                &[
+                    &PROJECT_READS[..],
+                    &WORK_ITEM_READS[..],
+                    &FORM_READS[..],
+                    &FORM_WRITES[..],
+                ]
+                .concat(),
+            ),
         ),
     ];
     for (scope, expected) in cases {
@@ -650,7 +659,7 @@ async fn a_legacy_caller_gets_search_mode_and_the_registry_on_request() -> TestR
         assert_eq!(listed(&reply)?, search_mode, "{token}");
         let full = server.post_full(Some(token), &list()).await?;
         assert_eq!(full.status, StatusCode::OK);
-        assert_eq!(listed(&full)?.len(), 154, "{token}");
+        assert_eq!(listed(&full)?.len(), 158, "{token}");
         assert!(
             !listed(&full)?.contains("sylvode_search"),
             "entry tools exist in search mode only"
@@ -761,7 +770,9 @@ async fn a_tool_that_is_not_available_is_refused_whatever_the_scopes_claim() -> 
         "work_items.create",
         "work_items.update",
         "comments.create",
-        "form_records.create",
+        "work_items.link_page",
+        "work_items.unlink_page",
+        "form_records.child_create",
         "work_items.delete",
         "plugins.invoke",
         "proposals.create",
