@@ -4,7 +4,6 @@ import type {
 	ViewFilterLogic
 } from '#lib/forms/page-types.js';
 import { FormsController } from '#lib/forms/state/controller.js';
-import { syncLegacyViewFilterFields } from '#lib/forms/view-draft-parse.js';
 
 export class ViewDraftFiltersController extends FormsController {
 	setViewDraftFilterGroups = (filterGroups: ViewFilterGroupDraft[]) => {
@@ -19,8 +18,7 @@ export class ViewDraftFiltersController extends FormsController {
 
 		this.s.viewDraft = {
 			...this.s.viewDraft,
-			filterGroups: nextGroups,
-			...syncLegacyViewFilterFields(nextGroups)
+			filterGroups: nextGroups
 		};
 	};
 
@@ -166,7 +164,7 @@ export class ViewDraftFiltersController extends FormsController {
 	visibleViewDraftFilterGroups = (): ViewFilterGroupDraft[] => {
 		if (this.s.viewDraft.filterGroups.length > 0) return this.s.viewDraft.filterGroups;
 
-		return [{ logic: 'all', filters: this.s.viewDraft.filters }];
+		return [{ logic: 'all', filters: [] }];
 	};
 
 	hasReachedFilterLimit = (): boolean => {
@@ -185,7 +183,7 @@ export class ViewDraftFiltersController extends FormsController {
 
 	syncVisibleFilterGroups = () => {
 		if (this.s.viewDraft.filterGroups.length === 0) {
-			this.setViewDraftFilterGroups([{ logic: 'all', filters: this.s.viewDraft.filters }]);
+			this.setViewDraftFilterGroups([{ logic: 'all', filters: [] }]);
 		}
 	};
 

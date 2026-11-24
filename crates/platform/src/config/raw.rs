@@ -484,8 +484,8 @@ impl RawStorage {
             || Some(StorageBackend::default()),
             |raw| {
                 issues.record(match raw.trim().to_ascii_lowercase().as_str() {
-                    "local" | "filesystem" | "fs" => Ok(StorageBackend::Local),
-                    "s3" | "s3-compatible" | "s3_compatible" => Ok(StorageBackend::S3),
+                    "local" => Ok(StorageBackend::Local),
+                    "s3" => Ok(StorageBackend::S3),
                     other => Err(format!("storage.backend must be local or s3, got {other}")),
                 })
             },

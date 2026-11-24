@@ -713,6 +713,30 @@ bot_token = "opr_live_token"
 // ---- storage ----
 
 #[test]
+fn only_local_and_s3_name_a_storage_backend() {
+    for alias in ["filesystem", "fs", "s3-compatible", "s3_compatible"] {
+        let reported = issues(&format!(
+            r#"
+[database]
+url = "postgres://localhost/openpr"
+
+[auth]
+jwt_secret = "0123456789abcdef0123456789abcdef"
+
+[storage]
+backend = "{alias}"
+"#
+        ));
+        assert!(
+            reported
+                .iter()
+                .any(|issue| issue.contains("storage.backend must be local or s3")),
+            "{alias}: {reported:?}"
+        );
+    }
+}
+
+#[test]
 fn the_s3_backend_requires_its_own_section() {
     let reported = issues(
         r#"

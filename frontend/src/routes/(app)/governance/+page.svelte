@@ -78,7 +78,6 @@
 			if (project) {
 				return projectPath(project.workspace_id, project.id, 'audit-reports');
 			}
-			return `/projects/${selectedProjectId}/audit-reports`;
 		}
 		return '/workspace';
 	});

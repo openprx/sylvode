@@ -7,10 +7,8 @@ import type {
 	ViewFilterOperator
 } from '#lib/forms/page-types.js';
 import { isRecord } from '#lib/forms/record-format.js';
-import type { FormsPageState } from '#lib/forms/state/forms-page-state.svelte.js';
 import {
 	calendarExceptionDateMap,
-	viewConfigRecord,
 	viewFilterLogic,
 	viewFilterNodeDisabled,
 	viewFilterOperator
@@ -165,44 +163,7 @@ export function viewDraftFilterGroupsFromView(view: FormView): ViewFilterGroupDr
 		.filter((group): group is ViewFilterGroupDraft => Boolean(group))
 		.slice(0, 5);
 
-	if (groups.length > 0) return groups;
-
-	const rawFilters = Array.isArray(view.config?.filters) ? view.config.filters : [];
-	const filters = parseViewFilterDrafts(rawFilters);
-
-	if (filters.length > 0) return [{ logic: 'all', filters }];
-
-	const legacy = viewConfigRecord(view, 'filter');
-
-	if (!legacy || typeof legacy.field !== 'string') return [];
-
-	return [
-		{
-			logic: 'all',
-			filters: [
-				{
-					field: legacy.field,
-					operator: viewFilterOperator(legacy.operator),
-					value: typeof legacy.value === 'string' ? legacy.value : '',
-					disabled: viewFilterNodeDisabled(legacy) ? true : undefined
-				}
-			]
-		}
-	];
-}
-
-export function syncLegacyViewFilterFields(
-	filterGroups: ViewFilterGroupDraft[]
-): Pick<FormsPageState['viewDraft'], 'filters' | 'filterField' | 'filterOperator' | 'filterValue'> {
-	const filters = filterGroups[0]?.filters ?? [];
-	const filter = filters[0];
-
-	return {
-		filters,
-		filterField: filter?.field ?? '',
-		filterOperator: filter?.operator ?? 'contains',
-		filterValue: filter?.value ?? ''
-	};
+	return groups;
 }
 
 export function filterLabelSuffix(groupIndex: number, filterIndex: number): string {

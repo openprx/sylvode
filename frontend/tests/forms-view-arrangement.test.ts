@@ -63,7 +63,11 @@ suite.check('an unchanged saved view queries by view_id only', () => {
 suite.check('a sort-only change keeps view_id and adds sort', () => {
 	const base = {
 		id: 'v1',
-		config: { filters: [{ field: 'status', operator: 'equals', value: 'open' }] }
+		config: {
+			filter_groups: [
+				{ logic: 'all', filters: [{ field: 'status', operator: 'equals', value: 'open' }] }
+			]
+		}
 	};
 	const draft = { ...base.config, sort: { field: 'due', direction: 'desc' } };
 	assertDeepEqual(
@@ -76,7 +80,9 @@ suite.check('a sort-only change keeps view_id and adds sort', () => {
 suite.check('a filter change drops view_id and filters in the browser', () => {
 	const base = { id: 'v1', config: {} };
 	const draft = {
-		filters: [{ field: 'status', operator: 'equals', value: 'open' }],
+		filter_groups: [
+			{ logic: 'all', filters: [{ field: 'status', operator: 'equals', value: 'open' }] }
+		],
 		sort: { field: 'due', direction: 'asc' }
 	};
 	assertDeepEqual(
@@ -95,7 +101,7 @@ suite.check('the built-in table never sends view_id', () => {
 	assertDeepEqual(
 		serverQueryFor(
 			null,
-			{ filter: { field: 'status' } },
+			{ filter_groups: [{ logic: 'all', filters: [{ field: 'status' }] }] },
 			{ modified: true, isServerSortable: sortable }
 		),
 		{ per_page: CLIENT_FILTER_PER_PAGE, clientFilter: true },

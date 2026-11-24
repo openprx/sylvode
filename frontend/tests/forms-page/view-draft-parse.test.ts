@@ -350,83 +350,28 @@ suite.check('viewDraftFilterGroupsFromView reads filter_groups', () => {
 	);
 });
 
-suite.check(
-	'viewDraftFilterGroupsFromView reads the flat filter list and the legacy filter',
-	() => {
-		assertDeepEqual(
-			m.viewDraftFilterGroupsFromView(
-				view({ filters: [{ field: 'a', operator: 'not_equals', value: 'x' }, { field: 'b' }] })
-			),
-			[
-				{
-					logic: 'all',
-					filters: [
-						{ field: 'a', operator: 'not_equals', value: 'x' },
-						{ field: 'b', operator: 'contains', value: '' }
-					]
-				}
-			],
-			'flat list'
-		);
-		assertDeepEqual(
-			m.viewDraftFilterGroupsFromView(
-				view({ filter: { field: 'a', operator: 'equals', value: 'x' } })
-			),
-			[{ logic: 'all', filters: [{ field: 'a', operator: 'equals', value: 'x' }] }],
-			'legacy filter'
-		);
-		assertDeepEqual(
-			m.viewDraftFilterGroupsFromView(view({ filter: { field: 'a', value: 7, disabled: true } })),
-			[
-				{ logic: 'all', filters: [{ field: 'a', operator: 'contains', value: '', disabled: true }] }
-			],
-			'legacy filter with disabled flag and non-string value'
-		);
-		assertDeepEqual(
-			m.viewDraftFilterGroupsFromView(view({ filter: { value: 'x' } })),
-			[],
-			'legacy filter without a field'
-		);
-		assertDeepEqual(
-			m.viewDraftFilterGroupsFromView(view({ filter: 'x' })),
-			[],
-			'legacy filter of the wrong type'
-		);
-		assertDeepEqual(m.viewDraftFilterGroupsFromView(view({})), [], 'no filters at all');
-		assertDeepEqual(
-			m
-				.viewDraftFilterGroupsFromView(
-					view({ filters: [{ value: 'no field' }], filter: { field: 'l' } })
-				)
-				.map((g) => g.filters[0]?.field),
-			['l'],
-			'legacy after an unusable flat list'
-		);
-	}
-);
-
-suite.check('syncLegacyViewFilterFields mirrors the first filter', () => {
+suite.check('viewDraftFilterGroupsFromView reads only the stored groups', () => {
+	assertDeepEqual(m.viewDraftFilterGroupsFromView(view({})), [], 'no filters at all');
 	assertDeepEqual(
-		m.syncLegacyViewFilterFields([]),
-		{ filters: [], filterField: '', filterOperator: 'contains', filterValue: '' },
-		'no groups'
+		m.viewDraftFilterGroupsFromView(
+			view({ filters: [{ field: 'a', operator: 'equals', value: 'x' }] })
+		),
+		[],
+		'a flat filter list is not read'
 	);
 	assertDeepEqual(
-		m.syncLegacyViewFilterFields([{ logic: 'all', filters: [] }]),
-		{ filters: [], filterField: '', filterOperator: 'contains', filterValue: '' },
-		'empty first group'
+		m.viewDraftFilterGroupsFromView(view({ filter: { field: 'a', value: 'x' } })),
+		[],
+		'a single filter is not read'
 	);
-	const first = [
-		{ field: 'a', operator: 'equals' as const, value: 'x' },
-		{ field: 'b', operator: 'not_empty' as const, value: '' }
-	];
 	assertDeepEqual(
-		m.syncLegacyViewFilterFields([
-			{ logic: 'all', filters: first },
-			{ logic: 'any', filters: [{ field: 'z', operator: 'contains', value: 'q' }] }
-		]),
-		{ filters: first, filterField: 'a', filterOperator: 'equals', filterValue: 'x' },
-		'first group, first filter'
+		m.viewDraftFilterGroupsFromView(
+			view({
+				filter_groups: [{ logic: 'any', filters: [{ field: 'a', operator: 'equals', value: 'x' }] }]
+			})
+		),
+		[{ logic: 'any', filters: [{ field: 'a', operator: 'equals', value: 'x' }] }],
+		'groups'
 	);
 });
 

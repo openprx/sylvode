@@ -91,7 +91,7 @@ attachment packages) are stored. `api` and `worker` must see the same storage.
 
 | Key | Type | Default | Accepted values and notes |
 |---|---|---|---|
-| `backend` | string | `local` | `local` (also `filesystem`, `fs`) or `s3` (also `s3-compatible`, `s3_compatible`). |
+| `backend` | string | `local` | `local` or `s3`. |
 | `dir` | string | `./uploads` | Root directory of the local backend, relative to the working directory unless absolute. Must not be empty. Ignored when `backend` is `s3`. |
 | `s3` | table | none | The `[storage.s3]` section. Required when `backend` is `s3`; left unread when `backend` is `local`. |
 

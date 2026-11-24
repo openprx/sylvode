@@ -61,7 +61,7 @@ impl ObjectStorage {
     /// name and validated the S3 section.
     pub fn from_config(storage: &StorageConfig) -> Result<Self, ApiError> {
         match storage.backend {
-            StorageBackend::Local => Self::local(storage.dir.clone(), "local"),
+            StorageBackend::Local => Ok(Self::local(storage.dir.clone())),
             StorageBackend::S3 => {
                 let s3 = storage.s3.as_ref().ok_or_else(|| {
                     ApiError::BadRequest("storage.backend is s3 but the [storage.s3] section is missing".to_string())
@@ -76,18 +76,13 @@ impl ObjectStorage {
         Self::from_config(&crate::config::runtime().storage)
     }
 
-    pub fn local(root: impl Into<PathBuf>, backend: impl Into<String>) -> Result<Self, ApiError> {
-        if normalize_backend(&backend.into())? != ObjectStorageBackendKind::Local {
-            return Err(ApiError::BadRequest(
-                "local object storage constructor requires local/filesystem backend".to_string(),
-            ));
-        }
-        Ok(Self {
+    pub fn local(root: impl Into<PathBuf>) -> Self {
+        Self {
             backend: ObjectStorageBackend::Local(LocalObjectStorage {
                 root: root.into(),
                 backend: "local".to_string(),
             }),
-        })
+        }
     }
 
     /// Builds the S3 backend from an already validated `[storage.s3]` section.
@@ -211,7 +206,7 @@ impl ObjectStorage {
         match &self.backend {
             ObjectStorageBackend::S3(s3) => s3.create_bucket_for_test().await,
             ObjectStorageBackend::Local(_) => Err(ApiError::BadRequest(
-                "S3 test bucket creation requires the s3-compatible backend".to_string(),
+                "S3 test bucket creation requires the s3 backend".to_string(),
             )),
         }
     }
@@ -372,25 +367,6 @@ impl S3ObjectStorage {
             tracing::error!(status = %response.status(), "s3 test bucket create failed");
             Err(ApiError::Internal)
         }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum ObjectStorageBackendKind {
-    Local,
-    S3,
-}
-
-fn normalize_backend(raw: &str) -> Result<ObjectStorageBackendKind, ApiError> {
-    let backend = raw.trim().to_ascii_lowercase();
-    if matches!(backend.as_str(), "" | "local" | "filesystem" | "fs") {
-        Ok(ObjectStorageBackendKind::Local)
-    } else if matches!(backend.as_str(), "s3" | "s3-compatible" | "s3_compatible") {
-        Ok(ObjectStorageBackendKind::S3)
-    } else {
-        Err(ApiError::BadRequest(
-            "storage.backend supports local/filesystem or s3-compatible".to_string(),
-        ))
     }
 }
 
@@ -562,17 +538,6 @@ mod tests {
         assert!(validate_object_key("/file.zip").is_err());
         assert!(validate_object_key("nested\\file.zip").is_err());
         assert!(validate_object_key("./file.zip").is_err());
-    }
-
-    #[test]
-    fn rejects_unknown_backends() {
-        assert!(ObjectStorage::local("/tmp/sylvode-test", "local").is_ok());
-        assert!(ObjectStorage::local("/tmp/sylvode-test", "filesystem").is_ok());
-        assert!(ObjectStorage::local("/tmp/sylvode-test", "s3").is_err());
-        assert!(matches!(
-            normalize_backend("s3-compatible").unwrap(),
-            ObjectStorageBackendKind::S3
-        ));
     }
 
     fn s3_config() -> S3Config {

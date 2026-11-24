@@ -611,7 +611,7 @@ pub async fn bot_or_user_auth_middleware(
         req.extensions_mut().insert(context);
         req.extensions_mut().insert(JwtClaims {
             sub: bot.id.to_string(),
-            email: format!("bot+{}@openpr.local", bot.id),
+            email: format!("{}@bot.sylvode.local", bot.id),
             token_type: TokenType::Access,
             iat: 0,
             exp: 0,
