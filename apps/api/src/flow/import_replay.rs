@@ -26,9 +26,8 @@
 //! `portable_graph_package::MAX_REPLAY_MARK_EDITS`), server-built documents (records, collections,
 //! scopes, page creation), snapshot and compaction (re-export of accepted heads), export (reads this
 //! server's own storage), the projection rebuild and the other maintenance reads (this server's
-//! own storage), and the legacy page import (`flow_import_jobs.kind = 'legacy_pages'`: the kind
-//! exists in the schema but no code path writes it). The bytes of the last group only ever come
-//! from this server's own storage, so nothing there is metered by the import window.
+//! own storage). The bytes of the last group only ever come from this server's own storage, so
+//! nothing there is metered by the import window.
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use collab_core::isolation::wire::{ReplayDiffRequest, ReplayDiffResult};

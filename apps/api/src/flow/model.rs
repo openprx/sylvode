@@ -301,9 +301,8 @@ pub struct FlowFeatureUpdateView {
 
 /// A `flow_import_jobs` row (`migrations/0055_flow_import_jobs.sql`).
 ///
-/// Shaped for the status endpoints both import surfaces expose: `GET /admin/.../legacy-pages/
-/// imports/{import_id}` (`rest-api-v1.md`) and the v0.8 `GET /workspaces/{workspace_id}/flow/
-/// imports/{import_id}` (`ImportReport`, `export-package-v1.md`).
+/// Shaped for the status endpoint `GET /workspaces/{workspace_id}/flow/imports/{import_id}`
+/// (`ImportReport`, `export-package-v1.md`).
 ///
 /// `report` stays an opaque JSON blob here rather than being unpacked into `counts`/
 /// `object_mapping`/`warnings`/... fields: assembling that shape is the importing command's job
@@ -332,24 +331,4 @@ pub struct ImportJobView {
     pub finished_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
-}
-
-/// One `flow_import_lineage` row.
-///
-/// Shaped for the legacy status endpoint's `items:[{source_id,source_content_hash,
-/// target_object_id?,result}]` (`rest-api-v1.md`) and the v0.8 `ImportReport.object_mapping[]`
-/// (`export-package-v1.md`).
-///
-/// `target_object_id`/`target_document_id` are never absent on a row read from the table (a
-/// lineage row is only ever written once its job's single commit transaction has committed, so it
-/// always names a real target — see `flow_import_lineage_result_check`'s column comment); the
-/// response schema's `target_object_id?` accounts for problem items the command layer reports
-/// from `flow_import_jobs.report` instead, which never become a row here.
-#[derive(Debug, Clone, Serialize)]
-pub struct ImportLineageView {
-    pub source_id: Uuid,
-    pub source_content_hash: String,
-    pub target_object_id: Uuid,
-    pub target_document_id: Uuid,
-    pub result: String,
 }

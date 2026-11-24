@@ -1,9 +1,6 @@
 //! `sylvode`'s command tree — `cli-surface-v1.md` "命令树", the v0.4 rows only.
 //!
 //! `features flow get|set`, `objects get|query|history`, `collab inspect|verify`.
-//! `legacy-pages` is omitted: this deployment's ADR-0003 inventory is zero across every
-//! environment, and the zero branch does not require a native command to exist
-//! (`cli-surface-v1.md`: "零行分支不要求命令存在").
 
 use super::render::OutputFormat;
 use clap::{Args, Parser, Subcommand};

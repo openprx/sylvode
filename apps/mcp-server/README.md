@@ -371,7 +371,7 @@ navigator. `resources/read` reads one with the caller's credential.
 ## Tools
 
 <!-- BEGIN GENERATED: tool-table (sylvode-skillgen; do not edit) -->
-The MCP server registers 153 tools in 19 categories. By default it lists nine of them (search mode) and reaches the rest through `sylvode_search`, `sylvode_read` and `sylvode_write`. Every tool, with its category and access, is in [reference/tools.md](../../skills/sylvode-mcp/reference/tools.md).
+The MCP server registers 149 tools in 19 categories. By default it lists nine of them (search mode) and reaches the rest through `sylvode_search`, `sylvode_read` and `sylvode_write`. Every tool, with its category and access, is in [reference/tools.md](../../skills/sylvode-mcp/reference/tools.md).
 
 | Category | Tools | Read | Write | Covers |
 |---|---:|---:|---:|---|
@@ -392,15 +392,14 @@ The MCP server registers 153 tools in 19 categories. By default it lists nine of
 | `documents`: Documents | 3 | 0 | 3 | Governed document summaries, risk reviews and approvals |
 | `operations`: Operations | 2 | 0 | 2 | Governed inspection reports and corrective actions |
 | `workspace`: Workspace | 3 | 3 | 0 | Members, global search and bot operation records |
-| `flow`: Flow | 56 | 21 | 35 | Pages, collections, shares, comments, imports, exports and maintenance of Flow |
+| `flow`: Flow | 52 | 19 | 33 | Pages, collections, shares, comments, imports, exports and maintenance of Flow |
 | `tasks`: Agent tasks | 5 | 1 | 4 | The protocol of tasks assigned to a bot: get, acknowledge, report progress, complete, fail |
 
 Every tool, one line each, is in [skills/sylvode-mcp/reference/tools.md](../../skills/sylvode-mcp/reference/tools.md).
 <!-- END GENERATED: tool-table -->
 
 The Flow tools carry the Flow contracts (`objects.*`, `collections.*`, `records.create`, `collab.*`,
-`flow.*`, `legacy_pages.*`). `legacy_pages.inventory` reports an empty inventory and the three
-`legacy_pages` import tools refuse with `not_required_zero_inventory`; none of them sends a request.
+`flow.*`).
 
 To find the exact name and schema of a tool, call `sylvode_search`, read
 `sylvode://skills/sylvode-mcp/tools`, or open

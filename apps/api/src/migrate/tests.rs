@@ -147,10 +147,11 @@ fn migration_checksums_are_content_addressed() {
 
 /// The post-cutoff files that intentionally drop relations. Everything else past the cutoff
 /// must stay replay-safe.
-const RETIREMENT_MIGRATIONS: [&str; 3] = [
+const RETIREMENT_MIGRATIONS: [&str; 4] = [
     "0052_drop_connectors_and_agent_invocations.sql",
     "0053_drop_event_outbox.sql",
     "0114_multi_bot_connections.sql",
+    "0127_retire_legacy_objects.sql",
 ];
 
 /// Non-destructive post-cutoff migrations must remain safe to replay. The explicitly
@@ -223,6 +224,7 @@ fn the_retirement_migrations_drop_only_the_confirmed_relations() {
             "0114_multi_bot_connections.sql",
             ["project_execution_settings"].as_slice(),
         ),
+        ("0127_retire_legacy_objects.sql", ["pages"].as_slice()),
     ] {
         let sql = MIGRATIONS
             .iter()

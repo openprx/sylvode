@@ -721,26 +721,6 @@
   },
   {
     "access": "read",
-    "category": "flow",
-    "name": "legacy_pages.inventory"
-  },
-  {
-    "access": "write",
-    "category": "flow",
-    "name": "legacy_pages.import_preview"
-  },
-  {
-    "access": "write",
-    "category": "flow",
-    "name": "legacy_pages.import_commit"
-  },
-  {
-    "access": "read",
-    "category": "flow",
-    "name": "legacy_pages.import_status"
-  },
-  {
-    "access": "read",
     "category": "tasks",
     "name": "sylvode_task_get"
   },

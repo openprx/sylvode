@@ -216,7 +216,7 @@
         "spikes/**"
       ],
       "pattern": "(?i:openpr)",
-      "explanation": "Frozen Flow engine and legacy-pages spikes with their recorded evidence (bundle metafiles, environment topology, inventories), captured under the OpenPR name."
+      "explanation": "Frozen Flow engine spikes with their recorded evidence (bundle metafiles, environment topology), captured under the OpenPR name."
     },
     {
       "id": "sylvode-legacy-negative-checks",

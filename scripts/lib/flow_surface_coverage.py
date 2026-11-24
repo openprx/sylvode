@@ -111,10 +111,7 @@ def parse_rest_table(path: str) -> list[RestRow]:
             if current_version is None:
                 continue
             identity = normalize_rest_identity(m2.group(1), m2.group(2))
-            # ADR-0003's legacy table is explicitly conditional on a nonzero
-            # inventory; the frozen zero-row v0.4 branch has no route surface.
-            conditional = "/legacy-pages/" in identity
-            rows.append(RestRow(identity=identity, version=current_version, conditional=conditional))
+            rows.append(RestRow(identity=identity, version=current_version))
     return rows
 
 

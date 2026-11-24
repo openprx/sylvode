@@ -167,10 +167,6 @@ pub const WITHHELD_TOOLS: &[&str] = &[
     "collab.rebuild_projection",
     "collab.repair_quarantine",
     "collab.projection_lag",
-    "legacy_pages.inventory",
-    "legacy_pages.import_preview",
-    "legacy_pages.import_commit",
-    "legacy_pages.import_status",
     "flow.comments.list",
     "flow.comments.create",
     "flow.comments.update",
@@ -279,11 +275,11 @@ mod tests {
     #[test]
     fn the_first_release_exposes_exactly_these_totals() {
         assert_eq!(SCOPED_TOOLS.len(), 8);
-        assert_eq!(WITHHELD_TOOLS.len(), 151);
-        // The main registry (153 tools) and the four search mode entry tools are fully covered; the two
+        assert_eq!(WITHHELD_TOOLS.len(), 147);
+        // The main registry (149 tools) and the four search mode entry tools are fully covered; the two
         // extra names are Flow-only.
-        assert_eq!(crate::tools::get_all_tool_definitions().len(), 153);
-        assert_eq!(SCOPED_TOOLS.len() + WITHHELD_TOOLS.len(), 153 + 4 + 2);
+        assert_eq!(crate::tools::get_all_tool_definitions().len(), 149);
+        assert_eq!(SCOPED_TOOLS.len() + WITHHELD_TOOLS.len(), 149 + 4 + 2);
     }
 
     /// The five task tools are closed to every connected application, whatever its scopes, and

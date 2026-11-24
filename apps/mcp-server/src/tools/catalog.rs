@@ -183,16 +183,6 @@ pub static WRITE_BY_JOB_SEMANTICS: &[(&str, &str)] = &[
         "form_records.export",
         "export may create artifacts or jobs; conservative write",
     ),
-    // The four legacy page tools refuse locally with not_required_zero_inventory and never reach the
-    // network on this deployment (ADR-0003); the preview and the commit are writes by their contract.
-    (
-        "legacy_pages.import_preview",
-        "refuses locally (zero inventory); a preview stages an import",
-    ),
-    (
-        "legacy_pages.import_commit",
-        "refuses locally (zero inventory); a commit writes pages",
-    ),
 ];
 
 /// One entry per registry tool, in registry order.
@@ -1213,34 +1203,6 @@ pub static CATALOG: &[ToolMeta] = &[
         keywords: &["at mention", "people"],
     },
     ToolMeta {
-        name: "legacy_pages.inventory",
-        category: "flow",
-        access: Access::Read,
-        summary: "Read the inventory of the legacy Markdown page table",
-        keywords: &["migration", "old pages"],
-    },
-    ToolMeta {
-        name: "legacy_pages.import_preview",
-        category: "flow",
-        access: Access::Write,
-        summary: "Preview a legacy Markdown page import",
-        keywords: &["migration", "dry run"],
-    },
-    ToolMeta {
-        name: "legacy_pages.import_commit",
-        category: "flow",
-        access: Access::Write,
-        summary: "Commit a previewed legacy page import",
-        keywords: &["migration"],
-    },
-    ToolMeta {
-        name: "legacy_pages.import_status",
-        category: "flow",
-        access: Access::Read,
-        summary: "Read the status of a legacy page import",
-        keywords: &["migration progress"],
-    },
-    ToolMeta {
         name: "sylvode_task_get",
         category: "tasks",
         access: Access::Read,
@@ -1494,9 +1456,6 @@ mod tests {
 
     // ---- HTTP method witness ----
 
-    /// Read tools that refuse locally and never reach the network on this deployment (ADR-0003).
-    const READ_WITHOUT_REQUEST: [&str; 2] = ["legacy_pages.inventory", "legacy_pages.import_status"];
-
     /// Calls every registry tool against an in-process API mock with every argument shape that can
     /// change what it does (see [`argument_variants`]) and returns, per tool, the requests of all
     /// the calls in registry order.
@@ -1559,7 +1518,7 @@ mod tests {
             if entry.access != Access::Read {
                 continue;
             }
-            if requests.is_empty() && !READ_WITHOUT_REQUEST.contains(&name.as_str()) {
+            if requests.is_empty() {
                 violations.push(format!(
                     "read tool {name} issued no request, so the witness proved nothing"
                 ));
