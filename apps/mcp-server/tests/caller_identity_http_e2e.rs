@@ -192,7 +192,7 @@ impl HttpServer {
             &McpSettings {
                 api_url,
                 bot_token,
-                workspace_id: WORKSPACE,
+                workspace_id: None,
                 transport: Some("http"),
                 bind_addr: Some(bind_addr),
             },
@@ -491,7 +491,7 @@ async fn stdio_calls_the_backend_as_its_configured_bot_token() -> TestResult {
         &McpSettings {
             api_url: &api_url,
             bot_token: Some(CONFIGURED_TOKEN),
-            workspace_id: WORKSPACE,
+            workspace_id: Some(WORKSPACE),
             transport: Some("stdio"),
             bind_addr: None,
         },

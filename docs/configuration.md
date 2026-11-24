@@ -157,7 +157,7 @@ command line in [integrations/cli.md](integrations/cli.md).
 |---|---|---|---|
 | `api_url` | string | `http://localhost:8081` | `http://` or `https://` URL of the Sylvode API. |
 | `bot_token` | string | none | Workspace bot token with the `opr_` prefix. Required by the `stdio` transport and by the `sylvode` workspace commands. Not used by the `http` and `sse` transports, where every request carries its caller's own bot token. Never logged. |
-| `workspace_id` | string (UUID) | none | Required to run the MCP server. Non-nil UUID of the workspace the calls are scoped to. |
+| `workspace_id` | string (UUID) | none | Non-nil UUID of the workspace the calls are scoped to. Required by the `stdio` transport and by the `sylvode` workspace commands. Not used by the `http` and `sse` transports, where each request acts in the workspace its caller's own bot token belongs to. |
 | `transport` | string | `stdio` | `stdio`, `http` or `sse`. The `--transport` flag of `mcp-server serve` takes precedence. |
 | `bind_addr` | string | `127.0.0.1:8090` | `host:port` for the `http` and `sse` transports. The `--bind-addr` flag takes precedence. |
 | `oauth_issuer` | string | none | Issuer of delegated tokens; must equal `oauth.issuer` when both are in one file. `https`, or `http` on a loopback IP literal. |

@@ -76,7 +76,7 @@ async fn package_tools_follow_artifact_preview_commit_status_with_exact_contract
     let client = OpenPrClient::new(ClientConfig {
         base_url: format!("http://{address}"),
         credential: Some(Secret::new("opr_flow_package_e2e")),
-        workspace_id: WORKSPACE.to_string(),
+        workspace_id: Some(WORKSPACE.to_string()),
         transport_label: TRANSPORT_LABEL_STDIO,
     })?;
 

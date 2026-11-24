@@ -44,17 +44,30 @@ const IN_FLIGHT_STOP: Duration = Duration::from_secs(4);
 async fn spawn_slow_api() -> Result<(String, Arc<AtomicUsize>), Box<dyn Error>> {
     let arrived = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&arrived);
-    let router = Router::new().route(
-        "/api/v1/workspaces/{workspace_id}/labels",
-        get(move || {
-            let counter = Arc::clone(&counter);
-            async move {
-                counter.fetch_add(1, Ordering::SeqCst);
-                tokio::time::sleep(API_DELAY).await;
-                Json(json!({ "code": 0, "message": "ok", "data": [{ "id": "label-1", "name": "slow-label" }] }))
-            }
-        }),
-    );
+    let router = Router::new()
+        .route(
+            // The networked transports ask which workspace a caller's bot belongs to; the answer
+            // is immediate, so only the `labels` call is the one in flight.
+            "/api/v1/auth/me",
+            get(|| async {
+                Json(json!({
+                    "code": 0,
+                    "message": "ok",
+                    "data": { "user": {}, "bot": { "bot_id": WORKSPACE, "workspace_id": WORKSPACE } }
+                }))
+            }),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/labels",
+            get(move || {
+                let counter = Arc::clone(&counter);
+                async move {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    tokio::time::sleep(API_DELAY).await;
+                    Json(json!({ "code": 0, "message": "ok", "data": [{ "id": "label-1", "name": "slow-label" }] }))
+                }
+            }),
+        );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
     tokio::spawn(async move {
@@ -148,7 +161,8 @@ fn network_config(api_url: &str, transport: &str, bind_addr: &str) -> Result<Con
         &McpSettings {
             api_url,
             bot_token: None,
-            workspace_id: WORKSPACE,
+            // None: a networked caller's workspace is its token's.
+            workspace_id: None,
             transport: Some(transport),
             bind_addr: Some(bind_addr),
         },
@@ -350,7 +364,7 @@ fn stdio_config(api_url: &str) -> Result<ConfigFile, Box<dyn Error>> {
         &McpSettings {
             api_url,
             bot_token: Some(TOKEN),
-            workspace_id: WORKSPACE,
+            workspace_id: Some(WORKSPACE),
             transport: Some("stdio"),
             bind_addr: None,
         },

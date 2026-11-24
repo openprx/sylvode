@@ -97,7 +97,7 @@ fn private_config(api_url: &str, extra: &str) -> support::ConfigFile {
         &McpSettings {
             api_url,
             bot_token: Some(TOKEN),
-            workspace_id: WORKSPACE,
+            workspace_id: Some(WORKSPACE),
             transport: None,
             bind_addr: None,
         },
@@ -113,7 +113,7 @@ fn tokenless_config() -> support::ConfigFile {
     let config = write_config(&McpSettings {
         api_url: "http://localhost:1",
         bot_token: None,
-        workspace_id: WORKSPACE,
+        workspace_id: Some(WORKSPACE),
         transport: Some("http"),
         bind_addr: None,
     })

@@ -724,7 +724,7 @@ pub fn build_client(mcp: &McpRuntime, credential: Option<Secret>) -> anyhow::Res
     OpenPrClient::new(ClientConfig {
         base_url: mcp.api_url.clone(),
         credential,
-        workspace_id: mcp.workspace_id.to_string(),
+        workspace_id: mcp.workspace_id.map(|id| id.to_string()),
         transport_label: transport_label(mcp.transport),
     })
     .map_err(|e| anyhow::anyhow!(e))

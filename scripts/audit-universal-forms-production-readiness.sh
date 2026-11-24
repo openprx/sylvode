@@ -330,7 +330,7 @@ contains "start script uses docker compose build" "$START_SCRIPT" "docker compos
 contains "start script generates local PostgreSQL password" "$START_SCRIPT" "POSTGRES_PASSWORD"
 contains "start script generates a local JWT secret" "$START_SCRIPT" 'jwt_secret = "$(random_hex 32)"'
 contains "start script generates a bootstrap MCP bot token" "$START_SCRIPT" 'bot_token = "opr_local_$(random_hex 24)"'
-contains "start script generates a bootstrap MCP workspace id" "$START_SCRIPT" 'workspace_id = "$(random_uuid)"'
+not_contains "start script writes no MCP workspace id: http takes it from the caller's token" "$START_SCRIPT" 'workspace_id = "$(random_uuid)"'
 contains "start script derives the API probe from the compatible port" "$START_SCRIPT" 'api_probe="http://${probe_host}:${SYLVODE_API_PORT}/health"'
 contains "start script supports config-only validation" "$START_SCRIPT" "--check-config"
 contains "start script points the MCP server at the compose API service" "$START_SCRIPT" 'api_url = "http://api:8080"'

@@ -240,7 +240,7 @@ pub fn server_instructions(catalogue: &Catalogue<'_>) -> String {
          tool with sylvode_write, as {{\"tool\": name, \"arguments\": {{...}}}}. If the list holds the tools themselves, \
          call them by name. The task tools are always called directly.\n\
          If sylvode_write answers that writes are disabled, do not retry. A refusal that names the project agent \
-         policy is final.\n\
+         policy, or says this bot may not do this in this project, is final for that project.\n\
          \n\
          Categories: {categories}.\n\
          Read the resource sylvode://skills/sylvode-mcp for the full guide and sylvode://skills/sylvode-mcp/tools for \

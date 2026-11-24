@@ -104,7 +104,7 @@ fn client(base_url: &str, credential: Option<&str>) -> Result<OpenPrClient, Box<
     Ok(OpenPrClient::new(ClientConfig {
         base_url: base_url.to_string(),
         credential: credential.map(|value| Secret::new(value.to_string())),
-        workspace_id: "55555555-5555-4555-8555-555555555555".to_string(),
+        workspace_id: Some("55555555-5555-4555-8555-555555555555".to_string()),
         transport_label: TRANSPORT_LABEL_STDIO,
     })?)
 }

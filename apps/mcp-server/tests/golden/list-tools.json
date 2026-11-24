@@ -390,6 +390,31 @@
     "name": "sprints.delete"
   },
   {
+    "access": "read",
+    "category": "milestones",
+    "name": "milestones.list"
+  },
+  {
+    "access": "read",
+    "category": "milestones",
+    "name": "milestones.get"
+  },
+  {
+    "access": "write",
+    "category": "milestones",
+    "name": "milestones.create"
+  },
+  {
+    "access": "write",
+    "category": "milestones",
+    "name": "milestones.update"
+  },
+  {
+    "access": "write",
+    "category": "milestones",
+    "name": "milestones.delete"
+  },
+  {
     "access": "write",
     "category": "labels",
     "name": "labels.create"

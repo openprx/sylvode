@@ -165,7 +165,7 @@ fn cli_config(api_url: &str, bot_token: &str) -> Result<ConfigFile, Box<dyn Erro
     write_config(&McpSettings {
         api_url,
         bot_token: Some(bot_token),
-        workspace_id: WORKSPACE,
+        workspace_id: Some(WORKSPACE),
         // The CLI subcommands never start a listener; the transport only labels the audit.
         transport: Some("stdio"),
         bind_addr: None,

@@ -95,14 +95,14 @@ example.
 [mcp]
 api_url = "http://localhost:8081"
 bot_token = "opr_your_token_here"     # stdio transport and command line only
-workspace_id = "your-workspace-uuid"
+workspace_id = "your-workspace-uuid"  # stdio transport and command line only
 ```
 
 | Key | Default | Used for |
 |---|---|---|
 | `api_url` | `http://localhost:8081` | Base URL of the Sylvode API |
 | `bot_token` | none | The identity of the `stdio` transport and of the command line. Required for them, ignored by `http` and `sse` |
-| `workspace_id` | none, required | The workspace that workspace-scoped tools act in. Not used for delegated callers |
+| `workspace_id` | none | The workspace that workspace-scoped tools act in on `stdio` and in the command line, where it is required. Not used by `http` and `sse`, where each caller acts in the workspace its own bot token belongs to, nor for delegated callers |
 | `transport` | `stdio` | `stdio`, `http` or `sse` |
 | `bind_addr` | `127.0.0.1:8090` | Listener of `http` and `sse` |
 | `tool_mode` | `search` | What `tools/list` offers; see [Tool modes](#tool-modes) |
@@ -164,8 +164,9 @@ A request without an `Authorization` header, or with a malformed one, is refused
 `WWW-Authenticate: Bearer` before it reaches a tool. A workspace bot token (`opr_...`) or a user
 token is forwarded to the API unchanged, and the API authenticates it and enforces permissions. The
 API authenticates `opr_` bot tokens by their SHA-256 token hash, rejects disabled and expired ones,
-and lets a bot token act only inside its own workspace, so the caller's bot belongs to the
-workspace named by `[mcp] workspace_id`. Because every caller brings its own credential,
+and lets a bot token act only inside its own workspace; the server acts in that workspace, as
+described under [One server, any workspace](#one-server-any-workspace). Because every caller brings
+its own credential,
 `bind_addr` may be any reachable address; put the server behind a reverse proxy or tunnel with
 rate limits when it is exposed publicly.
 
@@ -181,6 +182,29 @@ curl -H "Authorization: Bearer opr_your_own_bot_token" \
 
 [docs/guide/agents.md](../../docs/guide/agents.md) describes workspace bots and how their tokens
 are created.
+
+## One server, any workspace
+
+One `http` or `sse` server serves callers of any number of workspaces. A request acts in the
+workspace its own bot token belongs to, which the server reads from `GET /api/v1/auth/me`
+(`data.bot.workspace_id`) with the caller's token the first time a tool needs a workspace:
+`projects.list`, `projects.create`, `project_types.list`, `members.list`, `bot_operation_logs.list`,
+the workspace label tools and the milestone list and create tools. Tools that name an object of their
+own (a project, a work item) need no lookup.
+
+- The answer is kept for 60 seconds per token, under the SHA-256 of the token, for at most 1,000
+  tokens at once; the oldest entry makes room when the table is full. A failed lookup is not kept.
+  The token itself is never stored in the table, logged or echoed in an error.
+- A token that belongs to no bot (a user token) has no workspace to take: a call that needs one is
+  refused with `401`, and no workspace route is called.
+- `[mcp] workspace_id` plays no part on `http` and `sse`, so a deployment leaves it out. It is still
+  required by the `stdio` transport and by the command line, which have no per-request token to
+  take the workspace from. A delegated caller's workspace is its grant's.
+- A token can be limited per project (Members, API tokens, Project access). The API then refuses a
+  call the token's level for that project does not allow with code `403` and
+  `this bot may not do this in this project`; the tool answers with that text as an error, and a
+  retry or another tool does not change it. The milestone tools are refused for such a token, and
+  creating, changing or deleting a milestone also needs a workspace owner or admin.
 
 ## Tool modes
 
@@ -296,8 +320,8 @@ What the server does for a delegated caller:
   credential is logged, echoed in an error or a tool result, or written anywhere.
 
 Delegated clients use plain JSON-RPC over `POST /mcp/rpc`. `opr_` bot tokens and user tokens on the
-same server are forwarded verbatim, use the configured `workspace_id`, and never carry the
-forwarding headers.
+same server are forwarded verbatim, act in the workspace of the bot token (see
+[One server, any workspace](#one-server-any-workspace)), and never carry the forwarding headers.
 
 ## Flow-only profile
 
@@ -371,7 +395,7 @@ navigator. `resources/read` reads one with the caller's credential.
 ## Tools
 
 <!-- BEGIN GENERATED: tool-table (sylvode-skillgen; do not edit) -->
-The MCP server registers 149 tools in 19 categories. By default it lists nine of them (search mode) and reaches the rest through `sylvode_search`, `sylvode_read` and `sylvode_write`. Every tool, with its category and access, is in [reference/tools.md](../../skills/sylvode-mcp/reference/tools.md).
+The MCP server registers 154 tools in 20 categories. By default it lists nine of them (search mode) and reaches the rest through `sylvode_search`, `sylvode_read` and `sylvode_write`. Every tool, with its category and access, is in [reference/tools.md](../../skills/sylvode-mcp/reference/tools.md).
 
 | Category | Tools | Read | Write | Covers |
 |---|---:|---:|---:|---|
@@ -386,6 +410,7 @@ The MCP server registers 149 tools in 19 categories. By default it lists nine of
 | `files`: Files | 1 | 0 | 1 | Upload files and get their URLs |
 | `labels`: Labels | 5 | 2 | 3 | Workspace and project labels |
 | `sprints`: Sprints | 4 | 1 | 3 | Plan iterations of a project |
+| `milestones`: Milestones | 5 | 2 | 3 | Workspace milestones that span projects |
 | `proposals`: Proposals | 5 | 2 | 3 | Governance proposals and check results |
 | `release`: Release | 1 | 1 | 0 | Release readiness gates and blockers |
 | `code`: Code | 2 | 1 | 1 | Context and governed proposals for code tasks |
@@ -441,8 +466,8 @@ curl -X POST "http://localhost:8090/mcp/rpc?tools=full" \
 
 - The server never verifies a token itself and never bypasses Sylvode authorization; it forwards
   the caller's token and the API decides. It accepts no database credentials.
-- `stdio` and the `sylvode` command line act as the configured bot; `http` and `sse` act as the
-  caller of each request.
+- `stdio` and the `sylvode` command line act as the configured bot, in the configured workspace;
+  `http` and `sse` act as the caller of each request, in the workspace of the caller's own bot token.
 - JWT user tokens go through the API's normal JWT validation.
 - Delegated callers are checked against the API on every request, see only the read tools their
   scopes allow, act in their grant's workspace, and are forwarded with the internal forwarding
@@ -455,7 +480,9 @@ curl -X POST "http://localhost:8090/mcp/rpc?tools=full" \
 | Symptom | Cause and fix |
 |---|---|
 | The server refuses to start with `unknown field auth_token` | The `[mcp]` section has an `auth_token` key; the loader accepts no such key. Delete the line; HTTP and SSE callers present their own tokens |
-| `mcp.bot_token is required by the stdio transport and by the CLI subcommands...` | `stdio` and the command line have no per-request caller, so they act as a configured bot. Set `bot_token`, `api_url` and `workspace_id` in `[mcp]`. `http` and `sse` never need `bot_token` |
+| `mcp.bot_token is required by the stdio transport and by the CLI subcommands...` | `stdio` and the command line have no per-request caller, so they act as a configured bot. Set `bot_token`, `api_url` and `workspace_id` in `[mcp]`. `http` and `sse` never need `bot_token` or `workspace_id` |
+| A tool answers `401` and says the credential belongs to no workspace bot | The caller presented a user token on `http` or `sse`; the workspace is taken from a workspace bot token. Present a bot token |
+| A tool answers `403 this bot may not do this in this project` | The bot token is limited per project and its level for that project is too low. A workspace owner or admin changes it under Members, API tokens, Project access |
 | `mcp.oauth_issuer, mcp.oauth_resource and mcp.oauth_forward_secret are set together or not at all` | Only some of the three keys are set. Set all three or remove them |
 | Every request answers `401` | The request has no `Authorization: Bearer` header, or the API rejected the token |
 | Every delegated call answers `401 invalid_token` | `oauth_forward_secret` differs from the API's `[oauth] internal_forward_secret`, or `oauth_resource` differs from `[oauth] mcp_resource` |

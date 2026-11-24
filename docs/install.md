@@ -145,11 +145,12 @@ What is limited:
 
 ### The MCP server in Compose
 
-The generated MCP file carries a random placeholder `workspace_id` and `bot_token` so the container
-starts. Replace `workspace_id` with the id of the workspace MCP clients work in, then recreate the
-service with `docker compose up -d mcp-server`. Clients authenticate with their own workspace bot
-tokens; see [apps/mcp-server/README.md](../apps/mcp-server/README.md). The demo script below fills
-in both values for the demo workspace.
+The generated MCP file carries a random placeholder `bot_token` so the container starts, and no
+`workspace_id`: the compose service serves `http`, where every client authenticates with its own
+workspace bot token and the server acts in the workspace that token belongs to, so one service
+serves any number of workspaces. Only the `stdio` transport and the `sylvode` command line need
+`workspace_id` in the file. See [apps/mcp-server/README.md](../apps/mcp-server/README.md). The demo
+script below fills in a bot token and workspace for the demo workspace.
 
 ### The optional runner
 
@@ -243,8 +244,9 @@ Run each process under your process supervisor, from a working directory of your
 ```
 
 Start the API first on a new or upgraded database: it applies the migrations, the worker does not.
-The MCP server needs `mcp.workspace_id` in the file; the flags select the `http` transport, which
-`mcp.transport` can also set. The worker accepts `--concurrency <n>` (default 4), the batch size multiplier of its jobs.
+The flags select the `http` transport, which `mcp.transport` can also set. On `http` the MCP server
+needs no `mcp.workspace_id`: each request acts in the workspace of its caller's bot token (the
+`stdio` transport still needs the key). The worker accepts `--concurrency <n>` (default 4), the batch size multiplier of its jobs.
 `api --build-info` prints the build provenance as JSON and exits.
 
 Relative paths in the file, such as the default `storage.dir = "./uploads"`, resolve against the

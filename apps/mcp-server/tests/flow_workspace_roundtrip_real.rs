@@ -343,7 +343,7 @@ async fn full_workspace_roundtrip_compares_every_document_graph_lineage_and_repo
         OpenPrClient::new(ClientConfig {
             base_url: format!("http://{address}"),
             credential: Some(Secret::new(source_token)),
-            workspace_id: source_workspace.to_string(),
+            workspace_id: Some(source_workspace.to_string()),
             transport_label: TRANSPORT_LABEL_STDIO,
         })?,
         McpToolMode::Full,
@@ -352,7 +352,7 @@ async fn full_workspace_roundtrip_compares_every_document_graph_lineage_and_repo
         OpenPrClient::new(ClientConfig {
             base_url: format!("http://{address}"),
             credential: Some(Secret::new(target_token)),
-            workspace_id: target_workspace.to_string(),
+            workspace_id: Some(target_workspace.to_string()),
             transport_label: TRANSPORT_LABEL_STDIO,
         })?,
         McpToolMode::Full,

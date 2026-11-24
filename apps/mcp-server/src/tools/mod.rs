@@ -13,6 +13,7 @@ pub mod flow_social;
 pub mod forms;
 pub mod labels;
 pub mod members;
+pub mod milestones;
 pub mod objects;
 pub mod operation_logs;
 pub mod plugins;
@@ -117,6 +118,11 @@ pub fn get_all_tool_definitions() -> Vec<ToolDefinition> {
         sprints::list_sprints_tool(),
         sprints::update_sprint_tool(),
         sprints::delete_sprint_tool(),
+        milestones::list_milestones_tool(),
+        milestones::get_milestone_tool(),
+        milestones::create_milestone_tool(),
+        milestones::update_milestone_tool(),
+        milestones::delete_milestone_tool(),
         labels::create_label_tool(),
         labels::list_labels_tool(),
         labels::list_project_labels_tool(),

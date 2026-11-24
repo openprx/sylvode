@@ -23,6 +23,8 @@ type TestResult = Result<(), Box<dyn Error>>;
 
 const WORKSPACE: &str = "11111111-1111-4111-8111-111111111111";
 const GRANT_WORKSPACE: &str = "77777777-7777-4777-8777-777777777777";
+/// The workspace the stand-in API reports for `BOT_TOKEN` on `GET /api/v1/auth/me`.
+const BOT_WORKSPACE: &str = "55555555-5555-4555-8555-555555555555";
 const FORWARD_SECRET: &str = "forward-secret-for-tests-0123456789abcdef";
 const BOT_TOKEN: &str = "opr_caller_binary_e2e_token";
 
@@ -82,6 +84,12 @@ async fn spawn_api() -> Result<(String, Seen), Box<dyn Error>> {
                 }
                 return StatusCode::UNAUTHORIZED.into_response();
             }
+            if path == "/api/v1/auth/me" {
+                let bot = (authorization.as_deref() == Some(&format!("Bearer {BOT_TOKEN}"))).then(
+                    || json!({"bot_id": WORKSPACE, "workspace_id": BOT_WORKSPACE, "permissions": ["read"], "project_scope": "workspace"}),
+                );
+                return Json(json!({"code": 0, "message": "ok", "data": {"user": {}, "bot": bot}})).into_response();
+            }
             Json(json!({"code": 0, "message": "ok", "data": []})).into_response()
         }
     });
@@ -114,7 +122,8 @@ impl Server {
             &McpSettings {
                 api_url,
                 bot_token: None,
-                workspace_id: WORKSPACE,
+                // The workspace of a networked caller is its token's, so none is configured.
+                workspace_id: None,
                 transport: Some(transport),
                 bind_addr: Some(&bind),
             },
@@ -346,7 +355,7 @@ async fn the_http_transport_serves_metadata_challenges_and_delegated_calls() -> 
     assert_eq!(tool_names(&body).len(), 9, "{body}");
     let (status, _, body) = rpc_at(&server, "/mcp/rpc?tools=full", Some(BOT_TOKEN), list).await?;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(tool_names(&body).len(), 149);
+    assert_eq!(tool_names(&body).len(), 154);
     let call_projects = json!({
         "jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "projects.list", "arguments": {}}
     });
@@ -366,7 +375,7 @@ async fn the_http_transport_serves_metadata_challenges_and_delegated_calls() -> 
             .rev()
             .find(|(path, _, _)| path.ends_with("/projects"))
             .ok_or("the bot call did not reach the API")?;
-        assert_eq!(call.0, format!("/api/v1/workspaces/{WORKSPACE}/projects"));
+        assert_eq!(call.0, format!("/api/v1/workspaces/{BOT_WORKSPACE}/projects"));
         assert_eq!(call.1.as_deref(), Some(format!("Bearer {BOT_TOKEN}").as_str()));
         assert_eq!(call.2, None);
     }

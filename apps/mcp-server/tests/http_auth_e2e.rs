@@ -70,7 +70,7 @@ impl HttpServer {
             // No API call is made by `initialize`, so the URL only has to be well formed.
             api_url: "http://127.0.0.1:1",
             bot_token,
-            workspace_id: WORKSPACE,
+            workspace_id: Some(WORKSPACE),
             transport: Some(transport),
             bind_addr: Some(configured_bind),
         })?;
@@ -338,7 +338,7 @@ async fn stdio_serves_from_its_configured_bot_token_with_no_inbound_credential()
     let config = write_config(&McpSettings {
         api_url: "http://127.0.0.1:1",
         bot_token: Some(BOT_TOKEN),
-        workspace_id: WORKSPACE,
+        workspace_id: Some(WORKSPACE),
         transport: Some("stdio"),
         bind_addr: Some("0.0.0.0:8090"),
     })?;
@@ -381,7 +381,7 @@ async fn stdio_without_a_configured_bot_token_refuses_to_start() -> TestResult {
     let config = write_config(&McpSettings {
         api_url: "http://127.0.0.1:1",
         bot_token: None,
-        workspace_id: WORKSPACE,
+        workspace_id: Some(WORKSPACE),
         transport: Some("stdio"),
         bind_addr: None,
     })?;
@@ -418,7 +418,7 @@ async fn a_configuration_still_carrying_the_retired_shared_secret_refuses_to_sta
         &McpSettings {
             api_url: "http://127.0.0.1:1",
             bot_token: Some(BOT_TOKEN),
-            workspace_id: WORKSPACE,
+            workspace_id: Some(WORKSPACE),
             transport: Some("http"),
             bind_addr: Some("127.0.0.1:8090"),
         },
@@ -458,7 +458,7 @@ async fn the_retired_environment_variables_no_longer_configure_the_server() -> T
     let empty = support::write_config(&McpSettings {
         api_url: "http://127.0.0.1:1",
         bot_token: Some(BOT_TOKEN),
-        workspace_id: WORKSPACE,
+        workspace_id: Some(WORKSPACE),
         transport: Some("stdio"),
         bind_addr: None,
     })?;

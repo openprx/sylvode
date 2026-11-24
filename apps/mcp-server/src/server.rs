@@ -288,6 +288,13 @@ const TOOL_POLICY_SCOPES: &[(&str, PolicyScope)] = &[
     ("sprints.list", PolicyScope::DeclaredProject { required: true }),
     ("sprints.update", PolicyScope::OwnedBy(OwnerLookup::Sprint)),
     ("sprints.delete", PolicyScope::OwnedBy(OwnerLookup::Sprint)),
+    // The workspace is the token's own; who may change a milestone is decided by the API route
+    // (workspace owner or admin), which also refuses a token limited to some projects.
+    ("milestones.list", PolicyScope::WorkspaceWide),
+    ("milestones.get", PolicyScope::WorkspaceWide),
+    ("milestones.create", PolicyScope::WorkspaceWide),
+    ("milestones.update", PolicyScope::WorkspaceWide),
+    ("milestones.delete", PolicyScope::WorkspaceWide),
     ("labels.create", PolicyScope::WorkspaceWide),
     ("labels.list", PolicyScope::WorkspaceWide),
     (
@@ -1125,6 +1132,13 @@ impl McpServer {
             "sprints.list" => tools::sprints::list_sprints(&self.client, args).await,
             "sprints.update" => tools::sprints::update_sprint(&self.client, args).await,
             "sprints.delete" => tools::sprints::handle_delete_sprint(&self.client, args).await,
+
+            // Milestones
+            "milestones.list" => tools::milestones::list_milestones(&self.client, args).await,
+            "milestones.get" => tools::milestones::get_milestone(&self.client, args).await,
+            "milestones.create" => tools::milestones::create_milestone(&self.client, args).await,
+            "milestones.update" => tools::milestones::update_milestone(&self.client, args).await,
+            "milestones.delete" => tools::milestones::handle_delete_milestone(&self.client, args).await,
 
             // Labels
             "labels.create" => tools::labels::create_label(&self.client, args).await,

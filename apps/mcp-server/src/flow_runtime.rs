@@ -105,7 +105,7 @@ impl FlowRuntime {
         OpenPrClient::new(ClientConfig {
             base_url: self.api_url.clone(),
             credential: self.credential.clone(),
-            workspace_id: self.workspace_id.map(|id| id.to_string()).unwrap_or_default(),
+            workspace_id: self.workspace_id.map(|id| id.to_string()),
             transport_label: transport_label(self.transport),
         })
         .map(OpenPrClient::flow_only)

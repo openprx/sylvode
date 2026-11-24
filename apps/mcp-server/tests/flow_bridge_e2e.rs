@@ -51,7 +51,7 @@ async fn all_six_bridge_tools_call_the_frozen_rest_contract() -> Result<(), Box<
     let client = OpenPrClient::new(ClientConfig {
         base_url: format!("http://{address}"),
         credential: Some(Secret::new("opr_flow_bridge_e2e")),
-        workspace_id: SOURCE.to_string(),
+        workspace_id: Some(SOURCE.to_string()),
         transport_label: TRANSPORT_LABEL_STDIO,
     })?;
 

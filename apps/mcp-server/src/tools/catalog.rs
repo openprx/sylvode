@@ -109,6 +109,11 @@ pub static CATEGORIES: &[Category] = &[
         summary: "Plan iterations of a project",
     },
     Category {
+        name: "milestones",
+        title: "Milestones",
+        summary: "Workspace milestones that span projects",
+    },
+    Category {
         name: "proposals",
         title: "Proposals",
         summary: "Governance proposals and check results",
@@ -741,6 +746,41 @@ pub static CATALOG: &[ToolMeta] = &[
         keywords: &["remove sprint"],
     },
     ToolMeta {
+        name: "milestones.list",
+        category: "milestones",
+        access: Access::Read,
+        summary: "List the milestones of the workspace with their progress",
+        keywords: &["release", "target date", "roadmap"],
+    },
+    ToolMeta {
+        name: "milestones.get",
+        category: "milestones",
+        access: Access::Read,
+        summary: "Get a milestone with its work items grouped by project",
+        keywords: &["release", "progress", "roadmap"],
+    },
+    ToolMeta {
+        name: "milestones.create",
+        category: "milestones",
+        access: Access::Write,
+        summary: "Create a milestone in the workspace",
+        keywords: &["new milestone", "release", "target date"],
+    },
+    ToolMeta {
+        name: "milestones.update",
+        category: "milestones",
+        access: Access::Write,
+        summary: "Update, close or reopen a milestone",
+        keywords: &["edit milestone", "rename milestone", "close milestone", "reopen"],
+    },
+    ToolMeta {
+        name: "milestones.delete",
+        category: "milestones",
+        access: Access::Write,
+        summary: "Delete a milestone and clear it from its work items",
+        keywords: &["remove milestone"],
+    },
+    ToolMeta {
         name: "labels.create",
         category: "labels",
         access: Access::Write,
@@ -1293,7 +1333,7 @@ mod tests {
     use serde_json::json;
     use std::collections::BTreeSet;
 
-    const FROZEN_CATEGORIES: [&str; 19] = [
+    const FROZEN_CATEGORIES: [&str; 20] = [
         "projects",
         "project_types",
         "scenario_templates",
@@ -1305,6 +1345,7 @@ mod tests {
         "files",
         "labels",
         "sprints",
+        "milestones",
         "proposals",
         "release",
         "code",
@@ -1347,7 +1388,7 @@ mod tests {
     }
 
     #[test]
-    fn the_category_names_are_the_frozen_nineteen() {
+    fn the_category_names_are_the_frozen_twenty() {
         let names = CATEGORIES.iter().map(|category| category.name).collect::<Vec<_>>();
         assert_eq!(names, FROZEN_CATEGORIES);
         for category in CATEGORIES {
@@ -1635,6 +1676,17 @@ mod tests {
         ("labels.create", "creates a workspace label"),
         ("labels.update", "changes a workspace label"),
         ("labels.delete", "deletes a workspace label"),
+        (
+            "milestones.list",
+            "milestones are workspace-wide; routes refused for scoped and runner bots",
+        ),
+        (
+            "milestones.get",
+            "milestones are workspace-wide; routes refused for scoped and runner bots",
+        ),
+        ("milestones.create", "creates a workspace milestone"),
+        ("milestones.update", "changes a workspace milestone"),
+        ("milestones.delete", "deletes a workspace milestone"),
         ("project_types.list", "lists the workspace's project types"),
         ("flow.feature_get", "reads the workspace's Flow switch"),
         ("flow.feature_set", "changes the workspace's Flow switch"),

@@ -151,7 +151,7 @@ async fn setup() -> Result<
     let client = OpenPrClient::new(ClientConfig {
         base_url: url,
         credential: None,
-        workspace_id: String::new(),
+        workspace_id: Some(String::new()),
         transport_label: TRANSPORT_LABEL_HTTP,
     })?
     .flow_only();
@@ -388,8 +388,7 @@ fn cli_flow_entry_keeps_credentials_redacted_and_schema_listing_explicit() {
 
 #[tokio::test]
 async fn opr_explicit_workspace_keeps_legacy_adapter_and_backend_write_denial() {
-    let (mut client, state, task) = setup().await.expect("mock fixture");
-    client.workspace_id = "99999999-9999-4999-8999-999999999999".into();
+    let (client, state, task) = setup().await.expect("mock fixture");
     let server = McpServer::new(client.acting_as(Secret::new("opr_fixture_only")), McpToolMode::Full);
     let result = server
         .call_tool("objects.query", json!({"workspace_id":WORKSPACE,"unprojected":true}))
@@ -526,8 +525,23 @@ fn private_token_file_and_flow_config_do_not_weaken_legacy_workspace_validation(
     .expect("fixture config");
     let loaded = platform::config::OpenPrConfig::load(Some(&config)).expect("structural config");
     assert!(
-        loaded.mcp_runtime().is_err(),
-        "normal legacy runtime still requires real workspace"
+        loaded
+            .mcp_runtime()
+            .expect("a networked runtime needs no configured workspace")
+            .workspace_id
+            .is_none(),
+        "a networked caller's workspace is its token's, not the file's"
+    );
+    let stdio_config = directory.join("stdio.toml");
+    std::fs::write(
+        &stdio_config,
+        "[mcp]\napi_url = 'http://127.0.0.1:1'\ntransport = 'stdio'\nbot_token = 'opr_fixture_only'\n",
+    )
+    .expect("fixture config");
+    let stdio = platform::config::OpenPrConfig::load(Some(&stdio_config)).expect("structural config");
+    assert!(
+        stdio.mcp_runtime().is_err(),
+        "the stdio runtime still requires a real workspace"
     );
     let flow = FlowRuntime::load(Some(&config), None, None, None, None, None).expect("network Flow-only runtime");
     assert!(flow.workspace_id.is_none());

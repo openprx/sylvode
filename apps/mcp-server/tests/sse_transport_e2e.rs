@@ -40,7 +40,10 @@ use tokio::process::{Child, Command};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
-const WORKSPACE: &str = "11111111-1111-4111-8111-111111111111";
+/// The workspace each caller's bot belongs to. A networked caller acts in its own token's
+/// workspace, so the two callers' calls must land in two different ones.
+const ALICE_WORKSPACE: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const BOB_WORKSPACE: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 /// The bot token of caller A, who opens the stream in most of these tests.
 const ALICE_TOKEN: &str = "opr_alice_sse_workspace_bot_token";
@@ -106,6 +109,21 @@ async fn spawn_api() -> Result<(String, ApiProbe), Box<dyn Error>> {
 
     let router = Router::new()
         .route(
+            "/api/v1/auth/me",
+            get(|headers: HeaderMap| async move {
+                let workspace = match presented_token(&headers).as_str() {
+                    ALICE_TOKEN => ALICE_WORKSPACE,
+                    BOB_TOKEN => BOB_WORKSPACE,
+                    _ => return Json(json!({ "code": 0, "message": "ok", "data": { "user": {}, "bot": null } })),
+                };
+                Json(json!({
+                    "code": 0,
+                    "message": "ok",
+                    "data": { "user": {}, "bot": { "bot_id": workspace, "workspace_id": workspace } }
+                }))
+            }),
+        )
+        .route(
             "/api/v1/workspaces/{workspace_id}/projects",
             get(move |Path(workspace_id): Path<String>, headers: HeaderMap| {
                 let seen = Arc::clone(&projects_seen);
@@ -160,7 +178,8 @@ impl SseServer {
             &McpSettings {
                 api_url,
                 bot_token: None,
-                workspace_id: WORKSPACE,
+                // None: every caller's workspace is its token's.
+                workspace_id: None,
                 transport: Some("sse"),
                 bind_addr: Some(bind_addr),
             },
@@ -574,6 +593,17 @@ async fn two_callers_sharing_one_stream_are_each_served_as_themselves() -> TestR
         probe.tokens_for("/projects").await,
         vec![ALICE_TOKEN.to_string(), BOB_TOKEN.to_string()],
         "the messages did not each reach the backend as their own poster"
+    );
+    // ... and each in the workspace of its own poster's bot, which no configuration names.
+    assert_eq!(
+        probe
+            .tokens_for(&format!("/workspaces/{ALICE_WORKSPACE}/projects"))
+            .await,
+        vec![ALICE_TOKEN.to_string()]
+    );
+    assert_eq!(
+        probe.tokens_for(&format!("/workspaces/{BOB_WORKSPACE}/projects")).await,
+        vec![BOB_TOKEN.to_string()]
     );
 
     server.shutdown().await

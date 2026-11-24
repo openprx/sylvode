@@ -39,6 +39,8 @@ type Answer = (StatusCode, Option<String>, String);
 type ContextRequest = (String, String, Option<String>, Option<String>, Option<String>);
 
 const CONFIGURED_WORKSPACE: &str = "11111111-1111-4111-8111-111111111111";
+/// The workspace the stand-in API reports for `BOT_TOKEN` on `GET /api/v1/auth/me`.
+const BOT_WORKSPACE: &str = "55555555-5555-4555-8555-555555555555";
 const GRANT_WORKSPACE: &str = "77777777-7777-4777-8777-777777777777";
 const OTHER_WORKSPACE: &str = "99999999-9999-4999-8999-999999999999";
 const PROJECT: &str = "22222222-2222-4222-8222-222222222222";
@@ -103,6 +105,11 @@ async fn record_and_answer(State(log): State<SeenLog>, request: Request) -> Json
     });
     if path.ends_with("/agent-policy") {
         Json(json!({"code": 0, "message": "ok", "data": {}}))
+    } else if path == "/api/v1/auth/me" {
+        // A bot token names its bot and workspace; every other token is a person.
+        let bot = (header(request.headers(), "authorization").as_deref() == Some(&format!("Bearer {BOT_TOKEN}")))
+            .then(|| json!({"bot_id": PROJECT, "workspace_id": BOT_WORKSPACE, "permissions": ["read", "write"], "project_scope": "workspace"}));
+        Json(json!({"code": 0, "message": "ok", "data": {"user": {}, "bot": bot}}))
     } else {
         Json(json!({"code": 0, "message": "ok", "data": []}))
     }
@@ -266,7 +273,7 @@ impl Harness {
         let client = OpenPrClient::new(ClientConfig {
             base_url: api_url,
             credential: None,
-            workspace_id: CONFIGURED_WORKSPACE.to_string(),
+            workspace_id: Some(CONFIGURED_WORKSPACE.to_string()),
             transport_label: "mcp_http",
         })?;
         let base = spawn(router(client, Arc::new(inbound))).await?;
@@ -643,7 +650,7 @@ async fn a_legacy_caller_gets_search_mode_and_the_registry_on_request() -> TestR
         assert_eq!(listed(&reply)?, search_mode, "{token}");
         let full = server.post_full(Some(token), &list()).await?;
         assert_eq!(full.status, StatusCode::OK);
-        assert_eq!(listed(&full)?.len(), 149, "{token}");
+        assert_eq!(listed(&full)?.len(), 154, "{token}");
         assert!(
             !listed(&full)?.contains("sylvode_search"),
             "entry tools exist in search mode only"
@@ -1303,6 +1310,8 @@ async fn the_http_token_context_source_asks_with_the_token_and_the_forwarding_cr
 async fn opr_and_user_tokens_are_forwarded_as_before_with_no_forwarding_credential() -> TestResult {
     let source = FakeSource::new([]);
     let server = Harness::delegated(&source).await?;
+    // A bot token acts in the workspace its own bot belongs to (asked of `auth/me`, never the
+    // configured one); a person's token has no bot, so no workspace, and nothing else is sent.
     for token in [BOT_TOKEN, JWT_SHAPED_TOKEN] {
         let before = server.seen().await.len();
         let reply = server
@@ -1310,21 +1319,42 @@ async fn opr_and_user_tokens_are_forwarded_as_before_with_no_forwarding_credenti
             .await?;
         assert_eq!(reply.status, StatusCode::OK, "{token}");
         let seen = server.seen().await;
-        let request = seen.get(before).ok_or("the call did not reach the API")?;
-        assert_eq!(
-            request.path,
-            format!("/api/v1/workspaces/{CONFIGURED_WORKSPACE}/projects"),
-            "a legacy caller keeps the configured workspace"
-        );
-        assert_eq!(
-            request.authorization.as_deref(),
-            Some(format!("Bearer {token}").as_str())
-        );
-        assert_eq!(
-            request.forwarded_by, None,
-            "a legacy caller never sends the forwarding headers"
-        );
-        assert_eq!(request.forward_auth, None);
+        let lookup = seen.get(before).ok_or("the call did not reach the API")?;
+        assert_eq!(lookup.path, "/api/v1/auth/me", "{token}");
+        let requests: Vec<&Seen> = if token == BOT_TOKEN {
+            let request = seen.get(before + 1).ok_or("the projects call did not reach the API")?;
+            assert_eq!(
+                request.path,
+                format!("/api/v1/workspaces/{BOT_WORKSPACE}/projects"),
+                "a legacy caller acts in its bot's workspace, not the configured one"
+            );
+            vec![lookup, request]
+        } else {
+            assert_eq!(
+                seen.len(),
+                before + 1,
+                "a token without a bot reaches no workspace route"
+            );
+            assert_eq!(
+                reply.json()?.pointer("/result/isError"),
+                Some(&json!(true)),
+                "{}",
+                reply.text
+            );
+            assert!(reply.text.contains("401"), "{}", reply.text);
+            vec![lookup]
+        };
+        for request in requests {
+            assert_eq!(
+                request.authorization.as_deref(),
+                Some(format!("Bearer {token}").as_str())
+            );
+            assert_eq!(
+                request.forwarded_by, None,
+                "a legacy caller never sends the forwarding headers"
+            );
+            assert_eq!(request.forward_auth, None);
+        }
     }
 
     // Tools a delegated caller is denied are untouched for a legacy caller, and so is a

@@ -657,7 +657,7 @@ mod sse_delivery_tests {
         let client = OpenPrClient::new(ClientConfig {
             base_url: "http://127.0.0.1:1".to_string(),
             credential: None,
-            workspace_id: WORKSPACE.to_string(),
+            workspace_id: Some(WORKSPACE.to_string()),
             transport_label: "sse",
         })?;
         Ok(state_with_client(client, surface, sessions))
@@ -751,7 +751,7 @@ mod sse_delivery_tests {
         let client = OpenPrClient::new(ClientConfig {
             base_url: api_url,
             credential: None,
-            workspace_id: WORKSPACE.to_string(),
+            workspace_id: Some(WORKSPACE.to_string()),
             transport_label: "sse",
         })
         .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
@@ -813,7 +813,7 @@ mod sse_delivery_tests {
                 .insert(id.to_string(), SseSession { sender: tx, mode });
             streams.insert(id, rx);
         }
-        for (id, expected) in [("search-session", 9_usize), ("full-session", 149)] {
+        for (id, expected) in [("search-session", 9_usize), ("full-session", 154)] {
             let accepted = handle_sse_message(
                 State(state.clone()),
                 Extension(Caller::Legacy(Secret::new(CALLER_TOKEN))),
@@ -862,7 +862,7 @@ mod sse_delivery_tests {
         let client = OpenPrClient::new(ClientConfig {
             base_url: api_url,
             credential: None,
-            workspace_id: WORKSPACE.to_string(),
+            workspace_id: Some(WORKSPACE.to_string()),
             transport_label: "sse",
         })
         .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;

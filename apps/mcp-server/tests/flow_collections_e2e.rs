@@ -103,7 +103,7 @@ fn config(api_url: &str) -> TestResultValue<ConfigFile> {
     write_config(&McpSettings {
         api_url,
         bot_token: Some(TOKEN),
-        workspace_id: WORKSPACE,
+        workspace_id: Some(WORKSPACE),
         transport: Some("stdio"),
         bind_addr: None,
     })
@@ -304,7 +304,7 @@ async fn mcp_cli_create_equivalence() -> TestResult {
     let client = OpenPrClient::new(ClientConfig {
         base_url: api_url,
         credential: Some(Secret::new(TOKEN)),
-        workspace_id: WORKSPACE.to_string(),
+        workspace_id: Some(WORKSPACE.to_string()),
         transport_label: TRANSPORT_LABEL_STDIO,
     })?;
 
@@ -403,7 +403,7 @@ async fn mcp_objects_create_forwards_after_block_id_only_for_an_embed() -> TestR
     let client = OpenPrClient::new(ClientConfig {
         base_url: api_url,
         credential: Some(Secret::new(TOKEN)),
-        workspace_id: WORKSPACE.to_string(),
+        workspace_id: Some(WORKSPACE.to_string()),
         transport_label: TRANSPORT_LABEL_STDIO,
     })?;
 
@@ -470,7 +470,7 @@ async fn cli_objects_create_after_block_matches_mcp_and_requires_embed_page() ->
     let client = OpenPrClient::new(ClientConfig {
         base_url: api_url,
         credential: Some(Secret::new(TOKEN)),
-        workspace_id: WORKSPACE.to_string(),
+        workspace_id: Some(WORKSPACE.to_string()),
         transport_label: TRANSPORT_LABEL_STDIO,
     })?;
     let mcp = create_flow_object(&client, embed_args(&json!({"after_block_id": "block-1"}))).await;
@@ -835,7 +835,7 @@ async fn mcp_and_cli_embed_a_collection_after_the_named_block_of_a_real_page() -
         OpenPrClient::new(ClientConfig {
             base_url: api_url.clone(),
             credential: Some(Secret::new(MCP_BOT_TOKEN)),
-            workspace_id: workspace_id.to_string(),
+            workspace_id: Some(workspace_id.to_string()),
             transport_label: TRANSPORT_LABEL_STDIO,
         })?,
         McpToolMode::Full,
@@ -892,7 +892,7 @@ async fn mcp_and_cli_embed_a_collection_after_the_named_block_of_a_real_page() -
     let config = write_config(&McpSettings {
         api_url: &api_url,
         bot_token: Some(CLI_BOT_TOKEN),
-        workspace_id: &workspace_id.to_string(),
+        workspace_id: Some(&workspace_id.to_string()),
         transport: Some("stdio"),
         bind_addr: None,
     })?;
