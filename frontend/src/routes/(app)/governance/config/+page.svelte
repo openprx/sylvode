@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
@@ -40,7 +41,7 @@
 		}
 		const res = await governanceApi.getConfig(selectedProjectId);
 		if (res.code !== 0 || !res.data) {
-			toast.error(res.message || get(t)('governanceConfig.loadFailed'));
+			toast.error(describeResult(res, get(t)('governanceConfig.loadFailed')));
 			return;
 		}
 		reviewRequired = res.data.review_required;
@@ -85,7 +86,7 @@
 		});
 		saving = false;
 		if (res.code !== 0) {
-			toast.error(res.message || get(t)('governanceConfig.updateFailed'));
+			toast.error(describeResult(res, get(t)('governanceConfig.updateFailed')));
 			return;
 		}
 		toast.success(get(t)('governanceConfig.updateSuccess'));

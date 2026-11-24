@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
@@ -29,7 +30,7 @@
 		loading = true;
 		const res = await governanceExtApi.getProjectAuditReport(projectId, reportId);
 		if (res.code !== 0 || !res.data) {
-			toast.error(res.message || get(t)('governanceExt.auditLoadFailed'));
+			toast.error(describeResult(res, get(t)('governanceExt.auditLoadFailed')));
 			loading = false;
 			return;
 		}

@@ -1,3 +1,4 @@
+import { describeResult } from '#lib/i18n/describe.js';
 import {
 	type FormField,
 	type FormPermissionAction,
@@ -35,7 +36,7 @@ export class PermissionsController extends FormsController {
 			this.s.memberRecordScopeDraft = 'all';
 			this.s.memberFieldReadDraft = this.defaultFieldReadDraft();
 			this.s.memberFieldWriteDraft = this.defaultFieldWriteDraft();
-			toast.error(response.message);
+			toast.error(describeResult(response));
 
 			return;
 		}
@@ -67,7 +68,7 @@ export class PermissionsController extends FormsController {
 		this.s.permissionsSaving = false;
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 
 			return;
 		}

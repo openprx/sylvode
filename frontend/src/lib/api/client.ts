@@ -1,10 +1,19 @@
 import { loginUrlForLocation } from '#lib/oauth/return-to.js';
+import { transportFailure, type TransportKey } from './transport';
+
+export type { TransportKey } from './transport';
+export { transportFailure } from './transport';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
 export interface ApiResult<T> {
 	code: number;
+	/** Prose the server sent; '' for a failure the client itself produced (see `messageKey`). */
 	message: string;
+	/** Locale key (`transport.*`) of a failure the client itself produced. Modules never format
+	 * text, so they run without an initialised locale; `describeResult` resolves the key. */
+	messageKey?: string;
+	messageValues?: Record<string, string | number>;
 	data: T | null;
 	/** The stable, machine-readable business code for a typed rejection
 	 * (`apps/api/src/error.rs::ApiErrorKind::stable_code`; `contracts/error-mapping-v1.md`'s
@@ -38,7 +47,8 @@ export interface PaginatedData<T> {
 function normalizeEnvelope<T>(parsed: Partial<ApiResult<T>>): ApiResult<T> {
 	return {
 		code: typeof parsed.code === 'number' ? parsed.code : 500,
-		message: typeof parsed.message === 'string' ? parsed.message : 'Invalid response format',
+		message: typeof parsed.message === 'string' ? parsed.message : '',
+		...(typeof parsed.message === 'string' ? {} : { messageKey: 'transport.invalidResponse' }),
 		data: (parsed.data as T | null) ?? null,
 		...(typeof parsed.error_code === 'string' ? { error_code: parsed.error_code } : {}),
 		...(parsed.details === undefined ? {} : { details: parsed.details })
@@ -47,13 +57,10 @@ function normalizeEnvelope<T>(parsed: Partial<ApiResult<T>>): ApiResult<T> {
 
 /** Local cancellation only: an earlier legitimate server mutation may already have applied. */
 export function authSessionChanged<T>(): ApiResult<T> {
-	return {
-		code: 499,
-		message: 'Request stopped after the authentication session changed',
-		data: null,
+	return transportFailure<T>(499, 'transport.sessionChanged', {
 		error_code: 'request_aborted',
 		details: { reason: 'auth_session_changed', outcome: 'unknown' }
-	};
+	});
 }
 
 /** Used only to isolate client ownership; the server still verifies every token and permission. */
@@ -356,13 +363,10 @@ export class ApiClient {
 					if (!this.isAuthSessionEpoch(epoch))
 						return this.bindAuthResult(authSessionChanged<T>(), epoch);
 					if (signal?.aborted)
-						return {
-							code: 499,
-							message: 'Request aborted',
-							data: null,
+						return transportFailure<T>(499, 'transport.requestAborted', {
 							error_code: 'request_aborted',
 							details: { reason: 'request_cancelled', outcome: 'unknown' }
-						};
+						});
 					if (refreshed) {
 						return this.request<T>(method, endpoint, body, false, additionalHeaders, signal);
 					}
@@ -374,14 +378,10 @@ export class ApiClient {
 			}
 
 			return this.bindAuthResult(result);
-		} catch (error) {
+		} catch {
 			if (!this.isAuthSessionEpoch(epoch))
 				return this.bindAuthResult(authSessionChanged<T>(), epoch);
-			return {
-				code: 500,
-				message: error instanceof Error ? error.message : 'Network error',
-				data: null
-			};
+			return transportFailure<T>(500, 'transport.networkError');
 		}
 	}
 
@@ -433,9 +433,9 @@ export class ApiClient {
 		const epoch = this.authEpoch;
 		const requestSignal = this.requestSignal(signal);
 		const result = await new Promise<ApiResult<T>>((resolve) => {
-			const failed = (message: string): ApiResult<T> => ({ code: 500, message, data: null });
+			const failed = (key: TransportKey): ApiResult<T> => transportFailure<T>(500, key);
 			if (requestSignal.aborted) {
-				resolve(failed('Request aborted'));
+				resolve(failed('transport.requestAborted'));
 				return;
 			}
 			const xhr = new XMLHttpRequest();
@@ -457,11 +457,11 @@ export class ApiClient {
 				try {
 					settle(normalizeEnvelope<T>(JSON.parse(xhr.responseText) as Partial<ApiResult<T>>));
 				} catch {
-					settle(failed('Invalid response format'));
+					settle(failed('transport.invalidResponse'));
 				}
 			};
-			xhr.onerror = () => settle(failed('Network error'));
-			xhr.onabort = () => settle(failed('Request aborted'));
+			xhr.onerror = () => settle(failed('transport.networkError'));
+			xhr.onabort = () => settle(failed('transport.requestAborted'));
 			xhr.send(data);
 		});
 		if (!this.isAuthSessionEpoch(epoch)) return authSessionChanged<T>();
@@ -541,17 +541,13 @@ export class ApiClient {
 				}
 				return { ...result, data: null };
 			}
-			if (!res.ok) return { code: res.status, message: 'Download failed', data: null };
+			if (!res.ok) return transportFailure(res.status, 'transport.downloadFailed');
 			const blob = await res.blob();
 			if (!this.isAuthSessionEpoch(epoch)) return authSessionChanged();
-			return { code: 0, message: 'ok', data: { blob, headers: res.headers } };
-		} catch (error) {
+			return { code: 0, message: '', data: { blob, headers: res.headers } };
+		} catch {
 			if (!this.isAuthSessionEpoch(epoch)) return authSessionChanged();
-			return {
-				code: 500,
-				message: error instanceof Error ? error.message : 'Network error',
-				data: null
-			};
+			return transportFailure<{ blob: Blob; headers: Headers }>(500, 'transport.networkError');
 		}
 	}
 

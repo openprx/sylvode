@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
@@ -46,7 +47,7 @@
 		await loadMyVetoScopes();
 		const res = await trustApi.listAppeals({ status: statusFilter, mine: mineOnly });
 		if (res.code !== 0 || !res.data) {
-			toast.error(res.message || get(t)('appeals.loadFailed'));
+			toast.error(describeResult(res, get(t)('appeals.loadFailed')));
 			items = [];
 			loading = false;
 			return;
@@ -125,7 +126,7 @@
 		});
 		saving = false;
 		if (res.code !== 0) {
-			toast.error(res.message || get(t)('appeals.createFailed'));
+			toast.error(describeResult(res, get(t)('appeals.createFailed')));
 			return;
 		}
 		toast.success(get(t)('appeals.createSuccess'));
@@ -142,7 +143,7 @@
 		});
 		reviewingId = null;
 		if (res.code !== 0) {
-			toast.error(res.message || get(t)('appeals.reviewFailed'));
+			toast.error(describeResult(res, get(t)('appeals.reviewFailed')));
 			return;
 		}
 		toast.success(get(t)('appeals.reviewSuccess'));
@@ -163,7 +164,7 @@
 		}
 		const res = await trustApi.deleteAppeal(item.id);
 		if (res.code !== 0) {
-			toast.error(res.message || get(t)('appeals.deleteFailed'));
+			toast.error(describeResult(res, get(t)('appeals.deleteFailed')));
 			return;
 		}
 		toast.success(get(t)('appeals.deleteSuccess'));

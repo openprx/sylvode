@@ -1,3 +1,4 @@
+import { describeResult } from '#lib/i18n/describe.js';
 import { formsApi } from '#lib/api/forms.js';
 import type { ScenarioTemplate } from '#lib/api/projects.js';
 import { toast } from '#lib/stores/toast.js';
@@ -44,7 +45,7 @@ export class CreateFormController extends FormsController {
 		this.s.formSubmitting = false;
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 
 			return;
 		}
@@ -111,7 +112,7 @@ export class CreateFormController extends FormsController {
 		this.s.installingTemplateKey = null;
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 
 			return;
 		}

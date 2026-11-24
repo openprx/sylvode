@@ -1,3 +1,4 @@
+import { describeResult } from '#lib/i18n/describe.js';
 import { copyText } from '#lib/clipboard.js';
 import type { BusinessEvent, FormField, FormRecord } from '#lib/api/forms.js';
 import { csvDownloadBlob } from '#lib/utils/csv.js';
@@ -252,7 +253,7 @@ export class ViewTimelineController extends FormsController {
 		this.s.updatingTimelineRecordId = null;
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 
 			return;
 		}

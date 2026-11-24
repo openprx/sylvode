@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
@@ -44,7 +45,7 @@
 			per_page: 100
 		});
 		if (res.code !== 0 || !res.data) {
-			toast.error(res.message || get(t)('trustBoard.loadFailed'));
+			toast.error(describeResult(res, get(t)('trustBoard.loadFailed')));
 			items = [];
 			totalPages = 1;
 			total = 0;

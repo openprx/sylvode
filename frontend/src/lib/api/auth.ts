@@ -1,4 +1,5 @@
 import { apiClient, authSessionChanged, type ApiResult } from './client';
+import { transportFailure } from './transport';
 
 export interface LoginRequest {
 	email: string;
@@ -117,7 +118,7 @@ export const authApi = {
 		if (!apiClient.isAuthSessionEpoch(epoch)) return authSessionChanged();
 		const token = apiClient.getToken();
 		return refreshed && token
-			? { code: 0, message: 'ok', data: { token } }
-			: { code: 401, message: 'Session refresh failed', data: null };
+			? { code: 0, message: '', data: { token } }
+			: transportFailure(401, 'transport.sessionRefreshFailed');
 	}
 };

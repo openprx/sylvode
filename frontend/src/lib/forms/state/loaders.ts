@@ -1,3 +1,4 @@
+import { describeResult } from '#lib/i18n/describe.js';
 import { goto } from '$app/navigation';
 import { page } from '$app/state';
 import { type FormAggregate, formsApi } from '#lib/api/forms.js';
@@ -27,7 +28,7 @@ export class LoadersController extends FormsController {
 		this.s.templatesLoading = false;
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			this.s.scenarioTemplates = [];
 
 			return;
@@ -45,7 +46,7 @@ export class LoadersController extends FormsController {
 
 		if (response.code !== 0) {
 			this.s.workspaceMembers = [];
-			toast.error(response.message);
+			toast.error(describeResult(response));
 
 			return;
 		}
@@ -57,7 +58,7 @@ export class LoadersController extends FormsController {
 		const response = await formsApi.list(this.s.projectId, { page: 1, per_page: 100 });
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			this.s.forms = [];
 
 			return;
@@ -173,7 +174,7 @@ export class LoadersController extends FormsController {
 		const response = await formsApi.listViews(this.s.selectedFormId);
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			this.s.formViews = [];
 			this.s.selectedViewId = precedence.ALL_RECORDS_VIEW_ID;
 			this.fp.views.applyView(precedence.ALL_RECORDS_VIEW_ID);
@@ -211,7 +212,7 @@ export class LoadersController extends FormsController {
 		]);
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			this.s.records = [];
 		} else {
 			this.s.records = response.data?.items ?? [];
@@ -259,7 +260,7 @@ export class LoadersController extends FormsController {
 
 		if (response.code !== 0) {
 			this.s.formEvents = [];
-			toast.error(response.message);
+			toast.error(describeResult(response));
 
 			return;
 		}

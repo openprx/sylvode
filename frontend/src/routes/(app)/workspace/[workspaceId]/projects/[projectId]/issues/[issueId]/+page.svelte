@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
@@ -210,7 +211,7 @@
 		]);
 
 		if (issueResponse.code !== 0) {
-			toast.error(issueResponse.message);
+			toast.error(describeResult(issueResponse));
 		} else if (issueResponse.data) {
 			issue = issueResponse.data;
 			issueForm = {
@@ -226,19 +227,19 @@
 		}
 
 		if (commentsResponse.code !== 0) {
-			toast.error(commentsResponse.message);
+			toast.error(describeResult(commentsResponse));
 		} else if (commentsResponse.data) {
 			comments = [...(commentsResponse.data.items ?? [])].sort(sortByCreatedAsc);
 		}
 
 		if (activityResponse.code !== 0) {
-			toast.error(activityResponse.message);
+			toast.error(describeResult(activityResponse));
 		} else if (activityResponse.data) {
 			activities = [...(activityResponse.data.items ?? [])].sort(sortByCreatedDesc);
 		}
 
 		if (labelsResponse.code !== 0) {
-			toast.error(labelsResponse.message);
+			toast.error(describeResult(labelsResponse));
 		} else if (labelsResponse.data) {
 			projectLabels = labelsResponse.data.items ?? [];
 		}
@@ -248,7 +249,7 @@
 		}
 
 		if (sprintsResponse.code !== 0) {
-			toast.error(sprintsResponse.message);
+			toast.error(describeResult(sprintsResponse));
 		} else if (sprintsResponse.data) {
 			sprints = sprintsResponse.data.items ?? [];
 		}
@@ -338,7 +339,7 @@
 
 		const response = await issuesApi.update(issue.id, data);
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			return false;
 		}
 
@@ -522,7 +523,7 @@
 		deletingIssue = false;
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			return;
 		}
 
@@ -545,7 +546,7 @@
 		labelSaving = false;
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			return;
 		}
 
@@ -567,7 +568,7 @@
 		labelSaving = false;
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			return;
 		}
 
@@ -593,7 +594,7 @@
 		creatingLabel = false;
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			return;
 		}
 
@@ -834,7 +835,7 @@
 		commentSubmitting = false;
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			return;
 		}
 
@@ -881,7 +882,7 @@
 		commentBusyId = null;
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			return;
 		}
 
@@ -914,7 +915,7 @@
 		commentBusyId = null;
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			return;
 		}
 

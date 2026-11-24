@@ -1,4 +1,5 @@
 import { apiClient, type ApiResult } from './client';
+import { transportFailure } from './transport';
 
 /**
  * One event of an agent task, as `GET /api/v1/issues/{issue_id}/ai-tasks` returns it
@@ -170,7 +171,7 @@ export const aiTasksApi = {
 		}
 		const tasks = narrowAiTaskList(result.data);
 		if (tasks === null) {
-			return { code: 500, message: 'Invalid response format', data: null };
+			return transportFailure(500, 'transport.invalidResponse');
 		}
 		return { code: 0, message: result.message, data: tasks };
 	}

@@ -1,3 +1,4 @@
+import { describeResult } from '#lib/i18n/describe.js';
 import { copyText } from '#lib/clipboard.js';
 import type { FormField, FormRecord, FormView } from '#lib/api/forms.js';
 import { toast } from '#lib/stores/toast.js';
@@ -108,7 +109,7 @@ export class ViewCalendarController extends FormsController {
 		this.s.updatingCalendarRecordId = null;
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 
 			return;
 		}
@@ -153,7 +154,7 @@ export class ViewCalendarController extends FormsController {
 		this.s.updatingCalendarRecordId = null;
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 
 			return;
 		}
@@ -197,7 +198,7 @@ export class ViewCalendarController extends FormsController {
 		this.s.updatingCalendarRecordId = null;
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 
 			return;
 		}
@@ -229,7 +230,7 @@ export class ViewCalendarController extends FormsController {
 		this.s.updatingCalendarRecordId = null;
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 
 			return;
 		}

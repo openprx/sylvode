@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
@@ -152,7 +153,7 @@
 		operatingId = null;
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			return;
 		}
 
@@ -174,7 +175,7 @@
 			return;
 		}
 
-		toast.error(response.message);
+		toast.error(describeResult(response));
 	}
 
 	async function deleteNotification(id: string) {
@@ -183,7 +184,7 @@
 		operatingId = null;
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			return;
 		}
 

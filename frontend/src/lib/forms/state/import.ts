@@ -1,3 +1,4 @@
+import { describeResult } from '#lib/i18n/describe.js';
 import { type FormField, type FormRecordImportRow, formsApi } from '#lib/api/forms.js';
 import { csvDownloadBlob } from '#lib/utils/csv.js';
 import { toast } from '#lib/stores/toast.js';
@@ -409,7 +410,7 @@ export class ImportController extends FormsController {
 		this.s.importPreviewing = false;
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message || translate('forms.importFailed'));
+			toast.error(describeResult(response, translate('forms.importFailed')));
 
 			return;
 		}
@@ -430,7 +431,7 @@ export class ImportController extends FormsController {
 		this.s.importingRecords = false;
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message || translate('forms.importFailed'));
+			toast.error(describeResult(response, translate('forms.importFailed')));
 
 			return;
 		}

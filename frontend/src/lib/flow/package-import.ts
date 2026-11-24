@@ -277,8 +277,7 @@ export class FlowPackageImportSession {
 			onProgress
 		);
 		// A cancelled upload never leaves an artifact behind, even if the response raced the abort.
-		if (signal?.aborted)
-			throw new FlowPackageRequestError({ code: 499, message: 'Upload cancelled' });
+		if (signal?.aborted) throw new FlowPackageRequestError({ code: 499, message: '' });
 		this.artifact = requireData(result);
 		return this.artifact;
 	}

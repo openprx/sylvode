@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { setLocale } from '#lib/i18n/index.js';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
@@ -38,7 +39,7 @@
 		currentTheme = get(theme);
 		const response = await authApi.me();
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			loading = false;
 			return;
 		}
@@ -79,7 +80,7 @@
 			authStore.setUser(user);
 			toast.success($t('settings.profileSaved'));
 		} else {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		}
 		savingProfile = false;
 	}
@@ -108,7 +109,7 @@
 			passwordForm = { currentPassword: '', newPassword: '', confirmPassword: '' };
 			toast.success($t('settings.passwordSaved'));
 		} else {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		}
 		savingPassword = false;
 	}
@@ -120,7 +121,7 @@
 			notificationPrefs = fromApiPreferences(response.data.notification_prefs);
 			toast.success($t('settings.notificationsSaved'));
 		} else {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		}
 		savingNotifications = false;
 	}

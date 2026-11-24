@@ -26,7 +26,7 @@ import {
  */
 export type CallResult<T> =
 	| { ok: true; value: T }
-	| { ok: false; code: number; message: string; current: Connection | null };
+	| { ok: false; code: number; message: string; messageKey?: string; current: Connection | null };
 
 export interface GovernanceInput {
 	max_domain_level?: Level;
@@ -60,14 +60,20 @@ export interface UpdateInput {
 function failure(result: ApiResult<unknown>): CallResult<never> {
 	const current =
 		result.code === 409 && isRecord(result.data) ? parseConnection(result.data.current) : null;
-	return { ok: false, code: result.code, message: result.message, current };
+	return {
+		ok: false,
+		code: result.code,
+		message: result.message,
+		...(result.messageKey ? { messageKey: result.messageKey } : {}),
+		current
+	};
 }
 
 function narrowed<T>(result: ApiResult<unknown>, read: (data: unknown) => T | null): CallResult<T> {
 	if (result.code !== 0) return failure(result);
 	const value = read(result.data);
 	return value === null
-		? { ok: false, code: 500, message: 'The answer was not understood', current: null }
+		? { ok: false, code: 500, message: '', messageKey: 'transport.invalidResponse', current: null }
 		: { ok: true, value };
 }
 

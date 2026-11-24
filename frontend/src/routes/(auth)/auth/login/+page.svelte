@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import '#lib/i18n/index.js';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
@@ -29,7 +30,7 @@
 		}
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else if (response.data) {
 			authStore.setUser(response.data.user);
 			toast.success($t('auth.loginSuccess'));

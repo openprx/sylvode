@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { tick } from 'svelte';
@@ -137,7 +138,7 @@
 		saving = false;
 
 		if (res.code !== 0 || !res.data) {
-			toast.error(res.message || get(t)('governance.updateFailed'));
+			toast.error(describeResult(res, get(t)('governance.updateFailed')));
 			return;
 		}
 		toast.success(get(t)('governance.updateSuccess'));
@@ -199,7 +200,7 @@
 				appendContentImage(result.data.url, file.type);
 				toast.success(get(t)('toast.uploadSuccess'));
 			} else {
-				toast.error(result.message || get(t)('toast.uploadFail'));
+				toast.error(describeResult(result, get(t)('toast.uploadFail')));
 			}
 		} catch {
 			toast.error(get(t)('toast.uploadNetworkFail'));

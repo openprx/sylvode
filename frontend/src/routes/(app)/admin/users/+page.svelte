@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
@@ -62,7 +63,7 @@
 	async function loadUsers() {
 		const usersResponse = await adminApi.listUsers();
 		if (usersResponse.code !== 0 || !usersResponse.data) {
-			toast.error(usersResponse.message || get(t)('admin.loadUsersFailed'));
+			toast.error(describeResult(usersResponse, get(t)('admin.loadUsersFailed')));
 			return;
 		}
 
@@ -157,7 +158,7 @@
 		const response = await adminApi.createUser(body);
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else {
 			showCreateModal = false;
 			createForm = { email: '', password: '', name: '' };
@@ -201,7 +202,7 @@
 		});
 
 		if (result.code !== 0) {
-			toast.error(result.message);
+			toast.error(describeResult(result));
 		} else {
 			showEditModal = false;
 			editingUserId = null;
@@ -234,7 +235,7 @@
 		passwordSaving = true;
 		const result = await adminApi.resetPassword(passwordUser.id, newPassword);
 		if (result.code !== 0) {
-			toast.error(result.message);
+			toast.error(describeResult(result));
 		} else {
 			showPasswordModal = false;
 			passwordUser = null;
@@ -268,7 +269,7 @@
 		actionLoadingUserId = user.id;
 		const result = await adminApi.toggleUserStatus(user.id);
 		if (result.code !== 0) {
-			toast.error(result.message);
+			toast.error(describeResult(result));
 		} else {
 			await loadUsers();
 			toast.success(get(t)('admin.toggleStatusSuccess', { values: { action: actionText } }));

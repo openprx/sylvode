@@ -1,0 +1,17 @@
+{
+	"transport": {
+		"invalidResponse": "无法读取服务器的回复。",
+		"sessionChanged": "请求已停止，因为期间你的登录状态发生了变化。",
+		"requestAborted": "请求已取消。",
+		"networkError": "无法连接服务器，请检查网络后重试。",
+		"downloadFailed": "下载失败。",
+		"sessionRefreshFailed": "登录状态无法续期，请重新登录。",
+		"unsupportedDownloadUrl": "不支持此下载链接。",
+		"assetResponseInvalid": "为此页面收到的文件无效。",
+		"privateAssetUnavailable": "此页面的文件暂时无法读取。",
+		"publicAssetUnavailable": "此共享页面的文件暂时无法读取。",
+		"sharedBlockUnavailable": "此共享块已不可用。",
+		"sharedBlockInvalid": "无法读取共享块的回复。",
+		"sharedBlockFailed": "共享块无法加载或保存。"
+	}
+}

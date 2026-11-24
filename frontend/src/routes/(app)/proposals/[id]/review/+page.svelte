@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
@@ -99,7 +100,7 @@
 		if (!proposalId) return;
 		const res = await impactReviewsApi.createForProposal(proposalId);
 		if (res.code !== 0) {
-			toast.error(res.message || get(t)('impactReview.createFailed'));
+			toast.error(describeResult(res, get(t)('impactReview.createFailed')));
 			return;
 		}
 		toast.success(get(t)('impactReview.createSuccess'));
@@ -126,7 +127,7 @@
 		});
 		impactSaving = false;
 		if (res.code !== 0 || !res.data) {
-			toast.error(res.message || get(t)('impactReview.updateFailed'));
+			toast.error(describeResult(res, get(t)('impactReview.updateFailed')));
 			return;
 		}
 		impactReviewDetail = res.data;

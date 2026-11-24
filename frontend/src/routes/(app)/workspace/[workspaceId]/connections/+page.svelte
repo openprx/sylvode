@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { Activity, RefreshCw } from '@lucide/svelte';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
@@ -41,7 +42,7 @@
 		if (response.code !== 0 || !response.data) {
 			logs = [];
 			nextCursor = null;
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else {
 			logs = response.data.items;
 			nextCursor = response.data.next_cursor;

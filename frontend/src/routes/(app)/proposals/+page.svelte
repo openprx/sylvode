@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
@@ -43,7 +44,7 @@
 			per_page: perPage
 		});
 		if (res.code !== 0 || !res.data) {
-			toast.error(res.message || get(t)('governance.loadFailed'));
+			toast.error(describeResult(res, get(t)('governance.loadFailed')));
 			items = [];
 			total = 0;
 			totalPages = 1;

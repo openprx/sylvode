@@ -1,5 +1,6 @@
 /** Share-only byte authority, locally captured aliases and bounded request lifetime. No Page fallback. */
 import type { ApiResult } from '#lib/api/client.js';
+import { transportFailure } from '#lib/api/transport.js';
 import type { SharedRead } from './contracts';
 import { parseSharedRead } from './contracts';
 import { sharedBlockApi } from './client';
@@ -21,11 +22,8 @@ export function sharedAssetProvider(
 	);
 	const pending = new Set<AbortController>();
 	let live = true;
-	const unavailable = (): ApiResult<{ blob: Blob; headers: Headers }> => ({
-		code: 403,
-		message: 'block_share_unavailable',
-		data: null
-	});
+	const unavailable = (): ApiResult<{ blob: Blob; headers: Headers }> =>
+		transportFailure(403, 'transport.sharedBlockUnavailable');
 	return {
 		mode: 'shared',
 		key: `${projection.share_id}:${projection.revision}`,
@@ -43,7 +41,7 @@ export function sharedAssetProvider(
 					result.data.headers.get('x-flow-share-id') !== projection.share_id ||
 					result.data.headers.get('x-flow-asset-alias') !== alias
 				)
-					return { code: 502, message: 'invalid_shared_asset_authority', data: null };
+					return transportFailure(502, 'transport.sharedBlockInvalid');
 				return result;
 			} finally {
 				pending.delete(controller);

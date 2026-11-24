@@ -1,6 +1,7 @@
 /** Recipient CAS drafts are local state, never a whole-Page CRDT/session or a hidden rebase. */
 import { randomUuid } from '#lib/utils/uuid.js';
 import type { ApiResult } from '#lib/api/client.js';
+import { transportFailure } from '#lib/api/transport.js';
 import {
 	parseSharedRead,
 	sharedSpansValid,
@@ -215,7 +216,7 @@ export class SharedBlockDraft {
 		try {
 			result = await this.transport.patch(shareId, patch, this.key, controller.signal);
 		} catch {
-			result = { code: 500, message: 'write_failed', data: null };
+			result = transportFailure(500, 'transport.sharedBlockFailed');
 		}
 		if (this.disposed || this.controller !== controller) return false;
 		this.controller = null;

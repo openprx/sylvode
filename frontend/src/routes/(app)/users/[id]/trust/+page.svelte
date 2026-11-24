@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { get } from 'svelte/store';
@@ -50,7 +51,7 @@
 		loading = true;
 		const res = await trustApi.getUserTrust(userId, projectId.trim() || undefined);
 		if (res.code !== 0 || !res.data) {
-			toast.error(res.message || get(t)('trustProfile.loadFailed'));
+			toast.error(describeResult(res, get(t)('trustProfile.loadFailed')));
 			scores = [];
 			loading = false;
 			return;

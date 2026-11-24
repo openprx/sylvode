@@ -1,3 +1,4 @@
+import { describeResult } from '#lib/i18n/describe.js';
 import { copyText } from '#lib/clipboard.js';
 import type { FormField, FormRecord, FormView } from '#lib/api/forms.js';
 import * as precedence from '#lib/forms/view-precedence.js';
@@ -120,7 +121,7 @@ export class ViewCardsController extends FormsController {
 		this.s.updatingCardRecordId = null;
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 
 			return;
 		}

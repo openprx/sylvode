@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
@@ -48,7 +49,7 @@
 			per_page: perPage
 		});
 		if (res.code !== 0 || !res.data) {
-			toast.error(res.message || get(t)('impactReview.loadListFailed'));
+			toast.error(describeResult(res, get(t)('impactReview.loadListFailed')));
 			reviews = [];
 			total = 0;
 			totalPages = 0;

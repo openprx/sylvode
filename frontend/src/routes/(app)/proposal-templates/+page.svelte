@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
@@ -51,7 +52,7 @@
 		}
 		const res = await proposalTemplatesApi.list({ project_id: selectedProjectId });
 		if (res.code !== 0 || !res.data) {
-			toast.error(res.message || get(t)('proposalTemplates.loadFailed'));
+			toast.error(describeResult(res, get(t)('proposalTemplates.loadFailed')));
 			templates = [];
 			return;
 		}
@@ -124,7 +125,7 @@
 			const res = await proposalTemplatesApi.update(editingId, payload);
 			saving = false;
 			if (res.code !== 0) {
-				toast.error(res.message || get(t)('proposalTemplates.updateFailed'));
+				toast.error(describeResult(res, get(t)('proposalTemplates.updateFailed')));
 				return;
 			}
 			toast.success(get(t)('proposalTemplates.updateSuccess'));
@@ -141,7 +142,7 @@
 			const res = await proposalTemplatesApi.create(payload);
 			saving = false;
 			if (res.code !== 0) {
-				toast.error(res.message || get(t)('proposalTemplates.createFailed'));
+				toast.error(describeResult(res, get(t)('proposalTemplates.createFailed')));
 				return;
 			}
 			toast.success(get(t)('proposalTemplates.createSuccess'));
@@ -164,7 +165,7 @@
 		}
 		const res = await proposalTemplatesApi.delete(item.id);
 		if (res.code !== 0) {
-			toast.error(res.message || get(t)('proposalTemplates.deleteFailed'));
+			toast.error(describeResult(res, get(t)('proposalTemplates.deleteFailed')));
 			return;
 		}
 		toast.success(get(t)('proposalTemplates.deleteSuccess'));
@@ -174,7 +175,7 @@
 	async function setDefault(item: ProposalTemplate) {
 		const res = await proposalTemplatesApi.update(item.id, { is_default: true });
 		if (res.code !== 0) {
-			toast.error(res.message || get(t)('proposalTemplates.updateFailed'));
+			toast.error(describeResult(res, get(t)('proposalTemplates.updateFailed')));
 			return;
 		}
 		toast.success(get(t)('proposalTemplates.setDefaultSuccess'));

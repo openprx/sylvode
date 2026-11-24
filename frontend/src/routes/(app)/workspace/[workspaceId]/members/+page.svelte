@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { locale, t } from 'svelte-i18n';
@@ -77,7 +78,7 @@
 		loading = true;
 		const response = await membersApi.list(workspaceId);
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else if (response.data) {
 			members = response.data.items ?? [];
 		}
@@ -88,7 +89,7 @@
 		botsLoading = true;
 		const response = await botsApi.list(workspaceId);
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			bots = [];
 		} else {
 			bots = response.data ?? [];
@@ -103,7 +104,7 @@
 			limit: 20
 		});
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			searchResults = [];
 		} else {
 			searchResults = response.data?.items ?? [];
@@ -119,7 +120,7 @@
 		});
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else {
 			toast.success(get(t)('members.addSuccess'));
 			await loadMembers();
@@ -144,7 +145,7 @@
 		removingMemberId = member.user_id;
 		const response = await membersApi.remove(workspaceId, member.user_id);
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else {
 			toast.success(get(t)('members.removeSuccess'));
 			await loadMembers();
@@ -246,7 +247,7 @@
 		const response = await botsApi.create(workspaceId, built.request);
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else if (response.data) {
 			createdToken = response.data;
 			showCreateTokenModal = false;
@@ -274,7 +275,7 @@
 		revokingBotId = bot.id;
 		const response = await botsApi.revoke(workspaceId, bot.id);
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else {
 			toast.success(get(t)('members.revokeSuccess'));
 			await loadBots();

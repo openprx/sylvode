@@ -1,3 +1,4 @@
+import { describeResult } from '#lib/i18n/describe.js';
 import type { FormField, FormRecord } from '#lib/api/forms.js';
 import { toast } from '#lib/stores/toast.js';
 import { translate } from '#lib/forms/i18n.js';
@@ -26,7 +27,7 @@ export class ViewKanbanController extends FormsController {
 		this.s.updatingKanbanRecordId = null;
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 
 			return;
 		}
@@ -106,7 +107,7 @@ export class ViewKanbanController extends FormsController {
 
 			if (response.code !== 0 || !response.data) {
 				this.s.bulkMovingKanban = false;
-				toast.error(response.message);
+				toast.error(describeResult(response));
 
 				return;
 			}

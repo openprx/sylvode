@@ -1,3 +1,4 @@
+import { describeResult } from '#lib/i18n/describe.js';
 import { onDestroy } from 'svelte';
 import { afterNavigate } from '$app/navigation';
 import { get } from 'svelte/store';
@@ -79,7 +80,7 @@ export function createInlineError(
 				clear();
 				return true;
 			}
-			fail(result.message, options);
+			fail(describeResult(result, '', env.translate), options);
 			return false;
 		},
 		clear

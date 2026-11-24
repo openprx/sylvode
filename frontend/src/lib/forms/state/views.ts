@@ -1,3 +1,4 @@
+import { describeResult } from '#lib/i18n/describe.js';
 import { goto } from '$app/navigation';
 import { page } from '$app/state';
 import type { ApiResult } from '#lib/api/client.js';
@@ -106,7 +107,7 @@ export class ViewsController extends FormsController {
 		this.s.viewSubmitting = false;
 		if (response.code === 409) this.s.viewConflict = true;
 		if (response.code !== 0 || !response.data) {
-			if (response.code !== 409) toast.error(response.message);
+			if (response.code !== 409) toast.error(describeResult(response));
 			return null;
 		}
 		const view = response.data;
@@ -173,7 +174,7 @@ export class ViewsController extends FormsController {
 		if (!view) return;
 		const response = await formsApi.deleteView(view.id);
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			return;
 		}
 		this.s.formViews = this.s.formViews.filter((item) => item.id !== view.id);

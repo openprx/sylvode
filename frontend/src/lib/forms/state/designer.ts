@@ -1,3 +1,4 @@
+import { describeResult } from '#lib/i18n/describe.js';
 import {
 	type FormField,
 	type FormFieldDependency,
@@ -329,14 +330,14 @@ export class DesignerController extends FormsController {
 
 		if (usageResponse.code !== 0) {
 			this.s.designerFieldUsage = [];
-			toast.error(usageResponse.message);
+			toast.error(describeResult(usageResponse));
 		} else {
 			this.s.designerFieldUsage = usageResponse.data?.fields ?? [];
 		}
 
 		if (dependencyResponse.code !== 0) {
 			this.s.designerFieldDependencies = [];
-			toast.error(dependencyResponse.message);
+			toast.error(describeResult(dependencyResponse));
 		} else {
 			this.s.designerFieldDependencies = dependencyResponse.data?.dependencies ?? [];
 		}
@@ -580,7 +581,7 @@ export class DesignerController extends FormsController {
 		this.s.designerSaving = false;
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 
 			return;
 		}

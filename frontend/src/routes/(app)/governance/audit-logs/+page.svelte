@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
@@ -46,7 +47,7 @@
 			per_page: perPage
 		});
 		if (res.code !== 0 || !res.data) {
-			toast.error(res.message || get(t)('governanceAuditLogs.loadFailed'));
+			toast.error(describeResult(res, get(t)('governanceAuditLogs.loadFailed')));
 			logs = [];
 			total = 0;
 			totalPages = 0;

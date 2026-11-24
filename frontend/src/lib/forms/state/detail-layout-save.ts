@@ -1,3 +1,4 @@
+import { describeResult } from '#lib/i18n/describe.js';
 import { formsApi } from '#lib/api/forms.js';
 import { toast } from '#lib/stores/toast.js';
 import type {
@@ -34,7 +35,7 @@ export class DetailLayoutSaveController extends FormsController {
 		this.s.detailHeaderSaving = false;
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 
 			return;
 		}
@@ -64,7 +65,7 @@ export class DetailLayoutSaveController extends FormsController {
 		this.s.detailHighlightSaving = false;
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 
 			return;
 		}
@@ -100,7 +101,7 @@ export class DetailLayoutSaveController extends FormsController {
 		this.s.detailPageCompositionSaving = false;
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 
 			return;
 		}
@@ -131,7 +132,7 @@ export class DetailLayoutSaveController extends FormsController {
 		this.s.detailLayoutSectionSaving = false;
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 
 			return;
 		}
@@ -161,7 +162,7 @@ export class DetailLayoutSaveController extends FormsController {
 		this.s.detailPageWidgetSaving = false;
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 
 			return;
 		}

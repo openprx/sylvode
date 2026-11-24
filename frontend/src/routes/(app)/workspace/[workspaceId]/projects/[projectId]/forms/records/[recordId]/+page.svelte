@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { writable } from 'svelte/store';
 	import CreatorPluginLink from '#lib/components/plugins/CreatorPluginLink.svelte';
 	import RecordPluginPanels from '#lib/components/plugins/RecordPluginPanels.svelte';
@@ -569,7 +570,7 @@
 		});
 		commentSubmitting = false;
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			return;
 		}
 		comments = [response.data, ...comments.filter((comment) => comment.id !== response.data?.id)];

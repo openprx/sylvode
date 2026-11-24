@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
@@ -43,7 +44,7 @@
 				loading = false;
 				return;
 			}
-			toast.error(chainRes.message || get(t)('governanceExt.loadFailed'));
+			toast.error(describeResult(chainRes, get(t)('governanceExt.loadFailed')));
 			loading = false;
 			return;
 		}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
@@ -49,7 +50,7 @@
 		goto(resolve(`/(app)/search?q=${encodeURIComponent(query.trim())}`), { replaceState: true });
 		const response = await searchApi.search(query.trim());
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			results = [];
 		} else if (response.data) {
 			results = response.data.results ?? [];

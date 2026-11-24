@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { apiClient } from '#lib/api/client.js';
 	import { toast } from '#lib/stores/toast.js';
 	import type { UploadedAttachment } from '#lib/utils/attachments.js';
@@ -156,7 +157,7 @@
 					const raw = JSON.parse(xhr.responseText) as UploadApiResult;
 					const normalized = normalizeUploadResult(raw, file.name);
 					if (!normalized) {
-						toast.error(raw.message || $t('toast.uploadFail'));
+						toast.error(describeResult(raw, $t('toast.uploadFail')));
 						resolve();
 						return;
 					}

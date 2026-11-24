@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { labelsApi } from '#lib/api/labels.js';
 	import { membersApi, type WorkspaceMember } from '#lib/api/members.js';
 	import { issuesApi, type Issue, type IssuePriority, type IssueStatus } from '#lib/api/issues.js';
@@ -142,13 +143,13 @@
 		if (memberRes.code === 0 && memberRes.data) {
 			members = memberRes.data.items ?? [];
 		} else {
-			toast.error(memberRes.message || $t('issue.loadMembersFailed'));
+			toast.error(describeResult(memberRes, $t('issue.loadMembersFailed')));
 		}
 
 		if (sprintRes.code === 0 && sprintRes.data) {
 			sprints = sprintRes.data.items ?? [];
 		} else {
-			toast.error(sprintRes.message || $t('issue.loadSprintsFailed'));
+			toast.error(describeResult(sprintRes, $t('issue.loadSprintsFailed')));
 		}
 
 		if (labelRes.code === 0 && labelRes.data) {
@@ -158,7 +159,7 @@
 				color: String(item.color || '#64748b')
 			}));
 		} else {
-			toast.error(labelRes.message || $t('issue.loadLabelsFailed'));
+			toast.error(describeResult(labelRes, $t('issue.loadLabelsFailed')));
 		}
 
 		loadingOptions = false;
@@ -209,7 +210,7 @@
 		});
 
 		if (createRes.code !== 0 || !createRes.data) {
-			toast.error(createRes.message || $t('issue.createFailed'));
+			toast.error(describeResult(createRes, $t('issue.createFailed')));
 			creating = false;
 			return;
 		}
@@ -221,7 +222,7 @@
 			const labelResults = await Promise.all(labelRequests);
 			const failed = labelResults.find((result) => result.code !== 0);
 			if (failed) {
-				toast.error(failed.message || $t('issue.addLabelPartialFail'));
+				toast.error(describeResult(failed, $t('issue.addLabelPartialFail')));
 			}
 		}
 

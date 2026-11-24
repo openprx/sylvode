@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { locale, t } from 'svelte-i18n';
@@ -75,7 +76,7 @@
 		loading = true;
 		const response = await webhooksApi.list(workspaceId);
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else if (response.data) {
 			webhooks = response.data.items ?? [];
 		}
@@ -109,7 +110,7 @@
 	async function loadBots() {
 		const response = await membersApi.list(workspaceId);
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			return;
 		}
 		botUsers = (response.data?.items ?? []).filter((member) => member.entity_type === 'bot');
@@ -148,7 +149,7 @@
 			: await webhooksApi.create(workspaceId, payload);
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else {
 			toast.success(get(t)(editingWebhook ? 'webhook.updated' : 'webhook.created'));
 			showModal = false;
@@ -174,7 +175,7 @@
 		deletingId = webhook.id;
 		const response = await webhooksApi.delete(workspaceId, webhook.id);
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else {
 			toast.success(get(t)('webhook.deleted'));
 			await loadWebhooks();
@@ -203,7 +204,7 @@
 			deliveriesPerPage
 		);
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			deliveries = [];
 			deliveriesTotal = 0;
 			deliveriesTotalPages = 1;
@@ -225,7 +226,7 @@
 
 		const response = await webhooksApi.getDelivery(workspaceId, selectedWebhook.id, delivery.id);
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else if (response.data) {
 			selectedDelivery = response.data;
 		}

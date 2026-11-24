@@ -16,6 +16,7 @@
 // semantic diff.
 
 import { apiClient, type ApiResult, type UploadProgress } from './client';
+import { transportFailure } from './transport';
 import { bodyBinaryResult } from '../flow/body/bytes';
 import type { BodyAssetKind, BodyAssetLimits, BodyAssetReceipt } from '../flow/body/assets';
 
@@ -1624,7 +1625,7 @@ export const flowApi = {
 		downloadUrl: string
 	): Promise<ApiResult<{ blob: Blob; sha256: string | null }>> {
 		if (!/^\/api\/v[12]\/flow\/exports\/[^/?#]+\/artifact$/.test(downloadUrl)) {
-			return { code: 400, message: 'Unsupported download URL', data: null };
+			return transportFailure(400, 'transport.unsupportedDownloadUrl');
 		}
 		const result = await apiClient.getBinary(downloadUrl);
 		if (result.code !== 0 || !result.data) return { ...result, data: null };

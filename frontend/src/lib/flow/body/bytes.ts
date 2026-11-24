@@ -1,3 +1,4 @@
+import { transportFailure } from '#lib/api/transport.js';
 /** Server-owned MIME/disposition decides rendering and downloading, never atom display labels. */
 export const BODY_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 export function bodyBytesValid(
@@ -49,5 +50,5 @@ export function bodyBinaryResult(
 	const kind = BODY_IMAGE_TYPES.has(mime) ? 'image' : 'attachment';
 	return bodyBytesValid(kind, blob, headers)
 		? result
-		: { code: 502, message: 'Invalid Page asset response', data: null };
+		: transportFailure(502, 'transport.assetResponseInvalid');
 }

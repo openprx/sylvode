@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
@@ -42,7 +43,7 @@
 			per_page: perPage
 		});
 		if (res.code !== 0 || !res.data) {
-			toast.error(res.message || get(t)('governanceExt.auditLoadFailed'));
+			toast.error(describeResult(res, get(t)('governanceExt.auditLoadFailed')));
 			reports = [];
 			total = 0;
 			totalPages = 0;
@@ -61,7 +62,7 @@
 		});
 		generating = false;
 		if (res.code !== 0 || !res.data) {
-			toast.error(res.message || get(t)('governanceExt.auditGenerateFailed'));
+			toast.error(describeResult(res, get(t)('governanceExt.auditGenerateFailed')));
 			return;
 		}
 		toast.success(get(t)('governanceExt.auditGenerateSuccess'));

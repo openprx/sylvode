@@ -1,3 +1,4 @@
+import { describeResult } from '#lib/i18n/describe.js';
 import { apiClient } from '#lib/api/client.js';
 import { type FormAttachment, type FormField, formsApi } from '#lib/api/forms.js';
 import { toast } from '#lib/stores/toast.js';
@@ -58,7 +59,7 @@ export class AttachmentsController extends FormsController {
 				};
 			}
 
-			toast.error(result.message || translate('toast.uploadFail'));
+			toast.error(describeResult(result, translate('toast.uploadFail')));
 		} catch {
 			toast.error(translate('toast.uploadFail'));
 		}
@@ -109,7 +110,7 @@ export class AttachmentsController extends FormsController {
 		});
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			this.s.recordAttachments = [];
 
 			return;
@@ -132,7 +133,7 @@ export class AttachmentsController extends FormsController {
 		});
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 
 			return;
 		}
@@ -178,7 +179,7 @@ export class AttachmentsController extends FormsController {
 		});
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			this.s.attachmentSubmittingField = null;
 
 			return;
@@ -234,7 +235,7 @@ export class AttachmentsController extends FormsController {
 		});
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			this.s.attachmentSubmittingField = null;
 
 			return;
@@ -257,7 +258,7 @@ export class AttachmentsController extends FormsController {
 		const response = await formsApi.deleteAttachment(attachment.id);
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			this.s.deletingAttachmentId = null;
 
 			return;

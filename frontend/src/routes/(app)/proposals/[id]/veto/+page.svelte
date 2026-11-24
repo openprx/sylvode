@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
@@ -57,7 +58,7 @@
 		vetoMissing = false;
 		const proposalRes = await proposalsApi.get(proposalId);
 		if (proposalRes.code !== 0 || !proposalRes.data) {
-			toast.error(proposalRes.message || get(t)('vetoDetail.loadProposalFailed'));
+			toast.error(describeResult(proposalRes, get(t)('vetoDetail.loadProposalFailed')));
 			loading = false;
 			return;
 		}
@@ -71,7 +72,7 @@
 			return;
 		}
 		if (vetoRes.code !== 0 || !vetoRes.data) {
-			toast.error(vetoRes.message || get(t)('vetoDetail.loadFailed'));
+			toast.error(describeResult(vetoRes, get(t)('vetoDetail.loadFailed')));
 			loading = false;
 			return;
 		}
@@ -144,7 +145,7 @@
 			return;
 		}
 		if (res.code !== 0 || !res.data) {
-			toast.error(res.message || get(t)('vetoDetail.startEscalationFailed'));
+			toast.error(describeResult(res, get(t)('vetoDetail.startEscalationFailed')));
 			return;
 		}
 		vetoEvent = res.data;
@@ -162,7 +163,7 @@
 			return;
 		}
 		if (res.code !== 0 || !res.data) {
-			toast.error(res.message || get(t)('vetoDetail.voteEscalationFailed'));
+			toast.error(describeResult(res, get(t)('vetoDetail.voteEscalationFailed')));
 			return;
 		}
 		vetoEvent = res.data;
@@ -180,7 +181,7 @@
 			return;
 		}
 		if (res.code !== 0 || !res.data) {
-			toast.error(res.message || get(t)('vetoDetail.withdrawFailed'));
+			toast.error(describeResult(res, get(t)('vetoDetail.withdrawFailed')));
 			return;
 		}
 		vetoEvent = res.data;

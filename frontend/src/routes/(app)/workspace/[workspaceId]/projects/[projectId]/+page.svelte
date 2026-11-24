@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { resolve } from '$app/paths';
 	import ProjectPluginSettingsLink from '#lib/components/plugins/ProjectPluginSettingsLink.svelte';
 	import ProjectPluginNav from '#lib/components/plugins/ProjectPluginNav.svelte';
@@ -87,7 +88,7 @@
 	async function loadProject(): Promise<Project | null> {
 		const response = await projectsApi.get(projectId);
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else if (response.data) {
 			project = response.data;
 			return response.data;
@@ -111,7 +112,7 @@
 		exporting = true;
 		const response = await importExportApi.exportProject(projectId);
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message || get(t)('project.exportFailed'));
+			toast.error(describeResult(response, get(t)('project.exportFailed')));
 			exporting = false;
 			return;
 		}
@@ -148,7 +149,7 @@
 				document
 			);
 			if (response.code !== 0) {
-				toast.error(response.message);
+				toast.error(describeResult(response));
 			} else {
 				toast.success(
 					get(t)('project.importSuccess', {

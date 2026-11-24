@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
@@ -95,7 +96,7 @@
 		});
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			issues = [];
 			total = 0;
 			totalPages = 1;
@@ -128,7 +129,7 @@
 	async function loadSprints() {
 		const response = await sprintsApi.list(projectId);
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			return;
 		}
 		if (response.data) {
@@ -139,7 +140,7 @@
 	async function loadLabels() {
 		const res = await labelsApi.list(workspaceId);
 		if (res.code !== 0) {
-			toast.error(res.message);
+			toast.error(describeResult(res));
 			workspaceLabels = [];
 			return;
 		}

@@ -1,0 +1,17 @@
+{
+	"transport": {
+		"invalidResponse": "The server's answer could not be read.",
+		"sessionChanged": "The request was stopped because you signed in or out in the meantime.",
+		"requestAborted": "The request was cancelled.",
+		"networkError": "The server could not be reached. Check your connection and try again.",
+		"downloadFailed": "The download failed.",
+		"sessionRefreshFailed": "Your session could not be renewed. Sign in again.",
+		"unsupportedDownloadUrl": "This download link is not supported.",
+		"assetResponseInvalid": "The file received for this page is not valid.",
+		"privateAssetUnavailable": "Files of this page cannot be read right now.",
+		"publicAssetUnavailable": "Files of this shared page cannot be read right now.",
+		"sharedBlockUnavailable": "This shared block is no longer available.",
+		"sharedBlockInvalid": "The shared block answer could not be read.",
+		"sharedBlockFailed": "The shared block could not be loaded or saved."
+	}
+}

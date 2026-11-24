@@ -1,5 +1,6 @@
 /** Independent HTTP protocol; this adapter has no Page/bootstrap/history fallback. Not routed yet. */
 import { apiClient, type ApiResult } from '#lib/api/client.js';
+import { transportFailure } from '#lib/api/transport.js';
 import { bodyBinaryResult } from '../body/bytes';
 import {
 	parseSharedRead,
@@ -19,7 +20,7 @@ function checked(result: ApiResult<unknown>, shareId: string): ApiResult<SharedR
 	try {
 		return { ...result, data: parseSharedRead(result.data, shareId) };
 	} catch {
-		return { code: 502, message: 'invalid_shared_projection', data: null };
+		return transportFailure(502, 'transport.sharedBlockInvalid');
 	}
 }
 export const sharedBlockApi = {
@@ -121,7 +122,7 @@ export const sharedBlockApi = {
 		try {
 			return { ...result, data: parseSharedDiscovery(result.data) };
 		} catch {
-			return { code: 502, message: 'invalid_shared_discovery', data: null };
+			return transportFailure(502, 'transport.sharedBlockInvalid');
 		}
 	},
 	async placements(
@@ -141,7 +142,7 @@ export const sharedBlockApi = {
 		try {
 			return { ...result, data: parseSharedPlacementManagement(result.data) };
 		} catch {
-			return { code: 502, message: 'invalid_shared_placements', data: null };
+			return transportFailure(502, 'transport.sharedBlockInvalid');
 		}
 	},
 

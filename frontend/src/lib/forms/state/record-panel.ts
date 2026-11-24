@@ -1,3 +1,4 @@
+import { describeResult } from '#lib/i18n/describe.js';
 import { goto } from '$app/navigation';
 import { tick } from 'svelte';
 import { page } from '$app/state';
@@ -103,7 +104,7 @@ export class RecordPanelController extends FormsController {
 
 		if (response.code !== 0) {
 			this.s.selectedRecordComments = [];
-			toast.error(response.message);
+			toast.error(describeResult(response));
 
 			return;
 		}
@@ -119,7 +120,7 @@ export class RecordPanelController extends FormsController {
 		if (this.s.selectedRecord?.id !== recordId) return;
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 
 			return;
 		}

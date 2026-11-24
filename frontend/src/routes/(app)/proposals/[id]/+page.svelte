@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { resolve } from '$app/paths';
 	import { onMount, tick } from 'svelte';
 	import { page } from '$app/state';
@@ -346,7 +347,7 @@
 				appendCommentImage(result.data.url, file.type);
 				toast.success(get(t)('toast.uploadSuccess'));
 			} else {
-				toast.error(result.message || get(t)('toast.uploadFail'));
+				toast.error(describeResult(result, get(t)('toast.uploadFail')));
 			}
 		} catch {
 			toast.error(get(t)('toast.uploadNetworkFail'));
@@ -408,7 +409,7 @@
 		if (!proposal) return;
 		const res = await proposalsApi.submit(proposal.id);
 		if (res.code !== 0) {
-			toast.error(res.message || get(t)('governance.submitFailed'));
+			toast.error(describeResult(res, get(t)('governance.submitFailed')));
 			return;
 		}
 		toast.success(get(t)('governance.discussionSubmitted'));
@@ -419,7 +420,7 @@
 		if (!proposal) return;
 		const res = await proposalsApi.startVoting(proposal.id);
 		if (res.code !== 0) {
-			toast.error(res.message || get(t)('governance.startVotingFailed'));
+			toast.error(describeResult(res, get(t)('governance.startVotingFailed')));
 			return;
 		}
 		toast.success(get(t)('governance.votingStarted'));
@@ -430,7 +431,7 @@
 		if (!proposal) return;
 		const res = await proposalsApi.archive(proposal.id);
 		if (res.code !== 0) {
-			toast.error(res.message || get(t)('governance.archiveFailed'));
+			toast.error(describeResult(res, get(t)('governance.archiveFailed')));
 			return;
 		}
 		toast.success(get(t)('governance.archived'));
@@ -448,7 +449,7 @@
 		if (!yes) return;
 		const res = await proposalsApi.delete(proposal.id);
 		if (res.code !== 0) {
-			toast.error(res.message || get(t)('governance.deleteFailed'));
+			toast.error(describeResult(res, get(t)('governance.deleteFailed')));
 			return;
 		}
 		toast.success(get(t)('governance.draftDeleted'));
@@ -459,7 +460,7 @@
 		if (!proposal) return;
 		const res = await proposalsApi.vote(proposal.id, choice, voteReason || undefined);
 		if (res.code !== 0) {
-			toast.error(res.message || get(t)('governance.voteFailed'));
+			toast.error(describeResult(res, get(t)('governance.voteFailed')));
 			return;
 		}
 		toast.success(get(t)('governance.voteSuccess'));
@@ -471,7 +472,7 @@
 		if (!proposal) return;
 		const res = await proposalsApi.withdrawVote(proposal.id);
 		if (res.code !== 0) {
-			toast.error(res.message || get(t)('governance.withdrawVoteFailed'));
+			toast.error(describeResult(res, get(t)('governance.withdrawVoteFailed')));
 			return;
 		}
 		toast.success(get(t)('governance.voteWithdrawn'));
@@ -488,7 +489,7 @@
 			mentionIds.length > 0 ? mentionIds : undefined
 		);
 		if (res.code !== 0) {
-			toast.error(res.message || get(t)('governance.commentAddFailed'));
+			toast.error(describeResult(res, get(t)('governance.commentAddFailed')));
 			return;
 		}
 		newComment = '';
@@ -509,7 +510,7 @@
 		const res = await proposalsApi.searchIssues(q);
 		searchingIssues = false;
 		if (res.code !== 0 || !res.data) {
-			toast.error(res.message || get(t)('governance.issueSearchFailed'));
+			toast.error(describeResult(res, get(t)('governance.issueSearchFailed')));
 			return;
 		}
 		issueResults = res.data;
@@ -519,7 +520,7 @@
 		if (!proposal) return;
 		const res = await proposalsApi.linkIssue(proposal.id, issueId);
 		if (res.code !== 0) {
-			toast.error(res.message || get(t)('governance.issueLinkFailed'));
+			toast.error(describeResult(res, get(t)('governance.issueLinkFailed')));
 			return;
 		}
 		toast.success(get(t)('governance.issueLinkSuccess'));
@@ -629,7 +630,7 @@
 		if (!proposal) return;
 		const res = await impactReviewsApi.createForProposal(proposal.id);
 		if (res.code !== 0) {
-			toast.error(res.message || get(t)('impactReview.createFailed'));
+			toast.error(describeResult(res, get(t)('impactReview.createFailed')));
 			return;
 		}
 		toast.success(get(t)('impactReview.createSuccess'));
@@ -656,7 +657,7 @@
 		});
 		impactSaving = false;
 		if (res.code !== 0 || !res.data) {
-			toast.error(res.message || get(t)('impactReview.updateFailed'));
+			toast.error(describeResult(res, get(t)('impactReview.updateFailed')));
 			return;
 		}
 		impactReviewDetail = res.data;

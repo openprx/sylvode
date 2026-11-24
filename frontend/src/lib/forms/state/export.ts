@@ -1,3 +1,4 @@
+import { describeResult } from '#lib/i18n/describe.js';
 import { formsApi } from '#lib/api/forms.js';
 import { csvDownloadBlob } from '#lib/utils/csv.js';
 import { toast } from '#lib/stores/toast.js';
@@ -23,7 +24,7 @@ export class ExportController extends FormsController {
 		this.s.exportingRecords = false;
 
 		if (response.code !== 0 || !response.data || !response.data.csv) {
-			toast.error(response.message || translate('forms.exportFailed'));
+			toast.error(describeResult(response, translate('forms.exportFailed')));
 
 			return;
 		}
@@ -55,7 +56,7 @@ export class ExportController extends FormsController {
 		this.s.exportingRecords = false;
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message || translate('forms.exportFailed'));
+			toast.error(describeResult(response, translate('forms.exportFailed')));
 
 			return;
 		}
@@ -145,7 +146,7 @@ export class ExportController extends FormsController {
 		this.s.exportingRecords = false;
 
 		if (metadataResponse.code !== 0 || !metadataResponse.data) {
-			toast.error(metadataResponse.message || translate('forms.exportFailed'));
+			toast.error(describeResult(metadataResponse, translate('forms.exportFailed')));
 
 			return null;
 		}

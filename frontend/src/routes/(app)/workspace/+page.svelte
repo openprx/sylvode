@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
@@ -50,7 +51,7 @@
 		const response = await workspacesApi.list();
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else if (response.data) {
 			workspaces = response.data.items ?? [];
 		}
@@ -66,13 +67,13 @@
 		]);
 
 		if (issuesResponse.code !== 0) {
-			toast.error(issuesResponse.message);
+			toast.error(describeResult(issuesResponse));
 		} else if (issuesResponse.data) {
 			myIssues = issuesResponse.data.items ?? [];
 		}
 
 		if (activitiesResponse.code !== 0) {
-			toast.error(activitiesResponse.message);
+			toast.error(describeResult(activitiesResponse));
 		} else if (activitiesResponse.data) {
 			myActivities = activitiesResponse.data.items ?? [];
 			activitiesPage = activitiesResponse.data.page;
@@ -90,7 +91,7 @@
 		const response = await myApi.getMyActivities({ page: nextPage, per_page: 10 });
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else if (response.data) {
 			myActivities = [...myActivities, ...(response.data.items ?? [])];
 			activitiesPage = response.data.page;
@@ -166,7 +167,7 @@
 		});
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else if (response.data) {
 			toast.success(get(t)('workspace.createSuccess'));
 			createForm = { slug: '', name: '', description: '' };
@@ -200,7 +201,7 @@
 		});
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else if (response.data) {
 			toast.success(get(t)('workspace.updateSuccess'));
 			showEditModal = false;
@@ -223,7 +224,7 @@
 		const response = await workspacesApi.delete(deletingWorkspace.id);
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else {
 			toast.success(get(t)('workspace.deleteSuccess'));
 			showDeleteModal = false;

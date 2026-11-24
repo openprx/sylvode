@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
@@ -54,7 +55,7 @@
 		loading = true;
 		const response = await workflowsApi.listByWorkspace(workspaceId);
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else if (response.data) {
 			workflows = response.data.items ?? [];
 		}
@@ -77,7 +78,7 @@
 			description: createForm.description.trim() || undefined
 		});
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else {
 			toast.success(get(t)('workflow.createSuccess'));
 			showCreateModal = false;
@@ -103,7 +104,7 @@
 			description: editForm.description.trim() || undefined
 		});
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else {
 			toast.success(get(t)('workflow.updateSuccess'));
 			showEditModal = false;
@@ -125,7 +126,7 @@
 			return;
 		const response = await workflowsApi.delete(wf.id);
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else {
 			toast.success(get(t)('workflow.deleteSuccess'));
 			await loadWorkflows();
@@ -135,7 +136,7 @@
 	async function openStatesModal(wf: WorkflowSummary) {
 		const response = await workflowsApi.get(wf.id);
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			return;
 		}
 		managingWorkflow = response.data;
@@ -200,7 +201,7 @@
 				is_terminal: stateForm.is_terminal
 			});
 			if (response.code !== 0) {
-				toast.error(response.message);
+				toast.error(describeResult(response));
 			} else {
 				toast.success(get(t)('workflow.stateUpdateSuccess'));
 				showStateForm = false;
@@ -222,7 +223,7 @@
 				is_terminal: stateForm.is_terminal
 			});
 			if (response.code !== 0) {
-				toast.error(response.message);
+				toast.error(describeResult(response));
 			} else {
 				toast.success(get(t)('workflow.stateAddSuccess'));
 				showStateForm = false;
@@ -246,7 +247,7 @@
 			return;
 		const response = await workflowsApi.deleteState(state.id);
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else {
 			toast.success(get(t)('workflow.stateDeleteSuccess'));
 			await refreshManagedWorkflow();

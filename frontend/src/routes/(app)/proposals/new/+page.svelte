@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import { tick } from 'svelte';
@@ -151,7 +152,7 @@
 				appendContentImage(result.data.url, file.type);
 				toast.success(get(t)('toast.uploadSuccess'));
 			} else {
-				toast.error(result.message || get(t)('toast.uploadFail'));
+				toast.error(describeResult(result, get(t)('toast.uploadFail')));
 			}
 		} catch {
 			toast.error(get(t)('toast.uploadNetworkFail'));
@@ -218,7 +219,7 @@
 		const res = await proposalTemplatesApi.list({ project_id: selectedProjectId, is_active: true });
 		loadingTemplates = false;
 		if (res.code !== 0 || !res.data) {
-			toast.error(res.message || get(t)('proposalTemplates.loadFailed'));
+			toast.error(describeResult(res, get(t)('proposalTemplates.loadFailed')));
 			templateOptions = [];
 			selectedTemplateId = '';
 			return;
@@ -332,7 +333,7 @@
 		submitting = false;
 
 		if (res.code !== 0 || !res.data) {
-			toast.error(res.message || get(t)('governance.createFailed'));
+			toast.error(describeResult(res, get(t)('governance.createFailed')));
 			return;
 		}
 

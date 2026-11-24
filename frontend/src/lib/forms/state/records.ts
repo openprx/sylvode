@@ -1,3 +1,4 @@
+import { describeResult } from '#lib/i18n/describe.js';
 import {
 	type FormField,
 	type FormRecord,
@@ -48,7 +49,7 @@ export class RecordsController extends FormsController {
 		this.s.recordSubmitting = false;
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 
 			return;
 		}
@@ -110,7 +111,7 @@ export class RecordsController extends FormsController {
 			});
 
 			if (response.code !== 0) {
-				toast.error(response.message);
+				toast.error(describeResult(response));
 			}
 		}
 	};
@@ -136,7 +137,7 @@ export class RecordsController extends FormsController {
 		this.s.deletingRecordId = null;
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 
 			return;
 		}
@@ -182,7 +183,7 @@ export class RecordsController extends FormsController {
 		this.s.restoringRecordId = null;
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 
 			return;
 		}

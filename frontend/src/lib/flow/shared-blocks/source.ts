@@ -1,6 +1,7 @@
 /** Original-Page/account-bound source publication draft. Server review and writes stay explicit. */
 import { randomUuid } from '#lib/utils/uuid.js';
 import type { ApiResult } from '#lib/api/client.js';
+import { transportFailure } from '#lib/api/transport.js';
 import type { BlockShareReview } from './review';
 import type { CreateBlockShare, ManagedBlockShare, SharedAudience } from './contracts';
 import { sharedBlockApi } from './client';
@@ -265,7 +266,7 @@ export class SourceBlockShares {
 					)
 				: await sharedBlockApi.create(this.host.sourceId, intent.payload, intent.key);
 		} catch {
-			result = { code: 500, message: 'failed', data: null };
+			result = transportFailure(500, 'transport.sharedBlockFailed');
 		}
 		if (this.disposed) return false;
 		this.value.busy = false;
@@ -302,7 +303,7 @@ export class SourceBlockShares {
 		try {
 			result = await sharedBlockApi.changeSourceLifecycle(this.host.sourceId, shareId, action, key);
 		} catch {
-			result = { code: 500, message: 'failed', data: null };
+			result = transportFailure(500, 'transport.sharedBlockFailed');
 		}
 		if (this.disposed) return false;
 		if (result.code !== 0 || result.data?.share_id !== shareId) {

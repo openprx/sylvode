@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
@@ -36,7 +37,7 @@
 			end_at: endAt ? new Date(endAt).toISOString() : undefined
 		});
 		if (res.code !== 0 || !res.data) {
-			toast.error(res.message || get(t)('governanceExt.analyticsLoadFailed'));
+			toast.error(describeResult(res, get(t)('governanceExt.analyticsLoadFailed')));
 			analytics = null;
 			return;
 		}

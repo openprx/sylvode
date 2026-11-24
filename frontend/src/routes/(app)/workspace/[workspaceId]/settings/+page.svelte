@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
@@ -34,7 +35,7 @@
 		loading = true;
 		const response = await workspacesApi.get(workspaceId);
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else if (response.data) {
 			workspace = response.data;
 			form = {
@@ -57,7 +58,7 @@
 			description: form.description.trim() || undefined
 		});
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else {
 			toast.success(get(t)('workspace.settingsSaved'));
 			await loadWorkspace();
@@ -82,7 +83,7 @@
 		deleting = true;
 		const response = await workspacesApi.delete(workspaceId);
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 			deleting = false;
 			return;
 		}

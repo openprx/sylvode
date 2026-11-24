@@ -1,3 +1,4 @@
+import { describeResult } from '#lib/i18n/describe.js';
 import type { FormField, FormRecord } from '#lib/api/forms.js';
 import { toast } from '#lib/stores/toast.js';
 import type { GanttTask, GanttTimeline } from '#lib/forms/page-types.js';
@@ -54,7 +55,7 @@ export class ViewGanttController extends FormsController {
 		this.s.updatingGanttRecordId = null;
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 
 			return;
 		}
@@ -86,7 +87,7 @@ export class ViewGanttController extends FormsController {
 		this.s.updatingGanttRecordId = null;
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 
 			return;
 		}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { resolve } from '$app/paths';
 	import { onMount, onDestroy, getContext } from 'svelte';
 	import { TaskWorkbench, WORKBENCH_CONTEXT } from '#lib/workbench/tabs.js';
@@ -167,7 +168,7 @@
 		const wsResponse = await workspacesApi.get(workspaceId);
 		if (wsResponse.code !== 0) {
 			error = wsResponse.message;
-			toast.error(wsResponse.message);
+			toast.error(describeResult(wsResponse));
 		} else if (wsResponse.data) {
 			workspace = wsResponse.data;
 		}
@@ -175,7 +176,7 @@
 		const response = await projectsApi.list(workspaceId);
 		if (response.code !== 0) {
 			error = response.message;
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else if (response.data) {
 			projects = response.data.items ?? [];
 			filteredProjects = projects;
@@ -263,7 +264,7 @@
 		});
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else if (response.data) {
 			toast.success(get(t)('project.createSuccess'));
 			showCreateModal = false;
@@ -309,7 +310,7 @@
 			if (response.code === 409 || response.error_code === 'version_conflict') {
 				await refreshProjects();
 				toast.error(get(t)('workbench.conflictBody'));
-			} else toast.error(response.message);
+			} else toast.error(describeResult(response));
 			return;
 		}
 
@@ -320,7 +321,7 @@
 				editForm.workflow_id || null
 			);
 			if (wfResponse.code !== 0) {
-				toast.error(wfResponse.message);
+				toast.error(describeResult(wfResponse));
 				updating = false;
 				return;
 			}
@@ -346,7 +347,7 @@
 		const response = await projectsApi.delete(deletingProject.id);
 
 		if (response.code !== 0) {
-			toast.error(response.message);
+			toast.error(describeResult(response));
 		} else {
 			toast.success(get(t)('project.deleteSuccess'));
 			showDeleteModal = false;

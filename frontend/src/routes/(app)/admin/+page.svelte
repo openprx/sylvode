@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
@@ -57,7 +58,7 @@
 
 		const workspaceResponse = await workspacesApi.list();
 		if (workspaceResponse.code !== 0 || !workspaceResponse.data) {
-			toast.error(workspaceResponse.message || get(t)('admin.loadOverviewFailed'));
+			toast.error(describeResult(workspaceResponse, get(t)('admin.loadOverviewFailed')));
 			loading = false;
 			return;
 		}

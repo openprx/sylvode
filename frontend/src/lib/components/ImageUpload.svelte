@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { describeResult } from '#lib/i18n/describe.js';
 	import { apiClient } from '#lib/api/client.js';
 	import { toast } from '#lib/stores/toast.js';
 	import { t } from 'svelte-i18n';
@@ -62,7 +63,7 @@
 						onUploaded(result.data.url, file.type);
 						toast.success($t('toast.uploadSuccess'));
 					} else {
-						toast.error(result.message || $t('toast.uploadFail'));
+						toast.error(describeResult(result, $t('toast.uploadFail')));
 					}
 				} catch {
 					toast.error($t('toast.uploadParseFail'));
