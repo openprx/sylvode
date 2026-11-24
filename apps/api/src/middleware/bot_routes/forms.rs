@@ -1,7 +1,7 @@
 //! Runner bot route classes of the `forms` router area (`router/forms.rs`).
 
-use super::{RunnerRoute, r};
-use crate::middleware::runner_bot_scope::{Class, Find};
+use super::{RunnerRoute, r, rc};
+use crate::middleware::scoped_bot::{Class, Find};
 
 #[rustfmt::skip]
 pub static ROUTES: &[RunnerRoute] = &[
@@ -23,7 +23,7 @@ pub static ROUTES: &[RunnerRoute] = &[
     r("PATCH", "/api/v1/form-records/{record_id}/children/{child_record_id}", Class::Project(Find::Table("form_records","record_id"))),
     r("POST", "/api/v1/form-records/{record_id}/children/{child_record_id}/restore", Class::Project(Find::Table("form_records","record_id"))),
     r("GET", "/api/v1/form-records/{record_id}/comments", Class::Project(Find::Table("form_records","record_id"))),
-    r("POST", "/api/v1/form-records/{record_id}/comments", Class::Project(Find::Table("form_records","record_id"))),
+    rc("POST", "/api/v1/form-records/{record_id}/comments", Class::Project(Find::Table("form_records","record_id"))),
     r("GET", "/api/v1/form-records/{record_id}/events", Class::Project(Find::Table("form_records","record_id"))),
     r("GET", "/api/v1/form-records/{record_id}/links", Class::Project(Find::Table("form_records","record_id"))),
     r("POST", "/api/v1/form-records/{record_id}/links", Class::Project(Find::Table("form_records","record_id"))),

@@ -1,7 +1,7 @@
 //! Runner bot route classes of the `integrations` router area (`router/integrations.rs`).
 
 use super::{RunnerRoute, r};
-use crate::middleware::runner_bot_scope::{Class, Find};
+use crate::middleware::scoped_bot::{Class, Find};
 
 #[rustfmt::skip]
 pub static ROUTES: &[RunnerRoute] = &[
@@ -17,6 +17,8 @@ pub static ROUTES: &[RunnerRoute] = &[
     r("GET", "/api/v1/workspaces/{workspace_id}/bots", Class::Admin),
     r("POST", "/api/v1/workspaces/{workspace_id}/bots", Class::Admin),
     r("DELETE", "/api/v1/workspaces/{workspace_id}/bots/{bot_id}", Class::Admin),
+    r("GET", "/api/v1/workspaces/{workspace_id}/bots/{bot_id}/project-access", Class::Admin),
+    r("PUT", "/api/v1/workspaces/{workspace_id}/bots/{bot_id}/project-access", Class::Admin),
     r("POST", "/api/v1/workspaces/{workspace_id}/import/project", Class::Admin),
     r("GET", "/api/v1/workspaces/{workspace_id}/webhooks", Class::Admin),
     r("POST", "/api/v1/workspaces/{workspace_id}/webhooks", Class::Admin),
@@ -41,7 +43,7 @@ mod tests {
     fn the_classes_of_the_area() {
         assert_eq!(
             class_counts(ROUTES),
-            BTreeMap::from([("admin", 13), ("own resource", 8), ("project-resolved", 2)]),
+            BTreeMap::from([("admin", 15), ("own resource", 8), ("project-resolved", 2)]),
             "the classes of the integrations routes changed"
         );
     }

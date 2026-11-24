@@ -1,7 +1,7 @@
 //! Runner bot route classes of the `governance` router area (`router/governance.rs`).
 
-use super::{RunnerRoute, r};
-use crate::middleware::runner_bot_scope::{Class, Find};
+use super::{RunnerRoute, r, rc};
+use crate::middleware::scoped_bot::{Class, Find};
 
 #[rustfmt::skip]
 pub static ROUTES: &[RunnerRoute] = &[
@@ -32,7 +32,7 @@ pub static ROUTES: &[RunnerRoute] = &[
     r("GET", "/api/v1/projects/{pid}/audit-reports/{id}", Class::Project(Find::Project("pid"))),
     r("GET", "/api/v1/projects/{project_id}/ai-participants/{bot_id}/alignment-stats", Class::Project(Find::Project("project_id"))),
     r("GET", "/api/v1/projects/{project_id}/ai-participants/{bot_id}/learning", Class::Project(Find::Project("project_id"))),
-    r("DELETE", "/api/v1/proposal-comments/{id}", Class::Project(Find::ProposalComment("id"))),
+    rc("DELETE", "/api/v1/proposal-comments/{id}", Class::Project(Find::ProposalComment("id"))),
     r("DELETE", "/api/v1/proposal-templates/{id}", Class::Project(Find::Table("proposal_templates","id"))),
     r("GET", "/api/v1/proposal-templates/{id}", Class::Project(Find::Table("proposal_templates","id"))),
     r("PUT", "/api/v1/proposal-templates/{id}", Class::Project(Find::Table("proposal_templates","id"))),
@@ -42,8 +42,8 @@ pub static ROUTES: &[RunnerRoute] = &[
     r("POST", "/api/v1/proposals/{id}/archive", Class::Project(Find::Proposal("id"))),
     r("GET", "/api/v1/proposals/{id}/chain", Class::Project(Find::Proposal("id"))),
     r("GET", "/api/v1/proposals/{id}/comments", Class::Project(Find::Proposal("id"))),
-    r("POST", "/api/v1/proposals/{id}/comments", Class::Project(Find::Proposal("id"))),
-    r("DELETE", "/api/v1/proposals/{id}/comments/{comment_id}", Class::Project(Find::Proposal("id"))),
+    rc("POST", "/api/v1/proposals/{id}/comments", Class::Project(Find::Proposal("id"))),
+    rc("DELETE", "/api/v1/proposals/{id}/comments/{comment_id}", Class::Project(Find::Proposal("id"))),
     r("GET", "/api/v1/proposals/{id}/decision", Class::Project(Find::Proposal("id"))),
     r("DELETE", "/api/v1/proposals/{id}/impact-review", Class::Project(Find::Proposal("id"))),
     r("GET", "/api/v1/proposals/{id}/impact-review", Class::Project(Find::Proposal("id"))),

@@ -1,17 +1,22 @@
-//! What the token of a runner bot may reach.
+//! What the token of a scoped bot may reach.
 //!
-//! A bot that a project bot connection made (it has a `bot_runners` row) holds a token that lives
-//! on a host running command-line agents over issue text. The token is limited to the projects
-//! where the bot has an enabled connection: every route is classified in
-//! [`RUNNER_BOT_ROUTES`](super::bot_routes::RUNNER_BOT_ROUTES), and a request is allowed
-//! only by its class.
+//! Two kinds of bot are scoped. A runner bot (it has a `bot_runners` row, made by a project bot
+//! connection) holds a token that lives on a host running command-line agents over issue text: it
+//! may write in the projects where it has an enabled connection and reach nothing else. A
+//! project-scoped bot (`workspace_bots.project_scope = 'projects'`) holds a level per project, from
+//! `bot_project_grants`, and a default level for every other project. Every route is classified in
+//! [`RUNNER_BOT_ROUTES`](super::bot_routes::RUNNER_BOT_ROUTES), and a request is allowed only by its
+//! class and the bot's level in the project it targets.
 //!
 //! * `NoProject`: the route names no project and its handler limits the bot to what it owns (the
 //!   task protocol, whose handlers require the bot to be the task's participant, and catalogues);
 //! * `Project(find)`: the route's target resolves to a project, found the way the permission layer
 //!   finds it for that route family (the project in the path, an issue, a form, a record, a Flow
-//!   object, a proposal, ...); allowed only when that project has an enabled connection for the
-//!   bot, refused when the target is missing, unresolvable or in another project;
+//!   object, a proposal, ...); allowed only when the bot's level in that project reaches the level
+//!   the request needs (`read` for a safe method, `comment` for a route flagged as a comment route,
+//!   `write` for any other), refused when the target is missing, unresolvable or in another
+//!   workspace. A runner bot is at `write` in a project with an enabled connection and at nothing
+//!   elsewhere; a project-scoped bot is at its grant, else its default level;
 //! * `Own`: the resource belongs to the bot itself (its notifications, its uploads, its personal
 //!   Flow space, a proposal it authored that no project claims yet); the handler filters by the
 //!   caller;
@@ -19,12 +24,13 @@
 //!   execution settings, workspace settings, project creation and deletion, alert sources and
 //!   rules, ...): refused;
 //! * `Refused`: everything else that spans projects or belongs to none (workspace-wide listings,
-//!   workspace-scoped Flow, trust scores, ...): refused.
+//!   workspace-scoped Flow, trust scores, ...): refused, except that a project-scoped bot whose
+//!   default level is at least `read` may make safe requests to them.
 //!
-//! A route that is not in the table is refused, so a new route is closed to a runner bot until it
-//! is classified on purpose; the test `every_route_of_main_is_classified` fails until then. All
-//! refusals answer one 403 that does not say which part failed. A bot without a `bot_runners` row is
-//! not touched.
+//! A route that is not in the table is refused, so a new route is closed to a scoped bot until it
+//! is classified on purpose; the test `every_router_route_is_classified` fails until then. All
+//! refusals answer one 403 that does not say which part failed. A bot that is neither a runner bot
+//! nor project-scoped is not touched.
 use axum::{
     body::Body,
     extract::{FromRequestParts, MatchedPath, RawPathParams},
@@ -69,7 +75,7 @@ pub enum Find {
     Query(&'static str),
 }
 
-/// What a route is to a runner bot.
+/// What a route is to a scoped bot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Class {
     NoProject,
@@ -99,6 +105,9 @@ pub struct RunnerRoute {
     /// The router's matched path template, exactly as registered in the router files.
     pub pattern: &'static str,
     pub class: Class,
+    /// The route comments (creates, edits, deletes or resolves a comment): a scoped bot needs the
+    /// `comment` level in the project instead of `write`. Only meaningful for unsafe methods.
+    pub comment: bool,
 }
 
 /// Every classified route of every area.
@@ -112,9 +121,99 @@ pub fn lookup(method: &str, pattern: &str) -> Option<&'static RunnerRoute> {
     all_routes().find(|entry| entry.method == method && entry.pattern == pattern)
 }
 
-/// What every refusal says, whether the route is closed, or the project is not connected, enabled
-/// or does not exist: it never tells which.
-pub const REFUSAL: &str = "this bot may act only in projects it is connected to";
+/// What every refusal says, whether the route is closed, or the bot's level in the project is too low
+/// or the project does not exist: it never tells which.
+pub const REFUSAL: &str = "this bot may not do this in this project";
+
+/// A scoped bot's level in one project, in increasing order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Level {
+    None,
+    Read,
+    Comment,
+    Write,
+}
+
+impl Level {
+    /// The stored name; an unknown name is no access.
+    #[must_use]
+    pub fn parse(name: &str) -> Self {
+        match name {
+            "read" => Self::Read,
+            "comment" => Self::Comment,
+            "write" => Self::Write,
+            _ => Self::None,
+        }
+    }
+}
+
+/// How a bot's reach is limited, as the bot authentication loads it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BotAccess {
+    /// Neither a runner bot nor project-scoped: the token's permissions are the only limit.
+    Workspace,
+    /// A project bot connection made the bot.
+    Runner,
+    /// Project-scoped: a grant per project, else `default`.
+    Projects { default: Level },
+}
+
+impl BotAccess {
+    /// From the stored columns: a bot with a `bot_runners` row is a runner bot whatever its scope.
+    #[must_use]
+    pub fn from_row(runner: bool, project_scope: &str, default_level: &str) -> Self {
+        if runner {
+            Self::Runner
+        } else if project_scope == "projects" {
+            Self::Projects {
+                default: Level::parse(default_level),
+            }
+        } else {
+            Self::Workspace
+        }
+    }
+}
+
+/// The level a request needs: `read` for a safe method, `comment` for a comment route, else `write`.
+const fn required_level(safe: bool, entry: &RunnerRoute) -> Level {
+    if safe {
+        Level::Read
+    } else if entry.comment {
+        Level::Comment
+    } else {
+        Level::Write
+    }
+}
+
+/// The bot's level in `project_id`.
+async fn level_in_project(
+    db: &DatabaseConnection,
+    access: BotAccess,
+    bot_id: Uuid,
+    project_id: Uuid,
+) -> Result<Level, ApiError> {
+    match access {
+        BotAccess::Workspace => Ok(Level::Write),
+        BotAccess::Runner => Ok(if runner_bot_block(db, project_id, bot_id).await?.is_none() {
+            Level::Write
+        } else {
+            Level::None
+        }),
+        BotAccess::Projects { default } => {
+            #[derive(FromQueryResult)]
+            struct Grant {
+                level: String,
+            }
+            let grant: Option<Grant> = one(
+                db,
+                "SELECT level FROM bot_project_grants WHERE bot_id = $1 AND project_id = $2",
+                vec![bot_id.into(), project_id.into()],
+            )
+            .await?;
+            Ok(grant.map_or(default, |grant| Level::parse(&grant.level)))
+        }
+    }
+}
 
 /// The largest body read to find the project of a request that names it there.
 const MAX_BODY_FOR_TARGET: usize = 2 * 1024 * 1024;
@@ -456,22 +555,22 @@ fn query_value(query: Option<&str>, name: &str) -> Option<String> {
         .map(|(_, value)| value.to_string())
 }
 
-/// Whether the runner bot `bot_id` of `workspace_id` may make this request; returns the body to
-/// hand on (re-buffered when it had to be read to find the target). `Ok` for a bot that is not a
-/// runner bot.
+/// Whether the bot `bot_id` of `workspace_id` may make this request; returns the body to hand on
+/// (re-buffered when it had to be read to find the target). `Ok` for a bot that is not scoped.
 pub async fn authorize(
     db: &DatabaseConnection,
     bot_id: Uuid,
     workspace_id: Uuid,
-    is_runner_bot: bool,
+    access: BotAccess,
     method: &str,
     parts: &mut Parts,
     body: Body,
 ) -> Result<Body, ApiError> {
-    if !is_runner_bot {
+    if access == BotAccess::Workspace {
         return Ok(body);
     }
     let refuse = || ApiError::Forbidden(REFUSAL.to_string());
+    let safe = axum::http::Method::from_bytes(method.as_bytes()).is_ok_and(|method| method.is_safe());
     let matched = parts
         .extensions
         .get::<MatchedPath>()
@@ -481,7 +580,13 @@ pub async fn authorize(
     };
     let find = match entry.class {
         Class::NoProject | Class::Own => return Ok(body),
-        Class::Admin | Class::Refused => return Err(refuse()),
+        Class::Admin => return Err(refuse()),
+        Class::Refused => {
+            return match access {
+                BotAccess::Projects { default } if safe && default >= Level::Read => Ok(body),
+                _ => Err(refuse()),
+            };
+        }
         Class::Project(find) => find,
     };
     let (body, json) = if find == Find::Body {
@@ -507,7 +612,11 @@ pub async fn authorize(
         Target::Project {
             workspace_id: target_workspace,
             project_id,
-        } if target_workspace == workspace_id && runner_bot_block(db, project_id, bot_id).await?.is_none() => Ok(body),
+        } if target_workspace == workspace_id
+            && level_in_project(db, access, bot_id, project_id).await? >= required_level(safe, entry) =>
+        {
+            Ok(body)
+        }
         _ => Err(refuse()),
     }
 }
@@ -515,8 +624,66 @@ pub async fn authorize(
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 mod tests {
-    use super::{Class, Find, all_routes, lookup};
+    use super::{BotAccess, Class, Find, Level, all_routes, lookup};
     use std::collections::{BTreeMap, BTreeSet};
+
+    /// The stored columns decide the kind of bot; a runner row wins; an unknown level is no access.
+    #[test]
+    fn bot_access_is_read_from_the_columns() {
+        assert_eq!(BotAccess::from_row(false, "workspace", "none"), BotAccess::Workspace);
+        assert_eq!(BotAccess::from_row(true, "workspace", "none"), BotAccess::Runner);
+        assert_eq!(BotAccess::from_row(true, "projects", "read"), BotAccess::Runner);
+        assert_eq!(
+            BotAccess::from_row(false, "projects", "comment"),
+            BotAccess::Projects {
+                default: Level::Comment
+            }
+        );
+        assert_eq!(
+            BotAccess::from_row(false, "projects", "surprise"),
+            BotAccess::Projects { default: Level::None }
+        );
+        assert!(Level::None < Level::Read && Level::Read < Level::Comment && Level::Comment < Level::Write);
+    }
+
+    /// The comment routes are exactly the unsafe routes on a comment resource, and none is a read.
+    #[test]
+    fn the_comment_routes_are_the_unsafe_comment_routes() {
+        let flagged: BTreeSet<(&str, &str)> = all_routes()
+            .filter(|entry| entry.comment)
+            .map(|entry| (entry.method, entry.pattern))
+            .collect();
+        for (method, pattern) in [
+            ("POST", "/api/v1/issues/{issue_id}/comments"),
+            ("PUT", "/api/v1/comments/{id}"),
+            ("DELETE", "/api/v1/comments/{id}"),
+            ("POST", "/api/v1/proposals/{id}/comments"),
+            ("POST", "/api/v1/form-records/{record_id}/comments"),
+            ("POST", "/api/v2/flow/objects/{object_id}/comments"),
+            ("PATCH", "/api/v2/flow/objects/{object_id}/comments/{comment_id}"),
+        ] {
+            assert!(flagged.contains(&(method, pattern)), "{method} {pattern}");
+        }
+        for entry in all_routes() {
+            let comment_resource = entry.pattern.contains("comments") || entry.pattern.contains("proposal-comments");
+            assert_eq!(
+                entry.comment,
+                comment_resource && entry.method != "GET",
+                "{} {}",
+                entry.method,
+                entry.pattern
+            );
+            if entry.comment {
+                assert!(
+                    matches!(entry.class, Class::Project(_)),
+                    "{} {}",
+                    entry.method,
+                    entry.pattern
+                );
+            }
+        }
+        assert_eq!(flagged.len(), 15);
+    }
 
     /// Every `(method, pattern)` that the router files register behind `bot_or_user_auth_middleware`.
     fn routes_of_router() -> BTreeSet<(String, String)> {

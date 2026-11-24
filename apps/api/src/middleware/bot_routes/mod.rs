@@ -1,10 +1,10 @@
-//! The route classes of a runner bot, one file per router area.
+//! The route classes of a scoped bot (a runner bot or a project-scoped bot), one file per router area.
 //!
 //! One entry per method and path of `router/<area>.rs` behind the bot authentication. Kept by hand:
 //! the test `every_router_route_is_classified` fails when a route is added to a router file
 //! without an entry in the matching area file here, or an entry names a route that is gone.
 
-use super::runner_bot_scope::{Class, RunnerRoute};
+use super::scoped_bot::{Class, RunnerRoute};
 
 mod alerts;
 mod auth_workspace;
@@ -32,7 +32,23 @@ pub static RUNNER_BOT_ROUTES: &[&[RunnerRoute]] = &[
 ];
 
 const fn r(method: &'static str, pattern: &'static str, class: Class) -> RunnerRoute {
-    RunnerRoute { method, pattern, class }
+    RunnerRoute {
+        method,
+        pattern,
+        class,
+        comment: false,
+    }
+}
+
+/// A route that comments (creates, edits, deletes or resolves a comment): a scoped bot needs the
+/// `comment` level in the project, not `write`.
+const fn rc(method: &'static str, pattern: &'static str, class: Class) -> RunnerRoute {
+    RunnerRoute {
+        method,
+        pattern,
+        class,
+        comment: true,
+    }
 }
 
 /// The number of routes per class name of one area's table.

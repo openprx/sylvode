@@ -443,6 +443,24 @@ fn sha256_hex(input: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
+/// The permissions of a project-scoped bot: `admin` counts as `write`. A bot that holds a level per
+/// project is never a workspace administrator, so it is a plain `member` everywhere and never
+/// bypasses a form policy or a record scope.
+fn without_admin(permissions: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(permissions.len());
+    for permission in permissions {
+        let permission = if permission == "admin" {
+            "write".to_string()
+        } else {
+            permission
+        };
+        if !out.contains(&permission) {
+            out.push(permission);
+        }
+    }
+    out
+}
+
 /// The permission an HTTP method demands of a bot token.
 ///
 /// Safe methods only read, everything else can change state. Kept separate from the middleware so
@@ -489,8 +507,13 @@ pub async fn bot_or_user_auth_middleware(
             is_active: bool,
             expires_at: Option<platform::timestamp::Timestamp>,
             /// A project bot connection made this bot: its token is limited to the projects it is
-            /// connected to (`runner_bot_scope`).
+            /// connected to (`scoped_bot`).
             runner: bool,
+            /// `workspace` (the token's permissions apply to the whole workspace) or `projects`
+            /// (a level per project, `scoped_bot`).
+            project_scope: String,
+            /// The level in every project without a grant, for a project-scoped bot.
+            default_project_level: String,
             /// The bot's user is not disabled. An instance administrator who disables the user stops
             /// the token, whatever the token's own flag says.
             user_active: bool,
@@ -499,6 +522,7 @@ pub async fn bot_or_user_auth_middleware(
         let bot = BotRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r"SELECT id, workspace_id, permissions, transport_surface, is_active, expires_at,
+                      project_scope, default_project_level,
                       EXISTS (SELECT 1 FROM bot_runners r WHERE r.bot_id = workspace_bots.id) AS runner,
                       COALESCE((SELECT u.is_active FROM users u WHERE u.id = workspace_bots.id), true) AS user_active
                FROM workspace_bots
@@ -532,11 +556,15 @@ pub async fn bot_or_user_auth_middleware(
                 .await;
         });
 
-        let permissions: Vec<String> = bot
+        let access = super::scoped_bot::BotAccess::from_row(bot.runner, &bot.project_scope, &bot.default_project_level);
+        let mut permissions: Vec<String> = bot
             .permissions
             .as_array()
             .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
             .unwrap_or_default();
+        if matches!(access, super::scoped_bot::BotAccess::Projects { .. }) {
+            permissions = without_admin(permissions);
+        }
 
         let context = bot_auth_context(
             bot.id,
@@ -581,19 +609,11 @@ pub async fn bot_or_user_auth_middleware(
             }
             return Err(error);
         }
-        // A runner bot reaches only the routes and projects its connections allow.
+        // A scoped bot reaches only the routes and projects its connections or grants allow.
         let method = req.method().as_str().to_owned();
         let (mut parts, body) = req.into_parts();
-        let scope = super::runner_bot_scope::authorize(
-            &state.db,
-            bot.id,
-            bot.workspace_id,
-            bot.runner,
-            &method,
-            &mut parts,
-            body,
-        )
-        .await;
+        let scope =
+            super::scoped_bot::authorize(&state.db, bot.id, bot.workspace_id, access, &method, &mut parts, body).await;
         match scope {
             Ok(body) => req = Request::from_parts(parts, body),
             Err(error) => {
@@ -664,7 +684,7 @@ mod tests {
     use super::{
         BotAuthContext, BotPermission, EventSurface, bot_permissions_allow, bot_role_from_permissions,
         credential_bound_surface, ensure_bot_permission, mcp_attribution, operation_surface, operation_tool_name,
-        required_bot_permission,
+        required_bot_permission, without_admin,
     };
     use crate::error::ApiError;
     use axum::http::{HeaderMap, HeaderValue, Method};
@@ -679,6 +699,18 @@ mod tests {
             tool_name: None,
             request_id: Uuid::new_v4(),
         }
+    }
+
+    #[test]
+    fn a_project_scoped_bot_is_never_an_administrator() {
+        let strings = |names: &[&str]| names.iter().map(|name| (*name).to_string()).collect::<Vec<_>>();
+        let stripped = without_admin(strings(&["read", "admin"]));
+        assert_eq!(stripped, strings(&["read", "write"]));
+        assert_eq!(bot_role_from_permissions(&stripped), "member");
+        assert_eq!(without_admin(strings(&["admin", "write"])), strings(&["write"]));
+        assert_eq!(without_admin(strings(&["read"])), strings(&["read"]));
+        assert!(!bot_permissions_allow(&stripped, BotPermission::Admin));
+        assert!(bot_permissions_allow(&stripped, BotPermission::Write));
     }
 
     #[test]

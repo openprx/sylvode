@@ -1,7 +1,7 @@
 //! Runner bot route classes of the `alerts` router area (`router/alerts.rs`).
 
 use super::{RunnerRoute, r};
-use crate::middleware::runner_bot_scope::{Class, Find};
+use crate::middleware::scoped_bot::{Class, Find};
 
 #[rustfmt::skip]
 pub static ROUTES: &[RunnerRoute] = &[

@@ -464,7 +464,7 @@ async fn chain(cli: &'static str, extra_config: &str, allow_write: bool, full: b
             assert_eq!(call.surface.as_deref(), Some("mcp_stdio"), "{call:?}");
             // Whatever the server calls must be open to a runner bot: the task routes name no
             // project, and the project's agent policy is resolved to the task's own project.
-            let route = api::middleware::runner_bot_scope::lookup(&call.method, &call.pattern)
+            let route = api::middleware::scoped_bot::lookup(&call.method, &call.pattern)
                 .ok_or_else(|| format!("{} {} is not classified for runner bots", call.method, call.pattern))?;
             let expected = if call.pattern.ends_with("/agent-policy") {
                 "project-resolved"

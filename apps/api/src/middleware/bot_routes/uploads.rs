@@ -1,7 +1,7 @@
 //! Runner bot route classes of the `uploads` router area (`router/uploads.rs`).
 
 use super::{RunnerRoute, r};
-use crate::middleware::runner_bot_scope::Class;
+use crate::middleware::scoped_bot::Class;
 
 #[rustfmt::skip]
 pub static ROUTES: &[RunnerRoute] = &[

@@ -94,6 +94,18 @@ pub struct AuthResponse {
 #[derive(Debug, Serialize)]
 pub struct MeResponse {
     user: UserResponse,
+    /// Set for a bot token, `null` for a person: the workspace the token belongs to, the
+    /// permissions it acts with and whether its reach is limited per project.
+    bot: Option<MeBot>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MeBot {
+    bot_id: uuid::Uuid,
+    workspace_id: uuid::Uuid,
+    permissions: Vec<String>,
+    /// `workspace` or `projects`.
+    project_scope: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -338,6 +350,7 @@ pub async fn logout(State(state): State<AppState>) -> Result<Response, ApiError>
 pub async fn me(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<crate::middleware::bot_auth::BotAuthContext>>,
 ) -> Result<impl IntoResponse, ApiError> {
     let row = state
         .db
@@ -352,7 +365,30 @@ pub async fn me(
 
     let user = user_response_from_row(&row)?;
 
-    Ok(ApiResponse::success(MeResponse { user }))
+    let bot = match bot {
+        Some(Extension(context)) => {
+            let scope = state
+                .db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT project_scope FROM workspace_bots WHERE id = $1".to_string(),
+                    vec![context.bot_id.into()],
+                ))
+                .await?
+                .ok_or_else(|| ApiError::Unauthorized("invalid bot token".to_string()))?;
+            Some(MeBot {
+                bot_id: context.bot_id,
+                workspace_id: context.workspace_id,
+                permissions: context.permissions,
+                project_scope: scope
+                    .try_get::<String>("", "project_scope")
+                    .map_err(|_| ApiError::Internal)?,
+            })
+        }
+        None => None,
+    };
+
+    Ok(ApiResponse::success(MeResponse { user, bot }))
 }
 
 pub async fn update_profile(
@@ -414,6 +450,7 @@ pub async fn update_profile(
 
     Ok(ApiResponse::success(MeResponse {
         user: user_response_from_row(&row)?,
+        bot: None,
     }))
 }
 

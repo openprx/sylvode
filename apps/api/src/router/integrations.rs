@@ -29,6 +29,15 @@ pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
             ),
         )
         .route(
+            "/api/v1/workspaces/{workspace_id}/bots/{bot_id}/project-access",
+            get(routes::bot::get_project_access)
+                .put(routes::bot::put_project_access)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
             "/api/v1/workspaces/{workspace_id}/bot-operation-logs",
             get(routes::bot_operation_log::list_bot_operation_logs).route_layer(
                 axum_middleware::from_fn_with_state(

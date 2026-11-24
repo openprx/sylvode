@@ -1,7 +1,7 @@
 //! Runner bot route classes of the `flow` router area (`router/flow.rs`).
 
-use super::{RunnerRoute, r};
-use crate::middleware::runner_bot_scope::{Class, Find};
+use super::{RunnerRoute, r, rc};
+use crate::middleware::scoped_bot::{Class, Find};
 
 #[rustfmt::skip]
 pub static ROUTES: &[RunnerRoute] = &[
@@ -58,10 +58,10 @@ pub static ROUTES: &[RunnerRoute] = &[
     r("POST", "/api/v1/flow/objects/{object_id}/collab/verify", Class::Project(Find::FlowObject("object_id"))),
     r("POST", "/api/v1/flow/objects/{object_id}/commands", Class::Project(Find::FlowObject("object_id"))),
     r("GET", "/api/v1/flow/objects/{object_id}/comments", Class::Project(Find::FlowObject("object_id"))),
-    r("POST", "/api/v1/flow/objects/{object_id}/comments", Class::Project(Find::FlowObject("object_id"))),
-    r("DELETE", "/api/v1/flow/objects/{object_id}/comments/{comment_id}", Class::Project(Find::FlowObject("object_id"))),
-    r("PATCH", "/api/v1/flow/objects/{object_id}/comments/{comment_id}", Class::Project(Find::FlowObject("object_id"))),
-    r("POST", "/api/v1/flow/objects/{object_id}/comments/{comment_id}/resolve", Class::Project(Find::FlowObject("object_id"))),
+    rc("POST", "/api/v1/flow/objects/{object_id}/comments", Class::Project(Find::FlowObject("object_id"))),
+    rc("DELETE", "/api/v1/flow/objects/{object_id}/comments/{comment_id}", Class::Project(Find::FlowObject("object_id"))),
+    rc("PATCH", "/api/v1/flow/objects/{object_id}/comments/{comment_id}", Class::Project(Find::FlowObject("object_id"))),
+    rc("POST", "/api/v1/flow/objects/{object_id}/comments/{comment_id}/resolve", Class::Project(Find::FlowObject("object_id"))),
     r("GET", "/api/v1/flow/objects/{object_id}/diff", Class::Project(Find::FlowObject("object_id"))),
     r("POST", "/api/v1/flow/objects/{object_id}/exports", Class::Project(Find::FlowObject("object_id"))),
     r("GET", "/api/v1/flow/objects/{object_id}/grants", Class::Project(Find::FlowObject("object_id"))),
@@ -129,10 +129,10 @@ pub static ROUTES: &[RunnerRoute] = &[
     r("GET", "/api/v2/flow/objects/{object_id}/collab", Class::Project(Find::FlowObject("object_id"))),
     r("POST", "/api/v2/flow/objects/{object_id}/commands", Class::Project(Find::FlowObject("object_id"))),
     r("GET", "/api/v2/flow/objects/{object_id}/comments", Class::Project(Find::FlowObject("object_id"))),
-    r("POST", "/api/v2/flow/objects/{object_id}/comments", Class::Project(Find::FlowObject("object_id"))),
-    r("DELETE", "/api/v2/flow/objects/{object_id}/comments/{comment_id}", Class::Project(Find::FlowObject("object_id"))),
-    r("PATCH", "/api/v2/flow/objects/{object_id}/comments/{comment_id}", Class::Project(Find::FlowObject("object_id"))),
-    r("POST", "/api/v2/flow/objects/{object_id}/comments/{comment_id}/resolve", Class::Project(Find::FlowObject("object_id"))),
+    rc("POST", "/api/v2/flow/objects/{object_id}/comments", Class::Project(Find::FlowObject("object_id"))),
+    rc("DELETE", "/api/v2/flow/objects/{object_id}/comments/{comment_id}", Class::Project(Find::FlowObject("object_id"))),
+    rc("PATCH", "/api/v2/flow/objects/{object_id}/comments/{comment_id}", Class::Project(Find::FlowObject("object_id"))),
+    rc("POST", "/api/v2/flow/objects/{object_id}/comments/{comment_id}/resolve", Class::Project(Find::FlowObject("object_id"))),
     r("GET", "/api/v2/flow/objects/{object_id}/diff", Class::Project(Find::FlowObject("object_id"))),
     r("POST", "/api/v2/flow/objects/{object_id}/exports", Class::Project(Find::FlowObject("object_id"))),
     r("GET", "/api/v2/flow/objects/{object_id}/grants", Class::Project(Find::FlowObject("object_id"))),

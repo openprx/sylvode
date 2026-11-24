@@ -7,13 +7,14 @@ use axum::{
     response::IntoResponse,
 };
 use platform::{app::AppState, auth::JwtClaims};
-use sea_orm::{DbBackend, FromQueryResult, Statement, TransactionTrait};
+use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::middleware::bot_auth::{BotAuthContext, require_workspace_access};
 use crate::{
     error::ApiError,
+    events::{BusinessEventInput, insert_business_event},
     response::ApiResponse,
     services::bots::{self, ManagedBy, ManagedPolicy, NewBot, normalize_bot_permissions, normalize_transport_surface},
 };
@@ -67,6 +68,32 @@ pub struct BotResponse {
     pub created_at: String,
     /// Set when a project bot connection manages this token; it cannot be revoked here.
     pub managed_by: Option<ManagedBy>,
+    /// `workspace` (the token permissions apply to every project) or `projects` (a level per
+    /// project, see `project-access`).
+    pub project_scope: String,
+    /// The level in every project without a grant: `none`, `read` or `comment`.
+    pub default_project_level: String,
+    /// The number of projects with a grant.
+    pub grant_count: i64,
+}
+
+/// One project's level of a project-scoped bot.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectGrant {
+    pub project_id: Uuid,
+    /// `read`, `comment` or `write`.
+    pub level: String,
+}
+
+/// Body and answer of `project-access`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectAccess {
+    /// `workspace` or `projects`.
+    pub project_scope: String,
+    /// `none`, `read` or `comment`: the level in every project that has no grant.
+    pub default_level: String,
+    pub grants: Vec<ProjectGrant>,
 }
 
 // ============================================================================
@@ -181,13 +208,18 @@ pub async fn list_bots(
         expires_at: Option<platform::timestamp::Timestamp>,
         created_at: platform::timestamp::Timestamp,
         managed: bool,
+        project_scope: String,
+        default_project_level: String,
+        grant_count: i64,
     }
 
     let rows = BotRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"SELECT b.id, b.workspace_id, b.name, b.token_prefix, b.permissions, b.transport_surface,
                   b.is_active, b.last_used_at, b.expires_at, b.created_at,
-                  (r.bot_id IS NOT NULL) AS managed
+                  (r.bot_id IS NOT NULL) AS managed,
+                  b.project_scope, b.default_project_level,
+                  (SELECT COUNT(*) FROM bot_project_grants g WHERE g.bot_id = b.id) AS grant_count
            FROM workspace_bots b
            LEFT JOIN bot_runners r ON r.bot_id = b.id
            WHERE b.workspace_id = $1
@@ -221,6 +253,9 @@ pub async fn list_bots(
             expires_at: b.expires_at.map(platform::timestamp::Timestamp::to_rfc3339),
             created_at: b.created_at.to_rfc3339(),
             managed_by,
+            project_scope: b.project_scope,
+            default_project_level: b.default_project_level,
+            grant_count: b.grant_count,
         });
     }
 
@@ -247,6 +282,217 @@ pub async fn revoke_bot(
     bots::revoke(&state.db, workspace_id, bot_id, ManagedPolicy::Refuse).await?;
 
     Ok(ApiResponse::ok())
+}
+
+/// Owners and admins only; the bot must belong to the workspace and not be managed by a project bot
+/// connection (its reach is the connection's).
+async fn authorize_access_admin(
+    state: &AppState,
+    extensions: &axum::http::Extensions,
+    workspace_id: Uuid,
+    bot_id: Uuid,
+) -> Result<(), ApiError> {
+    let (_, role, _) = require_workspace_access(state, extensions, workspace_id).await?;
+    if role != "owner" && role != "admin" {
+        return Err(ApiError::Forbidden(
+            "only workspace owners and admins can change a bot's project access".to_string(),
+        ));
+    }
+    let exists = state
+        .db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT 1 FROM workspace_bots WHERE id = $1 AND workspace_id = $2",
+            vec![bot_id.into(), workspace_id.into()],
+        ))
+        .await?;
+    if exists.is_none() {
+        return Err(ApiError::NotFound("bot not found".to_string()));
+    }
+    bots::ensure_editable(&state.db, bot_id, ManagedPolicy::Refuse).await
+}
+
+async fn load_project_access(db: &impl ConnectionTrait, bot_id: Uuid) -> Result<ProjectAccess, ApiError> {
+    #[derive(Debug, FromQueryResult)]
+    struct Scope {
+        project_scope: String,
+        default_project_level: String,
+    }
+    #[derive(Debug, FromQueryResult)]
+    struct Grant {
+        project_id: Uuid,
+        level: String,
+    }
+    let scope = Scope::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT project_scope, default_project_level FROM workspace_bots WHERE id = $1",
+        vec![bot_id.into()],
+    ))
+    .one(db)
+    .await?
+    .ok_or_else(|| ApiError::NotFound("bot not found".to_string()))?;
+    let grants = Grant::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT project_id, level FROM bot_project_grants WHERE bot_id = $1 ORDER BY project_id",
+        vec![bot_id.into()],
+    ))
+    .all(db)
+    .await?;
+    Ok(ProjectAccess {
+        project_scope: scope.project_scope,
+        default_level: scope.default_project_level,
+        grants: grants
+            .into_iter()
+            .map(|grant| ProjectGrant {
+                project_id: grant.project_id,
+                level: grant.level,
+            })
+            .collect(),
+    })
+}
+
+/// GET /`api/v1/workspaces/:workspace_id/bots/:bot_id/project-access`
+pub async fn get_project_access(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path((workspace_id, bot_id)): Path<(Uuid, Uuid)>,
+) -> Result<impl IntoResponse, ApiError> {
+    let extensions = build_auth_extensions(claims, bot);
+    authorize_access_admin(&state, &extensions, workspace_id, bot_id).await?;
+    Ok(ApiResponse::success(load_project_access(&state.db, bot_id).await?))
+}
+
+/// Checks a body of `project-access` that needs no database: the names, the duplicates, and that a
+/// workspace-wide bot carries no project level.
+fn validate_project_access(request: &ProjectAccess) -> Result<(), ApiError> {
+    let bad = |message: &str| ApiError::BadRequest(message.to_string());
+    match request.project_scope.as_str() {
+        "workspace" => {
+            if request.default_level != "none" || !request.grants.is_empty() {
+                return Err(bad(
+                    "a workspace-wide bot has no project levels: default_level must be none and grants empty",
+                ));
+            }
+        }
+        "projects" => {
+            if !matches!(request.default_level.as_str(), "none" | "read" | "comment") {
+                return Err(bad("default_level must be none, read or comment"));
+            }
+        }
+        _ => return Err(bad("project_scope must be workspace or projects")),
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for grant in &request.grants {
+        if !matches!(grant.level.as_str(), "read" | "comment" | "write") {
+            return Err(bad("a grant level must be read, comment or write"));
+        }
+        if !seen.insert(grant.project_id) {
+            return Err(bad("a project may appear only once in grants"));
+        }
+    }
+    Ok(())
+}
+
+/// PUT /`api/v1/workspaces/:workspace_id/bots/:bot_id/project-access`
+///
+/// Replaces the scope, the default level and every grant in one transaction.
+pub async fn put_project_access(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path((workspace_id, bot_id)): Path<(Uuid, Uuid)>,
+    Json(request): Json<ProjectAccess>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = Uuid::parse_str(&claims.sub).map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))?;
+    let extensions = build_auth_extensions(claims, bot);
+    authorize_access_admin(&state, &extensions, workspace_id, bot_id).await?;
+    validate_project_access(&request)?;
+
+    let tx = state.db.begin().await?;
+    // Serialises two replacements of one bot and re-checks the bot inside the transaction.
+    let locked = tx
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT 1 FROM workspace_bots WHERE id = $1 AND workspace_id = $2 FOR UPDATE",
+            vec![bot_id.into(), workspace_id.into()],
+        ))
+        .await?;
+    if locked.is_none() {
+        return Err(ApiError::NotFound("bot not found".to_string()));
+    }
+    bots::ensure_editable(&tx, bot_id, ManagedPolicy::Refuse).await?;
+
+    if !request.grants.is_empty() {
+        let ids: Vec<Uuid> = request.grants.iter().map(|grant| grant.project_id).collect();
+        let known = tx
+            .query_all(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT id FROM projects WHERE workspace_id = $1 AND id = ANY($2)",
+                vec![workspace_id.into(), ids.clone().into()],
+            ))
+            .await?;
+        if known.len() != ids.len() {
+            return Err(ApiError::BadRequest(
+                "grants name a project that is not in this workspace".to_string(),
+            ));
+        }
+    }
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE workspace_bots SET project_scope = $1, default_project_level = $2, updated_at = now() WHERE id = $3",
+        vec![
+            request.project_scope.clone().into(),
+            request.default_level.clone().into(),
+            bot_id.into(),
+        ],
+    ))
+    .await?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "DELETE FROM bot_project_grants WHERE bot_id = $1",
+        vec![bot_id.into()],
+    ))
+    .await?;
+    for grant in &request.grants {
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO bot_project_grants (bot_id, project_id, level, granted_by) VALUES ($1, $2, $3, $4)",
+            vec![
+                bot_id.into(),
+                grant.project_id.into(),
+                grant.level.clone().into(),
+                actor.into(),
+            ],
+        ))
+        .await?;
+    }
+    insert_business_event(
+        &tx,
+        BusinessEventInput {
+            workspace_id,
+            project_id: None,
+            event_type: "bot.project_access_changed".to_string(),
+            aggregate_type: "bot".to_string(),
+            aggregate_id: bot_id.to_string(),
+            actor_id: Some(actor),
+            source: serde_json::json!({ "type": "user", "actor_id": actor }),
+            payload: serde_json::json!({
+                "bot_id": bot_id,
+                "project_scope": request.project_scope,
+                "default_level": request.default_level,
+                "grants": request.grants,
+            }),
+            metadata: serde_json::json!({}),
+            correlation_id: None,
+            causation_id: None,
+            idempotency_key: None,
+        },
+    )
+    .await?;
+    let saved = load_project_access(&tx, bot_id).await?;
+    tx.commit().await?;
+    Ok(ApiResponse::success(saved))
 }
 
 /// Bots created through this API against a migrated scratch database.

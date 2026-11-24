@@ -628,6 +628,10 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
         SchemaProbe::Relation("plugins_one_active_version"),
     ),
     (
+        "0122_bot_project_access.sql",
+        SchemaProbe::Relation("bot_project_grants"),
+    ),
+    (
         "0126_retire_unused_columns.sql",
         SchemaProbe::ColumnAbsent("users", "agent_config"),
     ),

@@ -28,7 +28,7 @@ use serde_json::Value;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use super::runner_bot_scope::{Class, REFUSAL, all_routes};
+use super::scoped_bot::{Class, REFUSAL, all_routes};
 use crate::middleware::bot_auth::bot_or_user_auth_middleware;
 use crate::routes::context::tenant_fixture::{exec, seed_bot_user, state_for};
 use crate::scratch_or_skip;
@@ -39,7 +39,7 @@ use crate::services::bots::{self, NewBot};
 
 /// The router under test: every table pattern plus the extra ones, each answering `ok` behind the
 /// real authentication, registered per route as the router does.
-fn router(db: &DatabaseConnection, extra: &[(&'static str, Method)]) -> Router {
+pub(super) fn router(db: &DatabaseConnection, extra: &[(&'static str, Method)]) -> Router {
     let state = state_for(db.clone());
     let mut by_pattern: BTreeMap<&'static str, MethodRouter<platform::app::AppState>> = BTreeMap::new();
     let all = all_routes()
@@ -66,7 +66,7 @@ fn router(db: &DatabaseConnection, extra: &[(&'static str, Method)]) -> Router {
 }
 
 /// The concrete path of `pattern`, with each `{name}` filled in from `values`, else a fresh id.
-fn path_of(pattern: &str, values: &BTreeMap<&str, String>) -> String {
+pub(super) fn path_of(pattern: &str, values: &BTreeMap<&str, String>) -> String {
     let mut out = String::new();
     let mut rest = pattern;
     while let Some(start) = rest.find('{') {
@@ -233,17 +233,17 @@ async fn a_route_that_is_not_in_the_table_is_refused_for_a_runner_bot_only() {
 
 type Make = Box<dyn Fn(Uuid, &Rows) -> BTreeMap<&'static str, String>>;
 
-struct Rows {
-    issue: Uuid,
-    identifier: String,
-    comment: Uuid,
-    sprint: Uuid,
-    form: Uuid,
-    flow_object: Option<Uuid>,
+pub(super) struct Rows {
+    pub(super) issue: Uuid,
+    pub(super) identifier: String,
+    pub(super) comment: Uuid,
+    pub(super) sprint: Uuid,
+    pub(super) form: Uuid,
+    pub(super) flow_object: Option<Uuid>,
 }
 
 /// Rows of one project: an issue (and its identifier), a comment, a sprint, a form and a Flow object.
-async fn rows_of(db: &DatabaseConnection, c: &Cast, project: Uuid, tag: &str) -> Rows {
+pub(super) async fn rows_of(db: &DatabaseConnection, c: &Cast, project: Uuid, tag: &str) -> Rows {
     let issue = Uuid::new_v4();
     exec(
         db,

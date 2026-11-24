@@ -1663,7 +1663,7 @@ mod tests {
 
     /// Tools whose request is refused to the token of a managed runner bot, and why. A runner bot's
     /// token is limited to the projects where it has an enabled connection
-    /// (`api::middleware::runner_bot_scope`); these tools act on the workspace or on nothing that
+    /// (`api::middleware::scoped_bot`); these tools act on the workspace or on nothing that
     /// belongs to a project, so an agent that works on a task does not use them. Every other tool of
     /// the catalogue must resolve to an allowed route, and every entry here must really be refused:
     /// the test fails for a tool that lost its route and for a stale entry alike.
@@ -1722,8 +1722,8 @@ mod tests {
 
     /// The class of the most specific route that a request matches (a literal segment beats a
     /// parameter, and the catch-all comes last), `None` when no route matches.
-    fn class_of(method: &str, path: &str) -> Option<api::middleware::runner_bot_scope::Class> {
-        api::middleware::runner_bot_scope::all_routes()
+    fn class_of(method: &str, path: &str) -> Option<api::middleware::scoped_bot::Class> {
+        api::middleware::scoped_bot::all_routes()
             .filter(|route| route.method == method && pattern_matches(route.pattern, path))
             .max_by_key(|route| {
                 (
@@ -1740,7 +1740,7 @@ mod tests {
 
     #[tokio::test]
     async fn every_tool_a_runner_agent_uses_reaches_an_allowed_route() -> Result<(), Box<dyn std::error::Error>> {
-        use api::middleware::runner_bot_scope::Class;
+        use api::middleware::scoped_bot::Class;
         let intended: BTreeSet<&str> = REFUSED_FOR_A_RUNNER_BOT.iter().map(|(name, _)| *name).collect();
         for (name, reason) in REFUSED_FOR_A_RUNNER_BOT {
             assert!(!reason.is_empty(), "{name} has no reason");
@@ -1788,7 +1788,7 @@ mod tests {
     /// and it must carry the very project of the call.
     #[tokio::test]
     async fn the_project_form_of_the_flow_reads_reaches_an_allowed_route() -> Result<(), Box<dyn std::error::Error>> {
-        use api::middleware::runner_bot_scope::{Class, Find};
+        use api::middleware::scoped_bot::{Class, Find};
         const PROJECT: &str = "7d1c2f0e-4b6a-4c55-9a3e-0f2d8b1a6c11";
         const WORKSPACE: &str = "3a9f5c42-81de-4e07-b6a1-5c2e90d47f38";
         let api = Api::spawn(Policy::Permissive).await?;

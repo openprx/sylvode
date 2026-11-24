@@ -1,10 +1,12 @@
 pub mod admin;
 pub mod bot_auth;
 pub mod bot_routes;
+pub mod scoped_bot;
 #[cfg(test)]
-mod runner_bot_flow_reads_tests;
-pub mod runner_bot_scope;
+mod scoped_bot_flow_reads_tests;
 #[cfg(test)]
-mod runner_bot_scope_tests;
+mod scoped_bot_projects_tests;
+#[cfg(test)]
+mod scoped_bot_tests;
 
 pub mod auth;

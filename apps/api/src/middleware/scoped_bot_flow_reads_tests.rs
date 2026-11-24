@@ -15,7 +15,7 @@ use sea_orm::DatabaseConnection;
 use serde_json::Value;
 use uuid::Uuid;
 
-use super::runner_bot_scope_tests::{Cast, call, cast, refused};
+use super::scoped_bot_tests::{Cast, call, cast, refused};
 use crate::middleware::bot_auth::bot_or_user_auth_middleware;
 use crate::routes::context::tenant_fixture::{exec, state_for};
 use crate::routes::flow::{get_flow_search, get_flow_trash, list_flow_objects};

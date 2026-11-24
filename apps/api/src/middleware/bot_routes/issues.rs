@@ -1,7 +1,7 @@
 //! Runner bot route classes of the `issues` router area (`router/issues.rs`).
 
-use super::{RunnerRoute, r};
-use crate::middleware::runner_bot_scope::{Class, Find};
+use super::{RunnerRoute, r, rc};
+use crate::middleware::scoped_bot::{Class, Find};
 
 #[rustfmt::skip]
 pub static ROUTES: &[RunnerRoute] = &[
@@ -12,16 +12,16 @@ pub static ROUTES: &[RunnerRoute] = &[
     r("GET", "/api/v1/my/issues", Class::Refused),
     r("GET", "/api/v1/workspaces/{workspace_id}/activities", Class::Refused),
     r("GET", "/api/v1/workspaces/{workspace_id}/labels", Class::Refused),
-    r("DELETE", "/api/v1/comments/{id}", Class::Project(Find::Comment("id"))),
+    rc("DELETE", "/api/v1/comments/{id}", Class::Project(Find::Comment("id"))),
     r("GET", "/api/v1/comments/{id}", Class::Project(Find::Comment("id"))),
-    r("PUT", "/api/v1/comments/{id}", Class::Project(Find::Comment("id"))),
+    rc("PUT", "/api/v1/comments/{id}", Class::Project(Find::Comment("id"))),
     r("GET", "/api/v1/issues/by-identifier/{identifier}", Class::Project(Find::IssueIdentifier("identifier"))),
     r("DELETE", "/api/v1/issues/{id}", Class::Project(Find::Issue("id"))),
     r("GET", "/api/v1/issues/{id}", Class::Project(Find::Issue("id"))),
     r("PUT", "/api/v1/issues/{id}", Class::Project(Find::Issue("id"))),
     r("GET", "/api/v1/issues/{issue_id}/activities", Class::Project(Find::Issue("issue_id"))),
     r("GET", "/api/v1/issues/{issue_id}/comments", Class::Project(Find::Issue("issue_id"))),
-    r("POST", "/api/v1/issues/{issue_id}/comments", Class::Project(Find::Issue("issue_id"))),
+    rc("POST", "/api/v1/issues/{issue_id}/comments", Class::Project(Find::Issue("issue_id"))),
     r("GET", "/api/v1/issues/{issue_id}/labels", Class::Project(Find::Issue("issue_id"))),
     r("POST", "/api/v1/issues/{issue_id}/labels/batch", Class::Project(Find::Issue("issue_id"))),
     r("DELETE", "/api/v1/issues/{issue_id}/labels/{label_id}", Class::Project(Find::Issue("issue_id"))),
