@@ -59,7 +59,7 @@ A webhook can subscribe to these events:
 | Event | Sent when | `data` |
 |---|---|---|
 | `issue.created` | A work item is created. | `issue` |
-| `issue.updated` | A work item's title, description, priority, sprint or due date change. | `issue`, `changes` (each changed field as `old` and `new`; `sprint_id` and `due_at` included) |
+| `issue.updated` | A work item's title, description, priority, sprint, milestone or due date change, or a Flow page is linked to it or unlinked. | `issue`, `changes` (each changed field as `old` and `new`; `sprint_id` and `due_at` included; a change of linked pages is `page_links: {added, removed}`, lists of page ids) |
 | `issue.assigned` | A work item is created with an assignee, or its assignee changes, including to nobody. | `issue`, `changes.assignee_ids` (`old`, `new`, `added`, `removed`; `new` is empty after an unassignment) |
 | `issue.state_changed` | A work item moves to another state. | `issue`, `changes.state` (`old`, `new`) |
 | `issue.deleted` | A work item is deleted. | `issue` as it was before the delete, labels included |
@@ -74,7 +74,10 @@ A webhook can subscribe to these events:
 | `ai.task_failed` | A bot task fails for good. | `task_id`, `task_type`, `status`, `reference_type`, `reference_id`, `error_message` |
 
 An `issue` object has `id`, `key`, `title`, `description`, `state`, `priority`, `assignee_ids`,
-`label_ids`, `sprint_id`, `due_at`, `created_at` and `updated_at`. A `comment` object has `id`, `issue_id`,
+`label_ids`, `sprint_id`, `milestone_id`, `page_links`, `due_at`, `created_at` and `updated_at`. `page_links` is
+`[{object_id, title}]`, the Flow pages linked to the item; a `title` is present only for a page of the
+item's workspace that every ordinary member can read, and is `null` for a restricted page and for a
+personal page placed into the workspace (a delivery has no reader to check the title against). A `comment` object has `id`, `issue_id`,
 `content`, `author_id`, `author_name`, `created_at` and `updated_at`; the `issue` next to it has
 `id`, `key` and `title`, in `comment.deleted` too, where the `comment` is the one that was deleted,
 with its author and its original timestamps. In these payloads `key` is the work item's identifier: the project key and the
