@@ -278,7 +278,9 @@ allow_private = false
 # Never logged.
 # bot_token = "replace_with_opr_bot_token"
 
-# REQUIRED to run the MCP server. Workspace the calls are scoped to. Must be a real, non-nil UUID.
+# REQUIRED for transport = "stdio" and for the CLI subcommands. Workspace the calls are scoped to.
+# Must be a real, non-nil UUID. NOT used, and not needed, by transport = "http" or "sse": every
+# networked call acts in the workspace its caller's own bot token belongs to.
 # workspace_id = "replace_with_workspace_uuid"
 
 # "stdio", "http" or "sse". Default: stdio, which is a pipe pair owned by the parent process and

@@ -704,6 +704,11 @@ pub const MCP_BOT_TOKEN_REQUIRED: &str = "mcp.bot_token is required by the stdio
      per-request credential to act on; it is not used, nor needed, when mcp.transport is http or \
      sse, because every networked call is made with the bot token its caller presented";
 
+/// Why `mcp.workspace_id` is demanded of the `stdio` transport only.
+const MCP_WORKSPACE_REQUIRED: &str = "mcp.workspace_id is required by the stdio transport, which has no per-request caller token to \
+     take the workspace from; it is not used, nor needed, when mcp.transport is http or sse, because every networked call acts in \
+     the workspace of the bot token its caller presented";
+
 impl McpConfig {
     fn runtime(&self, origin: &Path) -> Result<McpRuntime, ConfigError> {
         let mut issues = Vec::new();
@@ -713,20 +718,22 @@ impl McpConfig {
         if !self.transport.is_networked() && self.bot_token.is_none() {
             issues.push(MCP_BOT_TOKEN_REQUIRED.to_string());
         }
-        if self.workspace_id.is_none() {
-            issues.push("mcp.workspace_id is required to run the MCP server".to_string());
+        // The networked transports take the workspace from each caller's own bot token, so the
+        // key is optional there; the pipe transport and the command line have no such token.
+        if !self.transport.is_networked() && self.workspace_id.is_none() {
+            issues.push(MCP_WORKSPACE_REQUIRED.to_string());
         }
         let oauth = self.oauth_runtime(&mut issues);
-        let Some(workspace_id) = self.workspace_id.filter(|_| issues.is_empty()) else {
+        if !issues.is_empty() {
             return Err(ConfigError::Invalid {
                 path: origin.to_path_buf(),
                 issues,
             });
-        };
+        }
         Ok(McpRuntime {
             api_url: self.api_url.clone().unwrap_or_else(|| DEFAULT_MCP_API_URL.to_string()),
             bot_token: self.bot_token.clone(),
-            workspace_id,
+            workspace_id: self.workspace_id,
             transport: self.transport,
             bind_addr: self
                 .bind_addr
@@ -788,7 +795,9 @@ pub struct McpRuntime {
     /// The configured identity. `None` is normal for an `http`/`sse` deployment, which never
     /// speaks to the API as itself; a command that does need one says so by name.
     pub bot_token: Option<Secret>,
-    pub workspace_id: Uuid,
+    /// The configured workspace. Required by `stdio`; `http` and `sse` ignore it, because every
+    /// networked call acts in the workspace its caller's bot token belongs to.
+    pub workspace_id: Option<Uuid>,
     pub transport: McpTransport,
     pub bind_addr: String,
     /// `None` when `[mcp]` carries no `oauth_*` keys: delegated tokens are then refused.

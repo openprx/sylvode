@@ -147,7 +147,7 @@ fn a_complete_file_parses_into_every_section() {
         mcp.bot_token.as_ref().map(super::Secret::expose),
         Some("opr_live_botexampletoken")
     );
-    assert_eq!(mcp.workspace_id.to_string(), WORKSPACE);
+    assert_eq!(mcp.workspace_id.map(|id| id.to_string()).as_deref(), Some(WORKSPACE));
     assert_eq!(mcp.bind_addr, "0.0.0.0:8090");
 }
 
@@ -401,7 +401,7 @@ workspace_id = "{WORKSPACE}"
     .expect("an MCP-only deployment must not have to invent a database URL and a signing key");
 
     let mcp = config.mcp_runtime().expect("the mcp section is complete");
-    assert_eq!(mcp.workspace_id.to_string(), WORKSPACE);
+    assert_eq!(mcp.workspace_id.map(|id| id.to_string()).as_deref(), Some(WORKSPACE));
     assert_eq!(mcp.api_url, super::DEFAULT_MCP_API_URL);
     assert!(config.database.url.is_none());
     assert!(config.auth.jwt_secret.is_none());
@@ -686,6 +686,26 @@ jwt_secret = "0123456789abcdef0123456789abcdef"
         issues.iter().any(|issue| issue.contains("mcp.workspace_id")),
         "{issues:?}"
     );
+}
+
+#[test]
+fn the_workspace_is_required_by_stdio_only() {
+    let stdio = parse("[mcp]\nbot_token = \"opr_live_token\"\n").expect("the shape of the file is fine");
+    let Err(ConfigError::Invalid { issues, .. }) = stdio.mcp_runtime() else {
+        panic!("stdio has no caller token to take the workspace from and must be refused without one");
+    };
+    assert!(
+        issues.iter().any(|issue| issue.contains("mcp.workspace_id")),
+        "{issues:?}"
+    );
+
+    for transport in ["http", "sse"] {
+        let networked = parse(&format!("[mcp]\ntransport = \"{transport}\"\n")).expect("the shape of the file is fine");
+        let runtime = networked
+            .mcp_runtime()
+            .expect("a networked transport takes the workspace from each caller's token");
+        assert!(runtime.workspace_id.is_none(), "{transport}");
+    }
 }
 
 #[test]
