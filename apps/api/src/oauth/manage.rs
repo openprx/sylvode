@@ -55,7 +55,8 @@ use super::audit::{self, AuditEvent, AuditRecord, DetailValue};
 use super::error::no_store_headers;
 use super::grants::{self, Actor, RevokeReason};
 use super::rate;
-use super::token::{json_response, not_found, parse_form, user_agent};
+use super::token::{json_response, parse_form, user_agent};
+use crate::error::ApiError;
 use crate::routes::auth::{extract_bearer_token, extract_cookie_token};
 
 pub const USER_APPS_PATH: &str = "/api/v1/me/connected-apps";
@@ -938,17 +939,22 @@ async fn patch_client(
 // Routes
 // ---------------------------------------------------------------------------------------------
 
-/// The management routes. Without `[oauth] issuer` all of them answer 404.
+/// Answer of every management route while the server has no `[oauth]` section.
+async fn not_enabled() -> ApiError {
+    ApiError::feature_disabled("connected applications are not enabled on this server")
+}
+
+/// The management routes. Without `[oauth] issuer` all of them answer `feature_disabled`.
 pub fn routes(config: Option<&Arc<OAuthConfig>>) -> Router<AppState> {
     let Some(config) = config else {
         return Router::new()
-            .route(USER_APPS_PATH, any(not_found))
-            .route(USER_APP_PATH, any(not_found))
-            .route(WORKSPACE_APPS_PATH, any(not_found))
-            .route(WORKSPACE_APP_PATH, any(not_found))
-            .route(WORKSPACE_SETTINGS_PATH, any(not_found))
-            .route(ADMIN_CLIENTS_PATH, any(not_found))
-            .route(ADMIN_CLIENT_PATH, any(not_found));
+            .route(USER_APPS_PATH, any(not_enabled))
+            .route(USER_APP_PATH, any(not_enabled))
+            .route(WORKSPACE_APPS_PATH, any(not_enabled))
+            .route(WORKSPACE_APP_PATH, any(not_enabled))
+            .route(WORKSPACE_SETTINGS_PATH, any(not_enabled))
+            .route(ADMIN_CLIENTS_PATH, any(not_enabled))
+            .route(ADMIN_CLIENT_PATH, any(not_enabled));
     };
     Router::new()
         .route(USER_APPS_PATH, get(list_own))

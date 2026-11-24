@@ -1136,7 +1136,7 @@ async fn sessions_that_are_not_live_people_are_refused() {
 }
 
 #[tokio::test]
-async fn management_routes_do_not_exist_without_an_issuer() {
+async fn management_routes_answer_feature_disabled_without_an_issuer() {
     let scratch = oauth_scratch_or_skip!("wp7_unconfigured", Start::Complete);
     let h = Harness::new(scratch).await;
     let router = routes(None).with_state(app_state(h.db().clone()));
@@ -1149,7 +1149,13 @@ async fn management_routes_do_not_exist_without_an_issuer() {
         "/api/v1/admin/oauth-clients".to_owned(),
     ] {
         let reply = send_on(router.clone(), request(Method::GET, &path, Some(&me.bearer), &[], None)).await;
-        assert_eq!(reply.status, StatusCode::NOT_FOUND, "{path}");
+        let body = reply.json();
+        assert_eq!(body["error_code"], "feature_disabled", "{path}: {}", reply.text());
+        assert_eq!(body["code"], 403, "{path}: {}", reply.text());
+        assert_eq!(
+            body["message"], "connected applications are not enabled on this server",
+            "{path}"
+        );
     }
     h.finish().await;
 }

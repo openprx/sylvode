@@ -160,7 +160,9 @@ standard OAuth error codes without telling apart an unknown, expired or foreign 
 The management endpoints (`/me/...`, `/workspaces/.../connected-apps...`, `/admin/oauth-clients...`)
 accept only Sylvode's own signed-in sessions: a bot token or a delegated token is refused with `403`
 whatever its scopes. Requests that change state also refuse a cross-site origin. None of them can
-create, extend or widen a grant. `GET /api/v1/oauth/internal/token-context` exists for the MCP
+create, extend or widen a grant. Without an `[oauth]` section every management endpoint answers
+`error_code: "feature_disabled"` (`connected applications are not enabled on this server`).
+`GET /api/v1/oauth/internal/token-context` exists for the MCP
 server only and answers `404` to anyone without the internal forwarding credential.
 
 ## Scopes
