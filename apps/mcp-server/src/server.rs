@@ -1483,7 +1483,7 @@ impl McpServer {
             ));
         };
 
-        let owner = self.lookup_form_data_owner(tool_name, &target).await?;
+        let owner = self.lookup_project_id(&target).await?;
         if let Some(declared_form_id) = declared_form_id {
             match owner.form_id.as_deref() {
                 Some(actual) if actual.eq_ignore_ascii_case(&declared_form_id) => {}
@@ -1511,30 +1511,6 @@ impl McpServer {
             }
         }
         Ok(owner.project_id)
-    }
-
-    /// Looks up the owning project of a form scoped target. Attachments have no read
-    /// endpoint on the API today, so they fail closed with an actionable message
-    /// instead of silently skipping the policy.
-    async fn lookup_form_data_owner(&self, tool_name: &str, target: &FormScopeTarget) -> Result<ResolvedOwner, String> {
-        let resolved = self.lookup_project_id(target).await;
-        match (target, resolved) {
-            (_, Ok(owner)) => Ok(owner),
-            (FormScopeTarget::Attachment(id), Err(error)) => {
-                tracing::warn!(
-                    tool_name = %tool_name,
-                    attachment_id = %id,
-                    error = %error,
-                    "Refusing attachment tool call: owning project cannot be resolved"
-                );
-                Err(format!(
-                    "Tool '{tool_name}' is refused because the owning project of attachment {id} cannot be resolved \
-                     ({error}); the API has to expose GET /api/v1/form-attachments/{{attachment_id}} returning \
-                     project_id or form_id before attachment tools can be authorized"
-                ))
-            }
-            (_, Err(error)) => Err(error),
-        }
     }
 
     async fn lookup_project_id(&self, target: &FormScopeTarget) -> Result<ResolvedOwner, String> {

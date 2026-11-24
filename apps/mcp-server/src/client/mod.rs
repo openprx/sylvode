@@ -788,8 +788,8 @@ impl OpenPrClient {
         .await
     }
 
-    /// Reads one attachment so the MCP server can resolve which project owns it. A failed read
-    /// refuses the attachment tools instead of skipping the project agent policy.
+    /// Reads one attachment (archived ones too) so the MCP server can resolve which project owns
+    /// it. A failed read refuses the attachment tools instead of skipping the project agent policy.
     pub async fn get_form_attachment(&self, attachment_id: &str) -> Result<Value, String> {
         self.get(&format!(
             "/api/v1/form-attachments/{}",

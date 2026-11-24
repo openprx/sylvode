@@ -1065,11 +1065,11 @@ async fn events_tail_is_governed_by_the_owning_project_policy() -> TestResult {
 }
 
 #[tokio::test]
-async fn attachment_tools_fail_closed_while_the_api_has_no_lookup() -> TestResult {
+async fn attachment_tools_refuse_when_the_attachment_cannot_be_read() -> TestResult {
     let mutations = Arc::new(AtomicUsize::new(0));
     let archive_counter = Arc::clone(&mutations);
     let restore_counter = Arc::clone(&mutations);
-    // Only the mutating routes exist, exactly like the current API surface.
+    // Only the mutating routes answer; the owner read of the attachment is a 405.
     let router = Router::new()
         .route(
             &format!("/api/v1/form-attachments/{ATTACHMENT}"),
@@ -1097,7 +1097,7 @@ async fn attachment_tools_fail_closed_while_the_api_has_no_lookup() -> TestResul
         let result = server.call_tool(tool, json!({ "attachment_id": ATTACHMENT })).await;
         assert_eq!(result.is_error, Some(true), "{tool} must not be allowed through");
         let text = message(&result);
-        assert!(text.contains("GET /api/v1/form-attachments/{attachment_id}"), "{text}");
+        assert!(text.contains("Failed to resolve owning project for"), "{text}");
     }
     assert_eq!(
         mutations.load(Ordering::SeqCst),
@@ -1108,7 +1108,7 @@ async fn attachment_tools_fail_closed_while_the_api_has_no_lookup() -> TestResul
 }
 
 #[tokio::test]
-async fn attachment_tools_are_governed_once_the_api_exposes_the_lookup() -> TestResult {
+async fn attachment_tools_are_governed_through_the_owning_form() -> TestResult {
     fn router(enabled_tools: Value, archives: &Arc<AtomicUsize>) -> Router {
         let counter = Arc::clone(archives);
         Router::new()
@@ -1162,6 +1162,87 @@ async fn attachment_tools_are_governed_once_the_api_exposes_the_lookup() -> Test
         .await;
     assert_eq!(smuggled.is_error, Some(true));
     assert_eq!(allowed_archives.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+/// The attachment read names the project directly (archived attachments included), so the
+/// attachment tools are governed by it without a second read of the form.
+#[tokio::test]
+async fn attachment_tools_resolve_the_owner() -> TestResult {
+    let lookups = Arc::new(AtomicUsize::new(0));
+    let mutations = Arc::new(AtomicUsize::new(0));
+    let (lookup_counter, archive_counter, restore_counter) =
+        (Arc::clone(&lookups), Arc::clone(&mutations), Arc::clone(&mutations));
+    let router = Router::new()
+        .route(
+            &format!("/api/v1/form-attachments/{ATTACHMENT}"),
+            get(move || {
+                let counter = Arc::clone(&lookup_counter);
+                async move {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    Json(json!({
+                        "code": 0,
+                        "data": {
+                            "id": ATTACHMENT,
+                            "form_id": FORM,
+                            "project_id": PROJECT,
+                            "workspace_id": "workspace-1",
+                            "archived_at": "2026-11-24T00:00:00Z"
+                        }
+                    }))
+                }
+            })
+            .delete(move || {
+                let counter = Arc::clone(&archive_counter);
+                async move {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    Json(json!({ "code": 0, "message": "ok" }))
+                }
+            }),
+        )
+        .route(
+            &format!("/api/v1/form-attachments/{ATTACHMENT}/restore"),
+            post(move || {
+                let counter = Arc::clone(&restore_counter);
+                async move {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    Json(json!({ "code": 0, "data": { "id": ATTACHMENT } }))
+                }
+            }),
+        )
+        .route(
+            &format!("/api/v1/projects/{PROJECT}/agent-policy"),
+            policy_route(json!(["form_attachments.restore"])),
+        );
+    let server = server(crate::client::test_api::spawn(router).await?)?;
+
+    // The owner's policy decides: archive is not enabled, restore is.
+    let denied = server
+        .call_tool("form_attachments.archive", json!({ "attachment_id": ATTACHMENT }))
+        .await;
+    assert_eq!(denied.is_error, Some(true));
+    assert!(
+        message(&denied).contains("disabled by project agent policy"),
+        "{}",
+        message(&denied)
+    );
+    assert_eq!(mutations.load(Ordering::SeqCst), 0);
+
+    let restored = server
+        .call_tool("form_attachments.restore", json!({ "attachment_id": ATTACHMENT }))
+        .await;
+    assert_eq!(restored.is_error, None, "{}", message(&restored));
+    assert_eq!(mutations.load(Ordering::SeqCst), 1);
+
+    let smuggled = server
+        .call_tool(
+            "form_attachments.restore",
+            json!({ "attachment_id": ATTACHMENT, "project_id": FOREIGN_PROJECT }),
+        )
+        .await;
+    assert_eq!(smuggled.is_error, Some(true));
+    assert_eq!(mutations.load(Ordering::SeqCst), 1);
+    assert_eq!(lookups.load(Ordering::SeqCst), 1, "the owner is read once and cached");
     Ok(())
 }
 
@@ -1403,6 +1484,81 @@ async fn sprint_and_comment_tools_resolve_the_owner_and_apply_policy() -> TestRe
         1,
         "the owner is read once and cached"
     );
+    Ok(())
+}
+
+/// The comment read names the project, and the project's policy governs `comments.delete`.
+#[tokio::test]
+async fn comments_delete_resolves_the_owner() -> TestResult {
+    let lookups = Arc::new(AtomicUsize::new(0));
+    let deletes = Arc::new(AtomicUsize::new(0));
+    let (lookup_counter, delete_counter) = (Arc::clone(&lookups), Arc::clone(&deletes));
+    let router = |enabled: Value| {
+        let (lookup_counter, delete_counter) = (Arc::clone(&lookup_counter), Arc::clone(&delete_counter));
+        Router::new()
+            .route(
+                &format!("/api/v1/comments/{COMMENT}"),
+                get(move || {
+                    let counter = Arc::clone(&lookup_counter);
+                    async move {
+                        counter.fetch_add(1, Ordering::SeqCst);
+                        Json(json!({
+                            "code": 0,
+                            "data": {
+                                "id": COMMENT,
+                                "work_item_id": WORK_ITEM,
+                                "project_id": PROJECT,
+                                "author_id": "55555555-5555-4555-8555-555555555555",
+                                "author_name": "bob",
+                                "content": "words",
+                                "created_at": "2026-11-24T00:00:00Z",
+                                "updated_at": "2026-11-24T00:00:00Z"
+                            }
+                        }))
+                    }
+                })
+                .delete(move || {
+                    let counter = Arc::clone(&delete_counter);
+                    async move {
+                        counter.fetch_add(1, Ordering::SeqCst);
+                        Json(json!({ "code": 0, "message": "ok" }))
+                    }
+                }),
+            )
+            .route(
+                &format!("/api/v1/projects/{PROJECT}/agent-policy"),
+                policy_route(enabled),
+            )
+    };
+
+    let denied_server = server(crate::client::test_api::spawn(router(json!(["comments.list"]))).await?)?;
+    let denied = denied_server
+        .call_tool("comments.delete", json!({ "comment_id": COMMENT }))
+        .await;
+    assert_eq!(denied.is_error, Some(true));
+    assert!(
+        message(&denied).contains("disabled by project agent policy"),
+        "{}",
+        message(&denied)
+    );
+    assert_eq!(deletes.load(Ordering::SeqCst), 0);
+
+    let allowed_server = server(crate::client::test_api::spawn(router(json!(["comments.delete"]))).await?)?;
+    let allowed = allowed_server
+        .call_tool("comments.delete", json!({ "comment_id": COMMENT }))
+        .await;
+    assert_eq!(allowed.is_error, None, "{}", message(&allowed));
+    assert_eq!(deletes.load(Ordering::SeqCst), 1);
+
+    let smuggled = allowed_server
+        .call_tool(
+            "comments.delete",
+            json!({ "comment_id": COMMENT, "project_id": FOREIGN_PROJECT }),
+        )
+        .await;
+    assert_eq!(smuggled.is_error, Some(true));
+    assert_eq!(deletes.load(Ordering::SeqCst), 1);
+    assert_eq!(lookups.load(Ordering::SeqCst), 2, "one read per server, then cached");
     Ok(())
 }
 
