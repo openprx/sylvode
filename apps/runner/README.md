@@ -514,8 +514,8 @@ on the channel the project's execution settings in Sylvode choose for the bot's 
 
 - **tmux**: the task is typed into the project's tmux session, where a long-running `claude`
   works on it. The session belongs to the operator ([tmux sessions](#tmux-sessions)). A bot with a
-  session named in the configuration has the tasks of every project it is connected to typed into
-  that one session, on either channel ([Using an existing session](#using-an-existing-session-with-another-name)).
+  session named in the configuration has the tasks of every project it is connected to over tmux typed
+  into that one session ([Using an existing session](#using-an-existing-session-with-another-name)).
 - **headless**: the CLI runs once for the task and exits ([Headless runs](#headless-runs)).
 
 The CLI reads the task and ends it itself with the Sylvode task tools (`sylvode_task_get`,
@@ -649,8 +649,9 @@ name = "sv"          # an existing tmux session
 
 Tasks of this bot for `claude`, from every project it is connected to, are then typed into the
 tmux session `sv`, one task at a time in the order they arrived, instead of one `<KEY>-claude`
-session per project. This holds on either channel: a task whose connection says `headless` is typed
-into the session too. A bot or CLI without an entry keeps its derived session per project.
+session per project. This holds for the connections that use the tmux channel; a connection that says
+`headless` runs headless as configured and never uses the session. A bot or CLI without an entry keeps
+its derived session per project.
 Everything else in this section holds for it, with these differences:
 
 - **The runner never creates it.** When the session does not exist the task fails, retryably, with

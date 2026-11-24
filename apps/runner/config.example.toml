@@ -150,8 +150,9 @@ retry_delay_ms = 1000
 # restarts it; when it is absent the task fails and can be retried. bot is the bot's id (a lower
 # case, hyphenated UUID) and must be one of the bot_ids of a runner agent that has a token under
 # [[ai_task_callback.bots]]; cli is claude or codex; name matches ^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$
-# and may not look like <KEY>-claude or <KEY>-codex. A task of such a bot goes into the session
-# on either channel, and its working directory is neither checked nor used. The session needs its
+# and may not look like <KEY>-claude or <KEY>-codex. A task of such a bot
+# over the tmux channel goes into the session (a headless connection runs headless as configured),
+# and its working directory is neither checked nor used. The session needs its
 # own Sylvode MCP entry for the bot (see `sylvode-runner setup claude`).
 #
 # [[runner.tmux.sessions]]

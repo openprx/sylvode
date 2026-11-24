@@ -104,7 +104,14 @@ only its prefix is shown afterwards.
   other route. The token's permissions stay a ceiling: a token without `write` never changes
   anything, so a bot that comments needs `write` in its permissions and a `comment` level. A
   project-scoped bot is never an administrator and never reaches administration routes. Workspace-wide
-  listings are open for safe methods only when the default level is at least `read`. The bot list
+  listings are open for safe methods only when the default level is at least `read`.
+  Four workspace-level reads answer a scoped bot with the projects it can read and nothing else: the
+  project list (`GET /api/v1/workspaces/{workspace_id}/projects`), `GET /api/v1/search` (with or
+  without `project_id`), `GET /api/v1/my/issues` and `GET /api/v1/my/activities`. Rows, counts and
+  page totals cover only those projects; for a bot made by a project bot connection they are the
+  projects where it has an enabled connection, for a project-scoped bot those whose level is at least
+  `read`. A `project_id` outside them answers 404 `project not found or access denied`. Every
+  other workspace-level route stays refused for such a bot. The bot list
   (`GET .../bots`) shows `project_scope`, `default_project_level` and `grant_count`. Every
   refusal answers 403 `this bot may not do this in this project`.
 - Instance administration (`/admin/users`, `/admin/stats` under `/api/v1/`) and a few other

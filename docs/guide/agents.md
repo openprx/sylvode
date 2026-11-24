@@ -209,11 +209,14 @@ channel.
 | Failure label | a label of the workspace, or none |
 | Enabled | changed with **Disable** and **Enable** |
 
-A project can have several connected bots, but at most one tmux connection per CLI: a second
-tmux connection for the same CLI is refused with 409
-`channel: project already has a tmux connection for <cli> (bot <holder>)`. Headless connections
-are not limited. On the runner a tmux connection uses the session `<KEY>-<cli>` (`<KEY>-claude` for Claude
-Code, `<KEY>-codex` for Codex), unless the runner's own configuration names an existing session for the bot and CLI: then the tasks of every project the bot is connected to go into that one session, on either channel, and its working directory is not checked (the runner never creates such a session). A runner-created Codex session starts with
+A project can have several connected bots, and several of them may use the tmux channel with the
+same CLI; one bot may hold a tmux connection in several projects. On the runner a tmux connection
+uses the session `<KEY>-<cli>` (`<KEY>-claude` for Claude Code, `<KEY>-codex` for Codex), unless the
+runner's own configuration names an existing session for the bot and CLI: then the tasks of every
+project the bot is connected to over tmux go into that one session, and its working directory is not
+checked (the runner never creates such a session). Two bots must not share a derived session: the
+runner refuses a task for a `<KEY>-<cli>` session that already serves another bot, so give each bot
+its own session in the runner's configuration. A headless connection runs headless as configured. A runner-created Codex session starts with
 `codex --no-daemon --no-alt-screen --dangerously-bypass-approvals-and-sandbox`, which turns off all of Codex's
 permission checks (see the [runner security notes](../../apps/runner/SECURITY.md)); Codex asks once to
 trust a new folder, and the runner never answers that dialog: attach to the session and answer it.
@@ -226,7 +229,8 @@ the connection meanwhile, the change is refused (`connection changed; reload`) a
 
 The connection shows what the runner last reported: **Online**, **Waiting for the runner**,
 **Not reporting** or **Unreachable**; the readiness of tmux and each CLI; the project's tmux
-session; a protocol mismatch; and **Permission checks off** when the runner's launch command or
+session (for a bot with a session of its own on the runner, the status says so and shows no name);
+a protocol mismatch; and **Permission checks off** when the runner's launch command or
 headless arguments turn off the CLI's permission checks (the default does, for each CLI on its own).
 
 ### Disable, rotate, remove

@@ -15,8 +15,8 @@ name.
 - **Runner: one session per bot, across projects.** `[[runner.tmux.sessions]]` (`bot`, `cli`,
   `name`) makes the runner type the tasks of a bot for a CLI, from every project the bot is
   connected to, into one existing tmux session, for example an operator's lead session with several
-  windows (only the pane that runs the CLI is used). It holds on either channel: a headless
-  delivery for such a bot is typed into the session too. The tasks of all projects share one
+  windows (only the pane that runs the CLI is used). It serves the tmux channel only: a headless
+  connection runs headless as configured. The tasks of all projects share one
   queue; every task text has a `Project: <KEY>` line. The runner never creates, renames or restarts
   such a session: when it is absent the task fails, retryably. Its working directory is not
   checked (no `path_outside_allowlist`), no project key is bound and the agent guide is not
@@ -27,6 +27,17 @@ name.
   status report carries `scope` and `session_source` and never the name. The state directory is
   `sessions/bot-<id>-<cli>/`. A configured session whose MCP entry is not the runner's own is a
   warning.
+
+- **A bot connected to several projects behaves normally in each.** A project may hold tmux
+  connections of several bots for the same CLI, and one bot may hold a tmux connection in several
+  projects (migration `0131_drop_one_tmux_per_cli.sql` drops the unique index
+  `pbc_one_tmux_per_cli`; the 409 `project already has a tmux connection for <cli>` is gone). For a
+  bot made by a project bot connection (and for a project-scoped bot, by its levels), the project
+  list, `GET /api/v1/search`, `GET /api/v1/my/issues` and `GET /api/v1/my/activities` are now
+  allowed and return only the projects the bot can read, in every row, count and page total; the MCP
+  tools `projects.list`, `search.all` and `work_items.search` follow. A `project_id` outside them
+  answers 404. Every other workspace-level route stays refused. The connection status shows the
+  runner's `scope: bot` session row for a tmux connection of a bot with a session of its own.
 
 - **Runner: a plain-http server address outside loopback can be acknowledged.**
   `[ai_task_callback] allow_insecure_transport = true` (default `false`) lets a `runner` agent use an
@@ -79,6 +90,9 @@ name.
 - `GET /api/v1/comments/{id}`, `GET /api/v1/form-attachments/{attachment_id}`, sprint `progress`.
 
 ### Changed
+
+- **The task view no longer carries `execution.session_name`.** The runner never read it, and it
+  is wrong for a bot's own session; the connection view keeps the derived `<KEY>-<cli>` name.
 
 - **Report schemas moved to `scripts/schemas/`.** The JSON schemas that the delivery, readiness
   and Flow evidence scripts and the project release readiness endpoint read were moved from
