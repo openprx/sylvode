@@ -9,7 +9,8 @@
 use axum::{
     Extension, Json,
     extract::{Path, Query, State},
-    response::IntoResponse,
+    http::{HeaderMap, HeaderValue, header},
+    response::{IntoResponse, Response},
 };
 use platform::{app::AppState, auth::JwtClaims, timestamp::Timestamp};
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement, TransactionTrait};
@@ -20,8 +21,8 @@ use uuid::Uuid;
 use crate::{
     error::ApiError,
     inbound::{
-        allowlist, audit, credentials,
-        dry_run::{self, EventFacts, Limits, SourceFacts},
+        INBOUND_EVENTS_PATH, allowlist, audit, credentials,
+        dry_run::{self, DraftRule, EventFacts, Limits, SourceFacts},
         envelope::{EnvelopeError, parse_envelope},
         notify,
         rule_input::{RuleInput, ValidatedRule},
@@ -93,9 +94,16 @@ fn actor_source(user_id: Uuid) -> Value {
 const SOURCE_COLUMNS: &str = "id, workspace_id, project_id, name, format, token_prefix, \
      require_signature, (signing_secret IS NOT NULL) AS has_signing_secret, ip_allowlist::text[] AS ip_allowlist, \
      acting_user_id, enabled, rate_per_minute, daily_cap, last_used_at, host(last_used_ip) AS last_used_ip, \
-     created_by, created_at, updated_at";
+     created_by, created_at, updated_at, \
+     (acting_user_id IS NULL OR NOT EXISTS ( \
+        SELECT 1 FROM workspace_members m JOIN users u ON u.id = m.user_id AND u.is_active \
+         WHERE m.workspace_id = inbound_sources.workspace_id AND m.user_id = inbound_sources.acting_user_id \
+           AND m.role IN ('owner', 'admin'))) AS suspended, \
+     (SELECT u.name FROM users u WHERE u.id = inbound_sources.acting_user_id) AS acting_user_name";
 
 /// A source as the management API shows it: no token hash, no signing secret.
+// The booleans are the wire shape the management UI reads.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, FromQueryResult, Serialize)]
 pub struct SourceView {
     pub id: Uuid,
@@ -109,6 +117,11 @@ pub struct SourceView {
     /// `address/prefix` blocks the source may post from; empty admits every address.
     pub ip_allowlist: Vec<String>,
     pub acting_user_id: Option<Uuid>,
+    /// The acting user's name; `None` when the user was removed.
+    pub acting_user_name: Option<String>,
+    /// The acting user is no longer an active owner or admin of the workspace: the inbound endpoint
+    /// refuses the source's events until an administrator takes it over.
+    pub suspended: bool,
     pub enabled: bool,
     pub rate_per_minute: i32,
     pub daily_cap: i32,
@@ -186,15 +199,63 @@ fn valid_allowlist(entries: &[String]) -> Result<Vec<String>, ApiError> {
     allowlist::normalise_entries(entries).map_err(ApiError::BadRequest)
 }
 
+/// A body that carries a secret must not be stored by any cache.
+fn no_store(body: impl IntoResponse) -> Response {
+    let mut response = body.into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
+/// The address events are posted to: the `[server] public_url`, else the `[oauth] issuer`, else
+/// the request's `http(s)` origin, with the inbound path appended; `None` when none of them
+/// is known.
+fn endpoint_url(public_url: Option<&str>, issuer: Option<&str>, origin: Option<&str>) -> Option<String> {
+    let configured = [public_url, issuer]
+        .into_iter()
+        .flatten()
+        .map(|url| url.trim().trim_end_matches('/'))
+        .find(|url| !url.is_empty())
+        .map(str::to_owned);
+    let base = configured.or_else(|| {
+        origin
+            .and_then(|origin| reqwest::Url::parse(origin.trim()).ok())
+            .filter(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
+            .map(|url| url.origin().ascii_serialization())
+    })?;
+    Some(format!("{base}{INBOUND_EVENTS_PATH}"))
+}
+
+/// [`endpoint_url`] for this server's configuration and this request.
+fn request_endpoint_url(headers: &HeaderMap) -> Option<String> {
+    let config = crate::config::runtime();
+    endpoint_url(
+        config.public_url.as_deref(),
+        config.oauth.as_ref().map(|oauth| oauth.issuer.as_str()),
+        headers.get(header::ORIGIN).and_then(|value| value.to_str().ok()),
+    )
+}
+
 fn mint_failure() -> ApiError {
     tracing::error!("the operating system random source is unavailable");
     ApiError::Internal
+}
+
+/// The sources of a project with the server-wide switch and the public address.
+#[derive(Serialize)]
+struct SourceList {
+    sources: Vec<SourceView>,
+    /// `[inbound] enabled`: when false every event is refused, whatever the sources say.
+    inbound_enabled: bool,
+    endpoint_url: Option<String>,
 }
 
 pub async fn list_sources(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
+    headers: HeaderMap,
     Path(project_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
     let workspace_id = project_workspace(&state, project_id).await?;
@@ -206,7 +267,11 @@ pub async fn list_sources(
     ))
     .all(&state.db)
     .await?;
-    Ok(ApiResponse::success(sources))
+    Ok(ApiResponse::success(SourceList {
+        sources,
+        inbound_enabled: crate::config::runtime().inbound.enabled,
+        endpoint_url: request_endpoint_url(&headers),
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -228,12 +293,14 @@ struct SecretsOnce {
     token: String,
     /// Shown once: the key to sign requests with.
     signing_secret: String,
+    endpoint_url: Option<String>,
 }
 
 pub async fn create_source(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
+    headers: HeaderMap,
     Path(project_id): Path<Uuid>,
     Json(request): Json<CreateSourceRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -287,11 +354,12 @@ pub async fn create_source(
     )
     .await?;
     tx.commit().await?;
-    Ok(ApiResponse::success(SecretsOnce {
+    Ok(no_store(ApiResponse::success(SecretsOnce {
         source,
         token: minted.raw,
         signing_secret,
-    }))
+        endpoint_url: request_endpoint_url(&headers),
+    })))
 }
 
 pub async fn get_source(
@@ -372,6 +440,7 @@ pub async fn rotate_source(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
+    headers: HeaderMap,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
     let (before, user) = admin_source(&state, &claims, bot.as_ref().map(|b| &b.0), id).await?;
@@ -404,11 +473,12 @@ pub async fn rotate_source(
     )
     .await?;
     tx.commit().await?;
-    Ok(ApiResponse::success(SecretsOnce {
+    Ok(no_store(ApiResponse::success(SecretsOnce {
         source,
         token: minted.raw,
         signing_secret,
-    }))
+        endpoint_url: request_endpoint_url(&headers),
+    })))
 }
 
 pub async fn delete_source(
@@ -447,8 +517,16 @@ pub struct EventsQuery {
     pub limit: Option<i64>,
 }
 
+/// The work item an event opened or joined.
+#[derive(Debug, Serialize)]
+struct WorkItemRef {
+    id: Uuid,
+    /// Project key and sequence number, such as `SEC-42`.
+    identifier: String,
+}
+
 /// A stored event as an administrator sees it, payload included.
-#[derive(Debug, FromQueryResult, Serialize)]
+#[derive(Debug, Serialize)]
 struct EventView {
     id: Uuid,
     event_id: String,
@@ -467,6 +545,59 @@ struct EventView {
     rule_id: Option<Uuid>,
     alert_id: Option<Uuid>,
     task_id: Option<Uuid>,
+    /// The alert's work item; `None` for an event that belongs to no alert.
+    work_item: Option<WorkItemRef>,
+}
+
+#[derive(FromQueryResult)]
+struct EventRow {
+    id: Uuid,
+    event_id: String,
+    kind: String,
+    severity_rank: i16,
+    dedup_key: String,
+    occurred_at: Timestamp,
+    received_at: Timestamp,
+    title: String,
+    summary: String,
+    subject: Value,
+    payload: Value,
+    signed: bool,
+    client_ip: Option<String>,
+    outcome: String,
+    rule_id: Option<Uuid>,
+    alert_id: Option<Uuid>,
+    task_id: Option<Uuid>,
+    work_item_id: Option<Uuid>,
+    work_item_identifier: Option<String>,
+}
+
+impl From<EventRow> for EventView {
+    fn from(row: EventRow) -> Self {
+        Self {
+            id: row.id,
+            event_id: row.event_id,
+            kind: row.kind,
+            severity_rank: row.severity_rank,
+            dedup_key: row.dedup_key,
+            occurred_at: row.occurred_at,
+            received_at: row.received_at,
+            title: row.title,
+            summary: row.summary,
+            subject: row.subject,
+            payload: row.payload,
+            signed: row.signed,
+            client_ip: row.client_ip,
+            outcome: row.outcome,
+            rule_id: row.rule_id,
+            alert_id: row.alert_id,
+            task_id: row.task_id,
+            work_item: row
+                .work_item_id
+                .zip(row.work_item_identifier)
+                .map(|(id, identifier)| WorkItemRef { id, identifier }),
+        }
+    }
 }
 
 pub async fn list_source_events(
@@ -484,16 +615,25 @@ pub async fn list_source_events(
         .transpose()
         .map_err(|_| ApiError::BadRequest("before must be an RFC 3339 timestamp".to_owned()))?;
     let limit = query.limit.unwrap_or(EVENTS_DEFAULT_LIMIT).clamp(1, EVENTS_MAX_LIMIT);
-    let events = EventView::find_by_statement(Statement::from_sql_and_values(
+    let events: Vec<EventView> = EventRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT id, event_id, kind, severity_rank, dedup_key, occurred_at, received_at, title, summary, subject, \
-                payload, signed, host(client_ip) AS client_ip, outcome, rule_id, alert_id, task_id \
-           FROM inbound_events WHERE source_id = $1 AND ($2::timestamptz IS NULL OR received_at < $2) \
-          ORDER BY received_at DESC, id DESC LIMIT $3",
+        "SELECT e.id, e.event_id, e.kind, e.severity_rank, e.dedup_key, e.occurred_at, e.received_at, e.title, \
+                e.summary, e.subject, e.payload, e.signed, host(e.client_ip) AS client_ip, e.outcome, e.rule_id, \
+                e.alert_id, e.task_id, w.id AS work_item_id, \
+                p.key || '-' || w.sequence_number::text AS work_item_identifier \
+           FROM inbound_events e \
+           LEFT JOIN inbound_alerts a ON a.id = e.alert_id \
+           LEFT JOIN work_items w ON w.id = a.work_item_id \
+           LEFT JOIN projects p ON p.id = w.project_id \
+          WHERE e.source_id = $1 AND ($2::timestamptz IS NULL OR e.received_at < $2) \
+          ORDER BY e.received_at DESC, e.id DESC LIMIT $3",
         vec![id.into(), before.into(), limit.into()],
     ))
     .all(&state.db)
-    .await?;
+    .await?
+    .into_iter()
+    .map(EventView::from)
+    .collect();
     Ok(ApiResponse::success(events))
 }
 
@@ -881,6 +1021,11 @@ pub struct TestRulesRequest {
     pub envelope: Option<Value>,
     /// A stored event of that source, tested again against the rules as they are now.
     pub inbound_event_id: Option<Uuid>,
+    /// A rule that is not saved yet: validated like a rule write, then tested in place of the rule
+    /// it `replaces`, or after every saved rule when `replaces` is absent. Nothing is written.
+    pub draft_rule: Option<RuleInput>,
+    /// The saved rule of this project the draft stands in for.
+    pub replaces: Option<Uuid>,
 }
 
 /// POST `/api/v1/projects/{project_id}/alert-rules/test`: which rule would handle the event and
@@ -893,7 +1038,7 @@ pub async fn test_rules(
     Json(request): Json<TestRulesRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let workspace_id = project_workspace(&state, project_id).await?;
-    require_workspace_admin(&state, &claims, bot.as_ref().map(|b| &b.0), workspace_id).await?;
+    let user = require_workspace_admin(&state, &claims, bot.as_ref().map(|b| &b.0), workspace_id).await?;
     let source = Found::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "SELECT id FROM inbound_sources WHERE id = $1 AND project_id = $2 AND workspace_id = $3",
@@ -942,6 +1087,34 @@ pub async fn test_rules(
             ));
         }
     };
+    let draft = match request.draft_rule {
+        Some(input) => {
+            let replaced = match request.replaces {
+                Some(rule_id) => Some(
+                    Found::find_by_statement(Statement::from_sql_and_values(
+                        DbBackend::Postgres,
+                        "SELECT id FROM alert_rules WHERE id = $1 AND project_id = $2",
+                        vec![rule_id.into(), project_id.into()],
+                    ))
+                    .one(&state.db)
+                    .await?
+                    .ok_or_else(|| ApiError::BadRequest("replaces must be a rule of this project".to_owned()))?
+                    .id,
+                ),
+                None => None,
+            };
+            let rule = validated(input, user)?;
+            check_rule_references(&state.db, workspace_id, project_id, &rule).await?;
+            Some(DraftRule {
+                replaces: replaced,
+                rule,
+            })
+        }
+        None if request.replaces.is_some() => {
+            return Err(ApiError::BadRequest("replaces needs draft_rule".to_owned()));
+        }
+        None => None,
+    };
     let workflow = resolve_effective_workflow_for_project(&state, project_id).await?;
     let config = crate::config::runtime().inbound;
     let report = dry_run::evaluate(
@@ -958,6 +1131,7 @@ pub async fn test_rules(
             workspace_active_tasks: config.max_active_alert_tasks_per_workspace,
             alerts_per_rule_per_hour: config.max_alerts_per_rule_per_hour,
         },
+        draft,
     )
     .await?;
     Ok(ApiResponse::success(report))
@@ -971,6 +1145,37 @@ struct SourceName {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_endpoint_address_comes_from_public_url_then_issuer_then_origin() {
+        let path = "/api/v1/inbound/events";
+        let both = endpoint_url(
+            Some("https://sv.example.com/"),
+            Some("https://issuer.example.com"),
+            Some("http://o.test"),
+        );
+        assert_eq!(both.as_deref(), Some("https://sv.example.com/api/v1/inbound/events"));
+        let issuer = endpoint_url(None, Some("https://issuer.example.com/"), Some("http://o.test"));
+        assert_eq!(issuer, Some(format!("https://issuer.example.com{path}")));
+        assert_eq!(
+            endpoint_url(Some(" "), Some(""), Some("http://10.0.0.5:8080")),
+            Some(format!("http://10.0.0.5:8080{path}"))
+        );
+        // An origin with a path or a default port is reduced to its origin.
+        assert_eq!(
+            endpoint_url(None, None, Some("https://sv.test:443/x")),
+            Some(format!("https://sv.test{path}"))
+        );
+        for unusable in [
+            None,
+            Some("null"),
+            Some("file:///etc"),
+            Some("javascript:alert(1)"),
+            Some(""),
+        ] {
+            assert_eq!(endpoint_url(None, None, unusable), None, "{unusable:?}");
+        }
+    }
 
     #[test]
     fn names_rates_and_allowlist_are_bounded() {

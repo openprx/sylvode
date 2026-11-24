@@ -39,6 +39,10 @@ pub enum WebhookEvent {
     LabelRemoved,
     SprintStarted,
     SprintCompleted,
+    SprintCreated,
+    SprintUpdated,
+    SprintCancelled,
+    SprintDeleted,
     MilestoneCreated,
     MilestoneUpdated,
     MilestoneDeleted,
@@ -78,6 +82,10 @@ impl WebhookEvent {
             Self::LabelRemoved => "label.removed",
             Self::SprintStarted => "sprint.started",
             Self::SprintCompleted => "sprint.completed",
+            Self::SprintCreated => "sprint.created",
+            Self::SprintUpdated => "sprint.updated",
+            Self::SprintCancelled => "sprint.cancelled",
+            Self::SprintDeleted => "sprint.deleted",
             Self::MilestoneCreated => "milestone.created",
             Self::MilestoneUpdated => "milestone.updated",
             Self::MilestoneDeleted => "milestone.deleted",
@@ -548,7 +556,16 @@ async fn build_event_data(
                 assignee_ids: Vec::new(),
             })
         }
-        WebhookEvent::SprintStarted | WebhookEvent::SprintCompleted => {
+        // The sprint no longer exists after a delete: the caller hands over the sprint as it was.
+        WebhookEvent::SprintDeleted => Ok(BuiltEventData {
+            data: json!({ "sprint": ctx.extra_data.clone().unwrap_or_else(|| json!({})) }),
+            assignee_ids: Vec::new(),
+        }),
+        WebhookEvent::SprintStarted
+        | WebhookEvent::SprintCompleted
+        | WebhookEvent::SprintCreated
+        | WebhookEvent::SprintUpdated
+        | WebhookEvent::SprintCancelled => {
             let sprint_id = ctx
                 .sprint_id
                 .ok_or_else(|| sea_orm::DbErr::Custom("missing sprint_id".to_string()))?;
@@ -586,7 +603,12 @@ async fn build_event_data(
                     "updated_at": sprint.updated_at.to_rfc3339(),
                 }
             });
-            // What completing the sprint did with its unfinished items.
+            if matches!(ctx.event, WebhookEvent::SprintUpdated)
+                && let Some(object) = data.as_object_mut()
+            {
+                object.insert("changes".to_string(), ctx.changes.clone().unwrap_or_else(|| json!({})));
+            }
+            // What completing or cancelling the sprint did with its unfinished items.
             if let Some(rollover) = ctx
                 .changes
                 .as_ref()
@@ -1123,6 +1145,69 @@ const fn default_trigger_reason(event: WebhookEvent) -> &'static str {
         WebhookEvent::IssueStateChanged => "status_changed",
         WebhookEvent::CommentCreated => "mentioned",
         _ => "assigned",
+    }
+}
+
+#[cfg(test)]
+mod event_list_tests {
+    use super::WebhookEvent;
+    use crate::entities::webhook::WEBHOOK_EVENTS;
+
+    /// Every event `webhook_trigger` can send, as a subscription names it.
+    const SENT_BY_TRIGGER: &[WebhookEvent] = &[
+        WebhookEvent::IssueCreated,
+        WebhookEvent::IssueUpdated,
+        WebhookEvent::IssueAssigned,
+        WebhookEvent::IssueStateChanged,
+        WebhookEvent::IssueDeleted,
+        WebhookEvent::CommentCreated,
+        WebhookEvent::CommentUpdated,
+        WebhookEvent::CommentDeleted,
+        WebhookEvent::LabelAdded,
+        WebhookEvent::LabelRemoved,
+        WebhookEvent::SprintStarted,
+        WebhookEvent::SprintCompleted,
+        WebhookEvent::SprintCreated,
+        WebhookEvent::SprintUpdated,
+        WebhookEvent::SprintCancelled,
+        WebhookEvent::SprintDeleted,
+        WebhookEvent::MilestoneCreated,
+        WebhookEvent::MilestoneUpdated,
+        WebhookEvent::MilestoneDeleted,
+        WebhookEvent::ProposalCreated,
+        WebhookEvent::ProposalUpdated,
+        WebhookEvent::ProposalDeleted,
+        WebhookEvent::ProposalSubmitted,
+        WebhookEvent::ProposalVotingStarted,
+        WebhookEvent::ProposalArchived,
+        WebhookEvent::ProposalVoteCast,
+        WebhookEvent::ProjectCreated,
+        WebhookEvent::ProjectUpdated,
+        WebhookEvent::ProjectDeleted,
+        WebhookEvent::MemberAdded,
+        WebhookEvent::MemberRemoved,
+        WebhookEvent::VetoExercised,
+        WebhookEvent::VetoWithdrawn,
+        WebhookEvent::EscalationStarted,
+        WebhookEvent::AppealCreated,
+        WebhookEvent::GovernanceConfigUpdated,
+        WebhookEvent::AiTaskCompleted,
+        WebhookEvent::AiTaskFailed,
+    ];
+
+    /// Subscribing to an event that is never sent, or sending one nobody can subscribe to, are the
+    /// two ways the list and the trigger drift apart.
+    #[test]
+    fn the_subscribable_list_is_the_trigger_events_plus_the_dispatcher_events() {
+        let mut sent: Vec<&str> = SENT_BY_TRIGGER.iter().map(|event| event.as_str()).collect();
+        let mut listed: Vec<&str> = WEBHOOK_EVENTS
+            .iter()
+            .copied()
+            .filter(|event| !event.starts_with("form.") && !event.starts_with("flow."))
+            .collect();
+        sent.sort_unstable();
+        listed.sort_unstable();
+        assert_eq!(sent, listed);
     }
 }
 

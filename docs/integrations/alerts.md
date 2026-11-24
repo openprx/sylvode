@@ -58,7 +58,9 @@ curl -s https://sylvode.example.com/api/v1/projects/$PROJECT_ID/inbound-sources 
 | `daily_cap` | 20000 | Events per day, 1 to 1000000. |
 | `ip_allowlist` | empty | Up to 64 address blocks (`198.51.100.0/24`, or a bare address for one host). Empty admits every address. A block with host bits set (`198.51.100.5/24`) or a prefix of 0 is refused. |
 
-The answer is `{"source", "token", "signing_secret"}`. The token (`svi_` followed by 64 hex
+The answer is `{"source", "token", "signing_secret", "endpoint_url"}`, sent with `Cache-Control:
+no-store`. `endpoint_url` is the address the product posts events to, or `null` when the server
+cannot tell (see [Where events are posted](#where-events-are-posted)). The token (`svi_` followed by 64 hex
 characters) and the signing secret (`svs_` followed by 64 hex characters) are shown only in this
 answer; afterwards a source shows `token_prefix` (the first 12 characters) and `has_signing_secret`.
 Give both values to the product.
@@ -66,17 +68,28 @@ Give both values to the product.
 The person who creates a source is the person it acts for (`acting_user_id`): alert work items are
 created in their name. When that person is not an owner or admin of the workspace any more, or their
 account is inactive, the source is suspended and every request answers 403 `source_suspended`.
-Another owner or admin takes the source over with `PATCH` and `{"take_over": true}`.
+Another owner or admin takes the source over with `PATCH` and `{"take_over": true}`. A source shows
+this: `suspended` is `true` while no active owner or admin stands behind it, and `acting_user_name`
+is the name of the person it acts for (`null` when that person was removed).
+
+### Where events are posted
+
+The list of a project's sources answers `{"sources", "inbound_enabled", "endpoint_url"}`.
+`inbound_enabled` is `false` while `[inbound] enabled` is off: sources can be prepared then, but
+every event is refused. `endpoint_url` is `[server] public_url` when it is set, otherwise the
+`[oauth] issuer`, otherwise the `Origin` of the request when that is an `http` or `https` origin,
+followed by `/api/v1/inbound/events`; `null` when none of them is known. Set `[server] public_url`
+when the address people use in the browser is not the address the product reaches.
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/api/v1/projects/{project_id}/inbound-sources` | The project's sources, oldest first. |
-| POST | `/api/v1/projects/{project_id}/inbound-sources` | Creates a source; answers the token and signing secret once. |
-| GET | `/api/v1/inbound-sources/{id}` | One source. Also shows `last_used_at` and `last_used_ip`. |
+| GET | `/api/v1/projects/{project_id}/inbound-sources` | `{sources, inbound_enabled, endpoint_url}`: the project's sources, oldest first, with the server-wide switch and the address. |
+| POST | `/api/v1/projects/{project_id}/inbound-sources` | Creates a source; answers the token, signing secret and `endpoint_url` once, with `Cache-Control: no-store`. |
+| GET | `/api/v1/inbound-sources/{id}` | One source. Also shows `last_used_at`, `last_used_ip`, `suspended` and `acting_user_name`. |
 | PATCH | `/api/v1/inbound-sources/{id}` | Any of `name`, `enabled`, `require_signature`, `rate_per_minute`, `daily_cap`, `ip_allowlist` (replaces the list), `take_over`. |
-| POST | `/api/v1/inbound-sources/{id}/rotate` | New token and new signing secret, answered once. The old token stops working at once. |
+| POST | `/api/v1/inbound-sources/{id}/rotate` | New token and new signing secret (and `endpoint_url`), answered once with `Cache-Control: no-store`. The old token stops working at once. |
 | DELETE | `/api/v1/inbound-sources/{id}` | Deletes the source. |
-| GET | `/api/v1/inbound-sources/{id}/events` | Stored events of the source, newest first, with payload and outcome. `limit` (default 50, maximum 100) and `before` (RFC 3339 timestamp; events received before it) page through older events. |
+| GET | `/api/v1/inbound-sources/{id}/events` | Stored events of the source, newest first, with payload and outcome. An event that opened or joined an alert shows `work_item` (`id` and `identifier`, such as `SEC-42`); any other event shows `null`. `limit` (default 50, maximum 100) and `before` (RFC 3339 timestamp; events received before it) page through older events. |
 
 Every change of a source is recorded as a business event with the old and new settings, never with
 a secret.
@@ -251,12 +264,22 @@ sample envelope or a stored event of that source:
   "title": "Test" } }
 ```
 
-or `{"source_id": "...", "inbound_event_id": "..."}`. The answer:
+or `{"source_id": "...", "inbound_event_id": "..."}`.
+
+To test a rule before it is saved, add `draft_rule`, a rule body as `POST .../alert-rules` takes it
+(validated the same way, `400` when it is wrong), and optionally `replaces`, the id of a saved rule
+of the project. The draft is evaluated in place of the rule it replaces, with that rule's id,
+position and counts, or after every saved rule when `replaces` is absent. `replaces` without
+`draft_rule` is `400`. Nothing is saved. The answer marks the draft with `draft: true` in `rule`
+and in its entry of `rules_evaluated`; a draft that replaces nothing has the nil id
+(`00000000-0000-0000-0000-000000000000`).
+
+The answer:
 
 | Field | Meaning |
 |---|---|
 | `matched`, `rule` | Whether a rule matched, and which. |
-| `rules_evaluated` | Every rule with `matched` and `reason`: `matched`, `disabled`, `other_source`, `kind_not_listed` or `below_minimum_severity`. |
+| `rules_evaluated` | Every rule with `matched`, `draft` and `reason`: `matched`, `disabled`, `other_source`, `kind_not_listed` or `below_minimum_severity`. |
 | `alert` | `no_rule`, `would_open`, `would_attach` or `would_refuse_alert_cap`. |
 | `task` | `none`, `bot_unavailable`, `would_start`, `would_queue`, `already_active`, `already_waiting` or `rearm_delay`. |
 | `queue_cause` | The cap that would queue the task. |

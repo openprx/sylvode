@@ -58,6 +58,8 @@ const ALL_API_SCOPES: &[&str] = &[
     "projects:read",
     "work_items:read",
     "work_items:write",
+    "forms:read",
+    "forms:write",
     "notifications:read",
     "notifications:write",
     "tasks:read",
@@ -170,6 +172,12 @@ struct World {
     ident2: String,
     ident3: String,
     label1: Uuid,
+    f1: Uuid,
+    f2: Uuid,
+    f3: Uuid,
+    r1: Uuid,
+    r2: Uuid,
+    r3: Uuid,
     n1: Uuid,
     n2: Uuid,
     n3: Uuid,
@@ -296,6 +304,48 @@ impl World {
             )
             .await;
         }
+        // One form with one record in each project; `salary` is the field the policy tests restrict.
+        let [f1, f2, f3, r1, r2, r3] = std::array::from_fn(|_| Uuid::new_v4());
+        let schema = json!({"version": "openpr.form.schema.v1", "fields": [
+            {"field_id": "fld_text", "key": "text", "type": "text"},
+            {"field_id": "fld_salary", "key": "salary", "type": "text"}
+        ]});
+        for (form, record, ws, project, key) in [
+            (f1, r1, ws1, p1, "staff_one"),
+            (f2, r2, ws1, p2, "staff_two"),
+            (f3, r3, ws2, p3, "staff_three"),
+        ] {
+            exec(
+                &db,
+                "INSERT INTO project_forms (id, workspace_id, project_id, key, name, schema, created_by) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                vec![
+                    form.into(),
+                    ws.into(),
+                    project.into(),
+                    key.into(),
+                    format!("form {key}").into(),
+                    schema.clone().into(),
+                    alice.into(),
+                ],
+            )
+            .await;
+            exec(
+                &db,
+                "INSERT INTO form_records (id, workspace_id, project_id, form_id, title, values, schema_version, \
+                 created_by) VALUES ($1, $2, $3, $4, $5, $6, 1, $7)",
+                vec![
+                    record.into(),
+                    ws.into(),
+                    project.into(),
+                    form.into(),
+                    format!("record {key}").into(),
+                    json!({"text": format!("text {key}"), "salary": "9000"}).into(),
+                    alice.into(),
+                ],
+            )
+            .await;
+        }
         let [n1, n2, n3, n4, n_without_workspace, n_bob] = std::array::from_fn(|_| Uuid::new_v4());
         // (id, owner, workspace, related project, related issue)
         for (id, owner, ws, project, issue) in [
@@ -344,6 +394,12 @@ impl World {
             ident2,
             ident3,
             label1,
+            f1,
+            f2,
+            f3,
+            r1,
+            r2,
+            r3,
             n1,
             n2,
             n3,
@@ -707,6 +763,12 @@ fn request_body(method: &str, pattern: &str) -> Option<Value> {
     match (method, pattern) {
         ("POST", "/api/v1/projects/{project_id}/issues") => Some(json!({"title": "created through a connection"})),
         ("PUT", "/api/v1/issues/{id}") => Some(json!({"title": "renamed through a connection"})),
+        ("POST", "/api/v1/forms/{form_id}/records") => {
+            Some(json!({"values": {"text": "created through a connection"}}))
+        }
+        ("PATCH", "/api/v1/form-records/{record_id}") => {
+            Some(json!({"values": {"text": "edited through a connection"}}))
+        }
         ("POST", "/api/v1/issues/{issue_id}/comments") => Some(json!({"content": "a comment"})),
         ("GET", _) => None,
         _ => Some(json!({})),
@@ -727,6 +789,8 @@ impl World {
                     Resolver::Workspace(n) if n == name => self.ws1.to_string(),
                     Resolver::Project(n) if n == name => self.p1.to_string(),
                     Resolver::Issue(n) if n == name => self.i1.to_string(),
+                    Resolver::Form(n) if n == name => self.f1.to_string(),
+                    Resolver::FormRecord(n) if n == name => self.r1.to_string(),
                     Resolver::IssueIdentifier(n) if n == name => self.ident1.clone(),
                     Resolver::Notification(n) if n == name => {
                         // Marking read twice is a 404 the second time; use a notification per method.
@@ -1054,7 +1118,19 @@ async fn unlisted_routes_are_refused_even_when_the_user_could_call_them() {
             format!("/api/v1/issues/{}/labels/batch", w.i1),
             Some(json!({"label_ids": [w.label1]})),
         ),
-        ("GET", format!("/api/v1/projects/{}/forms", w.p1), None),
+        (
+            "POST",
+            format!("/api/v1/projects/{}/forms", w.p1),
+            Some(json!({"key": "made", "name": "Made"})),
+        ),
+        ("GET", format!("/api/v1/forms/{}/permissions", w.f1), None),
+        ("GET", format!("/api/v1/forms/{}/records/export", w.f1), None),
+        (
+            "PATCH",
+            format!("/api/v1/forms/{}", w.f1),
+            Some(json!({"name": "renamed"})),
+        ),
+        ("DELETE", format!("/api/v1/form-records/{}", w.r1), None),
         ("GET", "/api/v1/search?q=item".to_string(), None),
     ];
     for (method, uri, body) in cases {
@@ -2754,5 +2830,198 @@ async fn by_identifier_is_409_when_two_member_workspaces_share_the_key_and_resol
         assert_eq!(resolved.code(), Some(0), "{}", resolved.text());
         assert_eq!(resolved.json()["data"]["id"], json!(expected));
     }
+    w.finish().await;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Forms
+// ---------------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn forms_follow_the_forms_scopes_the_grants_projects_and_the_member_field_policy() {
+    let Some(w) = World::new("deleg_forms").await else {
+        return;
+    };
+    let forms_uri = format!("/api/v1/projects/{}/forms", w.p1);
+    let records_uri = format!("/api/v1/forms/{}/records", w.f1);
+    let record_uri = format!("/api/v1/form-records/{}", w.r1);
+    let records_of_f1 = || {
+        count(
+            &w.db,
+            "SELECT COUNT(*) AS n FROM form_records WHERE form_id = $1",
+            vec![w.f1.into()],
+        )
+    };
+
+    // forms:read reads and lists; the write routes ask for forms:write.
+    let read = w.session(w.alice, w.ws1, &[], &["forms:read"]).await;
+    let listed = w.get(&read, &forms_uri).await;
+    assert_ok(&listed, "form list");
+    assert!(listed.text().contains(&w.f1.to_string()), "{}", listed.text());
+    assert_ok(&w.get(&read, &format!("/api/v1/forms/{}", w.f1)).await, "form");
+    let rows = w.get(&read, &records_uri).await;
+    assert_ok(&rows, "records");
+    assert!(rows.text().contains(&w.r1.to_string()), "{}", rows.text());
+    let detail = w.get(&read, &record_uri).await;
+    assert_ok(&detail, "record");
+    assert_eq!(detail.json()["data"]["values"]["salary"], "9000");
+    assert_eq!(
+        detail.json()["data"]["flow_lineage"],
+        json!({"references": [], "conversions": []}),
+        "a connected application sees no Flow lineage"
+    );
+    for (method, uri, body) in [
+        (
+            "POST",
+            records_uri.clone(),
+            json!({"values": {"text": "must not exist"}}),
+        ),
+        (
+            "PATCH",
+            record_uri.clone(),
+            json!({"values": {"text": "must not change"}}),
+        ),
+    ] {
+        let reply = w.send(method, &uri, Some(&read.token), &[], Some(&body)).await;
+        assert_eq!(
+            reply.bearer_error().as_deref(),
+            Some("insufficient_scope"),
+            "{method} {uri}"
+        );
+    }
+    assert_eq!(records_of_f1().await, 1);
+
+    // forms:write implies forms:read and writes as the grant's user.
+    let write = w.session(w.alice, w.ws1, &[], &["forms:write"]).await;
+    assert_ok(&w.get(&write, &record_uri).await, "write implies read");
+    let created = w
+        .send(
+            "POST",
+            &records_uri,
+            Some(&write.token),
+            &[],
+            Some(&json!({"values": {"text": "from a connection"}})),
+        )
+        .await;
+    assert_ok(&created, "create record");
+    assert_eq!(created.json()["data"]["values"]["text"], "from a connection");
+    assert_eq!(records_of_f1().await, 2);
+    let edited = w
+        .send(
+            "PATCH",
+            &record_uri,
+            Some(&write.token),
+            &[],
+            Some(&json!({"values": {"text": "edited"}})),
+        )
+        .await;
+    assert_ok(&edited, "update record");
+    assert_eq!(edited.json()["data"]["values"]["text"], "edited");
+    // Nothing else about forms is reachable: no deletion, no design, no permissions.
+    for (method, uri) in [
+        ("DELETE", record_uri.clone()),
+        ("PATCH", format!("/api/v1/forms/{}", w.f1)),
+        ("GET", format!("/api/v1/forms/{}/permissions", w.f1)),
+    ] {
+        let reply = w.send(method, &uri, Some(&write.token), &[], Some(&json!({}))).await;
+        assert_eq!(
+            reply.bearer_error().as_deref(),
+            Some("insufficient_scope"),
+            "{method} {uri}"
+        );
+    }
+
+    // A grant for one project reaches the forms of that project only; another project of the same
+    // workspace and another workspace answer like a missing object.
+    let one = w.session(w.alice, w.ws1, &[w.p1], &["forms:read", "forms:write"]).await;
+    assert_ok(&w.get(&one, &record_uri).await, "inside the grant");
+    for (method, uri, body) in [
+        ("GET", format!("/api/v1/projects/{}/forms", w.p2), None),
+        ("GET", format!("/api/v1/forms/{}", w.f2), None),
+        ("GET", format!("/api/v1/forms/{}/records", w.f2), None),
+        (
+            "POST",
+            format!("/api/v1/forms/{}/records", w.f2),
+            Some(json!({"values": {}})),
+        ),
+        ("GET", format!("/api/v1/form-records/{}", w.r2), None),
+        (
+            "PATCH",
+            format!("/api/v1/form-records/{}", w.r2),
+            Some(json!({"values": {"text": "no"}})),
+        ),
+        ("GET", format!("/api/v1/forms/{}", w.f3), None),
+        ("GET", format!("/api/v1/form-records/{}", w.r3), None),
+    ] {
+        let reply = w.send(method, &uri, Some(&one.token), &[], body.as_ref()).await;
+        assert_target_refused(&reply, &format!("{method} {uri}"));
+    }
+    assert_eq!(
+        count(
+            &w.db,
+            "SELECT COUNT(*) AS n FROM form_records WHERE form_id = $1",
+            vec![w.f2.into()]
+        )
+        .await,
+        1
+    );
+
+    // The connection acts as a member whatever the user's own role is: the member policy of the
+    // form applies, field by field, while the owner's own session is not restricted by it.
+    exec(
+        &w.db,
+        "INSERT INTO form_permissions (workspace_id, project_id, form_id, subject_type, subject_id, policy) \
+         VALUES ($1, $2, $3, 'role', 'member', $4)",
+        vec![
+            w.ws1.into(),
+            w.p1.into(),
+            w.f1.into(),
+            json!({"fields": {"salary": {"read": false, "write": false}}}).into(),
+        ],
+    )
+    .await;
+    let all = w.session(w.alice, w.ws1, &[], &["forms:read", "forms:write"]).await;
+    for (name, reply) in [
+        ("record", w.get(&all, &record_uri).await),
+        ("records", w.get(&all, &records_uri).await),
+    ] {
+        assert_ok(&reply, name);
+        assert!(
+            !reply.text().contains("9000"),
+            "{name}: a denied field reached a connection: {}",
+            reply.text()
+        );
+    }
+    let own = send_to(&w.router, "GET", &record_uri, Some(&World::jwt(w.alice)), &[], None).await;
+    assert!(
+        own.text().contains("9000"),
+        "the owner's own session still reads the field: {}",
+        own.text()
+    );
+    for (method, uri, body) in [
+        ("POST", records_uri.clone(), json!({"values": {"salary": "1"}})),
+        ("PATCH", record_uri.clone(), json!({"values": {"salary": "2"}})),
+    ] {
+        let reply = w.send(method, &uri, Some(&all.token), &[], Some(&body)).await;
+        assert_eq!(reply.code(), Some(403), "{method} {uri}: {}", reply.text());
+    }
+    assert_eq!(records_of_f1().await, 2);
+    exec(
+        &w.db,
+        "UPDATE form_permissions SET policy = $2 WHERE form_id = $1",
+        vec![
+            w.f1.into(),
+            json!({"actions": {"record.create": false, "record.update": false}}).into(),
+        ],
+    )
+    .await;
+    for (method, uri, body) in [
+        ("POST", records_uri.clone(), json!({"values": {"text": "x"}})),
+        ("PATCH", record_uri.clone(), json!({"values": {"text": "y"}})),
+    ] {
+        let reply = w.send(method, &uri, Some(&all.token), &[], Some(&body)).await;
+        assert_eq!(reply.code(), Some(403), "{method} {uri}: {}", reply.text());
+    }
+    assert_eq!(records_of_f1().await, 2);
     w.finish().await;
 }

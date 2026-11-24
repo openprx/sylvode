@@ -163,6 +163,9 @@ mod notification_api_tests;
 mod sprint_api_tests;
 
 #[cfg(test)]
+mod webhook_events_api_tests;
+
+#[cfg(test)]
 mod workflow_api_tests;
 
 #[cfg(test)]

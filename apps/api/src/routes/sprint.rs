@@ -271,6 +271,29 @@ async fn ensure_name_free(
     Ok(())
 }
 
+/// The webhook context of a sprint event; `changes` and `extra_data` are set by the caller that has them.
+const fn sprint_event(
+    event: WebhookEvent,
+    workspace_id: Uuid,
+    project_id: Uuid,
+    actor_id: Uuid,
+    sprint_id: Uuid,
+) -> TriggerContext {
+    TriggerContext {
+        event,
+        workspace_id,
+        project_id,
+        actor_id,
+        issue_id: None,
+        comment_id: None,
+        label_id: None,
+        sprint_id: Some(sprint_id),
+        changes: None,
+        mentions: Vec::new(),
+        extra_data: None,
+    }
+}
+
 /// POST /`api/v1/projects/:project_id/sprints` - Create sprint
 pub async fn create_sprint(
     State(state): State<AppState>,
@@ -279,7 +302,7 @@ pub async fn create_sprint(
     Path(project_id): Path<Uuid>,
     Json(req): Json<CreateSprintRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let _user_id = Uuid::parse_str(&claims.sub).map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))?;
+    let user_id = Uuid::parse_str(&claims.sub).map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))?;
     let extensions = build_auth_extensions(claims, bot);
 
     if req.name.trim().is_empty() {
@@ -354,6 +377,17 @@ pub async fn create_sprint(
     .await
     .map_err(rule_violation)?;
     tx.commit().await.map_err(rule_violation)?;
+
+    trigger_webhooks(
+        state.clone(),
+        sprint_event(
+            WebhookEvent::SprintCreated,
+            project.workspace_id,
+            project_id,
+            user_id,
+            sprint_id,
+        ),
+    );
 
     Ok(ApiResponse::success(SprintResponse {
         id: sprint_id,
@@ -524,6 +558,8 @@ pub async fn update_sprint(
     struct Current {
         project_id: Uuid,
         workspace_id: Uuid,
+        name: String,
+        description: String,
         status: String,
         start_date: Option<Date>,
         end_date: Option<Date>,
@@ -532,7 +568,7 @@ pub async fn update_sprint(
     let current = Current::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
-            SELECT s.project_id, p.workspace_id, s.status, s.start_date, s.end_date
+            SELECT s.project_id, p.workspace_id, s.name, s.description, s.status, s.start_date, s.end_date
             FROM sprints s
             INNER JOIN projects p ON s.project_id = p.id
             WHERE s.id = $1
@@ -617,6 +653,35 @@ pub async fn update_sprint(
         ensure_name_free(&tx, current.project_id, name, Some(sprint_id)).await?;
     }
 
+    // What the request actually changes in the sprint's own fields, old and new, for `sprint.updated`.
+    let mut field_changes = serde_json::Map::new();
+    if let Some(name) = requested_name.as_ref().filter(|name| **name != current.name) {
+        field_changes.insert(
+            "name".to_string(),
+            serde_json::json!({"old": current.name, "new": name}),
+        );
+    }
+    if let Some(description) = requested_description
+        .as_ref()
+        .filter(|description| **description != current.description)
+    {
+        field_changes.insert(
+            "description".to_string(),
+            serde_json::json!({"old": current.description, "new": description}),
+        );
+    }
+    for (key, requested, old) in [
+        ("start_date", requested_start, current.start_date),
+        ("end_date", requested_end, current.end_date),
+    ] {
+        if let Some(new) = requested.filter(|new| *new != old) {
+            field_changes.insert(
+                key.to_string(),
+                serde_json::json!({"old": old.map(|d| d.to_string()), "new": new.map(|d| d.to_string())}),
+            );
+        }
+    }
+
     let mut updates = Vec::new();
     let mut values: Vec<sea_orm::Value> = Vec::new();
     let mut push = |column: &str, value: sea_orm::Value| {
@@ -658,6 +723,7 @@ pub async fn update_sprint(
         let event = match new_status.as_str() {
             "active" => Some(WebhookEvent::SprintStarted),
             "completed" => Some(WebhookEvent::SprintCompleted),
+            "cancelled" => Some(WebhookEvent::SprintCancelled),
             _ => None,
         };
         if let Some(event) = event {
@@ -684,6 +750,21 @@ pub async fn update_sprint(
                 },
             );
         }
+    }
+    if !field_changes.is_empty() {
+        trigger_webhooks(
+            state.clone(),
+            TriggerContext {
+                changes: Some(serde_json::Value::Object(field_changes)),
+                ..sprint_event(
+                    WebhookEvent::SprintUpdated,
+                    current.workspace_id,
+                    current.project_id,
+                    user_id,
+                    sprint_id,
+                )
+            },
+        );
     }
     if let Some((items, target)) = &moved {
         emit_moves(&state, scope, items, *target);
@@ -739,6 +820,10 @@ pub async fn delete_sprint(
     };
     let tx = state.db.begin().await?;
     let items = lock_all_items(&tx, sprint_id).await?;
+    // The sprint as it was, for the event: after the delete there is nothing left to read.
+    let before = load_sprint(&tx, sprint_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("sprint not found".to_string()))?;
     move_items(&tx, scope, &items, None, Timestamp::now()).await?;
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -749,6 +834,28 @@ pub async fn delete_sprint(
     tx.commit().await?;
 
     emit_moves(&state, scope, &items, None);
+    trigger_webhooks(
+        state.clone(),
+        TriggerContext {
+            extra_data: Some(serde_json::json!({
+                "id": before.id.to_string(),
+                "name": before.name,
+                "description": before.description,
+                "status": before.status,
+                "start_date": before.start_date.map(|d| d.to_string()),
+                "end_date": before.end_date.map(|d| d.to_string()),
+                "created_at": before.created_at.to_rfc3339(),
+                "updated_at": before.updated_at.to_rfc3339(),
+            })),
+            ..sprint_event(
+                WebhookEvent::SprintDeleted,
+                sprint.workspace_id,
+                sprint.project_id,
+                user_id,
+                sprint_id,
+            )
+        },
+    );
 
     Ok(ApiResponse::ok())
 }

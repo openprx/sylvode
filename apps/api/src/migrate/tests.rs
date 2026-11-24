@@ -133,6 +133,7 @@ fn the_adoption_cutoff_names_a_registered_migration() {
             "0121_milestones.sql",
             "0122_bot_project_access.sql",
             "0123_work_item_page_links.sql",
+            "0125_oauth_client_scopes.sql",
             "0126_retire_unused_columns.sql",
             "0127_retire_legacy_objects.sql",
             "0130_tmux_cli_codex.sql",
@@ -282,7 +283,8 @@ fn only_rerunnable_probes_have_no_statement() {
             "0021_fix_cascade.sql",
             "0035_project_type_two_lanes.sql",
             "0105_token_bot_entity_type.sql",
-            "0127_retire_legacy_objects.sql"
+            "0125_oauth_client_scopes.sql",
+            "0127_retire_legacy_objects.sql",
         ],
         "a migration may only skip its probe when re-executing it is a no-op"
     );

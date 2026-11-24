@@ -3,8 +3,8 @@
 //! Two primitives:
 //!
 //! * a database fixed window, shared by every API process, for the endpoints that face the
-//!   internet (`authorize`, `decision`, `token_ip`, `token_grant`, `revoke`, `stream_connect`,
-//!   `embed_ticket`). One statement per hit, keyed by the SHA-256 of an address or a grant or user
+//!   internet (`authorize`, `decision`, `token_ip`, `token_grant`, `revoke`, `stream_connect`).
+//!   One statement per hit, keyed by the SHA-256 of an address or a grant or user
 //!   id, so no address is stored in readable form;
 //! * an in-process token bucket per grant for delegated API requests (600 per minute, burst 60),
 //!   which needs no round trip.
@@ -47,8 +47,6 @@ pub enum RateBucket {
     Revoke,
     /// Event stream connections, per grant.
     StreamConnect,
-    /// Embed tickets, per grant.
-    EmbedTicket,
     /// Failed authentications on the inbound event endpoint, per client address.
     InboundAuthFail,
     /// Events accepted from one inbound source per minute.
@@ -60,14 +58,13 @@ pub enum RateBucket {
 }
 
 impl RateBucket {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 10] = [
         Self::Authorize,
         Self::Decision,
         Self::TokenIp,
         Self::TokenGrant,
         Self::Revoke,
         Self::StreamConnect,
-        Self::EmbedTicket,
         Self::InboundAuthFail,
         Self::InboundSourceMinute,
         Self::InboundSourceDay,
@@ -82,7 +79,6 @@ impl RateBucket {
             Self::TokenGrant => "token_grant",
             Self::Revoke => "revoke",
             Self::StreamConnect => "stream_connect",
-            Self::EmbedTicket => "embed_ticket",
             Self::InboundAuthFail => "inbound_auth_fail",
             Self::InboundSourceMinute => "inbound_source_minute",
             Self::InboundSourceDay => "inbound_source_day",
@@ -103,7 +99,7 @@ impl RateBucket {
         match self {
             Self::Authorize | Self::Revoke | Self::InboundAuthFail => 30,
             Self::Decision | Self::StreamConnect => 10,
-            Self::TokenIp | Self::EmbedTicket => 60,
+            Self::TokenIp => 60,
             Self::TokenGrant => 20,
             Self::InboundSourceMinute => 120,
             Self::InboundSourceDay => 20_000,
@@ -371,7 +367,6 @@ mod tests {
             (RateBucket::TokenGrant, "token_grant", 20),
             (RateBucket::Revoke, "revoke", 30),
             (RateBucket::StreamConnect, "stream_connect", 10),
-            (RateBucket::EmbedTicket, "embed_ticket", 60),
             (RateBucket::InboundAuthFail, "inbound_auth_fail", 30),
             (RateBucket::InboundSourceMinute, "inbound_source_minute", 120),
             (RateBucket::InboundSourceDay, "inbound_source_day", 20_000),

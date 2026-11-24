@@ -299,7 +299,7 @@ The full description, the event format and the rule fields are in [Alerts](alert
 | Method | Path | Who |
 |---|---|---|
 | POST | `/api/v1/inbound/events` | Inbound source token (`svi_`) only |
-| GET, POST | `/api/v1/projects/{project_id}/inbound-sources` | Workspace owner or admin |
+| GET, POST | `/api/v1/projects/{project_id}/inbound-sources` | Workspace owner or admin (the list answers `{sources, inbound_enabled, endpoint_url}`) |
 | GET, PATCH, DELETE | `/api/v1/inbound-sources/{id}` | Workspace owner or admin |
 | POST | `/api/v1/inbound-sources/{id}/rotate` | Workspace owner or admin |
 | GET | `/api/v1/inbound-sources/{id}/events` | Workspace owner or admin |
@@ -391,6 +391,8 @@ sprint as `sprint_changed` and a removal from a milestone as `milestone_changed`
 change or delete it. A sprint has `name`, `description`, `start_date` and `end_date` (`YYYY-MM-DD` or
 `null`) and `status`.
 
+- Sprints send the webhook events `sprint.created`, `sprint.updated`, `sprint.started`,
+  `sprint.completed`, `sprint.cancelled` and `sprint.deleted` (see [Webhooks and events](webhooks.md#events)).
 - A new sprint is `planned` (the default) or `active`; any other status is `400`.
 - `status` moves `planned` to `active`, `active` to `completed`, and `planned` or `active` to
   `cancelled`. Completed and cancelled sprints are final, and `active` back to `planned` is
@@ -658,7 +660,7 @@ The remaining endpoints follow the conventions above. Their paths, relative to `
 | Projects and work items | `/workspaces/{workspace_id}/projects`, `/projects/{id}`, `/projects/{project_id}/issues`, `/issues/{id}`, `/issues/{issue_id}/comments`, `/comments/{id}`, `/projects/{project_id}/board`, `/projects/{project_id}/sprints`, `/sprints/{id}`, `/workspaces/{workspace_id}/labels`, `/labels/{id}`, `/my/issues`, `/my/activities` |
 | Workflows | `/workspaces/{workspace_id}/workflows`, `/workflows/{workflow_id}`, `/workflow-states/{state_id}`, `/projects/{project_id}/workflow` |
 | Project types, templates and context | `/project-types`, `/scenario-templates`, `/projects/{project_id}/resources`, `/projects/{project_id}/context`, `/projects/{project_id}/release-readiness`, `/projects/{project_id}/check-results`, `/check-results/{check_result_id}` |
-| Forms | `/projects/{project_id}/forms`, `/forms/{form_id}`, `/form-records/{record_id}`, `/form-views/{view_id}`, `/form-attachments/{attachment_id}`, `/form-export-jobs/{job_id}`, `/form-import-jobs/{job_id}`, `/form-attachment-package-jobs/{job_id}`, `/form-import-mapping-templates/{template_id}`; see the [forms guide](../guide/forms.md); `GET /form-attachments/{attachment_id}` reads one attachment (archived ones too) with its `form_id` and `project_id` |
+| Forms | `/projects/{project_id}/forms`, `/forms/{form_id}`, `/form-records/{record_id}`, `/form-views/{view_id}`, `/form-attachments/{attachment_id}`, `/form-export-jobs/{job_id}`, `/form-import-jobs/{job_id}`, `/form-attachment-package-jobs/{job_id}`, `/form-import-mapping-templates/{template_id}`; see the [forms guide](../guide/forms.md); `GET /form-attachments/{attachment_id}` reads one attachment (archived ones too) with its `form_id` and `project_id`; a delegated token with `forms:read` or `forms:write` reaches the form list, one form, its records, one record, and creating and updating a record, and nothing else of forms (see [OAuth](oauth.md#calling-the-api-with-a-delegated-token)) |
 | Plugins | `/projects/{project_id}/plugins`, `/plugins/{plugin_id}`, `/projects/{project_id}/plugin-packages`, `/me/form-plugin-packages`; see [plugins](../plugins/README.md) |
 | Governance | `/proposals`, `/proposal-comments/{id}`, `/proposal-templates`, `/decisions`, `/decision-domains`, `/projects/{project_id}/domains`, `/governance/config`, `/governance/audit-logs`, `/trust-scores`, `/users/{id}/trust`, `/impact-reviews`, `/vetoers`, `/projects/{pid}/audit-reports`, `/ai-learning/{review_id}/feedback`, `/projects/{project_id}/ai-participants/{bot_id}/learning`; see the [governance guide](../guide/governance.md) |
 | Flow | `/workspaces/{workspace_id}/flow/...`, `/workspaces/{workspace_id}/features/flow`, `/flow/...`, `/collab/...`, and `/api/v2/flow/`; see the [Flow guide](../guide/flow.md) and the Flow command groups of the [`sylvode` command line](cli.md) |

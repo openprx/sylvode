@@ -126,27 +126,108 @@ impl From<Model> for WebhookResponse {
     }
 }
 
-// Available webhook events
+// Available webhook events, in the order of the web UI's groups (`WEBHOOK_EVENT_GROUPS`).
+//
+// Issue, comment, label, sprint, milestone, AI, governance, project and member events are sent by
+// `webhook_trigger`. The form record events and the Flow events are delivered by the event
+// dispatcher (`events::dispatcher`), which retries and carries the `openpr.event.v1` envelope.
 pub const WEBHOOK_EVENTS: &[&str] = &[
+    // Work items
     "issue.created",
     "issue.updated",
     "issue.assigned",
     "issue.deleted",
     "issue.state_changed",
+    // Comments
     "comment.created",
     "comment.updated",
     "comment.deleted",
+    // Labels
     "label.added",
     "label.removed",
+    // Sprints and milestones
     "sprint.started",
     "sprint.completed",
+    "sprint.created",
+    "sprint.updated",
+    "sprint.cancelled",
+    "sprint.deleted",
+    "milestone.created",
+    "milestone.updated",
+    "milestone.deleted",
+    // AI tasks
     "ai.task_completed",
     "ai.task_failed",
+    // Governance
+    "proposal.created",
+    "proposal.updated",
+    "proposal.deleted",
+    "proposal.submitted",
+    "proposal.voting_started",
+    "proposal.archived",
+    "proposal.vote_cast",
+    "veto.exercised",
+    "veto.withdrawn",
+    "escalation.started",
+    "appeal.created",
+    "governance_config.updated",
+    // Projects and members
+    "project.created",
+    "project.updated",
+    "project.deleted",
+    "member.added",
+    "member.removed",
+    // Forms (dispatcher; ids and changed field keys, never values)
+    "form.record.created",
+    "form.record.updated",
+    "form.record.archived",
+    "form.record.restored",
+    // Flow (dispatcher; each has a public payload policy in `flow::event_policy`)
+    "flow.object.created",
+    "flow.object.archived",
+    "flow.object.restored",
+    "flow.object.moved",
+    "flow.content.accepted",
+    "flow.relation.linked",
+    "flow.relation.unlinked",
+    "flow.record.created",
+    "flow.record.updated",
+    "flow.record.archived",
+    "flow.schema.changed",
+    "flow.view.created",
+    "flow.view.updated",
+    "flow.view.reordered",
+    "flow.reference.created",
+    "flow.reference.removed",
+    "flow.comment.created",
+    "flow.comment.updated",
+    "flow.comment.deleted",
+    "flow.feature.enabled",
+    "flow.feature.disabled",
 ];
 
 #[cfg(test)]
 mod tests {
     use super::WEBHOOK_EVENTS;
+
+    #[test]
+    fn the_list_has_no_duplicates() {
+        let mut seen = std::collections::BTreeSet::new();
+        for event in WEBHOOK_EVENTS {
+            assert!(seen.insert(*event), "{event} is listed twice");
+        }
+    }
+
+    /// The form events in the list are exactly the ones the dispatcher delivers.
+    #[test]
+    fn the_form_events_are_the_delivered_form_events() {
+        let listed: Vec<&str> = WEBHOOK_EVENTS
+            .iter()
+            .copied()
+            .filter(|event| event.starts_with("form."))
+            .collect();
+        assert_eq!(listed, crate::forms::event_redaction::DELIVERED_FORM_EVENT_TYPES);
+    }
 
     /// The web UI's webhook form offers exactly the events this list accepts, in this order.
     ///

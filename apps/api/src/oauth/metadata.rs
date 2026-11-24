@@ -185,7 +185,7 @@ mod tests {
             "revocation_endpoint_auth_methods_supported": ["none"],
             "scopes_supported": [
                 "projects:read", "work_items:read", "work_items:write", "forms:read", "forms:write",
-                "notifications:read", "notifications:write", "tasks:read", "surfaces:embed", "offline_access"
+                "notifications:read", "notifications:write", "tasks:read", "offline_access"
             ],
             "authorization_response_iss_parameter_supported": true,
             "client_id_metadata_document_supported": false
@@ -227,7 +227,7 @@ mod tests {
             "bearer_methods_supported": ["header"],
             "scopes_supported": [
                 "projects:read", "work_items:read", "work_items:write", "forms:read", "forms:write",
-                "notifications:read", "notifications:write", "tasks:read", "surfaces:embed"
+                "notifications:read", "notifications:write", "tasks:read"
             ],
             "resource_name": "Sylvode API"
         });

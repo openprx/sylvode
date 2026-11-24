@@ -765,7 +765,8 @@ async fn authorization_request_errors_and_what_they_create() {
             "invalid_scope",
         ),
         (
-            with(authorize_body(), "scope", json!("projects:read forms:write")),
+            // Left the vocabulary; `forms:write` is offered to the ramflux client now.
+            with(authorize_body(), "scope", json!("projects:read surfaces:embed")),
             "invalid_scope",
         ),
     ];

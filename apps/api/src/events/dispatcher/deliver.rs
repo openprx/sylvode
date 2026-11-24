@@ -360,7 +360,16 @@ pub(super) fn envelope_json(
     payload_override: Option<Value>,
 ) -> Value {
     let raw_payload = payload_override.unwrap_or_else(|| event.payload.clone());
-    let payload = crate::flow::event_policy::redact_flow_event_payload_for_delivery(&event.event_type, &raw_payload);
+    // Form record events carry ids and field keys only; every other type goes through the Flow
+    // registry and is withheld when it has no entry there.
+    let (payload, source) =
+        crate::forms::event_redaction::delivery_parts(&event.event_type, &raw_payload, &event.metadata, &event.source)
+            .unwrap_or_else(|| {
+                (
+                    crate::flow::event_policy::redact_flow_event_payload_for_delivery(&event.event_type, &raw_payload),
+                    event.source.clone(),
+                )
+            });
     let metadata = crate::flow::event_policy::redact_flow_event_metadata_for_delivery(&event.metadata);
     let mut envelope = json!({
         "version": "openpr.event.v1",
@@ -370,7 +379,7 @@ pub(super) fn envelope_json(
         "project_id": event.project_id,
         "aggregate": { "type": event.aggregate_type, "id": event.aggregate_id },
         "actor_id": event.actor_id,
-        "source": event.source,
+        "source": source,
         "payload": payload,
         "metadata": metadata,
         "correlation_id": event.correlation_id,

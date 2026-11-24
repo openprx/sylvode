@@ -2,8 +2,8 @@
 
 Sylvode tells other systems about changes in two ways:
 
-- **Webhooks** push selected work item, comment, label, sprint and AI task events to an HTTP
-  endpoint as they happen.
+- **Webhooks** push selected work item, comment, label, sprint, milestone, governance, project,
+  member, form record and Flow events, and AI task events, to an HTTP endpoint as they happen.
 - **The business event ledger** records business writes. It is read on demand; nothing is pushed
   from it.
 
@@ -70,8 +70,23 @@ A webhook can subscribe to these events:
 | `label.removed` | A label is removed from a work item that had it, and once for every work item that had it when the label is deleted. | `issue`, `label` (the name and colour it had) |
 | `sprint.started` | A sprint starts. | `sprint` (`id`, `name`, `description`, `status`, `start_date`, `end_date`, timestamps) |
 | `sprint.completed` | A sprint is completed. | `sprint`, `rollover` (`moved_count`, `target_sprint_id`: what happened to the unfinished work items) |
+| `sprint.created` | A sprint is created (planned or active). | `sprint` |
+| `sprint.updated` | A sprint's name, description, start date or end date change to another value. A status change alone does not send it. | `sprint`, `changes` (each changed field as `old` and `new`) |
+| `sprint.cancelled` | A sprint is cancelled. | `sprint`, `rollover` |
+| `sprint.deleted` | A sprint is deleted. | `sprint` as it was before the delete |
+| `milestone.created` | A workspace milestone is created. | `milestone` |
+| `milestone.updated` | A milestone's name, description, due date or status change. | `milestone`, `changes` |
+| `milestone.deleted` | A milestone is deleted. | `milestone` as it was, `cleared_item_count` (work items that had it) |
 | `ai.task_completed` | A bot task completes. | `task_id`, `task_type`, `status`, `reference_type`, `reference_id`, `result` |
 | `ai.task_failed` | A bot task fails for good. | `task_id`, `task_type`, `status`, `reference_type`, `reference_id`, `error_message` |
+| `proposal.created`, `proposal.updated`, `proposal.deleted`, `proposal.submitted`, `proposal.voting_started`, `proposal.archived`, `proposal.vote_cast` | A governance proposal is created, edited, deleted, submitted, opened for voting, archived, or receives a vote. | The proposal and what changed |
+| `veto.exercised`, `veto.withdrawn` | A vetoer exercises or withdraws a veto on a proposal. | The proposal and the veto |
+| `escalation.started`, `appeal.created` | A decision is escalated, or an appeal against it is filed. | The proposal and the escalation or appeal |
+| `governance_config.updated` | The workspace's governance configuration changes. | The configuration and what changed |
+| `project.created`, `project.updated`, `project.deleted` | A project is created, changed or deleted. | The project |
+| `member.added`, `member.removed` | A person is added to, or removed from, the workspace. | The member |
+| `form.record.created`, `form.record.updated`, `form.record.archived`, `form.record.restored` | A form record is created, edited, archived or restored. Sent by the [event dispatcher](#form-and-flow-events). | `form_id`, `form_key`, `record_id`, `changed_fields` (keys only) |
+| `flow.object.created`, `flow.object.archived`, `flow.object.restored`, `flow.object.moved`, `flow.content.accepted`, `flow.relation.linked`, `flow.relation.unlinked`, `flow.record.created`, `flow.record.updated`, `flow.record.archived`, `flow.schema.changed`, `flow.view.created`, `flow.view.updated`, `flow.view.reordered`, `flow.reference.created`, `flow.reference.removed`, `flow.comment.created`, `flow.comment.updated`, `flow.comment.deleted`, `flow.feature.enabled`, `flow.feature.disabled` | Something changes in the workspace's Flow pages, collections or settings. Sent by the [event dispatcher](#form-and-flow-events). | Ids, enums and counts only |
 
 An `issue` object has `id`, `key`, `title`, `description`, `state`, `priority`, `assignee_ids`,
 `label_ids`, `sprint_id`, `milestone_id`, `page_links`, `due_at`, `created_at` and `updated_at`. `page_links` is
@@ -84,12 +99,15 @@ with its author and its original timestamps. In these payloads `key` is the work
 work item's number, for example `WEB-12`.
 
 The work items that completing, cancelling or deleting a sprint moves out of it each send an
-`issue.updated` with `changes.sprint_id` (`old`, `new`), after `sprint.completed`. Cancelling a sprint
-sends no sprint event of its own.
+`issue.updated` with `changes.sprint_id` (`old`, `new`), after the sprint's own event
+(`sprint.completed`, `sprint.cancelled` or `sprint.deleted`).
 
 An alert rule that opens a work item also sends `issue.created` for it (see [Alerts](alerts.md)).
 
 ## Deliveries
+
+The form record and Flow events use a different delivery path, described under
+[Form and Flow events](#form-and-flow-events). Every other event is sent as described here.
 
 Each event is sent once to every active webhook of the workspace that subscribes to it, as an HTTP
 `POST` with a JSON body:
@@ -157,6 +175,71 @@ def verify(secret: str, body: bytes, header: str) -> bool:
 
 The body carries no signed timestamp, so use `X-Webhook-Delivery` to discard a delivery seen
 before.
+
+## Form and Flow events
+
+`form.record.*` and `flow.*` events are delivered by the event dispatcher, not by the path above.
+They have retries and their own body, and they are sent to the same webhooks, which subscribe to
+them in the same `events` list.
+
+The body is a delivery wrapper around the event envelope:
+
+```json
+{
+  "delivery": { "id": "8f1d6c52-...", "attempt": 1, "coalesced": false },
+  "event": {
+    "version": "sylvode.event.v1",
+    "event_id": "...",
+    "event_type": "form.record.updated",
+    "workspace_id": "...",
+    "project_id": "...",
+    "aggregate": { "type": "form.staff", "id": "<record id>" },
+    "actor_id": "...",
+    "source": { "type": "user", "actor_id": "..." },
+    "payload": {
+      "form_id": "...",
+      "form_key": "staff",
+      "record_id": "...",
+      "changed_fields": ["salary"]
+    },
+    "metadata": {},
+    "correlation_id": null,
+    "causation_id": null,
+    "created_at": "2026-11-24T09:30:12.418Z"
+  }
+}
+```
+
+- `delivery.id` stays the same across the retries of one delivery; `attempt` counts them from 1.
+  Flow content events that arrive in quick succession for one document can be sent as one delivery
+  (`coalesced: true`, with `delivery.source_event_ids`).
+- A form record payload names the form, the record and the keys of the fields that changed
+  (`changed_fields`: for a new record every field that has a value, for an edit the fields whose
+  value differs, an empty list for an archive and a restore). It never carries a field value, a
+  record title or any other text of the record: a webhook is read by the whole workspace, so the
+  field permissions of individual people cannot be applied to it. A receiver that needs the values
+  reads the record through the API with its own credentials.
+- A Flow payload carries ids, enums and counts, such as the object id and type, the collection and
+  record ids, the ids of the changed blocks. No page text and no title. An event type that has no
+  public payload declared is sent with `{"field_permission_redacted": true}` instead of a payload.
+- `source` keeps only `type`, `actor_id` and `origin_event`.
+
+Request headers:
+
+| Header | Value |
+|---|---|
+| `Content-Type` | `application/json` |
+| `User-Agent` | `Sylvode-Webhook/1.0` |
+| `X-Webhook-Signature` | `sha256=<hex>`: HMAC-SHA256 of the raw request body with the webhook secret, as for the other events. |
+| `X-Sylvode-Delivery-Id` | The delivery id (`delivery.id`). |
+
+A 2xx answer counts as success. Anything else, and a transport error, is retried: after the first
+failure the dispatcher waits 30 seconds, then 60, and so on in steps of 30 seconds up to 5 minutes,
+and gives up after 10 attempts. The delivery id does not change, so a receiver can discard a
+delivery it has already handled. The request times out after 10 seconds. The same
+[outbound address policy](#outbound-address-policy) applies, checked before every attempt. These
+deliveries are not listed in the webhook's delivery log (`.../deliveries`), which records the
+other events.
 
 ## Outbound address policy
 

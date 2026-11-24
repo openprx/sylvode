@@ -107,10 +107,26 @@ impl World {
     /// Calls a management route. Returns the HTTP status and the JSON body; the API's own routes
     /// carry a refusal in the body's `code`.
     async fn call(&self, method: Method, uri: &str, token: Option<&str>, body: Option<&Value>) -> (StatusCode, Value) {
+        let (status, _, body) = self.call_raw(method, uri, token, body, None).await;
+        (status, body)
+    }
+
+    /// [`Self::call`] with the response headers, and an `Origin` header when one is given.
+    async fn call_raw(
+        &self,
+        method: Method,
+        uri: &str,
+        token: Option<&str>,
+        body: Option<&Value>,
+        origin: Option<&str>,
+    ) -> (StatusCode, axum::http::HeaderMap, Value) {
         let router = router(&self.state).with_state(self.state.clone());
         let mut builder = Request::builder().method(method).uri(uri);
         if let Some(token) = token {
             builder = builder.header("authorization", format!("Bearer {token}"));
+        }
+        if let Some(origin) = origin {
+            builder = builder.header("origin", origin);
         }
         let request = match body {
             Some(body) => builder
@@ -121,8 +137,9 @@ impl World {
         };
         let response = router.oneshot(request).await.unwrap();
         let status = response.status();
+        let headers = response.headers().clone();
         let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+        (status, headers, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
     }
 
     async fn as_admin(&self, method: Method, uri: &str, body: Option<&Value>) -> Value {
@@ -1199,5 +1216,328 @@ async fn the_alert_of_a_work_item_is_readable_by_members_and_no_one_else() {
             .iter()
             .all(|entry| !entry.pattern.ends_with("/alert"))
     );
+    w.scratch.drop_self().await;
+}
+
+#[tokio::test]
+async fn the_source_list_carries_the_switch_the_address_and_who_the_source_acts_for() {
+    let w = world!("adm_list_shape");
+    let admin_token = w.jwt(w.admin);
+
+    // No origin, no `[server] public_url`, no `[oauth] issuer`: the address is unknown.
+    let (_, _, answer) = w
+        .call_raw(Method::GET, &w.sources_uri(), Some(&admin_token), None, None)
+        .await;
+    assert_eq!(answer["code"], 0, "{answer}");
+    let data = &answer["data"];
+    assert_eq!(data["inbound_enabled"], json!(crate::config::runtime().inbound.enabled));
+    assert!(data["endpoint_url"].is_null(), "{data}");
+    let sources = data["sources"].as_array().expect("sources is a list");
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0]["id"], json!(w.source_id));
+    assert_eq!(sources[0]["suspended"], false);
+    assert_eq!(sources[0]["acting_user_name"], "admin");
+
+    // The request's origin names the address.
+    let (_, _, answer) = w
+        .call_raw(
+            Method::GET,
+            &w.sources_uri(),
+            Some(&admin_token),
+            None,
+            Some("https://sv.example.test"),
+        )
+        .await;
+    assert_eq!(
+        answer["data"]["endpoint_url"],
+        "https://sv.example.test/api/v1/inbound/events"
+    );
+    // Something that is not an http(s) origin names nothing.
+    let (_, _, answer) = w
+        .call_raw(Method::GET, &w.sources_uri(), Some(&admin_token), None, Some("null"))
+        .await;
+    assert!(answer["data"]["endpoint_url"].is_null());
+
+    // The single source answer carries the same two fields.
+    let one = w
+        .as_admin(Method::GET, &format!("/api/v1/inbound-sources/{}", w.source_id), None)
+        .await;
+    assert_eq!(one["data"]["suspended"], false);
+    assert_eq!(one["data"]["acting_user_name"], "admin");
+
+    // A person who is no longer an owner or admin, or no longer active, or removed: suspended. A
+    // second administrator reads the list from here on.
+    let second = Uuid::new_v4();
+    exec(
+        w.db(),
+        "INSERT INTO users (id, email, password_hash, name, role, is_active) VALUES ($1, $2, '!', 'second', 'user', true)",
+        vec![second.into(), format!("{second}@inbound.test").into()],
+    )
+    .await;
+    exec(
+        w.db(),
+        "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'owner')",
+        vec![w.tenant.workspace_id.into(), second.into()],
+    )
+    .await;
+    let admin_token = w.jwt(second);
+    exec(
+        w.db(),
+        "UPDATE workspace_members SET role = 'member' WHERE user_id = $1",
+        vec![w.admin.into()],
+    )
+    .await;
+    let after = w.as_admin_listing(&admin_token).await;
+    assert_eq!(after["suspended"], true, "demoted to member: {after}");
+    assert_eq!(after["acting_user_name"], "admin");
+    exec(
+        w.db(),
+        "UPDATE workspace_members SET role = 'owner' WHERE user_id = $1",
+        vec![w.admin.into()],
+    )
+    .await;
+    let after = w.as_admin_listing(&admin_token).await;
+    assert_eq!(after["suspended"], false, "an owner stands behind it: {after}");
+    exec(
+        w.db(),
+        "UPDATE users SET is_active = false WHERE id = $1",
+        vec![w.admin.into()],
+    )
+    .await;
+    let after = w.as_admin_listing(&admin_token).await;
+    assert_eq!(
+        after["suspended"], true,
+        "an inactive account does not stand behind it: {after}"
+    );
+    exec(
+        w.db(),
+        "UPDATE users SET is_active = true WHERE id = $1",
+        vec![w.admin.into()],
+    )
+    .await;
+    exec(
+        w.db(),
+        "UPDATE inbound_sources SET acting_user_id = NULL WHERE id = $1",
+        vec![w.source_id.into()],
+    )
+    .await;
+    let after = w.as_admin_listing(&admin_token).await;
+    assert_eq!(after["suspended"], true, "nobody stands behind it: {after}");
+    assert!(after["acting_user_name"].is_null());
+    w.scratch.drop_self().await;
+}
+
+impl World {
+    /// The only source of the project as the list shows it, read with `token`.
+    async fn as_admin_listing(&self, token: &str) -> Value {
+        let (_, answer) = self.call(Method::GET, &self.sources_uri(), Some(token), None).await;
+        answer["data"]["sources"][0].clone()
+    }
+}
+
+#[tokio::test]
+async fn create_and_rotate_answer_with_no_store_and_the_address() {
+    let w = world!("adm_no_store");
+    let token = w.jwt(w.admin);
+    let origin = Some("http://127.0.0.1:18097");
+    let (status, headers, created) = w
+        .call_raw(
+            Method::POST,
+            &w.sources_uri(),
+            Some(&token),
+            Some(&json!({ "name": "edge-03" })),
+            origin,
+        )
+        .await;
+    assert_eq!(
+        (status, created["code"].clone()),
+        (StatusCode::OK, json!(0)),
+        "{created}"
+    );
+    assert_eq!(headers["cache-control"], "no-store");
+    assert_eq!(
+        created["data"]["endpoint_url"],
+        "http://127.0.0.1:18097/api/v1/inbound/events"
+    );
+    assert!(
+        created["data"]["token"]
+            .as_str()
+            .is_some_and(|text| text.starts_with("svi_"))
+    );
+    let id = created["data"]["source"]["id"].as_str().unwrap().to_owned();
+
+    let (_, headers, rotated) = w
+        .call_raw(
+            Method::POST,
+            &format!("/api/v1/inbound-sources/{id}/rotate"),
+            Some(&token),
+            None,
+            origin,
+        )
+        .await;
+    assert_eq!(rotated["code"], 0, "{rotated}");
+    assert_eq!(headers["cache-control"], "no-store");
+    assert_eq!(
+        rotated["data"]["endpoint_url"],
+        "http://127.0.0.1:18097/api/v1/inbound/events"
+    );
+    // Without an origin the address is unknown, and the answer still says so.
+    let (_, headers, rotated) = w
+        .call_raw(
+            Method::POST,
+            &format!("/api/v1/inbound-sources/{id}/rotate"),
+            Some(&token),
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(headers["cache-control"], "no-store");
+    assert!(rotated["data"]["endpoint_url"].is_null());
+    // A refusal is not cached either way; it carries no secret.
+    let member = w.jwt(w.tenant.member_id);
+    let (_, _, refused) = w
+        .call_raw(
+            Method::POST,
+            &format!("/api/v1/inbound-sources/{id}/rotate"),
+            Some(&member),
+            None,
+            origin,
+        )
+        .await;
+    assert_eq!(refused["code"], 403);
+    assert!(refused["data"].is_null() || refused["data"].get("token").is_none());
+    w.scratch.drop_self().await;
+}
+
+#[tokio::test]
+async fn an_event_row_names_the_work_item_of_its_alert() {
+    let w = world!("adm_event_work_item");
+    // A high event opens an alert and a work item; a medium one matches no rule and opens none.
+    assert_eq!(w.post(&w.event("wi-1", "k1", "high")).await.0, StatusCode::ACCEPTED);
+    assert_eq!(w.post(&w.event("wi-2", "k2", "medium")).await.0, StatusCode::ACCEPTED);
+    let answer = w
+        .as_admin(
+            Method::GET,
+            &format!("/api/v1/inbound-sources/{}/events", w.source_id),
+            None,
+        )
+        .await;
+    assert_eq!(answer["code"], 0, "{answer}");
+    let rows = answer["data"].as_array().unwrap();
+    let opened = rows
+        .iter()
+        .find(|row| row["event_id"] == "wi-1")
+        .expect("the high event");
+    let skipped = rows
+        .iter()
+        .find(|row| row["event_id"] == "wi-2")
+        .expect("the medium event");
+    assert!(
+        skipped["alert_id"].is_null() && skipped["work_item"].is_null(),
+        "{skipped}"
+    );
+
+    let item = w
+        .scratch
+        .db
+        .query_one(sea_orm::Statement::from_string(
+            sea_orm::DbBackend::Postgres,
+            "SELECT w.id, p.key || '-' || w.sequence_number::text AS identifier FROM inbound_alerts a \
+               JOIN work_items w ON w.id = a.work_item_id JOIN projects p ON p.id = w.project_id"
+                .to_owned(),
+        ))
+        .await
+        .unwrap()
+        .expect("the alert has a work item");
+    let (id, identifier): (Uuid, String) = (item.try_get("", "id").unwrap(), item.try_get("", "identifier").unwrap());
+    assert_eq!(opened["work_item"], json!({ "id": id, "identifier": identifier }));
+    assert!(identifier.contains('-'));
+    w.scratch.drop_self().await;
+}
+
+#[tokio::test]
+async fn the_rule_test_can_include_an_unsaved_rule_and_writes_nothing() {
+    let w = world!("adm_rule_test_draft");
+    let uri = format!("{}/test", w.rules_uri());
+    let sample = |severity: &str| {
+        let mut event = w.event("sample-1", "k", severity);
+        event["kind"] = json!("waf.attack_detected");
+        event
+    };
+    let ask = |body: Value| {
+        let uri = uri.clone();
+        let w = &w;
+        async move { w.as_admin(Method::POST, &uri, Some(&body)).await }
+    };
+    let rules_before = footprint(&w).await;
+    let saved = w.n("SELECT count(*) AS count FROM alert_rules").await;
+
+    // Without a draft the seeded rule needs `high`: a medium event matches nothing.
+    let answer = ask(json!({ "source_id": w.source_id, "envelope": sample("medium") })).await;
+    assert_eq!(answer["data"]["matched"], false, "{answer}");
+    assert_eq!(answer["data"]["rules_evaluated"][0]["draft"], false);
+
+    // A draft that replaces nothing is evaluated after every saved rule, and it matches.
+    let draft = json!({ "name": "draft: medium to triage", "min_severity": "medium", "action": "work_item" });
+    let answer = ask(json!({ "source_id": w.source_id, "envelope": sample("medium"), "draft_rule": draft })).await;
+    assert_eq!(answer["code"], 0, "{answer}");
+    let data = &answer["data"];
+    assert_eq!(data["matched"], true);
+    assert_eq!(data["rule"]["name"], "draft: medium to triage");
+    assert_eq!(data["rule"]["draft"], true);
+    assert_eq!(data["alert"], "would_open");
+    assert_eq!(data["task"], "none");
+    let evaluated = data["rules_evaluated"].as_array().unwrap();
+    assert_eq!(evaluated.len(), 2);
+    assert_eq!(
+        (evaluated[0]["draft"].clone(), evaluated[0]["id"].clone()),
+        (json!(false), json!(w.rule_id))
+    );
+    assert_eq!(evaluated[1]["draft"], true);
+    assert!(evaluated[1]["position"].as_i64() > evaluated[0]["position"].as_i64());
+    assert_eq!(evaluated[1]["reason"], "matched");
+
+    // A draft that replaces the saved rule takes its place, id and position included.
+    let draft = json!({ "name": "seeded, edited", "min_severity": "info", "action": "work_item" });
+    let answer = ask(json!({
+        "source_id": w.source_id, "envelope": sample("medium"), "draft_rule": draft, "replaces": w.rule_id
+    }))
+    .await;
+    let data = &answer["data"];
+    assert_eq!(data["matched"], true, "{answer}");
+    assert_eq!(data["rule"]["id"], json!(w.rule_id));
+    assert_eq!(data["rule"]["name"], "seeded, edited");
+    assert_eq!(data["rule"]["draft"], true);
+    assert_eq!(data["rules_evaluated"].as_array().unwrap().len(), 1);
+    // The saved rule is untouched.
+    assert_eq!(
+        w.n("SELECT count(*) AS count FROM alert_rules WHERE name = 'seeded, edited' OR name LIKE 'draft:%'")
+            .await,
+        0
+    );
+
+    // A draft is validated like a rule write.
+    let valid = json!({ "name": "d", "action": "work_item" });
+    for bad in [
+        json!({ "source_id": w.source_id, "envelope": sample("high"), "draft_rule": { "name": " " } }),
+        json!({ "source_id": w.source_id, "envelope": sample("high"), "draft_rule": { "name": "d", "min_severity": "loud" } }),
+        json!({ "source_id": w.source_id, "envelope": sample("high"), "draft_rule": { "name": "d", "source_id": Uuid::new_v4() } }),
+        json!({ "source_id": w.source_id, "envelope": sample("high"), "draft_rule": { "name": "d", "notify_user_ids": [Uuid::new_v4()] } }),
+        json!({ "source_id": w.source_id, "envelope": sample("high"), "draft_rule": valid.clone(), "replaces": Uuid::new_v4() }),
+        json!({ "source_id": w.source_id, "envelope": sample("high"), "replaces": w.rule_id }),
+    ] {
+        let answer = ask(bad.clone()).await;
+        assert_eq!(answer["code"], 400, "{bad}: {answer}");
+    }
+
+    // Nothing was written or counted, and the saved rules are as they were.
+    assert_eq!(footprint(&w).await, rules_before);
+    assert_eq!(w.n("SELECT count(*) AS count FROM alert_rules").await, saved);
+
+    // Members and bots are refused with a draft as without.
+    let member = w.jwt(w.tenant.member_id);
+    let body = json!({ "source_id": w.source_id, "envelope": sample("high"), "draft_rule": valid });
+    let (_, answer) = w.call(Method::POST, &uri, Some(&member), Some(&body)).await;
+    assert_eq!(answer["code"], 403, "{answer}");
     w.scratch.drop_self().await;
 }

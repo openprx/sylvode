@@ -111,13 +111,17 @@ async fn a_fresh_database_gets_twelve_tables_four_triggers_and_the_ramflux_clien
             "http://[::1]/oauth/sylvode/callback"
         ]
     );
-    // The first release offers the read set and the right to stay connected, nothing that writes.
+    // Migration 0125 widens the first release's read set with the write scopes and the forms scopes.
     assert_eq!(
         client.allowed_scopes,
         [
             "projects:read",
             "work_items:read",
+            "work_items:write",
+            "forms:read",
+            "forms:write",
             "notifications:read",
+            "notifications:write",
             "tasks:read",
             "offline_access"
         ]
@@ -761,6 +765,108 @@ async fn every_check_and_uniqueness_rule_is_proven_by_a_failing_insert() {
         assert!(
             error.to_string().contains(constraint),
             "expected {constraint}, got: {error}\n{sql}"
+        );
+    }
+    scratch.drop_self().await;
+}
+
+#[derive(Debug, FromQueryResult)]
+struct ScopeRow {
+    scopes: Vec<String>,
+}
+
+async fn scopes_of(db: &DatabaseConnection, sql: &str, values: Vec<sea_orm::Value>) -> Vec<String> {
+    ScopeRow::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres, sql, values))
+        .one(db)
+        .await
+        .expect("scope query runs")
+        .expect("the row exists")
+        .scopes
+}
+
+#[tokio::test]
+async fn the_client_scopes_migration_widens_ramflux_and_removes_the_retired_scope_everywhere() {
+    let scratch = oauth_scratch_or_skip!("mig_client_scopes", Start::Complete);
+    let db = &scratch.db;
+    let tenant = seed_tenant(db, "cs").await;
+    // The state of a database from before the migration: the first release's client list, and a
+    // grant, a token and an authorization request that still name the retired scope.
+    exec(
+        db,
+        "UPDATE oauth_clients SET allowed_scopes = \
+         ARRAY['projects:read','work_items:read','notifications:read','tasks:read','offline_access'] \
+         WHERE client_id = 'ramflux'",
+        vec![],
+    )
+    .await;
+    exec(
+        db,
+        "INSERT INTO oauth_clients (client_id, display_name, client_type, token_endpoint_auth_method, \
+         redirect_uris, allowed_scopes, allowed_resources) \
+         VALUES ('other-client', 'Other', 'public', 'none', ARRAY['http://127.0.0.1/cb'], \
+                 ARRAY['projects:read','surfaces:embed'], ARRAY['api'])",
+        vec![],
+    )
+    .await;
+    let grant = seed_grant(
+        db,
+        tenant.member_id,
+        tenant.workspace_id,
+        "all",
+        &["projects:read", "surfaces:embed", "offline_access"],
+    )
+    .await;
+    let (token, _) =
+        super::test_support::seed_access_token(db, grant, "api", &["projects:read", "surfaces:embed"]).await;
+
+    let sql = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../migrations/0125_oauth_client_scopes.sql"
+    ))
+    .expect("the migration file is readable");
+    // Run twice: the file is re-runnable and the second run changes nothing.
+    for _ in 0..2 {
+        db.execute_unprepared(&sql).await.expect("the migration runs");
+        assert_eq!(
+            ramflux(db).await.allowed_scopes,
+            [
+                "projects:read",
+                "work_items:read",
+                "work_items:write",
+                "forms:read",
+                "forms:write",
+                "notifications:read",
+                "notifications:write",
+                "tasks:read",
+                "offline_access"
+            ]
+        );
+        assert_eq!(
+            scopes_of(
+                db,
+                "SELECT allowed_scopes AS scopes FROM oauth_clients WHERE client_id = 'other-client'",
+                vec![]
+            )
+            .await,
+            ["projects:read"],
+            "a client that still listed the retired scope loses it and keeps the rest"
+        );
+        assert_eq!(
+            scopes_of(db, "SELECT scopes FROM oauth_grants WHERE id = $1", vec![grant.into()]).await,
+            ["projects:read", "offline_access"]
+        );
+        assert_eq!(
+            scopes_of(db, "SELECT scopes FROM oauth_tokens WHERE id = $1", vec![token.into()]).await,
+            ["projects:read"]
+        );
+        assert_eq!(
+            count(
+                db,
+                "SELECT count(*) AS n FROM oauth_clients WHERE 'surfaces:embed' = ANY(allowed_scopes)",
+                vec![]
+            )
+            .await,
+            0
         );
     }
     scratch.drop_self().await;

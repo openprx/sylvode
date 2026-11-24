@@ -177,12 +177,11 @@ server only and answers `404` to anyone without the internal forwarding credenti
 | `notifications:read` | Receive the person's notifications from the workspace | no |
 | `notifications:write` | Mark notifications as read; does not imply `notifications:read` | yes |
 | `tasks:read` | See agent tasks and their progress | no |
-| `surfaces:embed` | Show Sylvode views inside the client. Part of the vocabulary; no API route requires it | yes |
 | `offline_access` | Receive a refresh token, so the connection lasts until it is disconnected or expires | no |
 
-The forms routes do not accept delegated tokens (see
-[Calling the API with a delegated token](#calling-the-api-with-a-delegated-token)), so
-`forms:read` and `forms:write` currently unlock nothing on the API.
+`forms:read` and `forms:write` unlock six form routes (see
+[Calling the API with a delegated token](#calling-the-api-with-a-delegated-token)). Form design,
+permissions, attachments, import, export and deletion stay out of reach of a connected application.
 
 "Optional" means the person may untick the scope on the consent page; the others are shown fixed
 when the client asks for them. The scope list is closed: an unknown name is `invalid_scope`, and the
@@ -236,6 +235,10 @@ could do themselves.
 | GET | `/api/v1/issues/{issue_id}/activities` | `work_items:read` |
 | GET | `/api/v1/issues/{issue_id}/labels` | `work_items:read` |
 | POST, DELETE | `/api/v1/issues/{issue_id}/labels/{label_id}` | `work_items:write` |
+| GET | `/api/v1/projects/{project_id}/forms` | `forms:read` |
+| GET | `/api/v1/forms/{form_id}` | `forms:read` |
+| GET, POST | `/api/v1/forms/{form_id}/records` | `forms:read` (GET), `forms:write` (POST) |
+| GET, PATCH | `/api/v1/form-records/{record_id}` | `forms:read` (GET), `forms:write` (PATCH) |
 | GET | `/api/v1/notifications` | `notifications:read` |
 | GET | `/api/v1/notifications/unread-count` | `notifications:read` |
 | PATCH, PUT | `/api/v1/notifications/{id}/read` | `notifications:write` |
@@ -246,11 +249,16 @@ could do themselves.
 
 Rules that apply on top of the table:
 
-- The object a request names (workspace, project, work item, notification) is resolved before the
-  handler runs. An object outside the grant's workspace or project set is refused with the same
+- The object a request names (workspace, project, work item, form, form record, notification) is
+  resolved before the handler runs; a form or a record belongs to the project of its form. An object outside the grant's workspace or project set is refused with the same
   answer as an object that does not exist.
 - A workspace owner or admin acts as an ordinary member through a delegated token: it cannot
-  administer the workspace.
+  administer the workspace. On a form that means the `member` row of the form's permissions: a
+  field the member may not read is left out of the answers, a field the member may not write is
+  refused, and an action the member is denied (`form.view`, `record.create`, `record.update`) is
+  refused with `403`.
+- The record answer carries no Flow lineage (`flow_lineage` is empty): Flow pages are not part of
+  what a connected application can read.
 - A request that would start or assign an agent (assigning a work item to a bot, mentioning a bot
   in a comment) is refused with `403`, because it needs the reserved `tasks:dispatch` scope.
 - A missing or insufficient scope answers `403` with `WWW-Authenticate: Bearer
