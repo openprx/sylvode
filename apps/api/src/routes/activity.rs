@@ -374,11 +374,23 @@ pub async fn get_issue_activities(
 /// The ids an entry names as people: who acted, and for an assignment who had the item before
 /// and after.
 fn people_ids(entry: &IssueActivityResponse) -> Vec<Uuid> {
-    let mut ids: Vec<Uuid> = entry.actor_id.into_iter().chain(entry.user_id).collect();
-    if entry.action == "assigned" {
+    named_people(
+        entry.actor_id.into_iter().chain(entry.user_id),
+        &entry.action,
+        &entry.detail,
+    )
+}
+
+/// `actors` plus, for an `assigned` entry, the assignee before (`from`) and after (`to`).
+pub(super) fn named_people(
+    actors: impl IntoIterator<Item = Uuid>,
+    action: &str,
+    detail: &serde_json::Value,
+) -> Vec<Uuid> {
+    let mut ids: Vec<Uuid> = actors.into_iter().collect();
+    if action == "assigned" {
         for side in ["from", "to"] {
-            if let Some(id) = entry
-                .detail
+            if let Some(id) = detail
                 .get(side)
                 .and_then(serde_json::Value::as_str)
                 .and_then(|raw| Uuid::parse_str(raw).ok())

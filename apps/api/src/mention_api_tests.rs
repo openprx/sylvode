@@ -458,6 +458,50 @@ async fn issue_activities_carry_the_people_they_name() {
 }
 
 #[tokio::test]
+async fn my_activities_carry_the_people_they_name() {
+    let Some(api) = Api::new("mention_my_activity_people").await else {
+        return;
+    };
+    let item = api.create_item("assigned to bob", json!({})).await;
+    let gone = api.add_member("Gil Gone", "human").await;
+    for assignee in [json!(api.bob), json!(gone), json!(api.bob)] {
+        let answer = api
+            .put(
+                &format!("/api/v1/issues/{item}"),
+                api.alice,
+                json!({"assignee_id": assignee}),
+            )
+            .await;
+        assert_eq!(answer.code(), Some(0), "{}", answer.body);
+    }
+    exec(
+        &api.db,
+        "DELETE FROM workspace_members WHERE user_id = $1",
+        vec![gone.into()],
+    )
+    .await;
+    let answer = api.get("/api/v1/my/activities", api.bob).await;
+    assert_eq!(answer.code(), Some(0), "{}", answer.body);
+    let items = answer.data()["items"].as_array().expect("items");
+    assert!(
+        items.iter().any(|entry| entry["action"] == json!("assigned")),
+        "{}",
+        answer.body
+    );
+    let people = &answer.data()["people"];
+    assert_eq!(
+        people[api.alice.to_string()],
+        json!({"id": api.alice, "name": "alice", "is_bot": false, "state": "active"}),
+        "{}",
+        answer.body
+    );
+    assert_eq!(people[api.bob.to_string()]["name"], json!("bob"), "{}", answer.body);
+    assert_eq!(people[gone.to_string()]["state"], json!("removed"), "{}", answer.body);
+    assert_no_id_shown(people, "my activity people");
+    api.finish().await;
+}
+
+#[tokio::test]
 async fn proposal_comments_resolve_typed_names_and_show_people() {
     let Some(api) = Api::new("mention_proposal").await else {
         return;

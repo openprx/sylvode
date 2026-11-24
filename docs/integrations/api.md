@@ -551,7 +551,9 @@ account. A Flow comment's `mentions` are the same person objects (they were ids 
 
 The activity of a work item (`GET /issues/{issue_id}/activities`) adds `people` to the paged answer:
 an object keyed by user id with `{id, name, is_bot, state}` for every person an entry names (its
-actor, and the assignee before and after in `assigned` entries).
+actor, and the assignee before and after in `assigned` entries). The activity feed of the caller
+across workspaces (`GET /my/activities`) answers the same way: each entry's actor and `assigned`
+from/to people are in `people`, read against the workspace of the entry that names them.
 
 ### Labels
 
