@@ -720,3 +720,34 @@ async fn completion_emits_sprint_completed_with_rollover_then_issue_updated_per_
     // Starting the next sprint sends no completion and no item event.
     api.finish().await;
 }
+
+#[tokio::test]
+async fn the_list_carries_the_progress_of_each_sprint() {
+    let Some(api) = Api::new("sprint_list_progress").await else {
+        return;
+    };
+    let busy = api.new_sprint("busy", json!({})).await;
+    let empty = api.new_sprint("empty", json!({})).await;
+    for (title, state) in [("a", "todo"), ("b", "in_progress"), ("c", "done"), ("d", "done")] {
+        api.create_item(title, json!({"sprint_id": busy, "state": state})).await;
+    }
+    // An item in no sprint counts for nobody.
+    api.create_item("loose", json!({"state": "done"})).await;
+    let answer = api.get(&api.sprints_uri(), api.alice).await;
+    assert_eq!(answer.code(), Some(0), "{}", answer.body);
+    let progress_of = |sprint: Uuid| {
+        answer.data()["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .find(|s| s["id"] == json!(sprint))
+            .map(|s| s["progress"].clone())
+            .expect("the sprint is listed")
+    };
+    assert_eq!(progress_of(busy), json!({"total": 4, "done": 2}), "{}", answer.body);
+    assert_eq!(progress_of(empty), json!({"total": 0, "done": 0}), "{}", answer.body);
+    // One sprint read has no progress block.
+    let one = api.get(&format!("/api/v1/sprints/{busy}"), api.alice).await;
+    assert!(one.data().get("progress").is_none(), "{}", one.body);
+    api.finish().await;
+}

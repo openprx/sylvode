@@ -40,6 +40,17 @@ pub struct SprintResponse {
     /// Only on the answer that completed or cancelled the sprint.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rollover: Option<RolloverSummary>,
+    /// Only in the project's sprint list.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<SprintProgress>,
+}
+
+/// The work items of a sprint and how many of them are in a finished state of the project's
+/// workflow.
+#[derive(Debug, Serialize)]
+pub struct SprintProgress {
+    pub total: i64,
+    pub done: i64,
 }
 
 /// What completing or cancelling a sprint did with its unfinished work items.
@@ -190,6 +201,7 @@ impl From<SprintRow> for SprintResponse {
             created_at: row.created_at.to_rfc3339(),
             updated_at: row.updated_at.to_rfc3339(),
             rollover: None,
+            progress: None,
         }
     }
 }
@@ -354,6 +366,7 @@ pub async fn create_sprint(
         created_at: now.to_rfc3339(),
         updated_at: now.to_rfc3339(),
         rollover: None,
+        progress: None,
     }))
 }
 
@@ -391,7 +404,40 @@ pub async fn list_sprints(
     .all(&state.db)
     .await?;
 
-    let response: Vec<SprintResponse> = sprints.into_iter().map(SprintResponse::from).collect();
+    let workflow = resolve_effective_workflow_for_project(&state, project_id).await?;
+    #[derive(Debug, FromQueryResult)]
+    struct Counts {
+        sprint_id: Uuid,
+        total: i64,
+        done: i64,
+    }
+    let counts = Counts::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r"
+            SELECT sprint_id,
+                   COUNT(*)::bigint AS total,
+                   (COUNT(*) FILTER (WHERE state = ANY($2)))::bigint AS done
+            FROM work_items
+            WHERE project_id = $1 AND sprint_id IS NOT NULL
+            GROUP BY sprint_id
+        ",
+        vec![project_id.into(), finished_state_keys(&workflow).into()],
+    ))
+    .all(&state.db)
+    .await?;
+
+    let response: Vec<SprintResponse> = sprints
+        .into_iter()
+        .map(|row| {
+            let (total, done) = counts
+                .iter()
+                .find(|c| c.sprint_id == row.id)
+                .map_or((0, 0), |c| (c.total, c.done));
+            let mut sprint = SprintResponse::from(row);
+            sprint.progress = Some(SprintProgress { total, done });
+            sprint
+        })
+        .collect();
 
     Ok(ApiResponse::success(PaginatedData::from_items(response)))
 }
