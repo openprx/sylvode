@@ -6,8 +6,7 @@ import { filenameFromDisposition, importExportApi } from '../../src/lib/api/impo
 const realFetch = globalThis.fetch;
 
 function answer(body: string, headers: Record<string, string>): void {
-	globalThis.fetch = (async (_url: unknown) =>
-		new Response(body, { status: 200, headers })) as typeof fetch;
+	globalThis.fetch = (async () => new Response(body, { status: 200, headers })) as typeof fetch;
 }
 
 test('the file name comes from Content-Disposition', () => {
