@@ -17,6 +17,10 @@ use std::time::{Duration, Instant};
 const BOT: &str = "00000000-0000-4000-8000-000000000001";
 const TOKEN: &str = concat!("opr", "_", "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a");
 const PROJECT: &str = "22222222-2222-4222-8222-222222222222";
+/// A second project of the same bot.
+const PROJECT_B: &str = "55555555-5555-4555-8555-555555555555";
+/// Another bot, for the record of a session it serves.
+const OTHER_BOT: &str = "00000000-0000-4000-8000-000000000002";
 
 fn enabled() -> bool {
     std::env::var("SV_TMUX_TESTS").as_deref() == Ok("1")
@@ -165,10 +169,15 @@ impl Fixture {
         }
     }
 
-    /// The project's claude connection uses the existing tmux session `name`.
+    /// The bot's claude tasks, from every project, go to the existing tmux session `name`.
     fn named(mut self, name: &str) -> Self {
-        self.sessions = format!("[[runner.tmux.sessions]]\nproject = \"SVWL\"\ncli = \"claude\"\nname = \"{name}\"\n");
+        self.sessions = format!("[[runner.tmux.sessions]]\nbot = \"{BOT}\"\ncli = \"claude\"\nname = \"{name}\"\n");
         self
+    }
+
+    /// The state directory of the bot's claude slot.
+    fn bot_slot_dir(&self) -> PathBuf {
+        self.tmux.state().join(format!("sessions/bot-{BOT}-claude"))
     }
 
     /// Starts the stand-in claude, as an operator would, in a tmux session called `name`. Its
@@ -199,6 +208,17 @@ impl Fixture {
             &self
                 .tmux
                 .raw(&["display-message", "-p", "-t", target, "#{pane_pid}"])
+                .stdout,
+        )
+        .trim()
+        .to_string()
+    }
+
+    fn pane_id(&self, target: &str) -> String {
+        String::from_utf8_lossy(
+            &self
+                .tmux
+                .raw(&["display-message", "-p", "-t", target, "#{pane_id}"])
                 .stdout,
         )
         .trim()
@@ -272,6 +292,33 @@ impl Fixture {
             "execution": {"enabled": true, "channel": "tmux", "cli": cli,
                           "working_directory": self.project.to_string_lossy(), "approval_gate": "none", "version": 1},
         })
+    }
+
+    /// The view of a task of project RFGUI (a second project of the same bot) whose working
+    /// directory lies outside the allowed roots, on `channel`.
+    fn view_b(&self, task: &str, channel: &str, active: bool, acked: bool) -> Value {
+        let mut view = self.view_for("claude", task, active, acked);
+        view["source"]["issue"]["identifier"] = json!("RFGUI-3");
+        view["project"] = json!({"id": PROJECT_B, "key": "RFGUI", "name": "b", "workspace_id": PROJECT_B});
+        view["execution"]["channel"] = json!(channel);
+        view["execution"]["working_directory"] = json!("/var/empty/not-allowed");
+        view
+    }
+
+    fn set_view_b(&self, task: &str, channel: &str, active: bool, acked: bool) {
+        let view = self.view_b(task, channel, active, acked);
+        self.api.script(|s| {
+            s.views.insert(task.to_string(), vec![(200, view)]);
+        });
+    }
+
+    /// The delivery of a task of project RFGUI.
+    fn delivery_b(task: &str) -> String {
+        json!({
+            "task_id": task, "project_id": PROJECT_B, "ai_participant_id": BOT, "attempts": 1, "max_attempts": 3,
+            "project_key": "RFGUI", "protocol": 1, "trigger_kind": "assigned",
+        })
+        .to_string()
     }
 
     fn set_view(&self, task: &str, active: bool, acked: bool) {
@@ -744,7 +791,12 @@ async fn restart_keeps_a_pushed_task(configured: Option<&str>) {
         fx.start_operator_session(name);
     }
     fx.set_view(T1, true, true);
-    fx.set_view(T2, true, false);
+    // With a bot session the second task comes from another project of the bot.
+    if configured.is_some() {
+        fx.set_view_b(T2, "headless", true, false);
+    } else {
+        fx.set_view(T2, true, false);
+    }
     let mut first = fx.serve();
     assert_eq!(
         Fixture::deliver(first.url("/webhook"), T1).await["status"],
@@ -761,7 +813,12 @@ async fn restart_keeps_a_pushed_task(configured: Option<&str>) {
     fx.api.script(|s| s.active = vec![listed]);
     let second = fx.serve();
     // The restarted runner must not push anything while T1 is open.
-    assert_eq!(Fixture::deliver(second.url("/webhook"), T2).await["queue_position"], 1);
+    let second_delivery = if configured.is_some() {
+        post_signed(&second.url("/webhook"), &Fixture::delivery_b(T2)).await.1
+    } else {
+        Fixture::deliver(second.url("/webhook"), T2).await
+    };
+    assert_eq!(second_delivery["queue_position"], 1, "{second_delivery}");
     tokio::time::sleep(Duration::from_secs(5)).await;
     assert_eq!(fx.typed().len(), 1, "{:?}", fx.typed());
     // T1 ends in Sylvode: the session is free and T2 goes in.
@@ -776,11 +833,14 @@ async fn restart_keeps_a_pushed_task(configured: Option<&str>) {
             .all(|r| !r.path().ends_with("/fail"))
     );
     if configured.is_some() {
+        assert!(typed[1].contains("|Project: RFGUI|"), "{typed:?}");
         assert!(!fx.has_session("SVWL-claude"), "a derived session was created");
-        let record =
-            std::fs::read_to_string(fx.tmux.state().join("sessions/SVWL-claude/session.json")).expect("record");
+        assert!(!fx.has_session("RFGUI-claude"), "a derived session was created");
+        let record = std::fs::read_to_string(fx.bot_slot_dir().join("session.json")).expect("record");
         assert!(
-            record.contains("\"tmux_name\": \"sv\"") && record.contains("\"name_source\": \"local\""),
+            record.contains("\"tmux_name\": \"sv\"")
+                && record.contains("\"name_source\": \"local\"")
+                && record.contains(&format!("\"bot_id\": \"{BOT}\"")),
             "{record}"
         );
     }
@@ -1293,6 +1353,11 @@ impl Fixture {
         self.row("session.SVWL-claude")
     }
 
+    /// The `session.bot-<uuid>-claude` row of `doctor --json --project SVWL`.
+    fn bot_row(&self) -> Value {
+        self.row(&format!("session.bot-{BOT}-claude"))
+    }
+
     /// One row of `doctor --json --project SVWL`.
     fn row(&self, component: &str) -> Value {
         let output = Command::new(RUNNER)
@@ -1689,7 +1754,7 @@ async fn a_configured_session_is_used_as_it_is_and_never_restarted() {
     assert_eq!(fx.wait_typed(1, 40).await.len(), 1);
     assert_eq!(fx.pane_pid("=sv:"), before, "the CLI was restarted");
     assert!(!fx.has_session("SVWL-claude"), "a derived session was created");
-    let record = std::fs::read_to_string(fx.tmux.state().join("sessions/SVWL-claude/session.json")).expect("record");
+    let record = std::fs::read_to_string(fx.bot_slot_dir().join("session.json")).expect("record");
     assert!(
         record.contains("\"created_by\": \"operator\"")
             && record.contains("\"tmux_name\": \"sv\"")
@@ -1818,7 +1883,7 @@ async fn an_absent_configured_session_fails_retryable_and_is_not_created() {
     assert!(!fx.has_session("SVWL-claude"), "a derived session was created");
     assert!(fx.typed().is_empty());
     // The row for it is a warning that names the tmux session and its source.
-    let row = fx.session_row();
+    let row = fx.bot_row();
     assert_eq!(row["status"], "warn", "{row}");
     assert_eq!(row["detail"]["tmux_session"], "sv", "{row}");
     assert_eq!(row["detail"]["name_source"], "local", "{row}");
@@ -1826,8 +1891,8 @@ async fn an_absent_configured_session_fails_retryable_and_is_not_created() {
     drop(server);
 }
 
-/// `doctor` for a configured session: the row is still `session.<KEY>-<cli>` and shows the tmux
-/// name and where it came from; it exists before any task ran.
+/// `doctor` for a bot's configured session: the row is `session.bot-<uuid>-<cli>` and shows the
+/// bot, the tmux name and where it came from; it exists before any task ran.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
 async fn doctor_describes_a_configured_session() {
@@ -1836,7 +1901,7 @@ async fn doctor_describes_a_configured_session() {
     }
     let Some(program) = find_tmux() else { return };
     let fx = Fixture::new(program, Standin::Normal).await.named("sv");
-    let absent = fx.session_row();
+    let absent = fx.bot_row();
     assert_eq!(absent["status"], "warn", "{absent}");
     assert_eq!(absent["detail"]["state"], "absent", "{absent}");
     assert!(
@@ -1847,9 +1912,10 @@ async fn doctor_describes_a_configured_session() {
         "{absent}"
     );
     fx.start_operator_session("sv");
-    let row = fx.session_row();
+    let row = fx.bot_row();
     assert_eq!(row["detail"]["state"], "running", "{row}");
     assert_eq!(row["detail"]["tmux_session"], "sv", "{row}");
+    assert_eq!(row["detail"]["bot"], BOT, "{row}");
     assert_eq!(row["detail"]["name_source"], "local", "{row}");
     assert_eq!(row["detail"]["foreground"], "claude", "{row}");
     // A session without the CLI fails, with the attach hint for the configured name and no offer
@@ -1861,7 +1927,7 @@ async fn doctor_describes_a_configured_session() {
             .status
             .success()
     );
-    let gone = fx.session_row();
+    let gone = fx.bot_row();
     assert_eq!(gone["detail"]["state"], "cli_not_running", "{gone}");
     assert_eq!(gone["status"], "fail");
     let hint = gone["hint"].as_str().unwrap_or_default();
@@ -1871,7 +1937,8 @@ async fn doctor_describes_a_configured_session() {
     );
 }
 
-/// `sessions` shows slot and tmux name; `release` sees the configured session.
+/// `sessions` shows slot, tmux name and bot of a bot's configured session; `release` has no key to
+/// release for it.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
 async fn the_operator_commands_see_a_configured_session() {
@@ -1892,28 +1959,184 @@ async fn the_operator_commands_see_a_configured_session() {
     assert!(server.wait_exit(Duration::from_secs(20)).is_some());
     let listing = fx.operator(&["sessions"]);
     let text = String::from_utf8_lossy(&listing.stdout).to_string();
-    let line = text.lines().find(|l| l.starts_with("SVWL-claude")).unwrap_or_default();
+    let line = text.lines().find(|l| l.starts_with("bot-")).unwrap_or_default();
     assert!(
         listing.status.success()
+            && line.split_whitespace().next() == Some(&format!("bot-{BOT}-claude"))
             && line.split_whitespace().nth(1) == Some("sv")
+            && line.split_whitespace().nth(2) == Some(BOT)
             && line.contains(PROJECT)
             && line.contains("operator")
             && (line.contains("idle") || line.contains("busy")),
         "{text}"
     );
-    // Only the configured session exists; it still blocks the release of its key.
+    // Only the configured session exists. A bot's session binds no key, so there is nothing
+    // to release and the live session does not matter to it.
     assert!(!fx.has_session("SVWL-claude"));
     let refused = fx.operator(&["release", "SVWL"]);
     assert!(
-        !refused.status.success() && String::from_utf8_lossy(&refused.stderr).contains("still exists"),
+        !refused.status.success() && String::from_utf8_lossy(&refused.stderr).contains("not reserved"),
         "{}",
         String::from_utf8_lossy(&refused.stderr)
     );
-    assert!(fx.tmux.raw(&["kill-session", "-t", "=sv"]).status.success());
-    let released = fx.operator(&["release", "SVWL"]);
-    assert!(
-        released.status.success(),
-        "{}",
-        String::from_utf8_lossy(&released.stderr)
+    assert!(fx.has_session("sv"));
+}
+
+/// Tasks of two projects of one bot go into the bot's one session, in arrival order: the second
+/// waits until the first is complete, its text names its project, no directory is looked at (the
+/// second project's is outside the allowed roots) and the CLI is never restarted.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn tasks_of_two_projects_for_one_bot_go_into_its_one_session_in_order() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::new(program, Standin::Normal).await.named("sv");
+    fx.start_operator_session("sv");
+    let before = fx.pane_pid("=sv:");
+    fx.set_view(T1, true, true);
+    fx.set_view_b(T2, "tmux", true, false);
+    let server = fx.serve();
+    let first = Fixture::deliver(server.url("/webhook"), T1).await;
+    assert_eq!(first["status"], "dispatched", "{first}");
+    assert_eq!(
+        (first["session"].as_str(), first["queue_position"].as_u64()),
+        (Some("sv"), Some(1)),
+        "{first}"
     );
+    // The stand-in records the line feeds of a message as `|`.
+    let typed = fx.wait_typed(1, 40).await;
+    assert_eq!(typed.len(), 1, "{typed:?}");
+    assert!(
+        typed[0].contains(&format!("id={T1}")) && typed[0].contains("|Project: SVWL|"),
+        "{typed:?}"
+    );
+    // B arrives behind the open task A, in the same session: the first place in the queue.
+    let second = post_signed(&server.url("/webhook"), &Fixture::delivery_b(T2)).await.1;
+    assert_eq!(second["status"], "dispatched", "{second}");
+    assert_eq!(
+        (second["session"].as_str(), second["queue_position"].as_u64()),
+        (Some("sv"), Some(1)),
+        "{second}"
+    );
+    // B stays queued while A is open, however long we wait.
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    assert_eq!(fx.typed().len(), 1, "{:?}", fx.typed());
+    // A is complete: B goes into the same session.
+    fx.set_view(T1, false, true);
+    let typed = fx.wait_typed(2, 40).await;
+    assert_eq!(typed.len(), 2, "{typed:?}");
+    assert!(
+        typed[1].contains(&format!("id={T2}")) && typed[1].contains("|Project: RFGUI|"),
+        "{typed:?}"
+    );
+    assert!(
+        !typed[1].contains("not-allowed") && !typed[1].contains("SVWL"),
+        "no path and no other project in the text: {typed:?}"
+    );
+    assert_eq!(fx.pane_pid("=sv:"), before, "the CLI was restarted");
+    for derived in ["SVWL-claude", "RFGUI-claude"] {
+        assert!(!fx.has_session(derived), "{derived} was created");
+    }
+    assert!(
+        fx.api
+            .requests_to("POST", "/api/v1/ai/tasks/")
+            .iter()
+            .all(|r| !r.path().ends_with("/fail"))
+    );
+    // One slot, whichever project the task came from; the record keeps the last project.
+    let slots: Vec<String> = std::fs::read_dir(fx.tmux.state().join("sessions"))
+        .expect("sessions")
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .collect();
+    assert!(slots.contains(&format!("bot-{BOT}-claude")), "{slots:?}");
+    assert!(
+        !slots
+            .iter()
+            .any(|name| name.starts_with("SVWL") || name.starts_with("RFGUI")),
+        "{slots:?}"
+    );
+    let record = std::fs::read_to_string(fx.bot_slot_dir().join("session.json")).expect("record");
+    assert!(record.contains(&format!("\"project_id\": \"{PROJECT_B}\"")), "{record}");
+    drop(server);
+}
+
+/// Stage R: a headless delivery for a bot that has a session is typed into it, and the directory
+/// that the roots would refuse for a headless run is not looked at.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn a_headless_delivery_for_a_bot_with_a_session_is_typed_into_it() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::new(program, Standin::Normal).await.named("sv");
+    fx.start_operator_session("sv");
+    fx.set_view_b(T1, "headless", true, true);
+    let server = fx.serve();
+    let answer = post_signed(&server.url("/webhook"), &Fixture::delivery_b(T1)).await.1;
+    assert_eq!(answer["status"], "dispatched", "{answer}");
+    assert_eq!(
+        (answer["channel"].as_str(), answer["session"].as_str()),
+        (Some("tmux"), Some("sv")),
+        "{answer}"
+    );
+    let typed = fx.wait_typed(1, 40).await;
+    assert_eq!(typed.len(), 1, "{typed:?}");
+    assert!(typed[0].contains("|Project: RFGUI|"), "{typed:?}");
+    // The same delivery for a bot without a session is a headless run that the roots refuse.
+    drop(server);
+    let plain = Fixture::new(find_tmux().expect("tmux"), Standin::Normal).await;
+    plain.set_view_b(T1, "headless", true, true);
+    let server = plain.serve();
+    let refused = post_signed(&server.url("/webhook"), &Fixture::delivery_b(T1)).await.1;
+    assert_eq!(refused["status"], "refused", "{refused}");
+    assert_eq!(refused["reason_code"], "path_outside_allowlist", "{refused}");
+    drop(server);
+}
+
+/// A derived session that another bot's tasks were typed into is never used for this bot: the
+/// delivery is refused for good and nothing is typed.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn a_derived_session_of_another_bot_is_refused() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::new(program, Standin::Normal).await;
+    fx.start_operator_session("SVWL-claude");
+    let process = fx.pane_pid("=SVWL-claude:");
+    let pane = fx.pane_id("=SVWL-claude:");
+    // What the runner recorded when another bot's task was typed into that session.
+    let dir = fx.tmux.state().join("sessions/SVWL-claude");
+    std::os::unix::fs::DirBuilderExt::mode(std::fs::DirBuilder::new().recursive(true), 0o700)
+        .create(&dir)
+        .expect("slot dir");
+    let record = json!({
+        "name": "SVWL-claude", "project_id": PROJECT, "bot_id": OTHER_BOT, "cli": "claude",
+        "pane_id": pane, "pane_pid": process.parse::<u32>().expect("pid"),
+        "dir": fx.project.to_string_lossy(), "created_by": "operator", "pushed": null,
+        "tmux_name": "SVWL-claude", "name_source": "derived",
+    });
+    let file = dir.join("session.json");
+    std::fs::write(&file, record.to_string()).expect("record");
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+    fx.set_view(T1, true, false);
+    let server = fx.serve();
+    let answer = Fixture::deliver(server.url("/webhook"), T1).await;
+    assert_eq!(answer["status"], "refused", "{answer}");
+    assert_eq!(answer["reason_code"], "session_bot_conflict", "{answer}");
+    assert!(
+        answer["reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("tmux session SVWL-claude on this runner serves another bot"),
+        "{answer}"
+    );
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(fx.typed().is_empty(), "{:?}", fx.typed());
+    drop(server);
 }
