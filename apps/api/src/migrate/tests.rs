@@ -129,6 +129,7 @@ fn the_adoption_cutoff_names_a_registered_migration() {
             "0117_sprint_rules.sql",
             "0118_label_rules.sql",
             "0119_plugin_single_active_version.sql",
+            "0130_tmux_cli_codex.sql",
         ],
         "everything past the cutoff re-runs on an adopted database and must be idempotent"
     );

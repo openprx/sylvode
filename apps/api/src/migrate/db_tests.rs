@@ -151,6 +151,73 @@ async fn a_fresh_database_applies_every_migration() {
     scratch.drop_self().await;
 }
 
+/// Files are applied in name order on a fresh database.
+#[tokio::test]
+async fn a_fresh_database_applies_the_files_in_name_order() {
+    let scratch = scratch_or_skip!("order_fresh");
+    run_migrations_with(&scratch.db, MigrationOptions::default())
+        .await
+        .expect("a fresh database migrates cleanly");
+    let applied = scalar_text(
+        &scratch.db,
+        "SELECT string_agg(name, ',' ORDER BY applied_at, name) AS v FROM schema_migrations",
+    )
+    .await;
+    let expected: Vec<&str> = MIGRATIONS.iter().map(|(name, _)| *name).collect();
+    assert_eq!(applied, expected.join(","), "ledger order is file name order");
+    scratch.drop_self().await;
+}
+
+/// The runner decides per file from the ledger, not from the newest applied name. A file that
+/// sorts before already applied ones (a migration merged after a higher number was applied) is
+/// executed on the next start. Simulated with 0118 on a database whose newest file is applied:
+/// its ledger row and its effect are removed, then the runner starts again.
+#[tokio::test]
+async fn a_file_that_sorts_before_applied_ones_is_applied_on_the_next_start() {
+    let scratch = scratch_or_skip!("order_late_file");
+    let db = &scratch.db;
+    run_migrations_with(db, MigrationOptions::default())
+        .await
+        .expect("a fresh database migrates cleanly");
+    let late = "0118_label_rules.sql";
+    let newest = MIGRATIONS.last().map(|(name, _)| *name).expect("migrations exist");
+    assert!(late < newest, "the late file sorts before the newest applied one");
+
+    db.execute_unprepared(
+        "DROP INDEX labels_workspace_lower_name_key; \
+         ALTER TABLE labels DROP CONSTRAINT labels_color_hex; \
+         DELETE FROM schema_migrations WHERE name = '0118_label_rules.sql';",
+    )
+    .await
+    .expect("the file is made absent");
+    let newest_at = scalar_text(
+        db,
+        &format!("SELECT applied_at::text AS v FROM schema_migrations WHERE name = '{newest}'"),
+    )
+    .await;
+
+    run_migrations_with(db, MigrationOptions::default())
+        .await
+        .expect("the next start applies the late file");
+
+    let ledger = ledger(db).await;
+    assert_eq!(status_of(&ledger, late), "applied", "the late file was executed");
+    assert_eq!(ledger.len(), MIGRATIONS.len());
+    let index = scalar_text(
+        db,
+        "SELECT (to_regclass('labels_workspace_lower_name_key') IS NOT NULL)::text AS v",
+    )
+    .await;
+    assert_eq!(index, "true", "its effect is back");
+    let newest_after = scalar_text(
+        db,
+        &format!("SELECT applied_at::text AS v FROM schema_migrations WHERE name = '{newest}'"),
+    )
+    .await;
+    assert_eq!(newest_after, newest_at, "files already applied are left alone");
+    scratch.drop_self().await;
+}
+
 async fn scalar_text(db: &DatabaseConnection, sql: &str) -> String {
     db.query_one(Statement::from_string(DbBackend::Postgres, sql.to_string()))
         .await

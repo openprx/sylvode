@@ -35,6 +35,42 @@ fn conflict(result: Result<impl std::fmt::Debug, ApiError>) -> String {
     }
 }
 
+fn tmux_codex(name: &str, directory: &str) -> Value {
+    let mut body = new_bot(name);
+    body["channel"] = json!("tmux");
+    body["cli"] = json!("codex");
+    body["working_directory"] = json!(directory);
+    body
+}
+
+#[tokio::test]
+async fn a_claude_and_a_codex_tmux_connection_live_side_by_side_and_a_second_codex_is_refused() {
+    let scratch = scratch_or_skip!("mc_codex_tmux");
+    let db = &scratch.db;
+    let w = world(db, "x1").await;
+    let project = w.tenant.project_id;
+
+    let claude = expect_connect(&w, project, new_bot("Alpha")).await.connection;
+    assert_eq!(claude.execution.session_name.as_deref(), Some("Px1-claude"));
+    let codex = expect_connect(&w, project, tmux_codex("Beta", "/srv/dev/work/beta"))
+        .await
+        .connection;
+    assert_eq!(codex.execution.channel, "tmux");
+    assert_eq!(codex.execution.cli, "codex");
+    assert_eq!(codex.execution.session_name.as_deref(), Some("Px1-codex"));
+
+    assert_eq!(
+        conflict(connect(&w, project, tmux_codex("Gamma", "/srv/dev/work/gamma")).await),
+        "channel: project already has a tmux connection for codex (bot Beta)"
+    );
+    assert_eq!(
+        n(db, "SELECT 1 FROM workspace_bots", vec![]).await,
+        2,
+        "the refused connect leaves no bot behind"
+    );
+    scratch.drop_self().await;
+}
+
 #[tokio::test]
 async fn one_tmux_connection_per_cli_and_any_number_of_headless_ones() {
     let scratch = scratch_or_skip!("mc_unique");

@@ -189,22 +189,42 @@ async fn execution_settings_are_validated_by_the_database() {
 }
 
 #[tokio::test]
-async fn the_tmux_channel_is_claude_only_in_the_database() {
+async fn the_tmux_channel_takes_claude_and_codex_only_in_the_database() {
     let scratch = scratch_or_skip!("runner_protocol_tmux_cli");
     let db = &scratch.db;
     let tenant = seed_tenant(db, "rt").await;
-    let bot = seed_bot_user(db, &tenant).await;
-    seed_bot_runner(db, &tenant, bot).await;
-    for cli in ["codex", "opencode"] {
-        let outcome = db
-            .execute(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "INSERT INTO project_bot_connections (project_id, bot_id, working_directory, channel, cli) \
-                 VALUES ($1, $2, '/a', 'tmux', $3)",
-                vec![tenant.project_id.into(), bot.into(), cli.to_string().into()],
-            ))
-            .await;
-        assert!(outcome.is_err(), "tmux with {cli} must be refused");
+    let insert = |bot: Uuid, cli: &'static str| {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO project_bot_connections (project_id, bot_id, working_directory, channel, cli) \
+             VALUES ($1, $2, '/a', 'tmux', $3)",
+            vec![tenant.project_id.into(), bot.into(), cli.to_string().into()],
+        ))
+    };
+    let bots = [
+        seed_bot_user(db, &tenant).await,
+        seed_bot_user(db, &tenant).await,
+        seed_bot_user(db, &tenant).await,
+        seed_bot_user(db, &tenant).await,
+    ];
+    for bot in bots {
+        seed_bot_runner(db, &tenant, bot).await;
+    }
+
+    assert!(
+        insert(bots[0], "opencode").await.is_err(),
+        "tmux with opencode must be refused"
+    );
+    // One claude and one codex tmux connection live side by side in the project.
+    insert(bots[1], "claude").await.expect("tmux with claude is accepted");
+    insert(bots[2], "codex").await.expect("tmux with codex is accepted");
+    // A second tmux connection of the same CLI is refused by the unique index.
+    for (bot, cli) in [(bots[3], "codex"), (bots[3], "claude")] {
+        let duplicate = insert(bot, cli).await;
+        assert!(
+            duplicate.is_err_and(|err| err.to_string().contains("pbc_one_tmux_per_cli")),
+            "a second tmux connection for {cli} is refused by pbc_one_tmux_per_cli"
+        );
     }
     scratch.drop_self().await;
 }

@@ -13,6 +13,8 @@ use crate::routes::context::tenant_fixture::{count, exec, seed_bot_runner, seed_
 use crate::scratch_or_skip;
 
 const MIGRATION: &str = include_str!("../../../../migrations/0114_multi_bot_connections.sql");
+/// The later migration that widens the tmux check to codex; the final shape includes it.
+const TMUX_CODEX: &str = include_str!("../../../../migrations/0130_tmux_cli_codex.sql");
 
 /// The tables as 0110 and 0112 created them before several connections per project.
 const EARLIER_SHAPE: &str = "
@@ -143,6 +145,9 @@ async fn a_database_at_0113_is_brought_forward_and_a_second_run_changes_nothing(
         db.execute_unprepared(MIGRATION)
             .await
             .unwrap_or_else(|err| panic!("run {run} of 0114 on the earlier shape: {err}"));
+        db.execute_unprepared(TMUX_CODEX)
+            .await
+            .unwrap_or_else(|err| panic!("run {run} of 0130 after 0114: {err}"));
         assert_eq!(shape(db).await, final_shape, "run {run} ends in the final shape");
         assert!(!relation_present(db, "project_execution_settings").await);
     }

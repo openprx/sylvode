@@ -612,6 +612,10 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
         "0119_plugin_single_active_version.sql",
         SchemaProbe::Relation("plugins_one_active_version"),
     ),
+    (
+        "0130_tmux_cli_codex.sql",
+        SchemaProbe::ConstraintContains("project_bot_connections", "pbc_tmux_cli_check", "'codex'"),
+    ),
 ];
 
 /// One recorded migration outcome.
