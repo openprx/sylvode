@@ -231,7 +231,7 @@
 		onchange={(value) => (cli = value ?? 'claude')}
 	/>
 	{#if draft.channel === 'tmux'}
-		<span class="hint">{$t('execution.connection.cli.tmuxOnlyClaude')}</span>
+		<span class="hint">{$t('execution.connection.cli.tmuxOnly')}</span>
 	{/if}
 
 	<div class="mono">

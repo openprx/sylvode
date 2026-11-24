@@ -1,12 +1,13 @@
 /**
- * Which CLI may use the tmux channel in a project (design 6.0 C3, 6.4 U3): only claude can, and
+ * Which CLI may use the tmux channel in a project (design 6.0 C3, 6.4 U3): only claude and codex can, and
  * at most one connection per CLI. Pure functions over the project's connections, so the forms
  * can disable the option with its reason before the server has to refuse.
  */
 import { routeServerMessage, tmuxTakenBy } from './server-errors';
 import type { Cli, Connection } from './wire';
 
-export const TMUX_CLI: Cli = 'claude';
+/** The CLIs that can run in a tmux session. */
+export const TMUX_CLIS: readonly Cli[] = ['claude', 'codex'];
 
 export type TmuxBlock =
 	/** Another connection of the project already uses `<KEY>-<cli>`. */
@@ -23,7 +24,7 @@ export function tmuxBlock(
 	cli: Cli,
 	exceptBotId: string | null
 ): TmuxBlock | null {
-	if (cli !== TMUX_CLI) return { kind: 'cli' };
+	if (!TMUX_CLIS.includes(cli)) return { kind: 'cli' };
 	const holder = connections.find(
 		(connection) =>
 			connection.bot.id !== exceptBotId &&
@@ -44,7 +45,7 @@ export function attachCommand(session: string): string {
 export type Translate = (key: string, values?: Record<string, string>) => string;
 
 export function blockReason(block: TmuxBlock, translate: Translate): string {
-	if (block.kind === 'cli') return translate('execution.connection.advanced.channel.onlyClaude');
+	if (block.kind === 'cli') return translate('execution.connection.advanced.channel.onlyTmuxClis');
 	return block.session === null
 		? translate('execution.connection.advanced.channel.takenNoSession', { bot: block.bot })
 		: translate('execution.connection.advanced.channel.taken', {

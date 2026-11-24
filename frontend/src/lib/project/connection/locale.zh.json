@@ -32,7 +32,7 @@
 				"claude": "Claude Code",
 				"codex": "Codex（实验性）",
 				"opencode": "opencode（实验性）",
-				"tmuxOnlyClaude": "只有 claude 可以在 tmux 会话中运行"
+				"tmuxOnly": "只有 Claude Code 和 Codex 可以在 tmux 会话中运行"
 			},
 			"workingDirectory": "工作目录",
 			"error": {
@@ -125,7 +125,7 @@
 					"label": "通道",
 					"tmux": "交互式会话（tmux）",
 					"headless": "一次性（headless）",
-					"onlyClaude": "只有 claude 可以在 tmux 会话中运行",
+					"onlyTmuxClis": "只有 Claude Code 和 Codex 可以在 tmux 会话中运行",
 					"taken": "{bot} 已在使用 tmux 会话 {session}",
 					"takenNoSession": "{bot} 已在使用此 CLI 的 tmux 会话"
 				},
@@ -198,7 +198,10 @@
 			"tmux": {
 				"session": "tmux 会话：",
 				"attach": "接入：",
-				"behaviour": "若该会话已在 runner 机器上存在，任务会原样输入其中。若不存在，runner 会在此处用 `claude --permission-mode bypassPermissions` 和你自己的登录状态启动它。CLI 以该机器人的身份通过 Sylvode 的工具回报。"
+				"behaviour": {
+					"claude": "若该会话已在 runner 机器上存在，任务会原样输入其中。若不存在，runner 会在此处用 `claude --permission-mode bypassPermissions` 和你自己的登录状态启动它。CLI 以该机器人的身份通过 Sylvode 的工具回报。",
+					"codex": "若该会话已在 runner 机器上存在，任务会原样输入其中。若不存在，runner 会在此处用 `codex --no-daemon --no-alt-screen --dangerously-bypass-approvals-and-sandbox` 和你自己的登录状态启动它，并为它提供 Sylvode 的工具。CLI 以该机器人的身份通过 Sylvode 的工具回报。Codex 在新文件夹中会询问一次是否信任：请连接会话并回答。"
+				}
 			},
 			"warning": {
 				"bypassTitle": "权限检查已关闭",

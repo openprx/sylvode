@@ -348,29 +348,29 @@ suite.check(
 
 // --- the tmux option --------------------------------------------------------------------------------------
 
-suite.check(
-	'tmux is off for a CLI that already has a tmux connection, and for any CLI but claude',
-	() => {
-		const connections = [tmuxCard, headlessCard];
-		const taken = tmuxBlock(connections, 'claude', null);
-		assertEqual(taken?.kind, 'taken', 'claude is taken');
-		assert(taken?.kind === 'taken' && taken.bot === 'Build bot', 'names the holder');
-		assert(taken?.kind === 'taken' && taken.session === 'QLA-claude', 'names the session');
-		assertEqual(tmuxBlock(connections, 'claude', 'b1'), null, 'the holder may keep its own tmux');
-		assertEqual(tmuxBlock([headlessCard], 'claude', null), null, 'headless holds no session');
-		assertEqual(tmuxBlock([], 'claude', null), null, 'an empty project');
-		assertEqual(tmuxBlock([], 'codex', null)?.kind, 'cli', 'only claude can use tmux');
-		assertEqual(tmuxBlock([], 'opencode', null)?.kind, 'cli', 'opencode neither');
-		const text = (key: string, values?: Record<string, string>) =>
-			`${key}|${JSON.stringify(values ?? {})}`;
-		assertEqual(
-			blockReason({ kind: 'taken', bot: 'Build bot', session: 'QLA-claude' }, text),
-			'execution.connection.advanced.channel.taken|{"bot":"Build bot","session":"QLA-claude"}',
-			'"<bot> already uses tmux session <KEY>-<cli>"'
-		);
-		assertEqual(attachCommand('QLA-claude'), 'tmux attach -t QLA-claude', 'attach command');
-	}
-);
+suite.check('tmux is off for a CLI that already has a tmux connection, and for opencode', () => {
+	const connections = [tmuxCard, headlessCard];
+	const taken = tmuxBlock(connections, 'claude', null);
+	assertEqual(taken?.kind, 'taken', 'claude is taken');
+	assert(taken?.kind === 'taken' && taken.bot === 'Build bot', 'names the holder');
+	assert(taken?.kind === 'taken' && taken.session === 'QLA-claude', 'names the session');
+	assertEqual(tmuxBlock(connections, 'claude', 'b1'), null, 'the holder may keep its own tmux');
+	assertEqual(tmuxBlock([headlessCard], 'claude', null), null, 'headless holds no session');
+	assertEqual(tmuxBlock([], 'claude', null), null, 'an empty project');
+	assertEqual(tmuxBlock([], 'codex', null), null, 'codex can use tmux');
+	assertEqual(tmuxBlock([tmuxCard], 'codex', null), null, "claude's session does not block codex");
+	const codexCard = conn(connectionJson('b2', 'Codex bot', 'tmux', 'codex'));
+	assertEqual(tmuxBlock([codexCard], 'codex', null)?.kind, 'taken', 'one tmux connection per CLI');
+	assertEqual(tmuxBlock([], 'opencode', null)?.kind, 'cli', 'opencode neither');
+	const text = (key: string, values?: Record<string, string>) =>
+		`${key}|${JSON.stringify(values ?? {})}`;
+	assertEqual(
+		blockReason({ kind: 'taken', bot: 'Build bot', session: 'QLA-claude' }, text),
+		'execution.connection.advanced.channel.taken|{"bot":"Build bot","session":"QLA-claude"}',
+		'"<bot> already uses tmux session <KEY>-<cli>"'
+	);
+	assertEqual(attachCommand('QLA-claude'), 'tmux attach -t QLA-claude', 'attach command');
+});
 
 suite.check(
 	'the 409 of a second tmux connection is a channel field error with the same reason',
@@ -451,6 +451,18 @@ const viewProps = (connection: Connection, status: ReturnType<typeof parseStatus
 });
 
 await suite.checkAsync(
+	'a codex tmux card names its session and its own behaviour text',
+	async () => {
+		const codexTmux = conn(connectionJson('b2', 'Codex bot', 'tmux', 'codex'));
+		const html = await renderToHtml(ConnectedView, viewProps(codexTmux, parseStatus(statusJson())));
+		assert(/tmux-session-name[^>]*>QLA-codex</.test(html), 'session name');
+		assert(html.includes('tmux attach -t QLA-codex'), 'attach command');
+		assert(html.includes('execution.connection.tmux.behaviour.codex'), 'codex behaviour text');
+		assert(!html.includes('execution.connection.tmux.behaviour.claude'), 'not claude text');
+	}
+);
+
+await suite.checkAsync(
 	'a tmux card: session name, attach command, the permission warning, actions',
 	async () => {
 		const html = await renderToHtml(ConnectedView, viewProps(tmuxCard, parseStatus(statusJson())));
@@ -458,8 +470,8 @@ await suite.checkAsync(
 		assert(/tmux-session-name[^>]*>QLA-claude</.test(html), 'session name');
 		assert(html.includes('tmux attach -t QLA-claude'), 'attach command');
 		assert(html.includes('execution.connection.workingDirectoryTmux'), 'tmux directory label');
-		assert(html.includes('execution.connection.cli.tmuxOnlyClaude'), 'cli is fixed to claude');
-		assert(html.includes('execution.connection.tmux.behaviour'), 'static text of U2');
+		assert(html.includes('execution.connection.cli.tmuxOnly'), 'cli is fixed for tmux');
+		assert(html.includes('execution.connection.tmux.behaviour.claude'), 'static text of U2');
 		assert(html.includes('data-testid="bypass-warning"'), 'the warning with no report on it');
 		assert(html.includes('/srv/dev/work'), 'working directory');
 		for (const action of ['disable', 'rotate', 'remove'])
@@ -575,7 +587,10 @@ await suite.checkAsync(
 			'the tmux option is enabled'
 		);
 		const cli = await renderToHtml(AdvancedFields, advancedProps({ tmuxBlock: { kind: 'cli' } }));
-		assert(cli.includes('execution.connection.advanced.channel.onlyClaude'), 'only claude');
+		assert(
+			cli.includes('execution.connection.advanced.channel.onlyTmuxClis'),
+			'only the tmux CLIs'
+		);
 		const refused = await renderToHtml(
 			AdvancedFields,
 			advancedProps({ channelError: 'Build bot already uses tmux session QLA-claude' })

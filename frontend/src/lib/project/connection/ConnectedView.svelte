@@ -246,7 +246,7 @@
 					<code data-testid="tmux-attach">{attachCommand(sessionName)}</code>
 				</p>
 			{/if}
-			<p class="hint">{$t('execution.connection.tmux.behaviour')}</p>
+			<p class="hint">{$t(`execution.connection.tmux.behaviour.${connection.execution.cli}`)}</p>
 		</div>
 	{/if}
 
@@ -286,8 +286,7 @@
 		>
 			{#snippet action()}
 				{#if isTmux}
-					<span class="hint" data-testid="cli-fixed"
-						>{$t('execution.connection.cli.tmuxOnlyClaude')}</span
+					<span class="hint" data-testid="cli-fixed">{$t('execution.connection.cli.tmuxOnly')}</span
 					>
 				{:else if editing !== 'cli'}
 					<Button variant="secondary" onclick={() => startEdit('cli')}>

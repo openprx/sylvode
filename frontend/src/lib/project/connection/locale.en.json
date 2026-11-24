@@ -32,7 +32,7 @@
 				"claude": "Claude Code",
 				"codex": "Codex (experimental)",
 				"opencode": "opencode (experimental)",
-				"tmuxOnlyClaude": "Only claude can run in a tmux session"
+				"tmuxOnly": "Only Claude Code and Codex can run in a tmux session"
 			},
 			"workingDirectory": "Working directory",
 			"error": {
@@ -125,7 +125,7 @@
 					"label": "Channel",
 					"tmux": "Interactive session (tmux)",
 					"headless": "One-shot (headless)",
-					"onlyClaude": "Only claude can run in a tmux session",
+					"onlyTmuxClis": "Only Claude Code and Codex can run in a tmux session",
 					"taken": "{bot} already uses tmux session {session}",
 					"takenNoSession": "{bot} already uses the tmux session of this CLI"
 				},
@@ -198,7 +198,10 @@
 			"tmux": {
 				"session": "tmux session:",
 				"attach": "Attach:",
-				"behaviour": "If this session exists on the runner machine, tasks are typed into it as it is. If not, the runner starts it here with `claude --permission-mode bypassPermissions` and your own login. The CLI reports back through Sylvode's tools as this bot."
+				"behaviour": {
+					"claude": "If this session exists on the runner machine, tasks are typed into it as it is. If not, the runner starts it here with `claude --permission-mode bypassPermissions` and your own login. The CLI reports back through Sylvode's tools as this bot.",
+					"codex": "If this session exists on the runner machine, tasks are typed into it as it is. If not, the runner starts it here with `codex --no-daemon --no-alt-screen --dangerously-bypass-approvals-and-sandbox` and your own login, and gives it the Sylvode tools. The CLI reports back through Sylvode's tools as this bot. Codex asks once to trust a new folder: attach and answer it."
+				}
 			},
 			"warning": {
 				"bypassTitle": "Permission checks are off",
