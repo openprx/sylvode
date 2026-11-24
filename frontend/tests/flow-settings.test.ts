@@ -58,6 +58,7 @@ function resetServer(initial: Partial<FlowFeatureFlags> = {}): void {
 	state = {
 		flow_enabled: true,
 		default_member_level: 'edit',
+		bridge_enabled: true,
 		authz_epoch: 7,
 		updated_at: '2026-10-09T00:00:00Z',
 		updated_by: '22222222-2222-4222-8222-222222222222',
@@ -79,12 +80,22 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
 		const req = body as {
 			enabled?: boolean;
 			default_member_level?: FlowFeatureFlags['default_member_level'];
+			bridge_enabled?: boolean;
 		};
+		const bridgeOnly =
+			req.bridge_enabled !== undefined &&
+			req.enabled === undefined &&
+			req.default_member_level === undefined;
+		if (req.bridge_enabled !== undefined) state.bridge_enabled = req.bridge_enabled;
 		if (req.enabled !== undefined) state.flow_enabled = req.enabled;
 		if (req.default_member_level !== undefined)
 			state.default_member_level = req.default_member_level;
-		state.authz_epoch += 1;
-		reply = { code: 0, message: 'ok', data: { ...state, event_id: `event-${calls.length}` } };
+		if (!bridgeOnly) state.authz_epoch += 1;
+		reply = {
+			code: 0,
+			message: 'ok',
+			data: { ...state, event_id: bridgeOnly ? null : `event-${calls.length}` }
+		};
 	} else {
 		reply = { code: 0, message: 'ok', data: { ...state } };
 	}
@@ -167,6 +178,33 @@ await suite.checkAsync(
 			{ default_member_level: 'view', idempotency_key: intent.idempotencyKey },
 			'level body'
 		);
+	}
+);
+
+await suite.checkAsync(
+	'bridge PUT carries only `bridge_enabled`, needs no confirmation and answers no event',
+	async () => {
+		resetServer();
+		const { ctl } = controller();
+		const loaded = await ctl.load();
+		assert(loaded.status === 'ready' && loaded.feature.bridge_enabled === true, 'GET carries it');
+		const intent = ctl.propose({ field: 'bridge_enabled', value: false });
+		assert(intent, 'turning the bridge off is a change');
+		assertEqual(intent.requiresConfirmation, false, 'no confirmation for the bridge switch');
+		const outcome = await ctl.submit(intent);
+		assertEqual(outcome.status, 'saved', 'saved');
+		assertDeepEqual(
+			puts()[0].body,
+			{ bridge_enabled: false, idempotency_key: intent.idempotencyKey },
+			'bridge body'
+		);
+		if (outcome.status === 'saved') {
+			assertEqual(outcome.eventId, null, 'a bridge-only change records no event id');
+			assertEqual(outcome.feature.bridge_enabled, false, 'status refreshed from the response');
+			assertEqual(outcome.feature.authz_epoch, 7, 'the epoch did not move');
+		}
+		assertEqual(ctl.propose({ field: 'bridge_enabled', value: false }), null, 'already off');
+		assertEqual(ctl.propose({ field: 'enabled', value: false })?.requiresConfirmation, true);
 	}
 );
 

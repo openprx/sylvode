@@ -212,7 +212,9 @@ be created from Flow.
 The preview expires. If it expires, or the form's fields change before you confirm, run the preview
 again. The target form must allow you to create records through Flow; if it has no permission
 policy for your role, the wizard says so and the conversion is refused until an owner or admin sets
-one (see [Forms permissions](forms.md#permissions)).
+one. Workspace owners and admins are the exception: when no policy names their role, they have full
+permission on the form through Flow, and a policy row for their role still applies (see
+[Forms permissions](forms.md#permissions)).
 
 Creating a new form (**Define the Form**) asks for a **Destination project**, a **Form name**, a
 **Form key** (lowercase letters, digits and underscores, starting with a letter) and fields, each
@@ -260,6 +262,9 @@ Workspace owners and admins open **Flow** in the workspace settings
 - **Default member level** sets the access every member gets on the workspace's Flow pages unless a
   page grants otherwise: **Full access**, **Edit** (the default), **Comment** or **View**. **Apply
   level** asks for confirmation because it changes access for the whole workspace.
+- **Allow converting Flow pages into forms** (the **Turn on** and **Turn off** button) is on by
+  default. When it is off, nobody can turn Flow pages into forms or form records in this
+  workspace; pages and forms stay as they are, and turning it on again allows conversion again.
 - **Export and import** opens the workspace package page described above.
 - **Operations** (`/workspace/{workspaceId}/settings/flow/operations`, **Flow operations**) shows
   health, indexing lag and integrity checks of the workspace's Flow data and offers maintenance

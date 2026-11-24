@@ -99,10 +99,15 @@
 			case 'saved': {
 				feature = outcome.feature;
 				selectedLevel = outcome.feature.default_member_level;
-				const message = outcome.eventId
-					? get(t)('flow.settings.saved', { values: { eventId: outcome.eventId } })
-					: get(t)('flow.settings.savedNoEvent');
-				if (outcome.eventId) setStatus('flow.settings.saved', { eventId: outcome.eventId });
+				// A conversion-switch change answers no event id although something changed.
+				const bridgeOnly = intent.change.field === 'bridge_enabled';
+				const message = bridgeOnly
+					? get(t)('flow.settings.bridge.saved')
+					: outcome.eventId
+						? get(t)('flow.settings.saved', { values: { eventId: outcome.eventId } })
+						: get(t)('flow.settings.savedNoEvent');
+				if (bridgeOnly) setStatus('flow.settings.bridge.saved');
+				else if (outcome.eventId) setStatus('flow.settings.saved', { eventId: outcome.eventId });
 				else setStatus('flow.settings.savedNoEvent');
 				toast.success(message, 6000);
 				return;
@@ -135,6 +140,12 @@
 		confirmIntent = intent;
 		acknowledged = false;
 		disableDialogOpen = true;
+	}
+
+	function toggleBridge() {
+		if (!feature) return;
+		const intent = controller.propose({ field: 'bridge_enabled', value: !feature.bridge_enabled });
+		if (intent) void run(intent);
 	}
 
 	function requestLevelChange() {
@@ -229,6 +240,16 @@
 				</div>
 				<div>
 					<dt class="text-fg-muted">
+						{$t('flow.settings.bridge.status')}
+					</dt>
+					<dd class="mt-1 font-medium text-fg" data-testid="flow-settings-bridge">
+						{feature.bridge_enabled
+							? $t('flow.settings.status.on')
+							: $t('flow.settings.status.off')}
+					</dd>
+				</div>
+				<div>
+					<dt class="text-fg-muted">
 						{$t('flow.settings.status.authzEpoch')}
 					</dt>
 					<dd class="mt-1 font-mono text-fg" data-testid="flow-settings-epoch">
@@ -303,6 +324,34 @@
 						{$t('flow.settings.toggle.enable')}
 					</button>
 				{/if}
+			</div>
+		</Card>
+
+		<Card>
+			<div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+				<div>
+					<h2 id="flow-bridge-heading" class="text-lg font-semibold text-fg">
+						{$t('flow.settings.bridge.heading')}
+					</h2>
+					<p id="flow-bridge-description" class="mt-1 text-sm text-fg-muted">
+						{$t('flow.settings.bridge.description')}
+					</p>
+				</div>
+				<button
+					type="button"
+					role="switch"
+					aria-checked={feature.bridge_enabled}
+					aria-labelledby="flow-bridge-heading"
+					aria-describedby="flow-bridge-description"
+					data-testid="flow-settings-bridge-switch"
+					class="min-h-11 shrink-0 rounded-control border border-fg px-4 text-sm font-medium text-fg hover:bg-surface disabled:text-fg-muted motion-safe:transition-colors"
+					disabled={saving}
+					onclick={toggleBridge}
+				>
+					{feature.bridge_enabled
+						? $t('flow.settings.bridge.turnOff')
+						: $t('flow.settings.bridge.turnOn')}
+				</button>
 			</div>
 		</Card>
 
