@@ -102,6 +102,7 @@
 				"session": {
 					"label": "会话",
 					"running": "运行中",
+					"runningBot": "运行中（此机器人自己的会话）",
 					"runningRunner": "运行中（由 runner 启动）",
 					"runningOperator": "运行中（由你启动）",
 					"absent": "未启动（下一个任务时启动）",
@@ -125,9 +126,7 @@
 					"label": "通道",
 					"tmux": "交互式会话（tmux）",
 					"headless": "一次性（headless）",
-					"onlyTmuxClis": "只有 Claude Code 和 Codex 可以在 tmux 会话中运行",
-					"taken": "{bot} 已在使用 tmux 会话 {session}",
-					"takenNoSession": "{bot} 已在使用此 CLI 的 tmux 会话"
+					"onlyTmuxClis": "只有 Claude Code 和 Codex 可以在 tmux 会话中运行"
 				},
 				"onComplete": {
 					"label": "完成后",
@@ -196,7 +195,8 @@
 			},
 			"workingDirectoryTmux": "工作目录（runner 启动会话时使用）",
 			"tmux": {
-				"session": "tmux 会话：",
+				"session": "此机器人没有专属会话时，runner创建的 tmux 会话：",
+				"botSession": "任务会投递到此机器人在runner上的专属会话，其连接的每个项目都是如此。",
 				"attach": "接入：",
 				"behaviour": {
 					"claude": "若该会话已在 runner 机器上存在，任务会原样输入其中。若不存在，runner 会在此处用 `claude --permission-mode bypassPermissions` 和你自己的登录状态启动它。CLI 以该机器人的身份通过 Sylvode 的工具回报。",

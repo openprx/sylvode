@@ -28,21 +28,19 @@
 		validateRunnerUrl,
 		validateWorkingDirectory
 	} from './validate';
-	import { channelErrorText, tmuxBlock as tmuxBlockOf } from './tmux';
-	import { CLIS, type Cli, type Connection, type WriteAnswer } from './wire';
+	import { tmuxBlock as tmuxBlockOf } from './tmux';
+	import { CLIS, type Cli, type WriteAnswer } from './wire';
 
 	interface Props {
 		workspaceId: string;
 		projectId: string;
-		/** The project's connections: a CLI that has a tmux connection cannot get another. */
-		connections: Connection[];
 		oncancel: () => void;
 		/** The answer of a successful connect. The block in it is the caller's from here on. */
 		onconnected: (answer: WriteAnswer) => void;
 		/** A business 409 asks the section to read the connection again. */
 		onreload: () => void;
 	}
-	let { workspaceId, projectId, connections, oncancel, onconnected, onreload }: Props = $props();
+	let { workspaceId, projectId, oncancel, onconnected, onreload }: Props = $props();
 
 	type Mode = 'new' | 'existing';
 	let mode = $state<Mode>('new');
@@ -73,16 +71,12 @@
 		]);
 	});
 
-	const tmuxBlock = $derived(tmuxBlockOf(connections, cli, null));
+	const tmuxBlock = $derived(tmuxBlockOf(cli));
 	$effect(() => {
 		// The server defaults to tmux; a CLI that cannot have it gets the one-shot channel instead.
 		if (tmuxBlock !== null && draft.channel === 'tmux') draft.channel = 'headless';
 	});
-	const channelError = $derived(
-		serverField?.field === 'channel'
-			? channelErrorText(serverField.text, connections, (key, values) => $t(key, { values }))
-			: undefined
-	);
+	const channelError = $derived(serverField?.field === 'channel' ? serverField.text : undefined);
 
 	const chosen = $derived(connectedBots.find((bot) => bot.id === botId) ?? null);
 	const botOptions = $derived(

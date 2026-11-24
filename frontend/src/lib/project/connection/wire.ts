@@ -55,6 +55,7 @@ export type DeliveryState = 'delivered' | 'refused' | 'failed' | 'none';
 
 export type SessionState = 'running' | 'absent' | 'cli_not_running' | 'ambiguous' | 'dialog';
 export type SessionOrigin = 'runner' | 'operator';
+export type SessionScope = 'bot' | 'project';
 export type SessionHooks = 'seen' | 'none';
 export type SessionPermissions = 'bypass' | 'normal' | 'unknown';
 export type SessionMcp = 'ok' | 'missing' | 'other' | 'stale';
@@ -64,6 +65,8 @@ export type SessionMcp = 'ok' | 'missing' | 'other' | 'stale';
  * is absent when the runner did not report it.
  */
 export interface SessionRow {
+	/** `bot`: the bot's own session on the runner, one for all its projects. */
+	scope: SessionScope | null;
 	session_name: string | null;
 	status: 'ok' | 'warn' | 'fail' | null;
 	state: SessionState | null;
@@ -233,6 +236,7 @@ function component(value: unknown): { state: ComponentState; version: string | n
 const SESSION_STATES = ['running', 'absent', 'cli_not_running', 'ambiguous', 'dialog'] as const;
 const SESSION_ORIGINS = ['runner', 'operator'] as const;
 const SESSION_HOOKS = ['seen', 'none'] as const;
+const SESSION_SCOPES = ['bot', 'project'] as const;
 const SESSION_PERMISSIONS = ['bypass', 'normal', 'unknown'] as const;
 const SESSION_MCP = ['ok', 'missing', 'other', 'stale'] as const;
 const ROW_STATUS = ['ok', 'warn', 'fail'] as const;
@@ -244,6 +248,7 @@ const ROW_STATUS = ['ok', 'warn', 'fail'] as const;
 function sessionRow(value: unknown): SessionRow | null {
 	if (!isRecord(value)) return null;
 	return {
+		scope: member(SESSION_SCOPES, value.scope),
 		session_name: str(value.session_name),
 		status: member(ROW_STATUS, value.status),
 		state: member(SESSION_STATES, value.state),

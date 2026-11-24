@@ -102,6 +102,7 @@
 				"session": {
 					"label": "Session",
 					"running": "Running",
+					"runningBot": "Running (this bot's own session)",
 					"runningRunner": "Running (started by runner)",
 					"runningOperator": "Running (started by you)",
 					"absent": "Not started (starts on the next task)",
@@ -125,9 +126,7 @@
 					"label": "Channel",
 					"tmux": "Interactive session (tmux)",
 					"headless": "One-shot (headless)",
-					"onlyTmuxClis": "Only Claude Code and Codex can run in a tmux session",
-					"taken": "{bot} already uses tmux session {session}",
-					"takenNoSession": "{bot} already uses the tmux session of this CLI"
+					"onlyTmuxClis": "Only Claude Code and Codex can run in a tmux session"
 				},
 				"onComplete": {
 					"label": "On completion",
@@ -196,7 +195,8 @@
 			},
 			"workingDirectoryTmux": "Working directory (used when the runner starts the session)",
 			"tmux": {
-				"session": "tmux session:",
+				"session": "tmux session the runner creates if this bot has none of its own:",
+				"botSession": "Delivered into this bot's own session on the runner, for every project it is connected to.",
 				"attach": "Attach:",
 				"behaviour": {
 					"claude": "If this session exists on the runner machine, tasks are typed into it as it is. If not, the runner starts it here with `claude --permission-mode bypassPermissions` and your own login. The CLI reports back through Sylvode's tools as this bot.",

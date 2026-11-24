@@ -21,16 +21,3 @@ export function routeServerMessage(message: string): { field: ErrorField; text: 
 	}
 	return { field: 'other', text: message };
 }
-
-const TMUX_TAKEN = /^project already has a tmux connection for (\S+) \(bot (.+)\)$/;
-
-/**
- * The 409 of a second tmux connection for a CLI: `channel: project already has a tmux connection
- * for <cli> (bot <name>)`. The bot it names, so the form can say "<bot> already uses tmux
- * session <KEY>-<cli>" as it does before submitting; `null` for any other message.
- */
-export function tmuxTakenBy(message: string): { cli: string; bot: string } | null {
-	const body = routeServerMessage(message);
-	const match = body.field === 'channel' ? TMUX_TAKEN.exec(body.text) : null;
-	return match?.[1] && match[2] ? { cli: match[1], bot: match[2] } : null;
-}

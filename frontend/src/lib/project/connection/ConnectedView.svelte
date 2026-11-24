@@ -19,7 +19,7 @@
 	import { loadDomains, loadLabels, loadStates, type Choice } from './options';
 	import { routeServerMessage } from './server-errors';
 	import { runsWithoutPermissionChecks } from './status';
-	import { attachCommand, channelErrorText, tmuxBlock as tmuxBlockOf } from './tmux';
+	import { attachCommand, tmuxBlock as tmuxBlockOf } from './tmux';
 	import {
 		normalizeDirectory,
 		normalizeRunnerUrl,
@@ -32,8 +32,6 @@
 		workspaceId: string;
 		projectName: string;
 		connection: Connection;
-		/** Every connection of the project: a CLI with a tmux connection cannot get a second. */
-		connections: Connection[];
 		status: Status | null;
 		now: Date;
 		refreshing: boolean;
@@ -48,7 +46,6 @@
 		workspaceId,
 		projectName,
 		connection,
-		connections,
 		status,
 		now,
 		refreshing,
@@ -62,7 +59,8 @@
 	const botId = $derived(connection.bot.id);
 	const isTmux = $derived(connection.execution.channel === 'tmux');
 	const sessionName = $derived(connection.execution.session_name);
-	const tmuxBlock = $derived(tmuxBlockOf(connections, connection.execution.cli, botId));
+	const botSession = $derived(status?.tmux_session?.scope === 'bot');
+	const tmuxBlock = $derived(tmuxBlockOf(connection.execution.cli));
 	const warn = $derived(runsWithoutPermissionChecks(status));
 	let channelError = $state<string | undefined>(undefined);
 	const shared = $derived(
@@ -130,9 +128,7 @@
 		}
 		const routed = routeServerMessage(result.message);
 		if (routed.field === 'channel') {
-			channelError = channelErrorText(result.message, connections, (key, values) =>
-				$t(key, { values })
-			);
+			channelError = routed.text;
 			advancedOpen = true;
 		} else if (routed.field === 'other') toast.error(result.message);
 		else editError = routed.text;
@@ -236,7 +232,9 @@
 
 	{#if isTmux}
 		<div class="session" data-testid="tmux-session">
-			{#if sessionName}
+			{#if botSession}
+				<p data-testid="tmux-bot-session">{$t('execution.connection.tmux.botSession')}</p>
+			{:else if sessionName}
 				<p>
 					{$t('execution.connection.tmux.session')}
 					<code data-testid="tmux-session-name">{sessionName}</code>

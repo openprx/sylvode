@@ -32,6 +32,7 @@ export function runnerChip(state: RunnerState): Chip {
 export function sessionChip(session: SessionRow | null): Chip | null {
 	switch (session?.state) {
 		case 'running':
+			if (session.scope === 'bot') return { tone: 'success', key: `${KEY}session.runningBot` };
 			return session.created_by === 'runner'
 				? { tone: 'success', key: `${KEY}session.runningRunner` }
 				: session.created_by === 'operator'

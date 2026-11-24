@@ -200,7 +200,6 @@
 				{workspaceId}
 				{projectName}
 				connection={item.connection}
-				connections={items.map((entry) => entry.connection)}
 				status={item.status}
 				{now}
 				{refreshing}
@@ -214,7 +213,6 @@
 			<ConnectForm
 				{workspaceId}
 				{projectId}
-				connections={items.map((entry) => entry.connection)}
 				oncancel={() => (formOpen = false)}
 				onconnected={connected}
 				onreload={() => void reload()}
