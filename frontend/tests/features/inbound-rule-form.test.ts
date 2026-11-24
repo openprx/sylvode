@@ -530,6 +530,10 @@ suite.check('the first exact kind skips prefixes and invalid lines', () => {
 	assertEqual(firstExactKind(''), null, 'empty');
 });
 
+// The patched methods are own properties of the shared client: remove them so that the other suites
+// of this process (they all run in one) see the real client again.
+for (const method of ['get', 'post', 'put', 'patch', 'delete']) delete client[method];
+
 test(suite.name, () => {
 	const result = suite.result();
 	nodeAssert.equal(result.failed, 0, result.failures.join('\n'));
