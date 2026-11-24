@@ -79,6 +79,8 @@ struct Fixture {
     log: PathBuf,
     /// The CLI of the project's connection: `claude`, or `codex` (which also enables codex).
     cli: &'static str,
+    /// Extra configuration appended last: the `[[runner.tmux.sessions]]` entries of a test.
+    sessions: String,
 }
 
 /// The stand-in CLI, compiled once per test run with `rustc` (`standin_cli.rs`).
@@ -159,7 +161,55 @@ impl Fixture {
             bin,
             log,
             cli: "claude",
+            sessions: String::new(),
         }
+    }
+
+    /// The project's claude connection uses the existing tmux session `name`.
+    fn named(mut self, name: &str) -> Self {
+        self.sessions = format!("[[runner.tmux.sessions]]\nproject = \"SVWL\"\ncli = \"claude\"\nname = \"{name}\"\n");
+        self
+    }
+
+    /// Starts the stand-in claude, as an operator would, in a tmux session called `name`. Its
+    /// settings file does not exist, so it reports no hooks.
+    fn start_operator_session(&self, name: &str) {
+        let settings = self.tmux.state().join("sessions/SVWL-claude/claude-settings.json");
+        assert!(
+            self.tmux
+                .raw(&[
+                    "new-session",
+                    "-d",
+                    "-s",
+                    name,
+                    "-c",
+                    &self.project.to_string_lossy(),
+                    "--",
+                    &self.bin.file("claude").to_string_lossy(),
+                    "--settings",
+                    &settings.to_string_lossy(),
+                ])
+                .status
+                .success()
+        );
+    }
+
+    fn pane_pid(&self, target: &str) -> String {
+        String::from_utf8_lossy(
+            &self
+                .tmux
+                .raw(&["display-message", "-p", "-t", target, "#{pane_pid}"])
+                .stdout,
+        )
+        .trim()
+        .to_string()
+    }
+
+    fn has_session(&self, name: &str) -> bool {
+        self.tmux
+            .raw(&["has-session", "-t", &format!("={name}")])
+            .status
+            .success()
     }
 
     /// A fixture whose project connection uses codex (enabled on the runner).
@@ -186,7 +236,7 @@ impl Fixture {
              launch_command = [\"{codex_bin}\", \"--no-daemon\", \"--no-alt-screen\", \"--dangerously-bypass-approvals-and-sandbox\"]\n\
              push_settle_ms = 500\n\
              [runner.mcp]\nserver_binary = \"{}\"\n\
-             [[agents]]\nid = \"{BOT}\"\nname = \"Bot\"\nagent_type = \"runner\"\n[agents.route]\nbot_ids = [\"{BOT}\"]\n",
+             [[agents]]\nid = \"{BOT}\"\nname = \"Bot\"\nagent_type = \"runner\"\n[agents.route]\nbot_ids = [\"{BOT}\"]\n{sessions}",
             self.api.url(),
             self.tmux.state().display(),
             canonical.display(),
@@ -196,6 +246,7 @@ impl Fixture {
             standin = self.bin.file("claude").display(),
             codex = self.cli == "codex",
             codex_bin = self.bin.file("codex").display(),
+            sessions = self.sessions,
         )
     }
 
@@ -670,11 +721,28 @@ impl Fixture {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
 async fn after_a_runner_restart_a_pushed_task_is_supervised_again_and_the_next_one_follows() {
+    restart_keeps_a_pushed_task(None).await;
+}
+
+/// The same with a configured session: the record names the tmux session the task was typed into,
+/// so it is the one looked at after the restart, and nothing is typed twice.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn after_a_runner_restart_a_pushed_task_in_a_configured_session_is_supervised_again() {
+    restart_keeps_a_pushed_task(Some("sv")).await;
+}
+
+async fn restart_keeps_a_pushed_task(configured: Option<&str>) {
     if !enabled() {
         return;
     }
     let Some(program) = find_tmux() else { return };
-    let fx = Fixture::new(program, Standin::Normal).await;
+    let mut fx = Fixture::new(program, Standin::Normal).await;
+    let session = configured.unwrap_or("SVWL-claude");
+    if let Some(name) = configured {
+        fx = fx.named(name);
+        fx.start_operator_session(name);
+    }
     fx.set_view(T1, true, true);
     fx.set_view(T2, true, false);
     let mut first = fx.serve();
@@ -686,7 +754,7 @@ async fn after_a_runner_restart_a_pushed_task_is_supervised_again_and_the_next_o
     first.terminate();
     assert!(first.wait_exit(Duration::from_secs(20)).is_some());
     // The session outlives the runner.
-    assert!(fx.tmux.raw(&["has-session", "-t", "=SVWL-claude"]).status.success());
+    assert!(fx.has_session(session));
     // Sylvode shows T1 acknowledged with a STALE phase (`queued`: the pushed report was lost or
     // overtaken); T2 is delivered after the restart. T1 must not be typed a second time.
     let listed = fx.active_view(T1, Some("queued"), true);
@@ -707,6 +775,15 @@ async fn after_a_runner_restart_a_pushed_task_is_supervised_again_and_the_next_o
             .iter()
             .all(|r| !r.path().ends_with("/fail"))
     );
+    if configured.is_some() {
+        assert!(!fx.has_session("SVWL-claude"), "a derived session was created");
+        let record =
+            std::fs::read_to_string(fx.tmux.state().join("sessions/SVWL-claude/session.json")).expect("record");
+        assert!(
+            record.contains("\"tmux_name\": \"sv\"") && record.contains("\"name_source\": \"local\""),
+            "{record}"
+        );
+    }
     drop(second);
 }
 
@@ -1248,6 +1325,8 @@ async fn doctor_describes_the_session_of_a_project() {
     let absent = fx.session_row();
     assert_eq!(absent["detail"]["state"], "absent", "{absent}");
     assert_eq!(absent["status"], "ok");
+    assert_eq!(absent["detail"]["tmux_session"], "SVWL-claude", "{absent}");
+    assert_eq!(absent["detail"]["name_source"], "derived", "{absent}");
     assert_eq!(absent["found"], false);
     // The operator's claude, with permission checks off and this bot's MCP file in its arguments.
     let state = fx.tmux.state();
@@ -1587,4 +1666,254 @@ async fn after_a_restart_a_pushed_codex_task_is_supervised_again_in_its_own_sess
     );
     assert!(!fx.tmux.raw(&["has-session", "-t", "=SVWL-claude"]).status.success());
     drop(second);
+}
+
+/// A session named in the configuration is used as it is: the task is typed into its CLI pane, the
+/// session is never restarted, no derived session is made, and the record says where the name came
+/// from. The state directory stays that of the slot.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn a_configured_session_is_used_as_it_is_and_never_restarted() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::new(program, Standin::Normal).await.named("sv");
+    fx.start_operator_session("sv");
+    let before = fx.pane_pid("=sv:");
+    fx.set_view(T1, true, true);
+    let server = fx.serve();
+    let answer = Fixture::deliver(server.url("/webhook"), T1).await;
+    assert_eq!(answer["status"], "dispatched", "{answer}");
+    assert_eq!(answer["session"], "sv", "{answer}");
+    assert_eq!(fx.wait_typed(1, 40).await.len(), 1);
+    assert_eq!(fx.pane_pid("=sv:"), before, "the CLI was restarted");
+    assert!(!fx.has_session("SVWL-claude"), "a derived session was created");
+    let record = std::fs::read_to_string(fx.tmux.state().join("sessions/SVWL-claude/session.json")).expect("record");
+    assert!(
+        record.contains("\"created_by\": \"operator\"")
+            && record.contains("\"tmux_name\": \"sv\"")
+            && record.contains("\"name_source\": \"local\""),
+        "{record}"
+    );
+    assert!(
+        std::fs::read_dir(fx.tmux.state().join("sessions"))
+            .expect("sessions")
+            .filter_map(Result::ok)
+            .all(|entry| entry.file_name() != "sv"),
+        "the name became a directory"
+    );
+    drop(server);
+}
+
+/// A configured session with several windows: only the pane that runs claude gets the task; the
+/// codex window and the plain program are untouched.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn a_configured_session_with_several_windows_gets_the_task_in_the_claude_pane_only() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::new(program, Standin::Normal).await.named("cli");
+    fx.start_operator_session("cli");
+    // A window whose foreground program is called `codex` (a program that only sleeps; a copy of
+    // a system binary is not usable on every platform), and a `cat`.
+    let source = fx.bin.file("sleeper.rs");
+    std::fs::write(
+        &source,
+        "fn main() { std::thread::sleep(std::time::Duration::from_secs(600)); }",
+    )
+    .expect("source");
+    let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
+    let built = Command::new(rustc)
+        .args(["--edition", "2021", "-o"])
+        .arg(fx.bin.file("codex"))
+        .arg(&source)
+        .status()
+        .expect("rustc runs");
+    assert!(built.success(), "the sleeper did not compile");
+    let project = fx.project.to_string_lossy().to_string();
+    assert!(
+        fx.tmux
+            .raw(&[
+                "new-window",
+                "-d",
+                "-t",
+                "=cli:",
+                "-c",
+                &project,
+                "--",
+                &fx.bin.file("codex").to_string_lossy(),
+            ])
+            .status
+            .success()
+    );
+    assert!(
+        fx.tmux
+            .raw(&["new-window", "-d", "-t", "=cli:", "-c", &project, "--", "cat"])
+            .status
+            .success()
+    );
+    let panes = |fx: &Fixture| {
+        String::from_utf8_lossy(
+            &fx.tmux
+                .raw(&["list-panes", "-s", "-t", "=cli", "-F", "#{window_index} #{pane_pid}"])
+                .stdout,
+        )
+        .to_string()
+    };
+    let before = panes(&fx);
+    assert_eq!(before.lines().count(), 3, "{before}");
+    fx.set_view(T1, true, true);
+    let server = fx.serve();
+    let answer = Fixture::deliver(server.url("/webhook"), T1).await;
+    assert_eq!(answer["status"], "dispatched", "{answer}");
+    assert_eq!(answer["session"], "cli", "{answer}");
+    assert_eq!(fx.wait_typed(1, 40).await.len(), 1);
+    assert_eq!(panes(&fx), before, "a window or process changed");
+    for window in ["1", "2"] {
+        let pane = String::from_utf8_lossy(
+            &fx.tmux
+                .raw(&["capture-pane", "-p", "-t", &format!("=cli:{window}")])
+                .stdout,
+        )
+        .to_string();
+        assert!(!pane.contains("Sylvode"), "window {window} got the task: {pane}");
+    }
+    assert!(
+        fx.api
+            .requests_to("POST", "/api/v1/ai/tasks/")
+            .iter()
+            .all(|r| !r.path().ends_with("/fail"))
+    );
+    drop(server);
+}
+
+/// A configured session that does not exist is never created: the task fails as retryable and
+/// says how to start it.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn an_absent_configured_session_fails_retryable_and_is_not_created() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::new(program, Standin::Normal).await.named("sv");
+    fx.set_view(T1, true, false);
+    let server = fx.serve();
+    let answer = Fixture::deliver(server.url("/webhook"), T1).await;
+    assert_eq!(answer["status"], "dispatched", "{answer}");
+    let fails = fx.api.wait_for("POST", "/fail", 1, Duration::from_secs(40)).await;
+    assert_eq!(fails.len(), 1, "{fails:?}");
+    assert_eq!(fails[0].body["retryable"], true);
+    let reason = fails[0].body["reason"].as_str().expect("reason");
+    assert!(
+        reason.contains("tmux session sv does not exist")
+            && reason.contains("tmux new-session -s sv")
+            && reason.contains("does not create sessions with a configured name"),
+        "{reason}"
+    );
+    assert!(!fx.has_session("sv"), "the configured session was created");
+    assert!(!fx.has_session("SVWL-claude"), "a derived session was created");
+    assert!(fx.typed().is_empty());
+    // The row for it is a warning that names the tmux session and its source.
+    let row = fx.session_row();
+    assert_eq!(row["status"], "warn", "{row}");
+    assert_eq!(row["detail"]["tmux_session"], "sv", "{row}");
+    assert_eq!(row["detail"]["name_source"], "local", "{row}");
+    assert_eq!(row["detail"]["state"], "absent", "{row}");
+    drop(server);
+}
+
+/// `doctor` for a configured session: the row is still `session.<KEY>-<cli>` and shows the tmux
+/// name and where it came from; it exists before any task ran.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn doctor_describes_a_configured_session() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::new(program, Standin::Normal).await.named("sv");
+    let absent = fx.session_row();
+    assert_eq!(absent["status"], "warn", "{absent}");
+    assert_eq!(absent["detail"]["state"], "absent", "{absent}");
+    assert!(
+        absent["hint"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("tmux session sv does not exist"),
+        "{absent}"
+    );
+    fx.start_operator_session("sv");
+    let row = fx.session_row();
+    assert_eq!(row["detail"]["state"], "running", "{row}");
+    assert_eq!(row["detail"]["tmux_session"], "sv", "{row}");
+    assert_eq!(row["detail"]["name_source"], "local", "{row}");
+    assert_eq!(row["detail"]["foreground"], "claude", "{row}");
+    // A session without the CLI fails, with the attach hint for the configured name and no offer
+    // to end the session.
+    assert!(fx.tmux.raw(&["kill-session", "-t", "=sv"]).status.success());
+    assert!(
+        fx.tmux
+            .raw(&["new-session", "-d", "-s", "sv", "-c", "/tmp", "--", "cat"])
+            .status
+            .success()
+    );
+    let gone = fx.session_row();
+    assert_eq!(gone["detail"]["state"], "cli_not_running", "{gone}");
+    assert_eq!(gone["status"], "fail");
+    let hint = gone["hint"].as_str().unwrap_or_default();
+    assert!(
+        hint.contains("tmux attach -t sv") && !hint.contains("end the session"),
+        "{gone}"
+    );
+}
+
+/// `sessions` shows slot and tmux name; `release` sees the configured session.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real tmux; run with SV_TMUX_TESTS=1 and --ignored"]
+async fn the_operator_commands_see_a_configured_session() {
+    if !enabled() {
+        return;
+    }
+    let Some(program) = find_tmux() else { return };
+    let fx = Fixture::new(program, Standin::Normal).await.named("sv");
+    fx.start_operator_session("sv");
+    fx.set_view(T1, true, true);
+    let mut server = fx.serve();
+    assert_eq!(
+        Fixture::deliver(server.url("/webhook"), T1).await["status"],
+        "dispatched"
+    );
+    assert_eq!(fx.wait_typed(1, 40).await.len(), 1);
+    server.terminate();
+    assert!(server.wait_exit(Duration::from_secs(20)).is_some());
+    let listing = fx.operator(&["sessions"]);
+    let text = String::from_utf8_lossy(&listing.stdout).to_string();
+    let line = text.lines().find(|l| l.starts_with("SVWL-claude")).unwrap_or_default();
+    assert!(
+        listing.status.success()
+            && line.split_whitespace().nth(1) == Some("sv")
+            && line.contains(PROJECT)
+            && line.contains("operator")
+            && (line.contains("idle") || line.contains("busy")),
+        "{text}"
+    );
+    // Only the configured session exists; it still blocks the release of its key.
+    assert!(!fx.has_session("SVWL-claude"));
+    let refused = fx.operator(&["release", "SVWL"]);
+    assert!(
+        !refused.status.success() && String::from_utf8_lossy(&refused.stderr).contains("still exists"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(fx.tmux.raw(&["kill-session", "-t", "=sv"]).status.success());
+    let released = fx.operator(&["release", "SVWL"]);
+    assert!(
+        released.status.success(),
+        "{}",
+        String::from_utf8_lossy(&released.stderr)
+    );
 }
