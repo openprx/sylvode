@@ -117,18 +117,18 @@ suite.check('rollover message names the target sprint from the server answer', (
 		{ id: 'p2', name: 'Sprint 13' }
 	];
 	assertEqual(
-		rolloverMessage(tr, 'completed', { moved_count: 3, target_sprint_id: 'p2' }, targets),
-		'cycles.completed. cycles.rolloverMoved{"count":3,"target":"Sprint 13"}',
+		rolloverMessage(tr, 'completed', { moved_count: 3, target_sprint_id: 'p2' }, targets, 'en'),
+		'cycles.completed. cycles.rolloverMoved.other{"target":"Sprint 13","count":3}',
 		'completed into a planned sprint'
 	);
 	assertEqual(
-		rolloverMessage(tr, 'cancelled', { moved_count: 1, target_sprint_id: 'p1' }, targets),
-		'cycles.cancelled. cycles.rolloverMoved{"count":1,"target":"Sprint 12"}',
+		rolloverMessage(tr, 'cancelled', { moved_count: 1, target_sprint_id: 'p1' }, targets, 'en'),
+		'cycles.cancelled. cycles.rolloverMoved.one{"target":"Sprint 12","count":1}',
 		'cancelled into a planned sprint'
 	);
 	assertEqual(
-		rolloverMessage(tr, 'completed', { moved_count: 2, target_sprint_id: null }, targets),
-		'cycles.completed. cycles.rolloverMoved{"count":2,"target":"cycles.rolloverBacklog"}',
+		rolloverMessage(tr, 'completed', { moved_count: 2, target_sprint_id: null }, targets, 'en'),
+		'cycles.completed. cycles.rolloverMoved.other{"target":"cycles.rolloverBacklog","count":2}',
 		'no target is the backlog'
 	);
 	assertEqual(
@@ -142,8 +142,8 @@ suite.check('rollover message names the target sprint from the server answer', (
 		'no rollover in the answer'
 	);
 	assertEqual(
-		rolloverMessage(tr, 'completed', { moved_count: 2, target_sprint_id: 'gone' }, targets),
-		'cycles.completed. cycles.rolloverMovedElsewhere{"count":2,"target":null}',
+		rolloverMessage(tr, 'completed', { moved_count: 2, target_sprint_id: 'gone' }, targets, 'en'),
+		'cycles.completed. cycles.rolloverMovedElsewhere.other{"target":null,"count":2}',
 		'a target that is not known is never reported as the backlog'
 	);
 });

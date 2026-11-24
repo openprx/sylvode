@@ -617,9 +617,15 @@
 		"rolloverTarget": "Move unfinished issues to",
 		"rolloverBacklog": "Backlog",
 		"rolloverKeep": "Keep the sprint",
-		"rolloverMoved": "{count} unfinished issues moved to {target}",
+		"rolloverMoved": {
+			"one": "{count} unfinished issue moved to {target}",
+			"other": "{count} unfinished issues moved to {target}"
+		},
 		"rolloverNone": "No unfinished issues to move",
-		"rolloverMovedElsewhere": "{count} unfinished issues moved to another sprint",
+		"rolloverMovedElsewhere": {
+			"one": "{count} unfinished issue moved to another sprint",
+			"other": "{count} unfinished issues moved to another sprint"
+		},
 		"cancelledList": "Cancelled Sprints",
 		"noCancelled": "No cancelled sprint",
 		"error": {
@@ -629,7 +635,11 @@
 			"invalidTransition": "A sprint cannot change from {from} to {to}.",
 			"invalidTransitionUnnamed": "That status change is not allowed for this sprint.",
 			"nameTaken": "Another sprint in this project already has this name."
-		}
+		},
+		"showIssues": "Show issues",
+		"hideIssues": "Hide issues",
+		"loadMore": "Load more",
+		"loadIssuesFailed": "The issues could not be loaded. Try again."
 	},
 	"errorPage": {
 		"title": "Page not found",

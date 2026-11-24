@@ -3,6 +3,7 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	import { get } from 'svelte/store';
 	import { locale, t } from 'svelte-i18n';
 	import { issuesApi, type Issue } from '#lib/api/issues.js';
@@ -15,6 +16,14 @@
 		rolloverTargets,
 		sprintFailureMessage
 	} from '#lib/sprints/rules.js';
+	import {
+		emptyIssueList,
+		hasMoreIssues,
+		nextIssuePage,
+		sprintProgressOf,
+		withIssuePage,
+		type SprintIssueList
+	} from '#lib/sprints/issue-pages.js';
 	import type { WorkspaceRole } from '#lib/workspace/home.js';
 	import { WorkspaceRoleTracker } from '#lib/workspace/role.js';
 	import {
@@ -38,7 +47,9 @@
 	let loading = $state(true);
 	let saving = $state(false);
 	let sprints = $state<Sprint[]>([]);
-	let projectIssues = $state<Issue[]>([]);
+	// Expanded sprints and the pages read for them.
+	let issueLists = $state<Record<string, SprintIssueList>>({});
+	const expanded = new SvelteSet<string>();
 	let errorMessage = $state('');
 	let projectMissing = $state(false);
 
@@ -82,6 +93,9 @@
 	};
 
 	let createForm = $state<SprintForm>({ ...emptyForm });
+	// A refused name is shown under the field: a toast would sit behind the open dialog.
+	let createNameError = $state('');
+	let createNameInput = $state<HTMLInputElement | null>(null);
 	let editForm = $state<SprintForm>({ ...emptyForm });
 
 	onMount(async () => {
@@ -103,36 +117,40 @@
 	const cancelledSprints = $derived(pastSprints(sprints, 'cancelled'));
 
 	const sprintProgress = $derived.by(() => {
-		const stats: Record<string, { done: number; total: number; percent: number }> = {};
-		for (const sprint of sprints) {
-			const issues = projectIssues.filter((item) => item.sprint_id === sprint.id);
-			const done = issues.filter((item) => item.status === 'done').length;
-			const total = issues.length;
-			const percent = total > 0 ? Math.round((done / total) * 100) : 0;
-			stats[sprint.id] = { done, total, percent };
-		}
+		const stats: Record<string, ReturnType<typeof sprintProgressOf>> = {};
+		for (const sprint of sprints) stats[sprint.id] = sprintProgressOf(sprint);
 		return stats;
 	});
 
-	const sprintIssues = $derived.by(() => {
-		const map: Record<string, Issue[]> = {};
-		for (const sprint of sprints) {
-			map[sprint.id] = projectIssues
-				.filter((item) => item.sprint_id === sprint.id)
-				.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+	async function loadIssues(sprintId: string) {
+		const current = issueLists[sprintId] ?? emptyIssueList();
+		const query = nextIssuePage(sprintId, current);
+		if (!query) return;
+		issueLists[sprintId] = { ...current, loading: true, failed: false };
+		const response = await issuesApi.list(projectId, query);
+		const latest = issueLists[sprintId] ?? current;
+		if (response.code !== 0 || !response.data) {
+			issueLists[sprintId] = { ...latest, loading: false, failed: true };
+			return;
 		}
-		return map;
-	});
+		issueLists[sprintId] = withIssuePage(latest, response.data);
+	}
+
+	function toggleIssues(sprintId: string) {
+		if (expanded.has(sprintId)) {
+			expanded.delete(sprintId);
+			return;
+		}
+		expanded.add(sprintId);
+		if (!issueLists[sprintId]) void loadIssues(sprintId);
+	}
 
 	async function loadData() {
 		loading = true;
 		errorMessage = '';
 		projectMissing = false;
 
-		const [sprintsResponse, issuesResponse] = await Promise.all([
-			sprintsApi.list(projectId),
-			issuesApi.list(projectId, { page: 1, per_page: 1000 })
-		]);
+		const sprintsResponse = await sprintsApi.list(projectId);
 
 		if (sprintsResponse.code !== 0) {
 			errorMessage = sprintsResponse.message;
@@ -142,11 +160,9 @@
 			sprints = sprintsResponse.data.items ?? [];
 		}
 
-		if (issuesResponse.code !== 0) {
-			projectIssues = [];
-		} else if (issuesResponse.data) {
-			projectIssues = issuesResponse.data.items ?? [];
-		}
+		// Lists read before are stale after a change; the expanded sprints read their first page again.
+		issueLists = {};
+		for (const id of expanded) void loadIssues(id);
 
 		loading = false;
 	}
@@ -197,6 +213,7 @@
 
 	function openCreateModal() {
 		createForm = { ...emptyForm };
+		createNameError = '';
 		showCreateModal = true;
 	}
 
@@ -246,6 +263,12 @@
 		saving = false;
 
 		if (response.code !== 0) {
+			if (response.error_code === 'sprint_name_taken') {
+				createNameError = sprintFailureMessage(get(t), response);
+				createNameInput?.focus();
+				createNameInput?.select();
+				return;
+			}
 			showFailure(response);
 			return;
 		}
@@ -453,35 +476,7 @@
 									}
 								})}
 							/>
-							<div class="mt-4 rounded-control border border-line bg-surface p-3">
-								<p class="mb-2 text-xs font-medium uppercase tracking-wide text-fg-muted">
-									{$t('cycles.linkedIssues', {
-										values: { count: sprintIssues[sprint.id]?.length ?? 0 }
-									})}
-								</p>
-								{#if (sprintIssues[sprint.id]?.length ?? 0) === 0}
-									<p class="text-sm text-fg-muted">
-										{$t('cycles.noLinkedIssue')}
-									</p>
-								{:else}
-									<div class="space-y-2">
-										{#each sprintIssues[sprint.id].slice(0, 5) as issue (issue.id)}
-											<a
-												href={resolve(
-													'/(app)/workspace/[workspaceId]/projects/[projectId]/issues/[issueId]',
-													{ workspaceId, projectId, issueId: issue.id }
-												)}
-												class="block rounded border border-line bg-raised px-3 py-2 text-sm hover:border-line-strong hover:bg-surface"
-											>
-												<p class="font-medium text-fg">{issue.title}</p>
-												<p class="font-mono text-xs text-fg-muted">
-													{formatIssueCode(issue)}
-												</p>
-											</a>
-										{/each}
-									</div>
-								{/if}
-							</div>
+							{@render issuePanel(sprint)}
 
 							<div class="mt-4 flex flex-wrap gap-2">
 								<button
@@ -546,35 +541,7 @@
 									{$t('cycles.description')}: {sprint.description}
 								</p>
 							{/if}
-							<div class="rounded-control border border-line bg-surface p-3">
-								<p class="mb-2 text-xs font-medium uppercase tracking-wide text-fg-muted">
-									{$t('cycles.linkedIssues', {
-										values: { count: sprintIssues[sprint.id]?.length ?? 0 }
-									})}
-								</p>
-								{#if (sprintIssues[sprint.id]?.length ?? 0) === 0}
-									<p class="text-sm text-fg-muted">
-										{$t('cycles.noLinkedIssue')}
-									</p>
-								{:else}
-									<div class="space-y-2">
-										{#each sprintIssues[sprint.id].slice(0, 5) as issue (issue.id)}
-											<a
-												href={resolve(
-													'/(app)/workspace/[workspaceId]/projects/[projectId]/issues/[issueId]',
-													{ workspaceId, projectId, issueId: issue.id }
-												)}
-												class="block rounded border border-line bg-raised px-3 py-2 text-sm hover:border-line-strong hover:bg-surface"
-											>
-												<p class="font-medium text-fg">{issue.title}</p>
-												<p class="font-mono text-xs text-fg-muted">
-													{formatIssueCode(issue)}
-												</p>
-											</a>
-										{/each}
-									</div>
-								{/if}
-							</div>
+							{@render issuePanel(sprint)}
 
 							<div class="mt-4 flex flex-wrap gap-2">
 								<button
@@ -657,6 +624,60 @@
 	{/if}
 </div>
 
+{#snippet issuePanel(sprint: Sprint)}
+	{@const progress = sprintProgress[sprint.id]}
+	{@const list = issueLists[sprint.id]}
+	<div class="mt-4 rounded-control border border-line bg-surface p-3">
+		<div class="flex flex-wrap items-center justify-between gap-2">
+			<p class="text-xs font-medium uppercase tracking-wide text-fg-muted">
+				{$t('cycles.linkedIssues', { values: { count: progress?.total ?? 0 } })}
+			</p>
+			{#if (progress?.total ?? 0) > 0}
+				<button
+					onclick={() => toggleIssues(sprint.id)}
+					aria-expanded={expanded.has(sprint.id)}
+					class="rounded-control border border-fg px-2 py-1 text-xs text-fg hover:bg-surface"
+					data-testid="cycles-toggle-issues"
+				>
+					{expanded.has(sprint.id) ? $t('cycles.hideIssues') : $t('cycles.showIssues')}
+				</button>
+			{/if}
+		</div>
+		{#if (progress?.total ?? 0) === 0}
+			<p class="mt-2 text-sm text-fg-muted">{$t('cycles.noLinkedIssue')}</p>
+		{:else if expanded.has(sprint.id)}
+			<div class="mt-2 space-y-2" data-testid="cycles-issue-list">
+				{#each list?.items ?? [] as issue (issue.id)}
+					<a
+						href={resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/issues/[issueId]', {
+							workspaceId,
+							projectId,
+							issueId: issue.id
+						})}
+						class="block rounded border border-line bg-raised px-3 py-2 text-sm hover:border-line-strong hover:bg-surface"
+					>
+						<p class="font-medium text-fg">{issue.title}</p>
+						<p class="font-mono text-xs text-fg-muted">{formatIssueCode(issue)}</p>
+					</a>
+				{/each}
+				{#if list?.failed}
+					<p class="text-sm text-danger" role="alert">{$t('cycles.loadIssuesFailed')}</p>
+				{/if}
+				{#if list && hasMoreIssues(list)}
+					<button
+						onclick={() => void loadIssues(sprint.id)}
+						disabled={list.loading}
+						class="rounded-control border border-fg px-3 py-1.5 text-sm text-fg hover:bg-surface disabled:text-fg-muted"
+						data-testid="cycles-load-more"
+					>
+						{list.loading ? $t('common.loading') : $t('cycles.loadMore')}
+					</button>
+				{/if}
+			</div>
+		{/if}
+	</div>
+{/snippet}
+
 {#snippet pastCard(sprint: Sprint)}
 	<div class="rounded-card border border-line p-4">
 		<div class="mb-2 flex items-start justify-between gap-2">
@@ -681,37 +702,7 @@
 				}
 			})}
 		/>
-		<div class="mt-3 rounded-control border border-line bg-surface p-3">
-			<p class="mb-2 text-xs font-medium uppercase tracking-wide text-fg-muted">
-				{$t('cycles.linkedIssues', {
-					values: { count: sprintIssues[sprint.id]?.length ?? 0 }
-				})}
-			</p>
-			{#if (sprintIssues[sprint.id]?.length ?? 0) === 0}
-				<p class="text-sm text-fg-muted">
-					{$t('cycles.noLinkedIssue')}
-				</p>
-			{:else}
-				<div class="space-y-2">
-					{#each sprintIssues[sprint.id].slice(0, 5) as issue (issue.id)}
-						<a
-							href={resolve(
-								'/(app)/workspace/[workspaceId]/projects/[projectId]/issues/[issueId]',
-								{ workspaceId, projectId, issueId: issue.id }
-							)}
-							class="block rounded border border-line bg-raised px-3 py-2 text-sm hover:border-line-strong hover:bg-surface"
-						>
-							<p class="font-medium text-fg">
-								{issue.title}
-							</p>
-							<p class="font-mono text-xs text-fg-muted">
-								{formatIssueCode(issue)}
-							</p>
-						</a>
-					{/each}
-				</div>
-			{/if}
-		</div>
+		{@render issuePanel(sprint)}
 	</div>
 {/snippet}
 
@@ -746,9 +737,18 @@
 				id="create-name"
 				type="text"
 				bind:value={createForm.name}
+				bind:this={createNameInput}
+				oninput={() => (createNameError = '')}
+				aria-invalid={createNameError ? 'true' : undefined}
+				aria-describedby={createNameError ? 'create-name-error' : undefined}
 				placeholder={$t('cycles.namePlaceholder')}
 				class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg placeholder:text-fg-muted"
 			/>
+			{#if createNameError}
+				<p id="create-name-error" role="alert" class="mt-1 text-sm text-danger">
+					{createNameError}
+				</p>
+			{/if}
 		</div>
 		<div>
 			<label for="create-description" class="mb-1 block text-sm font-medium text-fg"

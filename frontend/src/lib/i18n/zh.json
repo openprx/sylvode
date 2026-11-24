@@ -617,9 +617,15 @@
 		"rolloverTarget": "将未完成的工作项移到",
 		"rolloverBacklog": "待办池",
 		"rolloverKeep": "保持不变",
-		"rolloverMoved": "已将 {count} 个未完成的工作项移到{target}",
+		"rolloverMoved": {
+			"one": "已将 {count} 个未完成的工作项移到{target}",
+			"other": "已将 {count} 个未完成的工作项移到{target}"
+		},
 		"rolloverNone": "没有需要移动的未完成工作项",
-		"rolloverMovedElsewhere": "已将 {count} 个未完成的工作项移到其他迭代",
+		"rolloverMovedElsewhere": {
+			"one": "已将 {count} 个未完成的工作项移到其他迭代",
+			"other": "已将 {count} 个未完成的工作项移到其他迭代"
+		},
 		"cancelledList": "已取消的迭代",
 		"noCancelled": "暂无已取消迭代",
 		"error": {
@@ -629,7 +635,11 @@
 			"invalidTransition": "迭代不能从“{from}”变为“{to}”。",
 			"invalidTransitionUnnamed": "该迭代不允许这样变更状态。",
 			"nameTaken": "项目内已有同名迭代。"
-		}
+		},
+		"showIssues": "显示工作项",
+		"hideIssues": "收起工作项",
+		"loadMore": "加载更多",
+		"loadIssuesFailed": "无法加载工作项，请重试。"
 	},
 	"errorPage": {
 		"title": "找不到页面",

@@ -23,6 +23,7 @@
 	{#if status === 404}
 		<StateBlock
 			kind="notFound"
+			headingLevel={1}
 			object={$t('errorPage.object')}
 			message={$t('errorPage.notFoundBody')}
 			action={{ label: $t('errorPage.home'), run: goHome, primary: true }}
@@ -31,6 +32,7 @@
 	{:else}
 		<StateBlock
 			kind="loadFailed"
+			headingLevel={1}
 			message={message || $t('errorPage.failedBody')}
 			action={{ label: $t('errorPage.home'), run: goHome }}
 			data-testid="route-error-failed"

@@ -4,6 +4,7 @@
 // helpers keep the screens from offering what the server would refuse.
 
 import type { Sprint, SprintRollover } from '#lib/api/sprints.js';
+import { plural } from '#lib/ui/foundations/plural.js';
 import { isWorkspaceAdminRole, type WorkspaceRole } from '#lib/workspace/home.js';
 
 /** Starting, completing, cancelling and deleting a sprint are for workspace owners and admins. */
@@ -100,7 +101,8 @@ export function rolloverMessage(
 	translate: Translate,
 	status: 'completed' | 'cancelled',
 	rollover: SprintRollover | null | undefined,
-	targets: readonly Pick<Sprint, 'id' | 'name'>[]
+	targets: readonly Pick<Sprint, 'id' | 'name'>[],
+	lang?: string | null
 ): string {
 	const done = translate(status === 'completed' ? 'cycles.completed' : 'cycles.cancelled');
 	const moved = rollover?.moved_count ?? 0;
@@ -109,12 +111,8 @@ export function rolloverMessage(
 	const target = targetId
 		? (targets.find((sprint) => sprint.id === targetId)?.name ?? null)
 		: translate('cycles.rolloverBacklog');
-	return `${done}. ${translate(
-		target === null ? 'cycles.rolloverMovedElsewhere' : 'cycles.rolloverMoved',
-		{
-			values: { count: moved, target }
-		}
-	)}`;
+	const base = target === null ? 'cycles.rolloverMovedElsewhere' : 'cycles.rolloverMoved';
+	return `${done}. ${plural(translate, base, moved, lang, { target })}`;
 }
 
 /** What a refused sprint call answers; the fields of `ApiResult` that matter here. */

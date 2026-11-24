@@ -35,6 +35,9 @@
 		title?: string;
 		/** Replaces the body sentence of the kind (a feature that says more than the catalogue). */
 		message?: string;
+		/** Renders the title as `<h1>`..`<h3>` (a page that has nothing else to name it, such as
+		 * "page not found"); without it the title is a paragraph. */
+		headingLevel?: 1 | 2 | 3;
 		/** The one way forward. The label defaults per kind where the wording has one. */
 		action?: { label?: string; run: () => void; primary?: boolean };
 	}
@@ -50,6 +53,7 @@
 		title,
 		message,
 		action,
+		headingLevel,
 		...rest
 	}: Props = $props();
 
@@ -106,7 +110,13 @@
 		{:else}
 			<Lock size={24} class="glyph" aria-hidden="true" />
 		{/if}
-		<p class="title">{title ?? $t(copy.titleKey, { values })}</p>
+		{#if headingLevel}
+			<svelte:element this={`h${headingLevel}`} class="title">
+				{title ?? $t(copy.titleKey, { values })}
+			</svelte:element>
+		{:else}
+			<p class="title">{title ?? $t(copy.titleKey, { values })}</p>
+		{/if}
 		{#if body}<p class="body">{body}</p>{/if}
 		{#if action && actionLabel}
 			<div class="action">

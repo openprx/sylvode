@@ -9,6 +9,11 @@ export interface SprintRollover {
 	target_sprint_id: string | null;
 }
 
+export interface SprintProgress {
+	total: number;
+	done: number;
+}
+
 export interface Sprint {
 	id: string;
 	project_id: string;
@@ -19,6 +24,9 @@ export interface Sprint {
 	status: SprintStatus;
 	created_at: string;
 	updated_at: string;
+	/** Items counted by the server for this sprint (`done` follows the finished rule of the
+	 * project). Present on the sprint list. */
+	progress?: SprintProgress;
 	/** Only on the answer that completed or cancelled the sprint. */
 	rollover?: SprintRollover;
 }
