@@ -57,6 +57,8 @@ pub struct MyIssueResponse {
 pub struct MyActivityResponse {
     pub id: Uuid,
     pub issue_id: Uuid,
+    /// The short identifier of the work item, `{project key}-{sequence number}`.
+    pub identifier: String,
     pub project_id: Uuid,
     pub workspace_id: Uuid,
     pub project_name: String,
@@ -253,6 +255,8 @@ pub async fn get_my_activities(
     struct MyActivityRow {
         id: Uuid,
         issue_id: Uuid,
+        project_key: String,
+        sequence_number: i32,
         project_id: Uuid,
         workspace_id: Uuid,
         project_name: String,
@@ -303,6 +307,8 @@ pub async fn get_my_activities(
         r"
             SELECT a.id,
                    COALESCE(a.issue_id, CASE WHEN a.resource_type = 'issue' THEN a.resource_id END) AS issue_id,
+                   p.key AS project_key,
+                   wi.sequence_number,
                    wi.project_id,
                    p.workspace_id,
                    p.name AS project_name,
@@ -343,6 +349,7 @@ pub async fn get_my_activities(
         .map(|activity| MyActivityResponse {
             id: activity.id,
             issue_id: activity.issue_id,
+            identifier: identifier(&activity.project_key, activity.sequence_number),
             project_id: activity.project_id,
             workspace_id: activity.workspace_id,
             project_name: activity.project_name,

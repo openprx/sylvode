@@ -1,7 +1,8 @@
 /**
  * No person is ever shown by a piece of their id: the `substring(0, 8)` / `slice(0, 8)` fallbacks
- * are gone from `src`. The few that remain cut something that is not a person (a record, a work
- * item, a job, a plugin template, a list limit) and are listed here with the reason.
+ * are gone from `src`. The few that remain cut something that is not a person (a record, a job,
+ * a plugin template, a list limit) and are listed here with the reason. A work item is shown by its
+ * identifier (`KEY-n`), never by a piece of its id.
  *
  * Run standalone: `bun test tests/features/people-no-id-fallbacks.test.ts`
  */
@@ -37,8 +38,7 @@ const NOT_PEOPLE: Record<string, string> = {
 		'list limit of the mention picker',
 	'routes/(app)/trust-board/+page.svelte': 'hash shortening',
 	'routes/(app)/workspace/[workspaceId]/webhooks/+page.svelte': 'delivery id',
-	'routes/(app)/workspace/+page.svelte': 'work item id',
-	'routes/(app)/proposals/[id]/+page.svelte': 'work item id'
+	'routes/(app)/proposals/[id]/+page.svelte': 'list limit of the mention picker'
 };
 
 function files(dir: string, found: string[] = []): string[] {

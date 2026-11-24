@@ -82,6 +82,8 @@ export interface ProposalIssueLink {
 	id: number;
 	proposal_id: string;
 	issue_id: string;
+	/** The work item's short identifier, `KEY-n`. */
+	identifier: string;
 	issue_title: string;
 	issue_state: string;
 	created_at: string;

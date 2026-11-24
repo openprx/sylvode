@@ -22,6 +22,8 @@ export interface MyIssue {
 export interface MyActivity {
 	id: string;
 	issue_id: string;
+	/** The work item's short identifier, `KEY-n`. */
+	identifier: string;
 	project_id: string;
 	workspace_id: string;
 	project_name: string;
@@ -58,6 +60,7 @@ function mapActivity(raw: Record<string, unknown>): MyActivity {
 	return {
 		id: String(raw.id ?? ''),
 		issue_id: String(raw.issue_id ?? raw.resource_id ?? ''),
+		identifier: String(raw.identifier ?? ''),
 		project_id: String(raw.project_id ?? ''),
 		workspace_id: String(raw.workspace_id ?? ''),
 		project_name: String(raw.project_name ?? ''),

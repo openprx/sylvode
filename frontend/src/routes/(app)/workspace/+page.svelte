@@ -573,7 +573,7 @@
 											<span class="ml-1">{formatActivity(activity)}</span>
 										</p>
 										<p class="text-xs text-fg-muted">
-											#{activity.issue_id.slice(0, 8)} · {activity.issue_title} · {formatRelativeTime(
+											{activity.identifier} · {activity.issue_title} · {formatRelativeTime(
 												activity.created_at
 											)}
 										</p>

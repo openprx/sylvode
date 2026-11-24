@@ -83,3 +83,35 @@ test('the workspace page words an assignment through the people of the answer', 
 	assert.match(page, /personLabelById\(activityPeople, to, get\(t\)\)/);
 	assert.ok(!page.includes('getMemberDisplay'));
 });
+
+test('the workspace and proposal pages show a work item by its identifier, never by its id', async () => {
+	const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
+	assert.match(
+		read('../../src/routes/(app)/workspace/+page.svelte'),
+		/\{activity\.identifier\} · \{activity\.issue_title\}/
+	);
+	assert.match(
+		read('../../src/routes/(app)/proposals/[id]/+page.svelte'),
+		/\{link\.identifier\} · \{link\.issue_title\}/
+	);
+	const client = apiClient as unknown as { get: (url: string) => Promise<unknown> };
+	const realGet = client.get;
+	client.get = () =>
+		Promise.resolve({
+			code: 0,
+			message: 'ok',
+			data: {
+				items: [{ id: 'a1', issue_id: 'i1', identifier: 'QLB-7', action: 'created', detail: {} }],
+				total: 1,
+				page: 1,
+				per_page: 10,
+				total_pages: 1
+			}
+		});
+	try {
+		const answer = await myApi.getMyActivities();
+		assert.equal(answer.data?.items[0]?.identifier, 'QLB-7');
+	} finally {
+		client.get = realGet;
+	}
+});

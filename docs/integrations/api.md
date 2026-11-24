@@ -358,7 +358,8 @@ reach the workspace that owns the object: a non-member gets `404`.
 
 Every answer that describes a work item carries `identifier`, the short identifier
 `{project key}-{sequence number}` such as `WEB-12`. This covers a single item (read, create, update,
-by identifier), the project issue list, the board (`columns[].issues[]`), `/my/issues` and the
+by identifier), the project issue list, the board (`columns[].issues[]`), `/my/issues`, the entries
+of `/my/activities`, the linked work items of a proposal (`/proposals/{id}/issues`) and the
 issue results of `/search`. The same value is the `key` of the issue object in
 [webhook payloads](webhooks.md). The full item answers (single item, create, update, list and by
 identifier) also carry `labels`, an array of `{id, name, color}` sorted by name that is empty when
