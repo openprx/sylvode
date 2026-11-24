@@ -28,13 +28,22 @@ interface Candidate {
 	person: Person;
 }
 
-/** `@name` for every mentioned person who has a name, longest first. */
-function candidates(mentions: readonly Person[], escape: boolean): Candidate[] {
+/** A mentioned person; `label` is the text stored at mention time (absent in older callers). */
+export type Mentioned = Person & { label?: string | null };
+
+/**
+ * `@name` and `@label` for every mentioned person, longest first. The label keeps a mention
+ * highlighted after the person was renamed.
+ */
+function candidates(mentions: readonly Mentioned[], escape: boolean): Candidate[] {
 	const list: Candidate[] = [];
 	for (const person of mentions) {
-		const name = usableName(person.name);
-		if (!name) continue;
-		list.push({ token: `@${escape ? escapeHtml(name) : name}`, person });
+		const seen = new Set<string>();
+		for (const text of [usableName(person.name), usableName(person.label)]) {
+			if (!text || seen.has(text.toLowerCase())) continue;
+			seen.add(text.toLowerCase());
+			list.push({ token: `@${escape ? escapeHtml(text) : text}`, person });
+		}
 	}
 	return list.sort((a, b) => b.token.length - a.token.length);
 }
@@ -73,7 +82,7 @@ function segmentsOf(text: string, list: readonly Candidate[]): MentionSegment[] 
 }
 
 /** Plain text split into plain and mention parts (for text shown without markup). */
-export function mentionSegments(text: string, mentions: readonly Person[]): MentionSegment[] {
+export function mentionSegments(text: string, mentions: readonly Mentioned[]): MentionSegment[] {
 	return segmentsOf(text, candidates(mentions, false));
 }
 
@@ -81,7 +90,11 @@ export function mentionSegments(text: string, mentions: readonly Person[]): Ment
  * Highlights the mentions in rendered, already sanitised comment HTML. Only text outside tags,
  * links and code is touched; the tooltip is the person's current name.
  */
-export function highlightMentions(html: string, mentions: readonly Person[], t: Translate): string {
+export function highlightMentions(
+	html: string,
+	mentions: readonly Mentioned[],
+	t: Translate
+): string {
 	const list = candidates(mentions, true);
 	if (list.length === 0 || !html.includes('@')) return html;
 	let skip = 0;

@@ -112,7 +112,7 @@ async fn typed_at_name_becomes_a_mention_and_notifies() {
     let created = api.comment(item, api.alice, "ping @dana dee, please", &[]).await;
     assert_eq!(
         created["mentions"],
-        json!([{"id": dana, "name": "Dana Dee", "is_bot": false, "state": "active"}]),
+        json!([{"id": dana, "name": "Dana Dee", "is_bot": false, "state": "active", "label": "Dana Dee"}]),
         "{created}"
     );
     assert_eq!(
@@ -159,7 +159,7 @@ async fn typed_at_name_becomes_a_mention_and_notifies() {
     let with_bot = api.comment(item, api.alice, "@Helper take a look", &[]).await;
     assert_eq!(
         with_bot["mentions"],
-        json!([{"id": bot, "name": "Helper", "is_bot": true, "state": "active"}])
+        json!([{"id": bot, "name": "Helper", "is_bot": true, "state": "active", "label": "Helper"}])
     );
     api.finish().await;
 }
@@ -201,6 +201,8 @@ async fn mentions_survive_rename_and_show_current_name() {
     let listed = api.listed(item).await;
     assert_eq!(listed[0]["mentions"][0]["name"], json!("Dana Renamed"), "{listed:?}");
     assert_eq!(listed[0]["mentions"][0]["id"], json!(dana));
+    // The label is what the text said at mention time, so `@Dana Dee` still highlights.
+    assert_eq!(listed[0]["mentions"][0]["label"], json!("Dana Dee"), "{listed:?}");
     // The label keeps what the text said when it was written.
     let stored = api
         .db_count_text("SELECT mentions::text AS n FROM comments WHERE work_item_id = $1", item)
@@ -240,9 +242,9 @@ async fn removed_user_has_state_removed() {
     assert_eq!(
         mentions,
         &json!([
-            {"id": left, "name": "Lee Left", "is_bot": false, "state": "removed"},
+            {"id": left, "name": "Lee Left", "is_bot": false, "state": "removed", "label": "Lee Left"},
             // No account is left to read: the stored label stands in for the name.
-            {"id": gone, "name": "Gil Gone", "is_bot": false, "state": "removed"},
+            {"id": gone, "name": "Gil Gone", "is_bot": false, "state": "removed", "label": "Gil Gone"},
         ]),
         "{listed:?}"
     );
@@ -478,7 +480,7 @@ async fn proposal_comments_resolve_typed_names_and_show_people() {
     assert_eq!(created.code(), Some(0), "{}", created.body);
     assert_eq!(
         created.data()["mentions"],
-        json!([{"id": api.bob, "name": "bob", "is_bot": false, "state": "active"}]),
+        json!([{"id": api.bob, "name": "bob", "is_bot": false, "state": "active", "label": "bob"}]),
         "{}",
         created.body
     );

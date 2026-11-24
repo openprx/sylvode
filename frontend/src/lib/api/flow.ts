@@ -18,7 +18,7 @@
 import { apiClient, type ApiResult, type UploadProgress } from './client';
 import { transportFailure } from './transport';
 import { bodyBinaryResult } from '../flow/body/bytes';
-import type { Person } from '../people/display';
+import type { MentionedPerson, Person } from '../people/display';
 import type { BodyAssetKind, BodyAssetLimits, BodyAssetReceipt } from '../flow/body/assets';
 
 export type { UploadProgress };
@@ -912,7 +912,7 @@ export interface FlowComment {
 	author?: Person | null;
 	body: string;
 	/** The people the saved comment mentions: render and highlight from this list. */
-	mentions: Person[];
+	mentions: MentionedPerson[];
 	created_at: string;
 	updated_at: string;
 	resolved_at?: string | null;

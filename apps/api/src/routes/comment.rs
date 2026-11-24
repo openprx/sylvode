@@ -24,7 +24,7 @@ use crate::{
         ai_task_service::{CreateAiTaskInput, DispatchOrigin, DispatchOutcome, dispatch_ai_task, runner_bot_block},
         comments::insert_comment,
         issue_view::identifier,
-        mentions::{self, Audience, Mention, Person},
+        mentions::{self, Audience, Mention, MentionedPerson, Person},
         notifications::{self, NewNotification},
     },
     webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks, trigger_webhooks_after_ai_tasks},
@@ -40,7 +40,7 @@ pub struct CommentResponse {
     /// The author as a person to show; `null` when the account is gone and no id remains.
     pub author: Option<Person>,
     /// The people the comment mentions, in the order they were stored.
-    pub mentions: Vec<Person>,
+    pub mentions: Vec<MentionedPerson>,
     pub body: String,
     pub created_at: String,
     pub updated_at: String,
@@ -443,7 +443,7 @@ pub struct CommentDetailResponse {
     pub author_id: Option<Uuid>,
     pub author_name: Option<String>,
     pub author: Option<Person>,
-    pub mentions: Vec<Person>,
+    pub mentions: Vec<MentionedPerson>,
     pub content: String,
     pub created_at: String,
     pub updated_at: String,

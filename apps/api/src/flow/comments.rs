@@ -15,7 +15,7 @@ use uuid::Uuid;
 use super::collab::authz::PermissionLevel;
 use crate::{
     error::ApiError,
-    services::mentions::{self, Audience, Mention, Person, PersonState},
+    services::mentions::{self, Audience, Mention, MentionedPerson, Person, PersonState},
 };
 
 const BODY_MAX_CHARS: usize = 8_000;
@@ -50,7 +50,7 @@ pub struct FlowCommentView {
     /// The author as a person to show; `null` when no author remains.
     pub author: Option<Person>,
     pub body: String,
-    pub mentions: Vec<Person>,
+    pub mentions: Vec<MentionedPerson>,
     pub created_at: String,
     pub updated_at: String,
     pub resolved_at: Option<String>,
@@ -461,11 +461,14 @@ fn view_of(row: CommentRow) -> FlowCommentView {
         body: row.body,
         mentions: mentions::from_json(&row.mentions)
             .into_iter()
-            .map(|mention| Person {
-                id: mention.id,
-                name: Some(mention.label).filter(|label| !label.trim().is_empty()),
-                is_bot: false,
-                state: PersonState::Removed,
+            .map(|mention| MentionedPerson {
+                person: Person {
+                    id: mention.id,
+                    name: Some(mention.label.clone()).filter(|label| !label.trim().is_empty()),
+                    is_bot: false,
+                    state: PersonState::Removed,
+                },
+                label: mention.label,
             })
             .collect(),
         created_at: row.created_at.to_rfc3339(),
@@ -480,7 +483,11 @@ fn view_of(row: CommentRow) -> FlowCommentView {
 pub(crate) async fn decorate_people<C: ConnectionTrait>(db: &C, views: &mut [FlowCommentView]) -> Result<(), ApiError> {
     let mut ids = Vec::new();
     let mut hints = std::collections::HashMap::new();
-    for person in views.iter().flat_map(|view| view.author.iter().chain(&view.mentions)) {
+    for person in views.iter().flat_map(|view| {
+        view.author
+            .iter()
+            .chain(view.mentions.iter().map(|mentioned| &mentioned.person))
+    }) {
         ids.push(person.id);
         if let Some(name) = &person.name {
             hints.insert(person.id, name.clone());
@@ -488,7 +495,11 @@ pub(crate) async fn decorate_people<C: ConnectionTrait>(db: &C, views: &mut [Flo
     }
     let shown = mentions::people(db, Audience::Anyone, &ids, &hints).await?;
     for view in views {
-        for person in view.author.iter_mut().chain(view.mentions.iter_mut()) {
+        for person in view
+            .author
+            .iter_mut()
+            .chain(view.mentions.iter_mut().map(|mentioned| &mut mentioned.person))
+        {
             if let Some(current) = shown.get(&person.id) {
                 person.clone_from(current);
             }
@@ -641,11 +652,56 @@ async fn candidate_rows(
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_mention_query;
+    use super::{CommentRow, decorate_people, normalize_mention_query, view_of};
+    use crate::routes::context::tenant_fixture::exec;
+    use crate::scratch_or_skip;
+    use platform::timestamp::Timestamp;
+    use serde_json::json;
+    use uuid::Uuid;
 
     #[test]
     fn mention_query_rejects_control_characters() {
         assert_eq!(normalize_mention_query("  Ada ").ok().as_deref(), Some("Ada"));
         assert!(normalize_mention_query("ada\n").is_err());
+    }
+
+    #[tokio::test]
+    async fn mentions_carry_their_label() {
+        let scratch = scratch_or_skip!("flow_comment_people");
+        let db = &scratch.db;
+        let (alice, bob, gone) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        for (id, name) in [(alice, "Alice"), (bob, "Bob Renamed")] {
+            exec(
+                db,
+                "INSERT INTO users (id, email, password_hash, name, role, is_active) \
+                 VALUES ($1, $2, '!', $3, 'user', true)",
+                vec![id.into(), format!("{id}@flow.test").into(), name.into()],
+            )
+            .await;
+        }
+        let row = |resolved_by: Option<Uuid>| CommentRow {
+            id: Uuid::new_v4(),
+            object_id: Uuid::new_v4(),
+            block_id: None,
+            parent_id: None,
+            author_id: Some(alice),
+            body: "hi @Bob Dee".to_string(),
+            mentions: json!([{"id": bob, "label": "Bob Dee"}, {"id": gone, "label": "Gil Gone"}]),
+            created_at: Timestamp::now(),
+            updated_at: Timestamp::now(),
+            resolved_at: resolved_by.map(|_| Timestamp::now()),
+            resolved_by,
+        };
+        let mut views = vec![view_of(row(Some(bob))), view_of(row(None))];
+        decorate_people(db, &mut views).await.expect("people are readable");
+        let shown = serde_json::to_value(&views).expect("json");
+        assert_eq!(
+            shown[0]["mentions"],
+            json!([
+                {"id": bob, "name": "Bob Renamed", "is_bot": false, "state": "active", "label": "Bob Dee"},
+                {"id": gone, "name": "Gil Gone", "is_bot": false, "state": "removed", "label": "Gil Gone"}
+            ])
+        );
+        scratch.drop_self().await;
     }
 }

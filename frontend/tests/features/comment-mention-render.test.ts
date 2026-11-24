@@ -142,3 +142,15 @@ test('the picker trigger, the inserted text and the picked list', () => {
 	assert.deepEqual(new Set(pickedIds('@Ada @Bob', picked)), new Set([ada, bob]));
 	assert.deepEqual(pickedIds('no one', picked), []);
 });
+
+test('a mention still highlights by its stored label after the person was renamed', () => {
+	const renamed = { ...person('Dana Renamed'), label: 'Dana Dee' };
+	const html = highlightMentions(renderMarkdown('hi @Dana Dee and @Dana Renamed'), [renamed], t);
+	assert.deepEqual(
+		marks(html).map((m) => m[1]),
+		['@Dana Dee', '@Dana Renamed']
+	);
+	const segments = mentionSegments('@Dana Dee', [renamed]).filter((s) => s.mention);
+	assert.equal(segments.length, 1);
+	assert.equal(segments[0]?.mention?.id, renamed.id);
+});

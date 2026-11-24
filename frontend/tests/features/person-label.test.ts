@@ -13,7 +13,7 @@ import {
 	personDisplay,
 	personLabel,
 	personLabelById,
-	readPeople,
+	readMentioned,
 	readPeopleById,
 	readPerson,
 	usableName,
@@ -134,8 +134,8 @@ test('the readers keep only what the contract promises', () => {
 	});
 	assert.equal(readPerson(null), null);
 	assert.equal(readPerson({ name: 'no id' }), null);
-	assert.deepEqual(readPeople(undefined), []);
-	assert.equal(readPeople([{ id, name: 'A' }, 5, null]).length, 1);
+	assert.deepEqual(readMentioned(undefined), []);
+	assert.equal(readMentioned([{ id, name: 'A' }, 5, null]).length, 1);
 	const byId = readPeopleById({ [id]: { name: 'Ada', is_bot: false, state: 'active' } });
 	assert.equal(byId[id]?.id, id);
 	assert.equal(byId[id]?.name, 'Ada');

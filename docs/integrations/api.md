@@ -515,7 +515,9 @@ Every comment answer (create, edit, read, list; the list rows use `body` where t
 `content`) carries two people fields:
 
 - `author`: `{id, name, is_bot, state}`, or `null` when the account is gone and no author id is left.
-- `mentions`: the people the comment mentions, in the order stored, each `{id, name, is_bot, state}`.
+- `mentions`: the people the comment mentions, in the order stored, each `{id, name, is_bot, state,
+  label}`. `label` is the text stored when the mention was made; a client highlights `@label` as well
+  as `@name`, so a mention still shows after the person was renamed.
 
 `state` is `active` while the person is a member of the workspace and `removed` otherwise. `name` is
 the person's current name; for someone who has left it is the name the mention was written with (a
