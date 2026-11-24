@@ -269,6 +269,14 @@ own `read`/`write` permission remains a ceiling. A limited bot is never an admin
 reach administration routes; workspace-wide listings are open to it only when its default level is
 at least `read`. Bots made by a project connection are not set here: their reach is the connection's.
 
+In the workspace's **Members** page, the **API Tokens** list has a **Project access** column and a
+**Project access** button per token. The dialog offers **All projects (uses the token permission)**
+or **Selected projects**; for selected projects you choose a level per project (**Read**, **Read and
+comment**, **Write**, or **Same as other projects**) and the level of **Other projects** (**No
+access**, **Read**, **Read and comment**). A comment or write level only takes effect for a token with
+the **Write** permission, and the dialog says so when the token has none. A token of a project
+connection shows **Managed by the project connection** and its button is disabled.
+
 On the runner the CLI agent runs as the runner's OS user with that user's permissions; read the
 runner's [security notes](../../apps/runner/SECURITY.md) before connecting a bot.
 

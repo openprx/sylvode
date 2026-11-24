@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { agentTypeKey } from '#lib/admin/agent-types.js';
+	import BotAccessDialog from '#lib/admin/bot-access/BotAccessDialog.svelte';
+	import { accessSummary } from '#lib/admin/bot-access/rules.js';
 	import { describeResult } from '#lib/i18n/describe.js';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
@@ -63,6 +65,8 @@
 	let tokenSurface = $state<BotTransportSurface | ''>('');
 	let bots = $state<Bot[]>([]);
 	let createdToken = $state<CreateBotResponse | null>(null);
+	let showAccessDialog = $state(false);
+	let accessBot = $state<Bot | null>(null);
 
 	/** Bots a project connection manages: their token and seat are changed on the project. */
 	const managedBots = $derived(managedBotIds(bots));
@@ -256,6 +260,11 @@
 		}
 
 		creatingToken = false;
+	}
+
+	function openAccess(bot: Bot) {
+		accessBot = bot;
+		showAccessDialog = true;
 	}
 
 	async function revokeToken(bot: Bot) {
@@ -477,6 +486,10 @@
 							>
 							<th
 								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
+								>{$t('botAccess.column')}</th
+							>
+							<th
+								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t('common.status')}</th
 							>
 							<th
@@ -531,6 +544,13 @@
 										{/if}
 									</div>
 								</td>
+								<td
+									class="px-4 py-3 text-sm text-fg-muted"
+									data-testid="bot-project-scope"
+									data-scope={bot.project_scope ?? 'workspace'}
+								>
+									{accessSummary(bot, managedBots.has(bot.id), $t, $locale)}
+								</td>
 								<td class="px-4 py-3 text-sm">
 									{#if bot.is_active}
 										<span
@@ -549,6 +569,18 @@
 								<td class="px-4 py-3 text-sm text-fg-muted">{formatDate(bot.last_used_at)}</td>
 								<td class="px-4 py-3 text-sm text-fg-muted">{formatDate(bot.created_at)}</td>
 								<td class="px-4 py-3 text-right">
+									<Button
+										variant="secondary"
+										size="sm"
+										disabled={managedLock(parseManagedBy(bot.managed_by)).disabled}
+										disabledReason={managedLock(parseManagedBy(bot.managed_by)).reasonKey
+											? $t(managedLock(parseManagedBy(bot.managed_by)).reasonKey ?? '')
+											: undefined}
+										data-testid="bot-access-open"
+										onclick={() => openAccess(bot)}
+									>
+										{$t('botAccess.button')}
+									</Button>
 									<Button
 										variant="danger-quiet"
 										size="sm"
@@ -800,3 +832,5 @@
 		</div>
 	{/if}
 </Modal>
+
+<BotAccessDialog bind:open={showAccessDialog} {workspaceId} bot={accessBot} onsaved={loadBots} />

@@ -1,0 +1,39 @@
+{
+	"botAccess": {
+		"title": "Project access of {name}",
+		"column": "Project access",
+		"button": "Project access",
+		"saved": "Project access saved",
+		"managed": "Managed by the project connection",
+		"managedHelp": "The access of this token follows the project connection that manages it. Change it in the project's Execution settings.",
+		"scope": "Where the token may act",
+		"scopeWorkspace": "All projects (uses the token permission)",
+		"scopeWorkspaceHelp": "The token acts in every project of the workspace with the permissions it was created with.",
+		"scopeProjects": "Selected projects",
+		"scopeProjectsHelp": "The token acts only where you give it a level below. Other projects get the level of \"Other projects\".",
+		"otherProjects": "Other projects",
+		"projects": "Projects",
+		"noProjects": "This workspace has no projects yet.",
+		"levelFor": "Level in {name}",
+		"likeOthers": "Same as other projects",
+		"defaultLevel": {
+			"none": "No access",
+			"read": "Read",
+			"comment": "Read and comment"
+		},
+		"grantLevel": {
+			"read": "Read",
+			"comment": "Read and comment",
+			"write": "Write"
+		},
+		"needsWrite": "A level that allows comments or writing only takes effect for a token with the Write permission. This token does not have it, so it can still only read.",
+		"summary": {
+			"workspace": "All projects",
+			"projects": "{count}; other projects: {level}",
+			"grants": {
+				"one": "1 selected project",
+				"other": "{count} selected projects"
+			}
+		}
+	}
+}
