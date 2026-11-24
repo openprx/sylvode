@@ -34,7 +34,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use sylvode_runner::mcp_launch_for_tests::{
-    AiTaskCallback, BotCreds, Config, LaunchFiles, SEARCH_MODE_TOOLS, SERVER_NAME, SessionName, StateDir, WRITE_TOOL,
+    AiTaskCallback, BotCreds, Config, LaunchFiles, SEARCH_MODE_TOOLS, SERVER_NAME, Slot, StateDir, WRITE_TOOL,
     claude_headless_argv, codex_headless_argv, session_argv,
 };
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -200,7 +200,7 @@ fn runner_launch(scratch: &Scratch, config: &Config, cli: &'static str) -> Resul
     let server = Path::new(SERVER);
     state.write_bot_files(&bot.mcp_files(&config.runner), server)?;
 
-    let name = SessionName::new("SVWL", "claude")?;
+    let name = Slot::project("SVWL", "claude")?;
     let mcp_toml = state.mcp_toml(GOLDEN_BOT);
     let claude_json = state.claude_mcp_json(GOLDEN_BOT);
     let settings = state.claude_settings(&name);
