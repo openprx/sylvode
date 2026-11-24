@@ -26,7 +26,7 @@
 //!   container): [`value_bytes`] counts eight bytes for every scalar, collection or container
 //!   reference in a value, nested to any depth, plus the length of every string, binary and map key.
 //!
-//! It is what the full projection reads: `legacy_package_semantic_snapshot_v1` visits every tree
+//! It is what the full projection reads: the tree snapshot visits every tree
 //! node and its metadata; the block reader visits every element of the root list, its keys, its
 //! `attributes` (deep) and its inline texts. It is proportional to the cost of the full window,
 //! within a factor of about four across shapes. Measured on the development machine (release

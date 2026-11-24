@@ -6,12 +6,12 @@ fn actual_frontend_model5_packets_preserve_floor_and_identity_through_undo_redo(
         let before = std::fs::read(base.join(format!("{kind}.before.snapshot"))).unwrap();
         let mut engine = LoroCollabEngine::load(&before).unwrap();
         assert_eq!(engine.minimum_editor_model().unwrap(), 4);
-        let v4 = engine.legacy_package_semantic_snapshot_v4().unwrap();
+        let v4 = engine.package_semantic_snapshot_v4().unwrap();
         engine
             .import_update(&std::fs::read(base.join(format!("{kind}.update"))).unwrap())
             .unwrap();
         assert_eq!(engine.minimum_editor_model().unwrap(), 5);
-        assert!(engine.legacy_package_semantic_snapshot_v4().is_err());
+        assert!(engine.package_semantic_snapshot_v4().is_err());
         let active = engine.semantic_snapshot().unwrap();
         let cid = active
             .nodes
@@ -37,6 +37,6 @@ fn actual_frontend_model5_packets_preserve_floor_and_identity_through_undo_redo(
             kind
         );
         let original = LoroCollabEngine::load(&before).unwrap();
-        assert_eq!(original.legacy_package_semantic_snapshot_v4().unwrap(), v4);
+        assert_eq!(original.package_semantic_snapshot_v4().unwrap(), v4);
     }
 }

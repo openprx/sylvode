@@ -1217,10 +1217,10 @@ impl LoroCollabEngine {
     /// # Errors
     /// Propagates the underlying engine's read failure, if any.
     pub fn semantic_snapshot_with_floor(&self) -> Result<(SemanticSnapshot, u32), CollabError> {
-        // `legacy_package_semantic_snapshot_v3` followed by `project_editor_prose`, reading the
-        // editor document once for both prose steps (see
+        // The tree snapshot, the navigator step, then the legacy and the current editor prose
+        // steps, reading the editor document once for both prose steps (see
         // `project_legacy_then_current_editor_prose`).
-        let mut snapshot = self.legacy_package_semantic_snapshot_v1()?;
+        let mut snapshot = self.tree_semantic_snapshot()?;
         self.project_navigator_order(&mut snapshot)?;
         let facts = crate::prose_projection::project_legacy_then_current_editor_prose(&self.doc, &mut snapshot)?;
         let floor = if model5_marker(&self.doc)? || facts.physical_atom || facts.signals.atom {
@@ -1533,7 +1533,7 @@ impl LoroCollabEngine {
     /// block nodes (`prose_projection::project_blocks`). `None` for a node without a logical id,
     /// which the projection skips.
     ///
-    /// It reads the same fields in the same way as `legacy_package_semantic_snapshot_v1` and
+    /// It reads the same fields in the same way as `tree_semantic_snapshot` and
     /// `project_blocks`.
     ///
     /// # Errors
@@ -1584,25 +1584,27 @@ impl LoroCollabEngine {
         }))
     }
 
-    /// Frozen v4 prose/Tree reader. A model5 document must declare the v5 package model.
-    pub fn legacy_package_semantic_snapshot_v4(&self) -> Result<SemanticSnapshot, CollabError> {
+    /// The semantic reader of package model v4: the tree, navigator order and editor prose. A
+    /// model5 document must declare the v5 package model, whose fingerprint is
+    /// [`Self::semantic_snapshot`] itself.
+    ///
+    /// # Errors
+    /// Fails for a document that needs editor model 5, and propagates tree or editor-prose
+    /// decoding errors without changing the document.
+    pub fn package_semantic_snapshot_v4(&self) -> Result<SemanticSnapshot, CollabError> {
         if self.minimum_editor_model()? > 4 {
             return Err(CollabError::OperationFailed {
                 reason: "v4_reader_requires_model4_document".into(),
             });
         }
-        let mut snapshot = self.legacy_package_semantic_snapshot_v3()?;
+        let mut snapshot = self.tree_semantic_snapshot()?;
+        self.project_navigator_order(&mut snapshot)?;
+        crate::prose_projection::project_legacy_editor_prose(&self.doc, &mut snapshot)?;
         crate::prose_projection::project_editor_prose(&self.doc, &mut snapshot)?;
         Ok(snapshot)
     }
-    pub fn legacy_package_semantic_snapshot_v3(&self) -> Result<SemanticSnapshot, CollabError> {
-        let mut snapshot = self.legacy_package_semantic_snapshot_v1()?;
-        self.project_navigator_order(&mut snapshot)?;
-        crate::prose_projection::project_legacy_editor_prose(&self.doc, &mut snapshot)?;
-        Ok(snapshot)
-    }
 
-    /// Package v3's navigator step: order keys from the `order` map override tree positions.
+    /// The navigator step: order keys from the `order` map override tree positions.
     fn project_navigator_order(&self, snapshot: &mut SemanticSnapshot) -> Result<(), CollabError> {
         let order = self.navigator_order()?;
         for (id, node) in &mut snapshot.nodes {
@@ -1630,19 +1632,9 @@ impl LoroCollabEngine {
         Ok(())
     }
 
-    /// Exact package v2 reader before navigator order-map projection (tree plus editor prose).
-    ///
-    /// # Errors
-    /// Propagates tree or editor-prose decoding errors without changing the document.
-    pub fn legacy_package_semantic_snapshot_v2(&self) -> Result<SemanticSnapshot, CollabError> {
-        let mut snapshot = self.legacy_package_semantic_snapshot_v1()?;
-        crate::prose_projection::project_legacy_editor_prose(&self.doc, &mut snapshot)?;
-        Ok(snapshot)
-    }
-
-    /// Exact tree-only semantic reader used by package v1 before editor prose projection.
-    /// Restricted to versioned package fingerprints; current reads must use `semantic_snapshot`.
-    pub fn legacy_package_semantic_snapshot_v1(&self) -> Result<SemanticSnapshot, CollabError> {
+    /// The tree-only semantic reader every other projection starts from, before navigator order
+    /// and editor prose are applied. Current reads must use `semantic_snapshot`.
+    fn tree_semantic_snapshot(&self) -> Result<SemanticSnapshot, CollabError> {
         let mut snapshot = SemanticSnapshot::default();
         // Every node's `order_key` needs its position among its parent's children. The
         // straightforward per-node `siblings.iter().position(...)` (this method's shape before

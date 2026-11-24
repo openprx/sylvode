@@ -275,19 +275,23 @@ async fn portable_page_copies_assets_and_links_atomically() {
             .expect("response has /linked_page_count"),
         2
     );
-    let frozen_v1 = std::fs::read(concat!(
+    let browser_package = std::fs::read(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/flow-v2/legacy-browser-package-v1/package.zip"
+        "/tests/fixtures/flow-v2/browser-package-v4/package.zip"
     ))
     .unwrap();
     assert_eq!(
-        api::flow::package::verify_package(std::io::Cursor::new(&frozen_v1), None)
+        api::flow::package::verify_package(std::io::Cursor::new(&browser_package), None)
             .unwrap()
             .manifest
             .schema,
         api::flow::package::PACKAGE_SCHEMA
     );
-    assert!(package::preview(db, target, owner, &frozen_v1, false).await.is_err());
+    assert!(
+        package::preview(db, target, owner, &browser_package, false)
+            .await
+            .is_err()
+    );
 
     assert_eq!(
         *review.pointer("/blocks/0/text").expect("response has /blocks/0/text"),

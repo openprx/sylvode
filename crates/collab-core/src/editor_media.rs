@@ -91,20 +91,20 @@ mod tests {
         engine.initialize_page_structure().unwrap();
         assert_eq!(engine.minimum_editor_model().unwrap(), 4);
         let old = engine.frontier();
-        let v4 = engine.legacy_package_semantic_snapshot_v4().unwrap();
+        let v4 = engine.package_semantic_snapshot_v4().unwrap();
         let cid=engine.insert_page_atom("asset",None,1,"image",&serde_json::json!({"asset_id":"00000000-0000-4000-8000-000000000001","alt":"synthetic","caption":"","indent":0})).unwrap();
         assert_eq!(engine.minimum_editor_model().unwrap(), 5);
-        assert!(engine.legacy_package_semantic_snapshot_v4().is_err());
+        assert!(engine.package_semantic_snapshot_v4().is_err());
         engine
             .apply_content_operation(&Operation::DeleteNode { id: cid.into() })
             .unwrap();
         assert_eq!(engine.minimum_editor_model().unwrap(), 5);
         engine.revert_to_frontier(&old).unwrap();
         assert_eq!(engine.minimum_editor_model().unwrap(), 5);
-        assert!(engine.legacy_package_semantic_snapshot_v4().is_err());
+        assert!(engine.package_semantic_snapshot_v4().is_err());
         let restored = LoroCollabEngine::load(&engine.export_snapshot().unwrap()).unwrap();
         assert_eq!(restored.minimum_editor_model().unwrap(), 5);
         let plain = LoroCollabEngine::load(&engine.fork_at_frontier(&old).unwrap().export_snapshot().unwrap()).unwrap();
-        assert_eq!(plain.legacy_package_semantic_snapshot_v4().unwrap(), v4);
+        assert_eq!(plain.package_semantic_snapshot_v4().unwrap(), v4);
     }
 }

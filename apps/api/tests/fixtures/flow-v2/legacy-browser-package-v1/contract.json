@@ -1,8 +1,0 @@
-{
-  "canonical_semantic_hash": "35da6e9babcc154a354891c8868cab5985ab7e882352ee309c1db0041111c4b5",
-  "fixture_kind": "synthetic_pre_change_v1_format",
-  "legacy_semantic_hash": "1c60df0b968bf3771931d029a3fe501f1e0b51f760012ea458f8bf46a1fc6026",
-  "package_sha256": "5df4078b1f47db5ed5c16e975464c49c167a6e064ca32b8a2579c26878d340c9",
-  "reader_source": "d523d7c724b4122f7b83cb30e6614a36f51a1c65:crates/collab-core/src/engine.rs semantic_snapshot (tree-only)",
-  "snapshot_sha256": "e210de61ac3e692a3b8358bfbb8c0b4b97eef52e9c5518faa76c3defda8fd9e4"
-}
