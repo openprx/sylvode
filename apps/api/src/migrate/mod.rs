@@ -637,6 +637,10 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
         SchemaProbe::Relation("bot_project_grants"),
     ),
     (
+        "0123_work_item_page_links.sql",
+        SchemaProbe::Relation("work_item_page_links_object"),
+    ),
+    (
         "0126_retire_unused_columns.sql",
         SchemaProbe::ColumnAbsent("users", "agent_config"),
     ),

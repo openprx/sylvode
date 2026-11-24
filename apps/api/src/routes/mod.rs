@@ -25,6 +25,7 @@ pub mod import;
 pub mod inbound_admin;
 pub mod inbound_events;
 pub mod issue;
+pub mod issue_pages;
 pub mod label;
 pub mod member;
 pub mod milestone;

@@ -151,6 +151,9 @@ mod delegated_router_tests;
 mod item_api_tests;
 
 #[cfg(test)]
+mod issue_page_api_tests;
+
+#[cfg(test)]
 mod milestone_api_tests;
 
 #[cfg(test)]

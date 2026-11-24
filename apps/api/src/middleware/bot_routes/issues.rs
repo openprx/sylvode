@@ -26,6 +26,9 @@ pub static ROUTES: &[RunnerRoute] = &[
     r("POST", "/api/v1/issues/{issue_id}/labels/batch", Class::Project(Find::Issue("issue_id"))),
     r("DELETE", "/api/v1/issues/{issue_id}/labels/{label_id}", Class::Project(Find::Issue("issue_id"))),
     r("POST", "/api/v1/issues/{issue_id}/labels/{label_id}", Class::Project(Find::Issue("issue_id"))),
+    r("GET", "/api/v1/issues/{issue_id}/pages", Class::Project(Find::Issue("issue_id"))),
+    r("POST", "/api/v1/issues/{issue_id}/pages", Class::Project(Find::Issue("issue_id"))),
+    r("DELETE", "/api/v1/issues/{issue_id}/pages/{object_id}", Class::Project(Find::Issue("issue_id"))),
     r("GET", "/api/v1/projects/{project_id}/activities", Class::Project(Find::Project("project_id"))),
     r("GET", "/api/v1/projects/{project_id}/board", Class::Project(Find::Project("project_id"))),
     r("GET", "/api/v1/projects/{project_id}/issues", Class::Project(Find::Project("project_id"))),
@@ -45,7 +48,7 @@ mod tests {
     fn the_classes_of_the_area() {
         assert_eq!(
             class_counts(ROUTES),
-            BTreeMap::from([("admin", 3), ("project-resolved", 20), ("refused", 4)]),
+            BTreeMap::from([("admin", 3), ("project-resolved", 23), ("refused", 4)]),
             "the classes of the issues routes changed"
         );
     }

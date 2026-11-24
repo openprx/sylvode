@@ -691,6 +691,10 @@ pub(crate) async fn issue_snapshot(
         .map(|row| row.label_id.to_string())
         .collect::<Vec<_>>();
 
+    let page_links = crate::services::issue_view::page_links_for_webhook(db, issue_id)
+        .await
+        .map_err(|err| sea_orm::DbErr::Custom(format!("page links: {err}")))?;
+
     let assignee_ids = issue.assignee_id.map(|v| vec![v]).unwrap_or_default();
 
     let assignee_id_values = assignee_ids.iter().map(Uuid::to_string).collect::<Vec<_>>();
@@ -707,6 +711,7 @@ pub(crate) async fn issue_snapshot(
             "label_ids": label_ids,
             "sprint_id": issue.sprint_id.map(|v| v.to_string()),
             "milestone_id": issue.milestone_id.map(|v| v.to_string()),
+            "page_links": page_links,
             "due_at": issue.due_at.map(Timestamp::to_rfc3339),
             "created_at": issue.created_at.to_rfc3339(),
             "updated_at": issue.updated_at.to_rfc3339(),

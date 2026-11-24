@@ -518,6 +518,13 @@ pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
             )),
         )
         .route(
+            "/api/v2/flow/objects/{object_id}/work-items",
+            get(routes::flow::get_flow_v2_work_items).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
             "/api/v2/flow/objects/{object_id}/comments",
             get(routes::flow::get_flow_v2_comments)
                 .post(routes::flow::post_flow_v2_comment)

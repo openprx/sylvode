@@ -215,6 +215,35 @@ async fn level_in_project(
     }
 }
 
+/// The level of the bot `bot_id` in `project_id`, from its stored access: for a handler that must
+/// decide per project what a scoped bot may read beyond the project the route names.
+///
+/// # Errors
+/// A database failure.
+pub async fn bot_level_in_project(db: &DatabaseConnection, bot_id: Uuid, project_id: Uuid) -> Result<Level, ApiError> {
+    #[derive(FromQueryResult)]
+    struct AccessRow {
+        runner: bool,
+        project_scope: String,
+        default_project_level: String,
+    }
+    let row: Option<AccessRow> = one(
+        db,
+        "SELECT project_scope, default_project_level, \
+                EXISTS (SELECT 1 FROM bot_runners r WHERE r.bot_id = workspace_bots.id) AS runner \
+         FROM workspace_bots WHERE id = $1",
+        vec![bot_id.into()],
+    )
+    .await?;
+    match row {
+        Some(row) => {
+            let access = BotAccess::from_row(row.runner, &row.project_scope, &row.default_project_level);
+            level_in_project(db, access, bot_id, project_id).await
+        }
+        None => Ok(Level::None),
+    }
+}
+
 /// The largest body read to find the project of a request that names it there.
 const MAX_BODY_FOR_TARGET: usize = 2 * 1024 * 1024;
 
