@@ -1908,6 +1908,38 @@ pub async fn get_flow_v2_mentions(
     ))
 }
 
+/// The work items linked to a page that the caller may read, and how many others are linked.
+pub async fn get_flow_v2_work_items(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path(object): Path<Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    use crate::services::issue_view::{PageCaller, PageRef, viewable_pages, work_items_of_page};
+    let identity = scope::identity(&state.db, object).await?;
+    let extensions = super::build_auth_extensions(claims, bot);
+    let access = match identity.workspace_id {
+        Some(workspace) => crate::flow::policy::resolve_flow_principal(&state, &extensions, workspace)
+            .await
+            .map_err(|_| ApiError::not_found("flow resource not found"))?,
+        None => match extensions.get::<JwtClaims>().map(|claims| Uuid::parse_str(&claims.sub)) {
+            Some(Ok(user)) if extensions.get::<BotAuthContext>().is_none() => (user, String::new(), false),
+            _ => return Err(ApiError::not_found("flow resource not found")),
+        },
+    };
+    let caller = PageCaller::new(access, identity.workspace_id.unwrap_or_else(Uuid::nil));
+    let page = PageRef {
+        id: object,
+        workspace_id: identity.workspace_id,
+    };
+    if !viewable_pages(&state.db, &caller, &[page]).await?.contains(&object) {
+        return Err(ApiError::not_found("flow resource not found"));
+    }
+    Ok(ApiResponse::success(
+        work_items_of_page(&state.db, &caller, object).await?,
+    ))
+}
+
 pub async fn get_flow_v2_relations(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,

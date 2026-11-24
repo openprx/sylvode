@@ -15,6 +15,7 @@ use crate::middleware::bot_auth::{BotAuthContext, require_workspace_access};
 use crate::{
     error::ApiError,
     response::{ApiResponse, PaginatedData},
+    services::issue_view::{PageCaller, activity_pages},
 };
 
 #[derive(Debug, Serialize)]
@@ -290,7 +291,8 @@ pub async fn get_issue_activities(
     .await?
     .ok_or_else(|| ApiError::NotFound("issue not found".to_string()))?;
 
-    require_workspace_access(&state, &extensions, issue.workspace_id).await?;
+    let access = require_workspace_access(&state, &extensions, issue.workspace_id).await?;
+    let caller = PageCaller::new(access, issue.workspace_id);
 
     #[derive(Debug, FromQueryResult)]
     struct ActivityRow {
@@ -331,7 +333,7 @@ pub async fn get_issue_activities(
     .all(&state.db)
     .await?;
 
-    let response: Vec<IssueActivityResponse> = activities
+    let mut response: Vec<IssueActivityResponse> = activities
         .into_iter()
         .map(|a| IssueActivityResponse {
             id: a.id,
@@ -345,5 +347,41 @@ pub async fn get_issue_activities(
         })
         .collect();
 
+    resolve_page_entries(&state.db, &caller, &mut response).await?;
+
     Ok(ApiResponse::success(PaginatedData::from_items(response)))
+}
+
+/// The page named by a `page_linked` / `page_unlinked` entry is stored as an id only. Each such
+/// entry gets `detail.page = {title, access, lifecycle}`, resolved now for this caller: the title
+/// only while they may read the page, `access` one of `visible`, `restricted` (they may not) or
+/// `removed` (the page was purged).
+async fn resolve_page_entries(
+    db: &sea_orm::DatabaseConnection,
+    caller: &PageCaller,
+    entries: &mut [IssueActivityResponse],
+) -> Result<(), ApiError> {
+    let page_id = |entry: &IssueActivityResponse| -> Option<Uuid> {
+        if entry.action != "page_linked" && entry.action != "page_unlinked" {
+            return None;
+        }
+        entry
+            .detail
+            .get("object_id")?
+            .as_str()
+            .and_then(|raw| Uuid::parse_str(raw).ok())
+    };
+    let mut ids: Vec<Uuid> = entries.iter().filter_map(page_id).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let mut pages = activity_pages(db, caller, &ids).await?;
+    for entry in entries.iter_mut() {
+        if let Some(id) = page_id(entry)
+            && let Some(page) = pages.get_mut(&id)
+            && let Some(detail) = entry.detail.as_object_mut()
+        {
+            detail.insert("page".to_string(), page.clone());
+        }
+    }
+    Ok(())
 }

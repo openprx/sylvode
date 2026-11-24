@@ -113,6 +113,25 @@ pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
                 ),
             ),
         )
+        // Flow page links of a work item (protected)
+        .route(
+            "/api/v1/issues/{issue_id}/pages",
+            get(routes::issue_pages::list_issue_pages)
+                .post(routes::issue_pages::link_issue_page)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                )),
+        )
+        .route(
+            "/api/v1/issues/{issue_id}/pages/{object_id}",
+            axum::routing::delete(routes::issue_pages::unlink_issue_page).route_layer(
+                axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                ),
+            ),
+        )
         // Activity routes (protected)
         .route(
             "/api/v1/workspaces/{workspace_id}/activities",

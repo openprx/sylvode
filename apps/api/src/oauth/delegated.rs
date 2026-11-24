@@ -265,6 +265,12 @@ pub static DELEGATED_ROUTES: &[RouteEntry] = &[
         Resolver::Issue("issue_id"),
     ),
     entry(
+        "GET",
+        "/api/v1/issues/{issue_id}/pages",
+        READ_ITEMS,
+        Resolver::Issue("issue_id"),
+    ),
+    entry(
         "POST",
         "/api/v1/issues/{issue_id}/labels/{label_id}",
         WRITE_ITEMS,

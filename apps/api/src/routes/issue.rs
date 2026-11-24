@@ -22,7 +22,9 @@ use crate::{
     services::{
         ai_task_service::{CreateAiTaskInput, DispatchOrigin, DispatchOutcome, dispatch_ai_task, runner_bot_block},
         bot_identity::is_bot_user,
-        issue_view::{IssueResponse, identifier, issue_labels, load_issue},
+        issue_view::{
+            IssueResponse, PageCaller, attach_page_links, identifier, issue_labels, load_issue, page_link_counts,
+        },
         issues::{
             IssueRef, NotifyAssignment, NotifyChange, insert_activity, notify_assignment, notify_priority_change,
             notify_state_change,
@@ -129,7 +131,10 @@ fn validate_priority(priority: &str) -> Result<(), ApiError> {
     }
 }
 
-fn build_auth_extensions(claims: JwtClaims, bot: Option<Extension<BotAuthContext>>) -> axum::http::Extensions {
+pub(crate) fn build_auth_extensions(
+    claims: JwtClaims,
+    bot: Option<Extension<BotAuthContext>>,
+) -> axum::http::Extensions {
     let mut extensions = axum::http::Extensions::new();
     extensions.insert(claims);
     if let Some(Extension(bot_ctx)) = bot {
@@ -300,7 +305,7 @@ pub async fn create_issue(
     .await?
     .ok_or_else(|| ApiError::NotFound("project not found".to_string()))?;
 
-    require_workspace_access(&state, &extensions, project.workspace_id).await?;
+    let access = require_workspace_access(&state, &extensions, project.workspace_id).await?;
 
     // A connected application may not assign a work item to an agent (nothing is written yet).
     if let Some(assignee_id) = req.assignee_id {
@@ -461,7 +466,13 @@ pub async fn create_issue(
         );
     }
 
-    let created = load_issue(&state.db, issue_id).await?.ok_or(ApiError::Internal)?;
+    let mut created = load_issue(&state.db, issue_id).await?.ok_or(ApiError::Internal)?;
+    attach_page_links(
+        &state.db,
+        &PageCaller::new(access, project.workspace_id),
+        &mut created.issue,
+    )
+    .await?;
     Ok(ApiResponse::success(created.issue))
 }
 
@@ -663,6 +674,7 @@ pub async fn list_issues(
 
     let issue_ids: Vec<Uuid> = issues.iter().map(|issue| issue.id).collect();
     let mut label_map = issue_labels(&state.db, &issue_ids).await?;
+    let link_counts = page_link_counts(&state.db, &issue_ids).await?;
 
     let response: Vec<IssueResponse> = issues
         .into_iter()
@@ -685,6 +697,8 @@ pub async fn list_issues(
             governance_exempt: i.governance_exempt,
             governance_exempt_reason: i.governance_exempt_reason,
             labels: label_map.remove(&i.id).unwrap_or_default(),
+            page_links: None,
+            page_link_count: Some(link_counts.get(&i.id).copied().unwrap_or(0)),
         })
         .collect();
 
@@ -716,9 +730,11 @@ pub async fn get_issue(
         .await?
         .ok_or_else(|| ApiError::NotFound("issue not found".to_string()))?;
 
-    require_workspace_access(&state, &extensions, loaded.workspace_id).await?;
+    let access = require_workspace_access(&state, &extensions, loaded.workspace_id).await?;
 
-    Ok(ApiResponse::success(loaded.issue))
+    let mut issue = loaded.issue;
+    attach_page_links(&state.db, &PageCaller::new(access, loaded.workspace_id), &mut issue).await?;
+    Ok(ApiResponse::success(issue))
 }
 
 /// PUT /api/v1/issues/:id - Update issue
@@ -776,7 +792,7 @@ pub async fn update_issue(
     .await?
     .ok_or_else(|| ApiError::NotFound("issue not found".to_string()))?;
 
-    require_workspace_access(&state, &extensions, current_issue.workspace_id).await?;
+    let access = require_workspace_access(&state, &extensions, current_issue.workspace_id).await?;
 
     // A connected application may not assign a work item to an agent (nothing is written yet).
     if let Some(Some(assignee_id)) = requested_assignee {
@@ -906,7 +922,7 @@ pub async fn update_issue(
         .await?;
 
     // Read the row back inside the transaction, so the answer is exactly what was written.
-    let updated = load_issue(&tx, issue_id).await?.ok_or(ApiError::Internal)?.issue;
+    let mut updated = load_issue(&tx, issue_id).await?.ok_or(ApiError::Internal)?.issue;
 
     let assignee_changed = requested_assignee.is_some_and(|new_assignee| new_assignee != current_issue.assignee_id);
     let state_changed = requested_state
@@ -1206,6 +1222,12 @@ pub async fn update_issue(
         );
     }
 
+    attach_page_links(
+        &state.db,
+        &PageCaller::new(access, current_issue.workspace_id),
+        &mut updated,
+    )
+    .await?;
     Ok(ApiResponse::success(updated))
 }
 
@@ -1370,11 +1392,12 @@ pub async fn get_issue_by_identifier(
     };
 
     let extensions = build_auth_extensions(claims, bot);
-    require_workspace_access(&state, &extensions, located.workspace_id).await?;
+    let access = require_workspace_access(&state, &extensions, located.workspace_id).await?;
 
-    let loaded = load_issue(&state.db, located.id).await?.ok_or_else(not_found)?;
+    let mut issue = load_issue(&state.db, located.id).await?.ok_or_else(not_found)?.issue;
+    attach_page_links(&state.db, &PageCaller::new(access, located.workspace_id), &mut issue).await?;
 
-    Ok(ApiResponse::success(loaded.issue))
+    Ok(ApiResponse::success(issue))
 }
 
 /// POST /`api/v1/issues/:issue_id/labels/batch`

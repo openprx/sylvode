@@ -132,6 +132,7 @@ fn the_adoption_cutoff_names_a_registered_migration() {
             "0120_email_outbox.sql",
             "0121_milestones.sql",
             "0122_bot_project_access.sql",
+            "0123_work_item_page_links.sql",
             "0126_retire_unused_columns.sql",
             "0127_retire_legacy_objects.sql",
             "0130_tmux_cli_codex.sql",

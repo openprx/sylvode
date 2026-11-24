@@ -363,7 +363,8 @@ issue results of `/search`. The same value is the `key` of the issue object in
 [webhook payloads](webhooks.md). The full item answers (single item, create, update, list and by
 identifier) also carry `labels`, an array of `{id, name, color}` sorted by name that is empty when
 the item has no label. They also carry `milestone_id`, the id of the item's [milestone](#milestones)
-or `null`.
+or `null`. A single item (read, create, update, by identifier) carries `page_links`, its
+[linked Flow pages](#linked-flow-pages); the list answers carry `page_link_count` instead.
 
 ### Listing and updating work items
 
@@ -457,6 +458,49 @@ items: [{id, identifier, title, state, done}]}]`, ordered by project key and ite
   (`to: null`) on each, and sends `issue.updated` for each item after the commit.
 - Runner and project-scoped bot tokens cannot use the milestone routes, and connected applications
   cannot reach them.
+
+### Linked Flow pages
+
+A work item can link to Flow pages: the spec page of a feature, the notes of a meeting. A link is a
+pair (work item, page); the page title is never stored with it but read when the link is shown, so a
+rename shows at once. A page can be linked to many items and an item to at most 50 pages.
+
+| Method | Path | Who | Answer |
+|---|---|---|---|
+| GET | `/issues/{issue_id}/pages` | members | The links, oldest first: `[{object_id, title, access, lifecycle, linked_at}]`. |
+| POST | `/issues/{issue_id}/pages` | members | Body `{object_id}` (any other field is `422`). The link, in the same shape. |
+| DELETE | `/issues/{issue_id}/pages/{object_id}` | members | `{}`. |
+| GET | `/api/v2/flow/objects/{object_id}/work-items` | who can read the page | `{items: [{id, identifier, title, state, project_id}], hidden_count, truncated}`. |
+
+- Linking needs the same right as editing the item and at least `view` on the page. Unlinking needs
+  the right on the item only: someone who can edit the item can drop a link to a page they can no
+  longer read.
+- The page must be a Flow `page` of the item's workspace, or a personal page that its owner has placed
+  into that workspace; any other readable page is `400 page is not available in this workspace` and a
+  navigator or other object is `400 only a Flow page can be linked`. A page the caller cannot read, a
+  missing one and one of another workspace are all `404 page not found`: the route never says which.
+  More than 50 links is `400`.
+- Linking a pair that is already linked, and unlinking a pair that is not, change nothing, send no
+  event and answer as if they had just worked.
+- What a link shows depends on the reader. `access` is `visible` when the caller may read the page and
+  `restricted` when not; only a visible link has a `title` (`null` otherwise, never an empty string).
+  `lifecycle` is `active`, or `archived` while the page is in the trash. A page in the trash keeps its
+  links; restoring it shows it as active again; purging the page, or deleting the item, removes the
+  links (no activity entry for a purge). A connected application sees every link as `restricted`.
+- `GET /api/v2/flow/objects/{object_id}/work-items` lists the items linked to a page that the caller
+  may read; the others are only counted in `hidden_count`. A person reads the items of every workspace
+  they belong to, a project-scoped bot those of projects where its level is at least `read`.
+  `truncated` is `true` when the page has more than 500 links and only the first 500 were examined. A
+  page the caller cannot read is `404`.
+- The activity log of the item records `page_linked` and `page_unlinked` with `{object_id}`. The
+  activity answer adds `detail.page` to those entries, resolved for the reader: `{title, access,
+  lifecycle}` with `access` `visible`, `restricted` or `removed` (the page was purged); `title` is
+  present only when `visible`.
+- A project-scoped bot needs `read` in the item's project to list the links and `write` to link or
+  unlink; its own Flow rights decide which titles it sees. A connected application can list the links
+  of an item with `work_items:read`.
+- A change of the links sends `issue.updated` with `changes.page_links: {added: [object_id],
+  removed: [object_id]}`; see [webhooks](webhooks.md).
 
 ### Comments
 
