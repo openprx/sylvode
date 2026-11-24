@@ -10,6 +10,52 @@ name.
 
 ## [Unreleased]
 
+### Added
+
+- **Milestones.** Workspace milestones with a target date, open/closed status and progress per
+  project (`GET|POST /api/v1/workspaces/{id}/milestones`, `GET|PUT|DELETE /api/v1/milestones/{id}`);
+  work items carry `milestone_id` (create, update, list filter `milestone_id=<uuid>|none`); activity
+  `milestone_changed`; a Milestones row in the Projects column, list and detail pages, a Milestone
+  field on the work item page and a list filter; MCP tools `milestones.list|get|create|update|delete`.
+  Migration 0121.
+- **Notification e-mail.** `[email]` and `[server] public_url` in `sylvode.toml` (off by default,
+  plain text, sent by the worker from an outbox with retries); the notification preferences take
+  effect (each notification, a daily summary instead, mentions only, e-mail language);
+  `POST /api/v1/admin/email/test`; new notification types `issue_state_changed` and
+  `issue_priority_changed` for the assignee. Bots never receive e-mail. Migration 0120.
+- **Project access of bot tokens.** A workspace bot token can be limited to selected projects, each at
+  read, comment or write level, with a default level for the other projects
+  (`GET|PUT /api/v1/workspaces/{id}/bots/{bot_id}/project-access`, a Project access dialog on the
+  Members page). `GET /api/v1/auth/me` answers a `bot` object for bot tokens. Migration 0122.
+- **Links between work items and Flow pages.** `GET|POST /api/v1/issues/{id}/pages`,
+  `DELETE /api/v1/issues/{id}/pages/{object_id}`, `GET /api/v2/flow/objects/{id}/work-items`;
+  `page_links` on single work item answers and `page_link_count` on lists; `page_linked` /
+  `page_unlinked` activity; `issue.updated` with `changes.page_links`; a Linked pages section on the
+  work item page and linked work items in the Flow page's Relations tab; MCP tools
+  `work_items.link_page`, `work_items.unlink_page`, `work_items.list_pages`,
+  `objects.list_work_items`. A page the caller may not read is reported as restricted and never
+  named. Migration 0123.
+- **Mentions by name.** Typing `@Name` in a work item, Flow or proposal comment mentions that member
+  (exact name, case-insensitive; a name two members share mentions nobody until picked). Comment
+  answers carry `author` and `mentions` as person objects with the `label` stored at mention time;
+  activity answers carry `people`; webhook comment events carry `mentions: [{id, name}]`; proposal
+  comments can mention and notify. Migration 0124.
+- **Webhook events.** 63 subscribable events, grouped in the webhook form: sprint (`created`,
+  `updated`, `cancelled`, `deleted`), milestone, governance, project, member, form record and Flow
+  events are new. Form record events carry ids and the changed field keys only, never values.
+- **Alert chain in the web UI.** Inbound sources with one-time credentials and recent events, ordered
+  alert rules with an editor and a rule test (including an unsaved draft), and an Alert panel on the
+  work item page. The source list answers `{sources, inbound_enabled, endpoint_url}`; sources show
+  `suspended` and `acting_user_name`; event rows show the work item.
+- **First-run page.** `/auth/setup` creates the administrator account while the instance has no
+  user (`GET /api/v1/auth/setup-status`); the login page links to it in that state.
+- **Governance in the web UI.** Exercise a veto from the proposal page; manage vetoers in the
+  governance configuration.
+- **Flow settings.** A switch for converting Flow pages into forms (`bridge_enabled` on
+  `GET|PUT /api/v1/workspaces/{id}/features/flow`).
+- **Codex on the tmux channel** for project connections (migration 0130).
+- `GET /api/v1/comments/{id}`, `GET /api/v1/form-attachments/{attachment_id}`, sprint `progress`.
+
 ### Changed
 
 - **Report schemas moved to `scripts/schemas/`.** The JSON schemas that the delivery, readiness
@@ -188,9 +234,37 @@ name.
   cancelled, session changed, download, shared block) are shown in the user's language.
 - **Source layout.** The API router, the runner bot route tables and the event dispatcher are split
   into one file per area, and the migration registry is generated from `migrations/*.sql`.
+- **People are shown by name.** The web app no longer shows user ids or id prefixes anywhere; a
+  person without a name reads "Someone", a removed one "Removed user". The workspace feed and the
+  proposal links show a work item by its identifier (`KEY-n`). Flow comment `resolved_by` is a person
+  object; `GET /my/activities` adds `people` and `identifier`.
+- **MCP server workspace.** On `http` and `sse` the MCP server acts in the workspace of the caller's
+  bot token; `[mcp] workspace_id` is required for `stdio` and the `sylvode` command line only. A
+  project-scoped refusal reaches the client as a final error. Comment tools leave `@Name` to the
+  server.
+- **Connected applications.** The `forms:read` / `forms:write` scopes unlock six form routes and the
+  matching MCP tools; the `ramflux` client may request write and forms scopes (migration 0125);
+  connected applications show "not enabled" only for the typed `feature_disabled` answer.
+- **Project export is a file download** at `GET /api/v1/projects/{project_id}/export?format=json|csv`.
+- **Administrator-created bots** pick one agent type (`runner`, `openclaw`, `openprx`, `webhook`,
+  `custom`); `agent_config` is removed (migration 0126).
+- **Flow page into a form.** Workspace owners and admins can convert into any existing form when no
+  permission policy names their role.
+- **Flow collections are shown again** in the navigator, the trash, the New menu and the slash menu.
+- **Bot refusals.** A bot refused by its scope always gets 403 `this bot may not do this in this
+  project`. Bot-token claims carry `{bot id}@bot.sylvode.local`.
+- **Configuration.** `storage.backend` accepts only `local` and `s3`. The runner, MCP server and CLI
+  also trust the operating system's certificate store.
+- **Windows release archive** is `sylvode-cli-windows-amd64.zip` with `mcp-server.exe` and
+  `sylvode.exe` only.
+- Saved Forms views read and write filters through `filter_groups` and `filter_expression` only.
 
 ### Removed
 
+- **Legacy objects.** The four `legacy_pages.*` MCP tools, the `pages` table, `form_plugin_layouts`
+  and the comment-anchor seal column (migration 0127); package manifests without a semantic model or
+  with `editor_cid_v2` / `canonical_order_v3`; the `/projects/{pid}/audit-reports` redirect; the
+  `/api/v1/export/project/{id}` route; the `surfaces:embed` scope and the `sve_` token kind.
 - **Universal forms delivery and sign-off tooling.** The scripts and schemas that produced and
   checked delivery manifests, readiness, sign-off, completion and implementation map reports,
   acceptance packets and delivery bundles were removed, together with
