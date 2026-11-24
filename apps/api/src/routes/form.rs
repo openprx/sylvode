@@ -3856,7 +3856,7 @@ async fn update_record_for_form_internal(
     }
     refresh_record_projection(&tx, form.project_id, form.id, record_id, &form.schema, &values).await?;
     let event_payload = json!({ "record_id": record_id, "values": values });
-    insert_form_event_with_idempotency(
+    insert_form_event_with_changes(
         &tx,
         form,
         Some(record_id),
@@ -3865,6 +3865,7 @@ async fn update_record_for_form_internal(
         source,
         event_payload.clone(),
         idempotency_key,
+        Some(changed_field_keys(&previous_values, &values)),
     )
     .await?;
     let table_change_payload = order_table_change_payload(&form.key, record_id, &previous_values, &values);
@@ -6606,6 +6607,47 @@ pub(crate) async fn insert_form_event_with_idempotency<C>(
 where
     C: ConnectionTrait,
 {
+    // A created record changed every field it has a value for; an update says which fields it changed.
+    let changed_fields = (event_type == "form.record.created").then(|| {
+        payload
+            .get("values")
+            .and_then(Value::as_object)
+            .map(|values| values.keys().cloned().collect())
+            .unwrap_or_default()
+    });
+    insert_form_event_with_changes(
+        db,
+        form,
+        record_id,
+        event_type,
+        actor_id,
+        source,
+        payload,
+        idempotency_key,
+        changed_fields,
+    )
+    .await
+}
+
+/// [`insert_form_event_with_idempotency`] with the keys of the changed fields given. The four
+/// record events a webhook can subscribe to (`form.record.created|updated|archived|restored`) also
+/// get the `event_dispatch` row the event dispatcher delivers from; the keys travel in the event's
+/// metadata and are what a receiver is told, never the values.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn insert_form_event_with_changes<C>(
+    db: &C,
+    form: &FormResponse,
+    record_id: Option<Uuid>,
+    event_type: &str,
+    actor_id: Option<Uuid>,
+    source: Value,
+    payload: Value,
+    idempotency_key: Option<String>,
+    changed_fields: Option<Vec<String>>,
+) -> Result<(), ApiError>
+where
+    C: ConnectionTrait,
+{
     let aggregate_id = record_id.unwrap_or(form.id).to_string();
     let aggregate_type = if record_id.is_some() {
         format!("form.{}", form.key)
@@ -6635,7 +6677,15 @@ where
         ],
     ))
     .await?;
-    insert_business_event(
+    let mut metadata = json!({
+        "form_id": form.id,
+        "form_key": form.key,
+        "record_id": record_id
+    });
+    if let (Some(fields), Some(object)) = (changed_fields, metadata.as_object_mut()) {
+        object.insert("changed_fields".to_string(), json!(fields));
+    }
+    let event_id = insert_business_event(
         db,
         BusinessEventInput {
             workspace_id: form.workspace_id,
@@ -6646,17 +6696,23 @@ where
             actor_id,
             source,
             payload: payload.clone(),
-            metadata: json!({
-                "form_id": form.id,
-                "form_key": form.key,
-                "record_id": record_id
-            }),
+            metadata,
             correlation_id: None,
             causation_id: None,
             idempotency_key: idempotency_key.clone(),
         },
     )
     .await?;
+    if crate::forms::event_redaction::is_delivered_form_event(event_type) {
+        crate::flow::repository::insert_event_dispatch(
+            db,
+            event_id,
+            form.workspace_id,
+            event_type,
+            crate::config::runtime().flow.dispatch_max_attempts,
+        )
+        .await?;
+    }
     if form.key == "print_job" && event_type == "form.record.created" {
         insert_business_event(
             db,
@@ -6686,6 +6742,22 @@ where
         .await?;
     }
     Ok(())
+}
+
+/// The keys whose value differs between two `{field_key: value}` maps, in key order.
+fn changed_field_keys(before: &Value, after: &Value) -> Vec<String> {
+    let empty = serde_json::Map::new();
+    let before = before.as_object().unwrap_or(&empty);
+    let after = after.as_object().unwrap_or(&empty);
+    let mut keys: Vec<String> = after
+        .iter()
+        .filter(|(key, value)| before.get(*key) != Some(*value))
+        .map(|(key, _)| key.clone())
+        .chain(before.keys().filter(|key| !after.contains_key(*key)).cloned())
+        .collect();
+    keys.sort();
+    keys.dedup();
+    keys
 }
 
 pub(crate) async fn insert_schema_version<C>(

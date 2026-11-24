@@ -152,6 +152,60 @@ pub const FORM_EVENT_PAYLOAD_POLICIES: &[(&str, EventPayloadPolicy)] = &[
 /// these and are not a permission action must be declared in the policy table.
 pub const FORM_EVENT_TYPE_PREFIXES: [&str; 3] = ["form.", "order.", "print_job."];
 
+/// The form events the event dispatcher delivers to webhook subscribers.
+pub const DELIVERED_FORM_EVENT_TYPES: [&str; 4] = [
+    "form.record.created",
+    "form.record.updated",
+    "form.record.archived",
+    "form.record.restored",
+];
+
+/// Whether `event_type` is delivered to webhook subscribers by the event dispatcher.
+pub fn is_delivered_form_event(event_type: &str) -> bool {
+    DELIVERED_FORM_EVENT_TYPES.contains(&event_type)
+}
+
+/// The payload and source a webhook receiver gets for a delivered form event, `None` for any other
+/// event type.
+///
+/// A webhook is workspace wide, so field level read permissions cannot be applied to its body:
+/// the payload names the form, the record and the keys of the fields that changed, and never a
+/// value. The keys come from the event's metadata (`changed_fields`, written next to the event),
+/// the source keeps only the keys that cannot carry a value.
+pub fn delivery_parts(event_type: &str, payload: &Value, metadata: &Value, source: &Value) -> Option<(Value, Value)> {
+    if !is_delivered_form_event(event_type) {
+        return None;
+    }
+    let record_id = payload.get("record_id").or_else(|| metadata.get("record_id"));
+    let changed_fields: Vec<Value> = metadata
+        .get("changed_fields")
+        .and_then(Value::as_array)
+        .map(|keys| keys.iter().filter(|key| key.is_string()).cloned().collect())
+        .unwrap_or_default();
+    let mut delivered = Map::new();
+    delivered.insert(
+        "form_id".to_string(),
+        metadata.get("form_id").cloned().unwrap_or(Value::Null),
+    );
+    delivered.insert(
+        "form_key".to_string(),
+        metadata.get("form_key").cloned().unwrap_or(Value::Null),
+    );
+    delivered.insert("record_id".to_string(), record_id.cloned().unwrap_or(Value::Null));
+    delivered.insert("changed_fields".to_string(), Value::Array(changed_fields));
+    let safe_source: Map<String, Value> = source
+        .as_object()
+        .map(|entries| {
+            entries
+                .iter()
+                .filter(|(key, _)| SAFE_EVENT_SOURCE_KEYS.contains(&key.as_str()))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    Some((Value::Object(delivered), Value::Object(safe_source)))
+}
+
 pub fn event_payload_policy(event_type: &str) -> Option<&'static EventPayloadPolicy> {
     FORM_EVENT_PAYLOAD_POLICIES
         .iter()
@@ -304,8 +358,8 @@ fn looks_like_event_type(literal: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        EVENT_REDACTED_MARKER, FORM_EVENT_PAYLOAD_POLICIES, event_payload_policy, event_type_literals,
-        redact_event_metadata, redact_event_payload, redact_event_source,
+        DELIVERED_FORM_EVENT_TYPES, EVENT_REDACTED_MARKER, FORM_EVENT_PAYLOAD_POLICIES, delivery_parts,
+        event_payload_policy, event_type_literals, redact_event_metadata, redact_event_payload, redact_event_source,
     };
     use crate::forms::permissions::FORM_PERMISSION_ACTIONS;
     use serde_json::{Value, json};
@@ -313,6 +367,32 @@ mod tests {
 
     fn denied(keys: &[&str]) -> BTreeSet<String> {
         keys.iter().map(|key| (*key).to_string()).collect()
+    }
+
+    #[test]
+    fn a_delivered_form_event_carries_ids_and_field_keys_never_values() {
+        let payload = json!({ "record_id": "r1", "values": { "salary": 9000 }, "title": "Ada earns 9000" });
+        let metadata = json!({ "form_id": "f1", "form_key": "staff", "record_id": "r1", "changed_fields": ["salary"] });
+        let source = json!({ "type": "user", "actor_id": "u1", "signature_media": { "entries": [{ "url": "/x" }] } });
+        let (body, safe_source) =
+            delivery_parts("form.record.updated", &payload, &metadata, &source).expect("delivered type");
+        assert_eq!(
+            body,
+            json!({ "form_id": "f1", "form_key": "staff", "record_id": "r1", "changed_fields": ["salary"] })
+        );
+        assert_eq!(safe_source, json!({ "type": "user", "actor_id": "u1" }));
+        assert!(!body.to_string().contains("9000") && !body.to_string().contains("Ada"));
+        // Archive and restore changed no field; any other type is not handled here.
+        let (archived, _) = delivery_parts("form.record.archived", &payload, &json!({}), &source).expect("delivered");
+        assert_eq!(archived.get("changed_fields"), Some(&json!([])));
+        assert!(delivery_parts("form.record.recalculated", &payload, &metadata, &source).is_none());
+    }
+
+    #[test]
+    fn every_delivered_form_event_type_declares_a_payload_policy() {
+        for event_type in DELIVERED_FORM_EVENT_TYPES {
+            assert!(event_payload_policy(event_type).is_some(), "{event_type}");
+        }
     }
 
     #[test]

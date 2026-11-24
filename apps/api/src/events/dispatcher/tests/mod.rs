@@ -807,5 +807,6 @@ fn delivery_lease_row_for_test(
 mod coalesce;
 mod deliver;
 mod expand;
+mod form_events;
 mod replay;
 mod retention;

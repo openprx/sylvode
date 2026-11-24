@@ -408,6 +408,24 @@ mod tests {
         files
     }
 
+    /// A Flow event can be subscribed to only when it has a public payload policy; without one the
+    /// receiver would be sent a withheld marker for every delivery.
+    #[test]
+    fn every_subscribable_flow_event_has_a_public_payload_policy() {
+        let subscribable: Vec<&str> = crate::entities::webhook::WEBHOOK_EVENTS
+            .iter()
+            .copied()
+            .filter(|event| event.starts_with(super::FLOW_EVENT_TYPE_PREFIX))
+            .collect();
+        assert!(!subscribable.is_empty());
+        for event in subscribable {
+            assert!(
+                flow_event_has_public_payload(event),
+                "{event} has no public payload policy"
+            );
+        }
+    }
+
     #[test]
     fn declared_type_keeps_only_its_declared_keys() {
         let payload =
