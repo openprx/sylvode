@@ -1,7 +1,7 @@
 import { apiClient, type ApiResult, type PaginatedData } from './client';
 import { get } from 'svelte/store';
 import { t } from 'svelte-i18n';
-import { readPeople, readPerson, type Person } from '../people/display';
+import { readMentioned, readPerson, type MentionedPerson, type Person } from '../people/display';
 
 export interface Comment {
 	id: string;
@@ -11,7 +11,7 @@ export interface Comment {
 	/** The author as a person to show; null when no account remains. */
 	author: Person | null;
 	/** The people the saved comment mentions: render and highlight from this list. */
-	mentions: Person[];
+	mentions: MentionedPerson[];
 	content: string;
 	created_at: string;
 	updated_at: string;
@@ -35,7 +35,7 @@ function mapComment(raw: Record<string, unknown>): Comment {
 		content: (raw.content ?? raw.body ?? '') as string,
 		author_name: (raw.author_name ?? '') as string,
 		author: readPerson(raw.author),
-		mentions: readPeople(raw.mentions)
+		mentions: readMentioned(raw.mentions)
 	};
 }
 

@@ -11,7 +11,7 @@ use super::proposal::ProposalCommentRow;
 use crate::{
     error::ApiError,
     services::{
-        mentions::{self, Audience, Mention, Person},
+        mentions::{self, Audience, Mention, MentionedPerson, Person},
         notifications::{self, NewNotification},
     },
 };
@@ -23,7 +23,7 @@ pub struct ProposalCommentView {
     pub row: ProposalCommentRow,
     /// `null` when the author id is not an account id.
     pub author: Option<Person>,
-    pub mentions: Vec<Person>,
+    pub mentions: Vec<MentionedPerson>,
 }
 
 /// The mentions of a comment on a proposal of `workspace_id`. A proposal that belongs to no

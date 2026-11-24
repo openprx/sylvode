@@ -16,7 +16,7 @@
 	import EmptyState from '#lib/components/EmptyState.svelte';
 	import { timeAgo } from '#lib/utils/timeago.js';
 	import { milestoneActivityText } from '#lib/milestones/rules.js';
-	import { nameOrSomeone, someoneText } from '#lib/people/display.js';
+	import { nameOrSomeone, personLabelById, type Person } from '#lib/people/display.js';
 
 	type InputEventHandler = (
 		event: Event & { currentTarget: EventTarget & HTMLInputElement }
@@ -27,6 +27,7 @@
 	let loadingDashboard = $state(true);
 	let myIssues = $state<MyIssue[]>([]);
 	let myActivities = $state<MyActivity[]>([]);
+	let activityPeople = $state<Record<string, Person>>({});
 	let activitiesPage = $state(1);
 	let activitiesTotalPages = $state(1);
 	let loadingMoreActivities = $state(false);
@@ -78,6 +79,7 @@
 			toast.error(describeResult(activitiesResponse));
 		} else if (activitiesResponse.data) {
 			myActivities = activitiesResponse.data.items ?? [];
+			activityPeople = activitiesResponse.data.people;
 			activitiesPage = activitiesResponse.data.page;
 			activitiesTotalPages = activitiesResponse.data.total_pages;
 		}
@@ -96,6 +98,7 @@
 			toast.error(describeResult(response));
 		} else if (response.data) {
 			myActivities = [...myActivities, ...(response.data.items ?? [])];
+			activityPeople = { ...response.data.people, ...activityPeople };
 			activitiesPage = response.data.page;
 			activitiesTotalPages = response.data.total_pages;
 		}
@@ -289,15 +292,6 @@
 		return map[priority] || 'bg-surface text-fg';
 	}
 
-	// The activity feed names its actors but not the people an entry is about, so the person of an
-	// assignment is shown as the neutral text rather than an id.
-	function getMemberDisplay(userId: string | undefined): string {
-		if (!userId) {
-			return '';
-		}
-		return someoneText(get(t));
-	}
-
 	function getSprintDisplay(sprintId: string | undefined): string {
 		if (!sprintId) {
 			return '';
@@ -313,13 +307,14 @@
 		const detail = activity.detail || {};
 		const from = typeof detail.from === 'string' ? detail.from : '';
 		const to = typeof detail.to === 'string' ? detail.to : '';
-		const toName = typeof detail.to_name === 'string' ? detail.to_name : '';
 		const labelName = typeof detail.label_name === 'string' ? detail.label_name : '';
 
 		switch (activity.action) {
 			case 'assigned':
 				if (to) {
-					return get(t)('activity.assigned', { values: { name: toName || getMemberDisplay(to) } });
+					return get(t)('activity.assigned', {
+						values: { name: personLabelById(activityPeople, to, get(t)) }
+					});
 				}
 				return get(t)('activity.unassigned');
 			case 'status_changed':
@@ -333,7 +328,7 @@
 			case 'sprint_changed':
 				if (to) {
 					return get(t)('activity.sprintChanged', {
-						values: { name: toName || getSprintDisplay(to) }
+						values: { name: getSprintDisplay(to) }
 					});
 				}
 				return get(t)('activity.sprintRemoved');
@@ -577,7 +572,7 @@
 											<span class="ml-1">{formatActivity(activity)}</span>
 										</p>
 										<p class="text-xs text-fg-muted">
-											#{activity.issue_id.slice(0, 8)} · {activity.issue_title} · {formatRelativeTime(
+											{activity.identifier} · {activity.issue_title} · {formatRelativeTime(
 												activity.created_at
 											)}
 										</p>

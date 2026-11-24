@@ -1,7 +1,7 @@
 import { apiClient, type ApiResult, type PaginatedData } from './client';
 import { get } from 'svelte/store';
 import { t } from 'svelte-i18n';
-import { readPeople, readPerson, type Person } from '../people/display';
+import { readMentioned, readPerson, type MentionedPerson, type Person } from '../people/display';
 
 export type ProposalType =
 	| 'feature'
@@ -59,7 +59,7 @@ export interface ProposalComment {
 	/** The author as a person to show; null when the id is not an account. */
 	author: Person | null;
 	/** The people the saved comment mentions: render and highlight from this list. */
-	mentions: Person[];
+	mentions: MentionedPerson[];
 	author_avatar?: string;
 	author_type: 'human' | 'ai';
 	comment_type: string;
@@ -82,6 +82,8 @@ export interface ProposalIssueLink {
 	id: number;
 	proposal_id: string;
 	issue_id: string;
+	/** The work item's short identifier, `KEY-n`. */
+	identifier: string;
 	issue_title: string;
 	issue_state: string;
 	created_at: string;
@@ -312,7 +314,7 @@ export const proposalsApi = {
 							author_id: String(raw.author_id ?? ''),
 							author_name: raw.author_name ? String(raw.author_name) : undefined,
 							author: readPerson(raw.author),
-							mentions: readPeople(raw.mentions),
+							mentions: readMentioned(raw.mentions),
 							author_avatar: raw.author_avatar ? String(raw.author_avatar) : undefined,
 							author_type: (raw.author_type ?? 'human') as 'human' | 'ai',
 							comment_type: String(raw.comment_type ?? 'general'),
@@ -350,7 +352,7 @@ export const proposalsApi = {
 						author_id: String(res.data.author_id ?? ''),
 						author_name: res.data.author_name ? String(res.data.author_name) : undefined,
 						author: readPerson(res.data.author),
-						mentions: readPeople(res.data.mentions),
+						mentions: readMentioned(res.data.mentions),
 						author_avatar: res.data.author_avatar ? String(res.data.author_avatar) : undefined,
 						author_type: (res.data.author_type ?? 'human') as 'human' | 'ai',
 						comment_type: String(res.data.comment_type ?? 'general'),

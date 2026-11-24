@@ -160,6 +160,9 @@ mod milestone_api_tests;
 mod mention_api_tests;
 
 #[cfg(test)]
+mod identifier_api_tests;
+
+#[cfg(test)]
 mod notification_api_tests;
 
 #[cfg(test)]

@@ -6,6 +6,8 @@ use axum::{
     extract::{Query, State},
     response::IntoResponse,
 };
+use std::collections::HashMap;
+
 use platform::{app::AppState, auth::JwtClaims};
 use sea_orm::{DbBackend, FromQueryResult, Statement};
 use serde::{Deserialize, Serialize};
@@ -14,7 +16,10 @@ use uuid::Uuid;
 use crate::{
     error::ApiError,
     response::{ApiResponse, PaginatedData},
-    services::issue_view::identifier,
+    services::{
+        issue_view::identifier,
+        mentions::{self, Audience, Person},
+    },
 };
 
 #[derive(Debug, Deserialize)]
@@ -52,6 +57,8 @@ pub struct MyIssueResponse {
 pub struct MyActivityResponse {
     pub id: Uuid,
     pub issue_id: Uuid,
+    /// The short identifier of the work item, `{project key}-{sequence number}`.
+    pub identifier: String,
     pub project_id: Uuid,
     pub workspace_id: Uuid,
     pub project_name: String,
@@ -61,6 +68,16 @@ pub struct MyActivityResponse {
     pub action: String,
     pub detail: serde_json::Value,
     pub created_at: String,
+}
+
+/// The activity feed of the caller: the entries (paged shape) and the people they refer to.
+#[derive(Serialize)]
+pub struct MyActivityList {
+    #[serde(flatten)]
+    pub page: PaginatedData<MyActivityResponse>,
+    /// Every person an entry names (actor, assignee before and after), by id, as in the activity
+    /// answer of one work item. A client shows `name`, never an id.
+    pub people: HashMap<Uuid, Person>,
 }
 
 /// GET /api/v1/my/issues - List issues assigned to current user across workspaces
@@ -194,6 +211,34 @@ pub async fn get_my_issues(
     }))
 }
 
+/// The people the entries name, each read for the workspace of the entry that names them. A person
+/// who is active in one of those workspaces is shown as active.
+async fn people_of_feed(
+    db: &sea_orm::DatabaseConnection,
+    items: &[MyActivityResponse],
+) -> Result<HashMap<Uuid, Person>, ApiError> {
+    let mut wanted: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
+    for item in items {
+        wanted
+            .entry(item.workspace_id)
+            .or_default()
+            .extend(super::activity::named_people(item.user_id, &item.action, &item.detail));
+    }
+    let mut shown: HashMap<Uuid, Person> = HashMap::new();
+    for (workspace_id, ids) in wanted {
+        let found = mentions::people(db, Audience::of_workspace(workspace_id), &ids, &HashMap::new()).await?;
+        for (id, person) in found {
+            let keep = shown
+                .get(&id)
+                .is_some_and(|known| known.state == mentions::PersonState::Active);
+            if !keep {
+                shown.insert(id, person);
+            }
+        }
+    }
+    Ok(shown)
+}
+
 /// GET /api/v1/my/activities - List recent workspace activities visible to current user
 pub async fn get_my_activities(
     State(state): State<AppState>,
@@ -210,6 +255,8 @@ pub async fn get_my_activities(
     struct MyActivityRow {
         id: Uuid,
         issue_id: Uuid,
+        project_key: String,
+        sequence_number: i32,
         project_id: Uuid,
         workspace_id: Uuid,
         project_name: String,
@@ -260,6 +307,8 @@ pub async fn get_my_activities(
         r"
             SELECT a.id,
                    COALESCE(a.issue_id, CASE WHEN a.resource_type = 'issue' THEN a.resource_id END) AS issue_id,
+                   p.key AS project_key,
+                   wi.sequence_number,
                    wi.project_id,
                    p.workspace_id,
                    p.name AS project_name,
@@ -300,6 +349,7 @@ pub async fn get_my_activities(
         .map(|activity| MyActivityResponse {
             id: activity.id,
             issue_id: activity.issue_id,
+            identifier: identifier(&activity.project_key, activity.sequence_number),
             project_id: activity.project_id,
             workspace_id: activity.workspace_id,
             project_name: activity.project_name,
@@ -318,11 +368,16 @@ pub async fn get_my_activities(
         (total + per_page - 1) / per_page
     };
 
-    Ok(ApiResponse::success(PaginatedData {
-        items,
-        total,
-        page,
-        per_page,
-        total_pages,
+    let people = people_of_feed(&state.db, &items).await?;
+
+    Ok(ApiResponse::success(MyActivityList {
+        page: PaginatedData {
+            items,
+            total,
+            page,
+            per_page,
+            total_pages,
+        },
+        people,
     }))
 }

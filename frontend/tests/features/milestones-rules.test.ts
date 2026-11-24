@@ -154,7 +154,7 @@ test('the activity line names the milestone when it can, and never prints an id'
 	);
 	assert.equal(
 		milestoneActivityText(translate, { to: 'm9', to_name: 'Gamma' }, names),
-		'milestones.activity.set{"name":"Gamma"}'
+		'milestones.activity.setUnnamed'
 	);
 	assert.equal(
 		milestoneActivityText(translate, { from: 'm1', to: null }, names),

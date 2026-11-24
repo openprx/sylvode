@@ -146,6 +146,8 @@ pub struct ProposalIssueLinkRow {
     pub id: i64,
     pub proposal_id: String,
     pub issue_id: Uuid,
+    /// The short identifier of the work item, `{project key}-{sequence number}`.
+    pub identifier: String,
     pub issue_title: String,
     pub issue_state: String,
     pub created_at: Timestamp,
@@ -2722,10 +2724,12 @@ pub async fn list_linked_issues(
     let items = ProposalIssueLinkRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
-            SELECT pil.id, pil.proposal_id, pil.issue_id, wi.title AS issue_title,
-                   wi.state AS issue_state, pil.created_at
+            SELECT pil.id, pil.proposal_id, pil.issue_id,
+                   p.key || '-' || wi.sequence_number AS identifier,
+                   wi.title AS issue_title, wi.state AS issue_state, pil.created_at
             FROM proposal_issue_links pil
             INNER JOIN work_items wi ON pil.issue_id = wi.id
+            INNER JOIN projects p ON wi.project_id = p.id
             WHERE pil.proposal_id = $1
             ORDER BY pil.created_at ASC
         ",

@@ -14,6 +14,11 @@ export interface Person {
 	state: 'active' | 'removed';
 }
 
+/** A person a comment mentions: `label` is the text stored when the mention was made. */
+export interface MentionedPerson extends Person {
+	label: string;
+}
+
 /** People by user id, as `data.people` of the activity answers carries them. */
 export type PeopleById = Readonly<Record<string, Person | undefined>>;
 
@@ -108,8 +113,15 @@ export function readPerson(raw: unknown): Person | null {
 	};
 }
 
-export function readPeople(raw: unknown): Person[] {
-	return Array.isArray(raw) ? raw.flatMap((item) => readPerson(item) ?? []) : [];
+/** The `mentions` of a comment answer: each person with the stored label. */
+export function readMentioned(raw: unknown): MentionedPerson[] {
+	if (!Array.isArray(raw)) return [];
+	return raw.flatMap((item) => {
+		const person = readPerson(item);
+		if (!person) return [];
+		const label = (item as Record<string, unknown>).label;
+		return [{ ...person, label: typeof label === 'string' ? label : '' }];
+	});
 }
 
 /** The `people` object of an activity answer, keyed by user id. */

@@ -358,7 +358,8 @@ reach the workspace that owns the object: a non-member gets `404`.
 
 Every answer that describes a work item carries `identifier`, the short identifier
 `{project key}-{sequence number}` such as `WEB-12`. This covers a single item (read, create, update,
-by identifier), the project issue list, the board (`columns[].issues[]`), `/my/issues` and the
+by identifier), the project issue list, the board (`columns[].issues[]`), `/my/issues`, the entries
+of `/my/activities`, the linked work items of a proposal (`/proposals/{id}/issues`) and the
 issue results of `/search`. The same value is the `key` of the issue object in
 [webhook payloads](webhooks.md). The full item answers (single item, create, update, list and by
 identifier) also carry `labels`, an array of `{id, name, color}` sorted by name that is empty when
@@ -515,7 +516,9 @@ Every comment answer (create, edit, read, list; the list rows use `body` where t
 `content`) carries two people fields:
 
 - `author`: `{id, name, is_bot, state}`, or `null` when the account is gone and no author id is left.
-- `mentions`: the people the comment mentions, in the order stored, each `{id, name, is_bot, state}`.
+- `mentions`: the people the comment mentions, in the order stored, each `{id, name, is_bot, state,
+  label}`. `label` is the text stored when the mention was made; a client highlights `@label` as well
+  as `@name`, so a mention still shows after the person was renamed.
 
 `state` is `active` while the person is a member of the workspace and `removed` otherwise. `name` is
 the person's current name; for someone who has left it is the name the mention was written with (a
@@ -544,11 +547,14 @@ answers, typed `@Name` resolved by the server, `mentioned` notifications. For a 
 are the members of its workspace and the notification link is `/proposals/{id}`. For a Flow page
 they are the members of the workspace and the guests of the page (a personal page: the people who
 already take part in it); picked ids are accepted as before, and `state` is `active` for an enabled
-account. A Flow comment's `mentions` are the same person objects (they were ids before).
+account. A Flow comment's `mentions` are the same person objects (they were ids before), and its
+`resolved_by` is a person `{id, name, is_bot, state}` too, `null` while the comment is open.
 
 The activity of a work item (`GET /issues/{issue_id}/activities`) adds `people` to the paged answer:
 an object keyed by user id with `{id, name, is_bot, state}` for every person an entry names (its
-actor, and the assignee before and after in `assigned` entries).
+actor, and the assignee before and after in `assigned` entries). The activity feed of the caller
+across workspaces (`GET /my/activities`) answers the same way: each entry's actor and `assigned`
+from/to people are in `people`, read against the workspace of the entry that names them.
 
 ### Labels
 

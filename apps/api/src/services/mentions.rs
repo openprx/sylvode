@@ -59,6 +59,16 @@ pub struct Person {
     pub state: PersonState,
 }
 
+/// A person named by a comment mention, with the label stored at mention time.
+///
+/// A client highlights `@label` as well as `@name`, so a mention still shows after a rename.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MentionedPerson {
+    #[serde(flatten)]
+    pub person: Person,
+    pub label: String,
+}
+
 /// Which people count as active, and whose name may be read.
 #[derive(Debug, Clone, Copy)]
 pub enum Audience {
@@ -377,16 +387,17 @@ fn non_blank(label: Option<&String>) -> Option<String> {
 }
 
 /// Shows the stored `mentions` with the current state of each person, in stored order.
-pub fn mention_people(mentions: &[Mention], shown: &HashMap<Uuid, Person>) -> Vec<Person> {
+pub fn mention_people(mentions: &[Mention], shown: &HashMap<Uuid, Person>) -> Vec<MentionedPerson> {
     mentions
         .iter()
-        .map(|mention| {
-            shown.get(&mention.id).cloned().unwrap_or_else(|| Person {
+        .map(|mention| MentionedPerson {
+            person: shown.get(&mention.id).cloned().unwrap_or_else(|| Person {
                 id: mention.id,
                 name: non_blank(Some(&mention.label)),
                 is_bot: false,
                 state: PersonState::Removed,
-            })
+            }),
+            label: mention.label.clone(),
         })
         .collect()
 }

@@ -13,6 +13,7 @@
 		proposalsApi,
 		type Proposal,
 		type ProposalComment,
+		type ProposalIssueLink,
 		type ProposalStatus,
 		type ProposalType,
 		type VoteChoice,
@@ -63,7 +64,7 @@
 	let decisionId = $state('');
 	let tally = $state({ yes: 0, no: 0, abstain: 0 });
 	let comments = $state<ProposalComment[]>([]);
-	let links = $state<Array<{ issue_id: string; issue_title: string; issue_state: string }>>([]);
+	let links = $state<ProposalIssueLink[]>([]);
 	let newComment = $state('');
 	let newCommentMode = $state<'edit' | 'preview'>('edit');
 	let voteReason = $state('');
@@ -152,11 +153,7 @@
 		decisionId = detailRes.data.decision_id || '';
 		tally = detailRes.data.tally;
 		comments = commentsRes.data?.items ?? [];
-		links = (linksRes.data?.items ?? []) as Array<{
-			issue_id: string;
-			issue_title: string;
-			issue_state: string;
-		}>;
+		links = linksRes.data?.items ?? [];
 		await loadImpactReview();
 		loading = false;
 	}
@@ -1086,7 +1083,7 @@
 					{:else}
 						{#each links as link (link.issue_id)}
 							<div class="rounded border border-line px-2 py-1 text-xs">
-								#{link.issue_id.slice(0, 8)} · {link.issue_title} · {link.issue_state}
+								{link.identifier} · {link.issue_title} · {link.issue_state}
 							</div>
 						{/each}
 					{/if}

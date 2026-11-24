@@ -1,6 +1,7 @@
 import { apiClient, type ApiResult, type PaginatedData } from './client';
 import { get } from 'svelte/store';
 import { t } from 'svelte-i18n';
+import { readPeopleById, type Person } from '../people/display';
 
 export type MyIssueStatus = 'backlog' | 'todo' | 'in_progress' | 'done';
 export type MyIssuePriority = 'low' | 'medium' | 'high' | 'urgent';
@@ -21,6 +22,8 @@ export interface MyIssue {
 export interface MyActivity {
 	id: string;
 	issue_id: string;
+	/** The work item's short identifier, `KEY-n`. */
+	identifier: string;
 	project_id: string;
 	workspace_id: string;
 	project_name: string;
@@ -31,6 +34,9 @@ export interface MyActivity {
 	detail: Record<string, unknown>;
 	created_at: string;
 }
+
+/** The paged feed plus the people its entries name (actor, assignee before and after), by id. */
+export type MyActivityPage = PaginatedData<MyActivity> & { people: Record<string, Person> };
 
 function mapIssue(raw: Record<string, unknown>): MyIssue {
 	return {
@@ -54,6 +60,7 @@ function mapActivity(raw: Record<string, unknown>): MyActivity {
 	return {
 		id: String(raw.id ?? ''),
 		issue_id: String(raw.issue_id ?? raw.resource_id ?? ''),
+		identifier: String(raw.identifier ?? ''),
 		project_id: String(raw.project_id ?? ''),
 		workspace_id: String(raw.workspace_id ?? ''),
 		project_name: String(raw.project_name ?? ''),
@@ -98,7 +105,7 @@ export const myApi = {
 	async getMyActivities(params?: {
 		page?: number;
 		per_page?: number;
-	}): Promise<ApiResult<PaginatedData<MyActivity>>> {
+	}): Promise<ApiResult<MyActivityPage>> {
 		const queryParams = new URLSearchParams();
 		if (params?.page) queryParams.set('page', String(params.page));
 		if (params?.per_page) queryParams.set('per_page', String(params.per_page));
@@ -118,7 +125,8 @@ export const myApi = {
 			message: result.message,
 			data: {
 				...result.data,
-				items: Array.isArray(result.data.items) ? result.data.items.map(mapActivity) : []
+				items: Array.isArray(result.data.items) ? result.data.items.map(mapActivity) : [],
+				people: readPeopleById((result.data as { people?: unknown }).people)
 			}
 		};
 	}
