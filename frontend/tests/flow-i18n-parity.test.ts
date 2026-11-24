@@ -89,10 +89,19 @@ const DELIVERED_LATER_NAMESPACES = [
 
 type Json = { [key: string]: Json } | string | number | boolean | null;
 
+/** The `locale.<lang>.json` modules next to the Flow code; the app merges them into the dictionary. */
+function flowLocaleModules(locale: Locale, dir = join(ROOT, 'src/lib/flow')): string[] {
+	const found: string[] = [];
+	for (const name of readdirSync(dir)) {
+		const path = join(dir, name);
+		if (statSync(path).isDirectory()) found.push(...flowLocaleModules(locale, path));
+		else if (name === `locale.${locale}.json`) found.push(path);
+	}
+	return found;
+}
+
 function loadLocale(locale: Locale): Map<string, string> {
-	const raw = JSON.parse(
-		readFileSync(join(ROOT, 'src/lib/i18n', `${locale}.json`), 'utf8')
-	) as Json;
+	const files = [join(ROOT, 'src/lib/i18n', `${locale}.json`), ...flowLocaleModules(locale)];
 	const flat = new Map<string, string>();
 	const walk = (node: Json, prefix: string): void => {
 		if (typeof node !== 'object' || node === null) {
@@ -102,7 +111,7 @@ function loadLocale(locale: Locale): Map<string, string> {
 		for (const [key, value] of Object.entries(node))
 			walk(value, prefix === '' ? key : `${prefix}.${key}`);
 	};
-	walk(raw, '');
+	for (const file of files) walk(JSON.parse(readFileSync(file, 'utf8')) as Json, '');
 	return flat;
 }
 
