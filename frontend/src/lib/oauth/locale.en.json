@@ -9,7 +9,6 @@
 			"notifications:read": "Receive your notifications from this workspace",
 			"notifications:write": "Mark your notifications as read",
 			"tasks:read": "See agent tasks and their progress",
-			"surfaces:embed": "Show Sylvode views inside {client}",
 			"offline_access": "Stay connected until you disconnect",
 			"unknown": "Access named \"{name}\""
 		},

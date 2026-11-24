@@ -9,7 +9,6 @@
 			"notifications:read": "接收你在此工作区的通知",
 			"notifications:write": "将你的通知标记为已读",
 			"tasks:read": "查看智能体任务及其进度",
-			"surfaces:embed": "在 {client} 中显示 Sylvode 视图",
 			"offline_access": "保持连接，直到你断开",
 			"unknown": "名为“{name}”的权限"
 		},

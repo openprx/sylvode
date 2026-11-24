@@ -18,6 +18,7 @@ import {
 import {
 	connectionLabel,
 	groupScopes,
+	isKnownScope,
 	relativeTime,
 	scopeGroup,
 	scopeSummary
@@ -322,7 +323,9 @@ suite.check('scope groups, summaries and labels', () => {
 	assertEqual(scopeGroup('work_items:read'), 'read', 'read');
 	assertEqual(scopeGroup('forms:write'), 'change', 'change');
 	assertEqual(scopeGroup('offline_access'), 'other', 'other');
-	assertEqual(scopeGroup('surfaces:embed'), 'other', 'embed');
+	assertEqual(isKnownScope('surfaces:embed'), false, 'the retired embed scope has no label');
+	for (const scope of ['forms:read', 'forms:write'])
+		assertEqual(isKnownScope(scope), true, `${scope} has a label`);
 	assertEqual(scopeSummary(['projects:read', 'offline_access']), 'read', 'read only');
 	assertEqual(scopeSummary(['projects:read', 'work_items:write']), 'readWrite', 'with write');
 	assertDeepEqual(

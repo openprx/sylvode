@@ -21,7 +21,6 @@ const KNOWN_SCOPES: ReadonlySet<string> = new Set([
 	'notifications:read',
 	'notifications:write',
 	'tasks:read',
-	'surfaces:embed',
 	'offline_access'
 ]);
 
