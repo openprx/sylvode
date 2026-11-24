@@ -9,6 +9,7 @@
 //! The cast: user `alice` is `owner` of workspace `ws1` and `admin` of `ws2` (and an instance
 //! administrator); `bob` is a member of `ws1`; `carol` of `ws2`; `agent` is a bot in `ws1`.
 //! `ws1` has projects `p1` and `p2`, `ws2` has `p3`, and each project has one work item.
+#![cfg(test)]
 #![allow(
     clippy::indexing_slicing,
     clippy::print_stderr,

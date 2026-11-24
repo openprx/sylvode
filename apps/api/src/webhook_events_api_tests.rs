@@ -2,6 +2,7 @@
 //! form record events' dispatch rows, and the subscription rules. Uses the fixture of
 //! `item_api_tests` (`alice` owns the workspace, `bob` is a member) against a scratch `PostgreSQL`
 //! (skipped without `OPENPR_TEST_DATABASE_URL`).
+#![cfg(test)]
 #![allow(
     clippy::indexing_slicing,
     clippy::too_many_lines,

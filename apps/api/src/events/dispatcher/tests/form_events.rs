@@ -1,6 +1,7 @@
 //! Form record events through the dispatcher: the four subscribable types leave one
 //! `event_dispatch` row each, and what a receiver is sent names the form, the record and the keys of
 //! the changed fields, never a value.
+#![cfg(test)]
 
 use super::*;
 use crate::routes::form::{FormResponse, insert_form_event_with_changes, insert_form_event_with_idempotency};
