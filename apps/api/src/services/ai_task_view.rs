@@ -256,23 +256,14 @@ pub async fn build_task_view<C: ConnectionTrait>(
     }
 
     let execution = settings.as_ref().map(|settings| {
-        let mut execution = json!({
+        json!({
             "enabled": settings.enabled,
             "channel": settings.channel,
             "cli": settings.cli,
             "working_directory": settings.working_directory,
             "approval_gate": settings.approval_gate,
             "version": settings.version,
-        });
-        if settings.channel == "tmux"
-            && let Some(map) = execution.as_object_mut()
-        {
-            map.insert(
-                "session_name".to_string(),
-                json!(execution_settings::session_name(&project.key, &settings.cli)),
-            );
-        }
-        execution
+        })
     });
 
     Ok(json!({
@@ -395,7 +386,7 @@ mod tests {
         assert_eq!(
             with["execution"],
             json!({"enabled": true, "channel": "tmux", "cli": "claude", "working_directory": "/work/a",
-                   "approval_gate": "none", "version": 1, "session_name": "Pas-claude"})
+                   "approval_gate": "none", "version": 1})
         );
         assert_eq!(with["reply_policy"]["on_complete"], "comment+state:done");
 
@@ -408,7 +399,7 @@ mod tests {
         .await;
         let renamed = view_of(db, task).await;
         assert_eq!(renamed["project"]["key"], "RENAMED");
-        assert_eq!(renamed["execution"]["session_name"], "RENAMED-claude");
+        assert!(renamed["execution"].get("session_name").is_none());
 
         let mut all = Vec::new();
         keys(&renamed, &mut all);

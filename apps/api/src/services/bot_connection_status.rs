@@ -65,15 +65,21 @@ fn is_known_component(name: &str) -> bool {
     )
 }
 
-/// One `tmux_session` row: `project_key` and `cli` are required and checked, `status` is `ok`,
-/// `warn` or `fail`, and each of the fields in [`SESSION_FIELDS`] is kept when it holds one of its
-/// listed values. Nothing else is kept.
+/// One `tmux_session` row. A `scope: bot` row (the session of one bot, whatever the project) carries
+/// no project key; any other row is a project row, whose `project_key` is required and checked. `cli`
+/// is required and checked in both, `status` is `ok`, `warn` or `fail`, and each of the fields in
+/// [`SESSION_FIELDS`] is kept when it holds one of its listed values. Nothing else is kept.
 fn sanitize_session_row(row: &Value) -> Option<Value> {
-    let key = row.get("project_key").and_then(Value::as_str).filter(|key| {
-        !key.is_empty()
-            && key.len() <= MAX_PROJECT_KEY_CHARS
-            && key.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
-    })?;
+    let bot_scope = row.get("scope").and_then(Value::as_str) == Some("bot");
+    let key = if bot_scope {
+        None
+    } else {
+        Some(row.get("project_key").and_then(Value::as_str).filter(|key| {
+            !key.is_empty()
+                && key.len() <= MAX_PROJECT_KEY_CHARS
+                && key.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+        })?)
+    };
     let cli = row
         .get("cli")
         .and_then(Value::as_str)
@@ -84,7 +90,10 @@ fn sanitize_session_row(row: &Value) -> Option<Value> {
         .filter(|status| matches!(*status, "ok" | "warn" | "fail"))?;
     let mut kept = serde_json::Map::new();
     kept.insert("component".to_string(), json!("tmux_session"));
-    kept.insert("project_key".to_string(), json!(key));
+    kept.insert("scope".to_string(), json!(if bot_scope { "bot" } else { "project" }));
+    if let Some(key) = key {
+        kept.insert("project_key".to_string(), json!(key));
+    }
     kept.insert("cli".to_string(), json!(cli));
     kept.insert("status".to_string(), json!(status));
     for (field, allowed) in SESSION_FIELDS {
@@ -248,11 +257,17 @@ pub struct DeliveryStatus {
     pub detail: Option<String>,
 }
 
-/// The runner's session row for a tmux connection's `<KEY>-<cli>`, from a fresh report. Every
-/// field but `session_name` and `status` is left out when the report did not carry it.
+/// The runner's session row for a tmux connection, from a fresh report.
+///
+/// It is the `scope: bot` row of the connection's bot and CLI when the runner has a session of its own for them, else the project row
+/// of `<KEY>-<cli>`. Every field but `scope` and `status` is left out when the report did not carry it.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct SessionStatus {
-    pub session_name: String,
+    /// `bot` (the bot's own session, one for all its projects) or `project` (`<KEY>-<cli>`).
+    pub scope: &'static str,
+    /// The derived `<KEY>-<cli>`; absent for a bot session, whose name only the operator knows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_name: Option<String>,
     /// `ok`, `warn` or `fail`.
     pub status: String,
     /// `running`, `absent`, `cli_not_running`, `ambiguous` or `dialog`.
@@ -402,22 +417,33 @@ fn component_status(
     }
 }
 
-/// The report's `tmux_session` row for this connection's project key and CLI.
+/// The report's `tmux_session` row for this connection: the bot's own session row for its CLI first,
+/// else the row of the project key and CLI.
 fn session_row(inputs: &StatusInputs) -> Option<SessionStatus> {
-    let row = inputs
-        .report
-        .as_ref()?
-        .get("components")?
-        .as_array()?
+    let rows = inputs.report.as_ref()?.get("components")?.as_array()?;
+    let of_cli = |row: &&Value| {
+        row.get("component").and_then(Value::as_str) == Some("tmux_session")
+            && row.get("cli").and_then(Value::as_str) == Some(inputs.cli.as_str())
+    };
+    let bot_row = rows
         .iter()
-        .find(|row| {
-            row.get("component").and_then(Value::as_str) == Some("tmux_session")
-                && row.get("project_key").and_then(Value::as_str) == Some(inputs.project_key.as_str())
-                && row.get("cli").and_then(Value::as_str) == Some(inputs.cli.as_str())
-        })?;
+        .filter(of_cli)
+        .find(|row| row.get("scope").and_then(Value::as_str) == Some("bot"));
+    let (row, scope) = match bot_row {
+        Some(row) => (row, "bot"),
+        None => (
+            rows.iter().filter(of_cli).find(|row| {
+                row.get("scope").and_then(Value::as_str) != Some("bot")
+                    && row.get("project_key").and_then(Value::as_str) == Some(inputs.project_key.as_str())
+            })?,
+            "project",
+        ),
+    };
     let text = |field: &str| row.get(field).and_then(Value::as_str).map(str::to_string);
     Some(SessionStatus {
-        session_name: crate::services::execution_settings::session_name(&inputs.project_key, &inputs.cli),
+        scope,
+        session_name: (scope == "project")
+            .then(|| crate::services::execution_settings::session_name(&inputs.project_key, &inputs.cli)),
         status: text("status")?,
         state: text("state"),
         created_by: text("created_by"),
@@ -847,10 +873,10 @@ mod tests {
         ]}));
         let status = derive(&input);
         let session = status.tmux_session.expect("the session of this key and CLI");
-        assert_eq!(session.session_name, "SVWL-claude");
+        assert_eq!(session.session_name.as_deref(), Some("SVWL-claude"));
         assert_eq!(
             serde_json::to_value(&session).expect("json"),
-            json!({"session_name": "SVWL-claude", "status": "warn", "state": "running",
+            json!({"scope": "project", "session_name": "SVWL-claude", "status": "warn", "state": "running",
                    "created_by": "operator", "hooks": "none", "permissions": "bypass", "mcp": "stale"})
         );
         assert_eq!(status.bypass, Some(true), "the session itself runs with bypass");
@@ -878,6 +904,58 @@ mod tests {
         assert!(stale.tmux_session.is_none() && stale.bypass.is_none());
     }
 
+    /// A `scope: bot` row is the session of one bot for all its projects: it carries no project key,
+    /// survives the sanitiser, and a tmux connection of that bot and CLI shows it before any project row.
+    #[test]
+    fn a_bot_session_row_matches_every_tmux_connection_of_that_bot_and_cli() {
+        let report = json!({"components": [
+            {"component": "tmux_session", "scope": "project", "project_key": "SVWL", "cli": "claude",
+             "status": "fail", "state": "ambiguous"},
+            {"component": "tmux_session", "scope": "bot", "cli": "claude", "status": "ok", "state": "running",
+             "created_by": "operator", "project_key": "IGNORED", "name": "sv", "path": "/srv/x"},
+            {"component": "tmux_session", "scope": "bot", "cli": "codex", "status": "warn", "state": "absent"},
+            {"component": "tmux_session", "scope": "elsewhere", "cli": "claude", "status": "ok"},
+        ]});
+        let kept = sanitize_report(&report);
+        assert_eq!(
+            kept["components"],
+            json!([
+                {"component": "tmux_session", "scope": "project", "project_key": "SVWL", "cli": "claude",
+                 "status": "fail", "state": "ambiguous"},
+                {"component": "tmux_session", "scope": "bot", "cli": "claude", "status": "ok",
+                 "state": "running", "created_by": "operator"},
+                {"component": "tmux_session", "scope": "bot", "cli": "codex", "status": "warn",
+                 "state": "absent"},
+            ]),
+            "a row of an unknown scope needs a project key, so it is dropped here"
+        );
+        let text = kept.to_string();
+        for leaked in ["IGNORED", "sv\"", "/srv"] {
+            assert!(!text.contains(leaked), "{leaked} must not survive");
+        }
+
+        // Every project of the bot, with the same CLI, shows the bot's row; another CLI does not.
+        for key in ["SVWL", "OTHER"] {
+            let mut input = inputs();
+            input.project_key = key.to_string();
+            input.report = Some(kept.clone());
+            let session = derive(&input).tmux_session.expect("the bot session");
+            assert_eq!(session.scope, "bot");
+            assert_eq!(session.session_name, None, "the operator's name is never shown");
+            assert_eq!(session.state.as_deref(), Some("running"));
+            input.cli = "opencode".to_string();
+            assert!(derive(&input).tmux_session.is_none());
+        }
+        // Without a bot row the project row applies.
+        let mut input = inputs();
+        input.report = Some(json!({"components": [kept["components"][0].clone()]}));
+        let project = derive(&input).tmux_session.expect("the project row");
+        assert_eq!(
+            (project.scope, project.session_name.as_deref()),
+            ("project", Some("SVWL-claude"))
+        );
+    }
+
     #[test]
     fn tmux_session_rows_keep_only_the_listed_keys_and_values() {
         let hostile = json!({"components": [
@@ -898,11 +976,11 @@ mod tests {
         assert_eq!(
             kept["components"],
             json!([
-                {"component": "tmux_session", "project_key": "QLA", "cli": "claude", "status": "warn",
-                 "state": "running", "created_by": "operator", "hooks": "seen", "permissions": "bypass",
-                 "mcp": "ok"},
-                {"component": "tmux_session", "project_key": "QLA", "cli": "codex", "status": "ok",
-                 "mcp": "stale"},
+                {"component": "tmux_session", "scope": "project", "project_key": "QLA", "cli": "claude",
+                 "status": "warn", "state": "running", "created_by": "operator", "hooks": "seen",
+                 "permissions": "bypass", "mcp": "ok"},
+                {"component": "tmux_session", "scope": "project", "project_key": "QLA", "cli": "codex",
+                 "status": "ok", "mcp": "stale"},
             ])
         );
         let text = kept.to_string();
