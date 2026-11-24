@@ -751,8 +751,12 @@
 			"issue": "Work items",
 			"comment": "Comments",
 			"label": "Labels",
-			"sprint": "Sprints",
-			"ai": "AI tasks"
+			"planning": "Sprints and milestones",
+			"ai": "AI tasks",
+			"governance": "Governance",
+			"projects": "Projects and members",
+			"forms": "Forms",
+			"flow": "Flow"
 		},
 		"eventLabel": {
 			"issue": {
@@ -773,11 +777,100 @@
 			},
 			"sprint": {
 				"started": "Sprint started",
-				"completed": "Sprint completed"
+				"completed": "Sprint completed",
+				"created": "Sprint created",
+				"updated": "Sprint updated",
+				"cancelled": "Sprint cancelled",
+				"deleted": "Sprint deleted"
+			},
+			"milestone": {
+				"created": "Milestone created",
+				"updated": "Milestone updated",
+				"deleted": "Milestone deleted"
 			},
 			"ai": {
 				"task_completed": "AI task completed",
 				"task_failed": "AI task failed"
+			},
+			"proposal": {
+				"created": "Proposal created",
+				"updated": "Proposal updated",
+				"deleted": "Proposal deleted",
+				"submitted": "Proposal submitted",
+				"voting_started": "Proposal voting started",
+				"archived": "Proposal archived",
+				"vote_cast": "Vote cast on a proposal"
+			},
+			"veto": {
+				"exercised": "Veto exercised",
+				"withdrawn": "Veto withdrawn"
+			},
+			"escalation": {
+				"started": "Escalation started"
+			},
+			"appeal": {
+				"created": "Appeal created"
+			},
+			"governance_config": {
+				"updated": "Governance configuration updated"
+			},
+			"project": {
+				"created": "Project created",
+				"updated": "Project updated",
+				"deleted": "Project deleted"
+			},
+			"member": {
+				"added": "Member added",
+				"removed": "Member removed"
+			},
+			"form": {
+				"record": {
+					"created": "Form record created",
+					"updated": "Form record updated",
+					"archived": "Form record archived",
+					"restored": "Form record restored"
+				}
+			},
+			"flow": {
+				"object": {
+					"created": "Flow page created",
+					"archived": "Flow page archived",
+					"restored": "Flow page restored",
+					"moved": "Flow page moved"
+				},
+				"content": {
+					"accepted": "Flow content accepted"
+				},
+				"relation": {
+					"linked": "Flow pages linked",
+					"unlinked": "Flow pages unlinked"
+				},
+				"record": {
+					"created": "Flow record created",
+					"updated": "Flow record updated",
+					"archived": "Flow record archived"
+				},
+				"schema": {
+					"changed": "Flow schema changed"
+				},
+				"view": {
+					"created": "Flow view created",
+					"updated": "Flow view updated",
+					"reordered": "Flow views reordered"
+				},
+				"reference": {
+					"created": "Flow reference created",
+					"removed": "Flow reference removed"
+				},
+				"comment": {
+					"created": "Flow comment added",
+					"updated": "Flow comment edited",
+					"deleted": "Flow comment deleted"
+				},
+				"feature": {
+					"enabled": "Flow enabled for the workspace",
+					"disabled": "Flow disabled for the workspace"
+				}
 			}
 		}
 	},

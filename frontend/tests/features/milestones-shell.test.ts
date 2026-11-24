@@ -68,8 +68,10 @@ test('write controls are shown to owners and admins only', () => {
 	assert.ok(gated >= 2, 'the create button and the row actions are gated');
 });
 
-test('milestone events are not subscribable in the webhook form yet', () => {
-	assert.doesNotMatch(read('src/lib/webhooks/events.ts'), /milestone/);
+test('milestone events are subscribable in the webhook form, under sprints and milestones', () => {
+	const source = read('src/lib/webhooks/events.ts');
+	for (const event of ['milestone.created', 'milestone.updated', 'milestone.deleted'])
+		assert.match(source, new RegExp(`'${event.replace('.', '\\.')}'`));
 });
 
 test('the item page and list use the milestone field and filter', () => {

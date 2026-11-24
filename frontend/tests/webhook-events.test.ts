@@ -50,17 +50,17 @@ function lookup(tree: unknown, key: string): unknown {
 
 suite.check('the form offers all events the API accepts, in its order', () => {
 	assertDeepEqual([...WEBHOOK_EVENTS], apiEvents(), 'frontend vs apps/api/src/entities/webhook.rs');
-	assert(
-		WEBHOOK_EVENTS.length === 14,
-		`expected the 14 subscribable events, got ${WEBHOOK_EVENTS.length}`
-	);
+	assert(new Set(WEBHOOK_EVENTS).size === WEBHOOK_EVENTS.length, 'an event is listed twice');
 });
 
-suite.check('every event belongs to the group its prefix names', () => {
+suite.check('the groups are in the documented order and none is empty', () => {
+	assertDeepEqual(
+		WEBHOOK_EVENT_GROUPS.map((entry) => entry.group),
+		['issue', 'comment', 'label', 'planning', 'ai', 'governance', 'projects', 'forms', 'flow'],
+		'group order'
+	);
 	for (const entry of WEBHOOK_EVENT_GROUPS) {
-		for (const event of entry.events) {
-			assert(event.startsWith(`${entry.group}.`), `${event} is filed under ${entry.group}`);
-		}
+		assert(entry.events.length > 0, `${entry.group} has no events`);
 	}
 });
 

@@ -21,8 +21,83 @@ export const WEBHOOK_EVENT_GROUPS = [
 	},
 	{ group: 'comment', events: ['comment.created', 'comment.updated', 'comment.deleted'] },
 	{ group: 'label', events: ['label.added', 'label.removed'] },
-	{ group: 'sprint', events: ['sprint.started', 'sprint.completed'] },
-	{ group: 'ai', events: ['ai.task_completed', 'ai.task_failed'] }
+	{
+		group: 'planning',
+		events: [
+			'sprint.started',
+			'sprint.completed',
+			'sprint.created',
+			'sprint.updated',
+			'sprint.cancelled',
+			'sprint.deleted',
+			'milestone.created',
+			'milestone.updated',
+			'milestone.deleted'
+		]
+	},
+	{ group: 'ai', events: ['ai.task_completed', 'ai.task_failed'] },
+	{
+		group: 'governance',
+		events: [
+			'proposal.created',
+			'proposal.updated',
+			'proposal.deleted',
+			'proposal.submitted',
+			'proposal.voting_started',
+			'proposal.archived',
+			'proposal.vote_cast',
+			'veto.exercised',
+			'veto.withdrawn',
+			'escalation.started',
+			'appeal.created',
+			'governance_config.updated'
+		]
+	},
+	{
+		group: 'projects',
+		events: [
+			'project.created',
+			'project.updated',
+			'project.deleted',
+			'member.added',
+			'member.removed'
+		]
+	},
+	{
+		group: 'forms',
+		events: [
+			'form.record.created',
+			'form.record.updated',
+			'form.record.archived',
+			'form.record.restored'
+		]
+	},
+	{
+		group: 'flow',
+		events: [
+			'flow.object.created',
+			'flow.object.archived',
+			'flow.object.restored',
+			'flow.object.moved',
+			'flow.content.accepted',
+			'flow.relation.linked',
+			'flow.relation.unlinked',
+			'flow.record.created',
+			'flow.record.updated',
+			'flow.record.archived',
+			'flow.schema.changed',
+			'flow.view.created',
+			'flow.view.updated',
+			'flow.view.reordered',
+			'flow.reference.created',
+			'flow.reference.removed',
+			'flow.comment.created',
+			'flow.comment.updated',
+			'flow.comment.deleted',
+			'flow.feature.enabled',
+			'flow.feature.disabled'
+		]
+	}
 ] as const;
 
 export type WebhookEventGroup = (typeof WEBHOOK_EVENT_GROUPS)[number]['group'];

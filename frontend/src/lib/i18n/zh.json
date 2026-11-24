@@ -751,8 +751,12 @@
 			"issue": "工作项",
 			"comment": "评论",
 			"label": "标签",
-			"sprint": "迭代",
-			"ai": "AI 任务"
+			"planning": "迭代和里程碑",
+			"ai": "AI 任务",
+			"governance": "治理",
+			"projects": "项目和成员",
+			"forms": "表单",
+			"flow": "Flow"
 		},
 		"eventLabel": {
 			"issue": {
@@ -773,11 +777,100 @@
 			},
 			"sprint": {
 				"started": "迭代已开始",
-				"completed": "迭代已完成"
+				"completed": "迭代已完成",
+				"created": "迭代已创建",
+				"updated": "迭代已更新",
+				"cancelled": "迭代已取消",
+				"deleted": "迭代已删除"
+			},
+			"milestone": {
+				"created": "里程碑已创建",
+				"updated": "里程碑已更新",
+				"deleted": "里程碑已删除"
 			},
 			"ai": {
 				"task_completed": "AI 任务已完成",
 				"task_failed": "AI 任务失败"
+			},
+			"proposal": {
+				"created": "提案已创建",
+				"updated": "提案已更新",
+				"deleted": "提案已删除",
+				"submitted": "提案已提交",
+				"voting_started": "提案已开始投票",
+				"archived": "提案已归档",
+				"vote_cast": "提案已收到投票"
+			},
+			"veto": {
+				"exercised": "已行使否决权",
+				"withdrawn": "否决已撤回"
+			},
+			"escalation": {
+				"started": "升级已开始"
+			},
+			"appeal": {
+				"created": "申诉已创建"
+			},
+			"governance_config": {
+				"updated": "治理配置已更新"
+			},
+			"project": {
+				"created": "项目已创建",
+				"updated": "项目已更新",
+				"deleted": "项目已删除"
+			},
+			"member": {
+				"added": "成员已添加",
+				"removed": "成员已移除"
+			},
+			"form": {
+				"record": {
+					"created": "表单记录已创建",
+					"updated": "表单记录已更新",
+					"archived": "表单记录已归档",
+					"restored": "表单记录已恢复"
+				}
+			},
+			"flow": {
+				"object": {
+					"created": "Flow 页面已创建",
+					"archived": "Flow 页面已归档",
+					"restored": "Flow 页面已恢复",
+					"moved": "Flow 页面已移动"
+				},
+				"content": {
+					"accepted": "Flow 内容已采纳"
+				},
+				"relation": {
+					"linked": "Flow 页面已关联",
+					"unlinked": "Flow 页面已取消关联"
+				},
+				"record": {
+					"created": "Flow 记录已创建",
+					"updated": "Flow 记录已更新",
+					"archived": "Flow 记录已归档"
+				},
+				"schema": {
+					"changed": "Flow 结构已变更"
+				},
+				"view": {
+					"created": "Flow 视图已创建",
+					"updated": "Flow 视图已更新",
+					"reordered": "Flow 视图已重新排序"
+				},
+				"reference": {
+					"created": "Flow 引用已创建",
+					"removed": "Flow 引用已移除"
+				},
+				"comment": {
+					"created": "Flow 评论已添加",
+					"updated": "Flow 评论已编辑",
+					"deleted": "Flow 评论已删除"
+				},
+				"feature": {
+					"enabled": "工作区已启用 Flow",
+					"disabled": "工作区已停用 Flow"
+				}
 			}
 		}
 	},
