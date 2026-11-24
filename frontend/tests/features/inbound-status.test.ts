@@ -10,11 +10,9 @@ import { readFileSync } from 'node:fs';
 import { Suite, assert, assertEqual } from '../support/harness';
 import { installSvelteSsr, renderToHtml } from '../support/svelte-ssr';
 import {
-	actingUserName,
 	botNotConnected,
 	eventWorkItemHref,
 	hasNoRecipients,
-	isSuspended,
 	outcomeTone,
 	outcomeWord,
 	severityKey,
@@ -48,6 +46,8 @@ const base = parseSource({
 	has_signing_secret: true,
 	ip_allowlist: [],
 	acting_user_id: 'u1',
+	acting_user_name: 'Ada',
+	suspended: false,
 	enabled: true,
 	rate_per_minute: 1,
 	daily_cap: 1,
@@ -57,61 +57,34 @@ const base = parseSource({
 	updated_at: 'x'
 });
 assert(base !== null, 'fixture');
-const admins = [{ user_id: 'u1', name: 'Ada', role: 'admin' }];
 
 suite.check('source status: waiting, receiving, idle, paused, suspended wins', () => {
-	assertEqual(sourceStatus(base, NOW, admins), 'waiting', 'never used');
+	assertEqual(sourceStatus(base, NOW), 'waiting', 'never used');
 	assertEqual(
-		sourceStatus({ ...base, last_used_at: '2026-11-22T11:00:00Z' }, NOW, admins),
+		sourceStatus({ ...base, last_used_at: '2026-11-22T11:00:00Z' }, NOW),
 		'receiving',
 		'1 h ago'
 	);
 	assertEqual(
-		sourceStatus({ ...base, last_used_at: '2026-11-21T12:00:00Z' }, NOW, admins),
+		sourceStatus({ ...base, last_used_at: '2026-11-21T12:00:00Z' }, NOW),
 		'receiving',
 		'exactly 24 h'
 	);
 	assertEqual(
-		sourceStatus({ ...base, last_used_at: '2026-11-21T11:59:59Z' }, NOW, admins),
+		sourceStatus({ ...base, last_used_at: '2026-11-21T11:59:59Z' }, NOW),
 		'idle',
 		'older than 24 h'
 	);
-	assertEqual(sourceStatus({ ...base, enabled: false }, NOW, admins), 'paused', 'disabled');
+	assertEqual(sourceStatus({ ...base, enabled: false }, NOW), 'paused', 'disabled');
 	const used = { ...base, enabled: false, last_used_at: '2026-11-22T11:00:00Z' };
 	assertEqual(
-		sourceStatus({ ...used, suspended: true }, NOW, admins),
+		sourceStatus({ ...used, suspended: true }, NOW),
 		'suspended',
 		'suspended beats paused'
 	);
 	assertEqual(sourceChip('receiving').tone, 'success', 'receiving tone');
 	assertEqual(sourceChip('suspended').tone, 'danger', 'suspended tone');
 	assertEqual(sourceChip('paused').key, 'inbound.sources.status.paused', 'key');
-});
-
-suite.check('suspended: the server verdict (G3) wins, else the members list', () => {
-	assertEqual(
-		isSuspended({ ...base, suspended: false }, [{ user_id: 'u1', name: 'A', role: 'member' }]),
-		false,
-		'server says no'
-	);
-	assertEqual(isSuspended({ ...base, suspended: true }, admins), true, 'server says yes');
-	assertEqual(isSuspended(base, admins), false, 'admin acting user');
-	assertEqual(
-		isSuspended(base, [{ user_id: 'u1', name: 'A', role: 'owner' }]),
-		false,
-		'owner acting user'
-	);
-	assertEqual(isSuspended(base, [{ user_id: 'u1', name: 'A', role: 'member' }]), true, 'demoted');
-	assertEqual(isSuspended(base, []), true, 'removed');
-	assertEqual(isSuspended({ ...base, acting_user_id: null }, admins), true, 'no acting user');
-	assertEqual(isSuspended(base, null), false, 'unknown without either');
-	assertEqual(actingUserName(base, admins), 'Ada', 'name from the list');
-	assertEqual(
-		actingUserName({ ...base, acting_user_name: 'Grace' }, admins),
-		'Grace',
-		'name from the server'
-	);
-	assertEqual(actingUserName(base, []), null, 'removed user');
 });
 
 suite.check('severity, outcome, rule test words; unknown codes print the code', () => {

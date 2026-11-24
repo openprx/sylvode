@@ -39,6 +39,8 @@ const sourceJson = {
 	has_signing_secret: true,
 	ip_allowlist: ['192.0.2.0/24'],
 	acting_user_id: 'u1',
+	acting_user_name: 'Ada',
+	suspended: false,
 	enabled: true,
 	rate_per_minute: 120,
 	daily_cap: 20000,
@@ -100,6 +102,7 @@ const verdict = (extra: object = {}) => ({
 	position: 10,
 	matched: true,
 	reason: 'matched',
+	draft: false,
 	...extra
 });
 
@@ -125,18 +128,24 @@ const testJson = {
 	title: '[HIGH] prx-waf · waf.attack_detected · h'
 };
 
-suite.check('a source: documented shape, G3 fields optional', () => {
+suite.check('a source: documented shape, with the suspension verdict and the acting name', () => {
 	const source = parseSource(sourceJson);
 	assert(source !== null, 'parsed');
-	assertEqual(source.suspended, null, 'no verdict without G3');
-	assertEqual(source.acting_user_name, null, 'no name without G3');
-	const withG3 = parseSource({ ...sourceJson, suspended: true, acting_user_name: 'Ada' });
-	assertEqual(withG3?.suspended, true, 'G3 verdict');
-	assertEqual(withG3?.acting_user_name, 'Ada', 'G3 name');
+	assertEqual(source.suspended, false, 'verdict');
+	assertEqual(source.acting_user_name, 'Ada', 'name');
+	const gone = parseSource({ ...sourceJson, suspended: true, acting_user_name: null });
+	assertEqual(gone?.suspended, true, 'suspended');
+	assertEqual(gone?.acting_user_name, null, 'removed user');
 	assertEqual(
 		parseSource({ ...sourceJson, acting_user_id: null, last_used_at: null })?.acting_user_id,
 		null,
 		'nulls'
+	);
+	assertEqual(parseSource({ ...sourceJson, suspended: undefined }), null, 'suspended is required');
+	assertEqual(
+		parseSource({ ...sourceJson, acting_user_name: undefined }),
+		null,
+		'acting_user_name is required'
 	);
 });
 
@@ -150,7 +159,7 @@ suite.check('a source: wrong types are refused', () => {
 	assertEqual(parseSource([]), null, 'array');
 });
 
-suite.check('the source list has the G1 shape', () => {
+suite.check('the source list has the documented shape', () => {
 	const list = parseSourceList({
 		sources: [sourceJson],
 		inbound_enabled: false,
@@ -210,10 +219,11 @@ suite.check('create and rotate answers carry the secrets; nothing else does', ()
 	assertEqual(text.includes('svi_' + 'a1'), false, 'no token in any other parser output');
 });
 
-suite.check('events: documented shape and G4 work item', () => {
+suite.check('events: documented shape and work item', () => {
 	const event = parseEvent(eventJson);
 	assertEqual(event?.work_item?.identifier, 'OPS-12', 'work item');
 	assertEqual(parseEvent({ ...eventJson, work_item: null })?.work_item, null, 'no work item');
+	assertEqual(parseEvent({ ...eventJson, work_item: undefined }), null, 'work_item is required');
 	assertEqual(parseEvent({ ...eventJson, work_item: { id: 'i' } }), null, 'half a work item');
 	assertEqual(parseEvent({ ...eventJson, signed: 1 }), null, 'signed');
 	assertEqual(parseEvent({ ...eventJson, severity_rank: 'high' }), null, 'rank');
@@ -244,13 +254,18 @@ suite.check('rules: documented shape', () => {
 	assertEqual(parseRuleWrite({ rule: ruleJson }), null, 'warnings required');
 });
 
-suite.check('rule test answers, including the G5 draft mark and unknown codes', () => {
+suite.check('rule test answers, including the draft mark and unknown codes', () => {
 	const result = parseTestResult(testJson);
 	assertEqual(result?.rules_evaluated.length, 2, 'rows');
 	assertEqual(result?.caps?.max_alerts_per_rule_per_hour, 20, 'caps');
 	assertEqual(result?.rules_evaluated[0].draft, false, 'not a draft');
 	const draft = parseTestResult({ ...testJson, rule: verdict({ draft: true }) });
 	assertEqual(draft?.rule?.draft, true, 'draft');
+	assertEqual(
+		parseTestResult({ ...testJson, rule: verdict({ draft: undefined }) }),
+		null,
+		'draft is required'
+	);
 	assertEqual(
 		parseTestResult({ ...testJson, caps: null, rule: null, matched: false, queue_cause: null })
 			?.caps,

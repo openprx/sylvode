@@ -125,7 +125,7 @@ export type ReplaceRuleBody = RuleBody & { expected_version: number };
 
 /**
  * What a rule test is run against. Exactly one of a stored event of the source and a sample
- * envelope; `draft_rule` (gap G5) puts the unsaved rule in its place in the order, replacing
+ * envelope; `draft_rule` puts the unsaved rule in its place in the order, replacing
  * `replaces` when given and otherwise last.
  */
 export type TestInput = { source_id: string } & (

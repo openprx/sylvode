@@ -16,13 +16,12 @@
 	import SourceForm from './SourceForm.svelte';
 	import { routeFailure } from './source-form';
 	import { boundRules } from './source-view';
-	import { actingUserName, sourceChip, sourceStatus, type PersonRef } from './status';
+	import { sourceChip, sourceStatus } from './status';
 	import type { Rule, SecretsAnswer, Source } from './wire';
 
 	interface Props {
 		source: Source;
 		projectId: string;
-		members: PersonRef[] | null;
 		now: Date;
 		editing: boolean;
 		eventsOpen: boolean;
@@ -41,7 +40,6 @@
 	let {
 		source,
 		projectId,
-		members,
 		now,
 		editing,
 		eventsOpen,
@@ -60,9 +58,9 @@
 	let askingDelete = $state(false);
 	let bound = $state<Rule[]>([]);
 
-	const status = $derived(sourceStatus(source, now, members));
+	const status = $derived(sourceStatus(source, now));
 	const statusChip = $derived(sourceChip(status));
-	const actsAs = $derived(actingUserName(source, members));
+	const actsAs = $derived(source.acting_user_name);
 	const blocks = $derived(source.ip_allowlist.length);
 
 	function failed(result: { code: number; message: string; messageKey?: string }): void {

@@ -6,7 +6,6 @@
 	import { describeResult } from '#lib/i18n/describe.js';
 	import { beforeNavigate, goto } from '$app/navigation';
 	import { inboundApi } from '#lib/api/inbound.js';
-	import { membersApi } from '#lib/api/members.js';
 	import { toast } from '#lib/stores/toast.js';
 	import Button from '#lib/ui/button/Button.svelte';
 	import { confirmAction } from '#lib/ui/dialog/confirm.js';
@@ -28,7 +27,6 @@
 		type SecretsState
 	} from './secrets-state';
 	import { replaceSource, withoutSource } from './source-view';
-	import type { PersonRef } from './status';
 	import type { SecretsAnswer, Source } from './wire';
 
 	interface Props {
@@ -40,7 +38,6 @@
 	let loadState = $state<LoadState>('loading');
 	let inboundEnabled = $state(true);
 	let sources = $state<Source[]>([]);
-	let members = $state<PersonRef[] | null>(null);
 	let now = $state(new Date());
 	let creating = $state(false);
 	let editingId = $state<string | null>(null);
@@ -76,15 +73,8 @@
 		loadState = loadStateOf(result);
 	}
 
-	async function loadMembers(): Promise<void> {
-		const result = await membersApi.list(workspaceId);
-		if (result.code !== 0 || !result.data) return;
-		members = result.data.items.map((m) => ({ user_id: m.user_id, name: m.name, role: m.role }));
-	}
-
 	onMount(() => {
 		void load();
-		void loadMembers();
 	});
 
 	/** The credentials of a create or rotate answer go into the one-time state; nothing else keeps them. */
@@ -207,7 +197,6 @@
 					<SourceCard
 						{source}
 						{projectId}
-						{members}
 						{now}
 						editing={editingId === source.id}
 						eventsOpen={eventsId === source.id}

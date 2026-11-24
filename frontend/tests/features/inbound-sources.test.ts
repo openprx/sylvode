@@ -69,6 +69,8 @@ const sourceJson = {
 	has_signing_secret: true,
 	ip_allowlist: ['203.0.113.0/24'],
 	acting_user_id: 'u1',
+	acting_user_name: 'Ada',
+	suspended: false,
 	enabled: true,
 	rate_per_minute: 120,
 	daily_cap: 20000,
@@ -454,7 +456,6 @@ await suite.checkAsync(
 	async () => {
 		const props = {
 			projectId: 'p1',
-			members: null,
 			now: new Date('2026-11-21T12:00:00Z'),
 			editing: false,
 			eventsOpen: false,

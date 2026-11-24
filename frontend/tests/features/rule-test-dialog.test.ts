@@ -23,11 +23,25 @@ const suite = new Suite('rule-test-dialog');
 const result = (over: Record<string, unknown> = {}): TestResult => {
 	const parsed = parseTestResult({
 		matched: true,
-		rule: { id: 'r2', name: 'WAF high', position: 1, matched: true, reason: 'matched' },
+		rule: {
+			id: 'r2',
+			name: 'WAF high',
+			position: 1,
+			matched: true,
+			reason: 'matched',
+			draft: false
+		},
 		rules_evaluated: [
-			{ id: 'r1', name: 'Other', position: 0, matched: false, reason: 'kind_not_listed' },
-			{ id: 'r2', name: 'WAF high', position: 1, matched: true, reason: 'matched' },
-			{ id: 'r3', name: 'Later', position: 2, matched: false, reason: 'disabled' }
+			{
+				id: 'r1',
+				name: 'Other',
+				position: 0,
+				matched: false,
+				reason: 'kind_not_listed',
+				draft: false
+			},
+			{ id: 'r2', name: 'WAF high', position: 1, matched: true, reason: 'matched', draft: false },
+			{ id: 'r3', name: 'Later', position: 2, matched: false, reason: 'disabled', draft: false }
 		],
 		alert: 'would_open',
 		task: 'would_start',
@@ -135,7 +149,7 @@ await suite.checkAsync('unknown codes are printed as the code, in monospace', as
 				alert: 'would_teleport',
 				task: 'would_levitate',
 				rules_evaluated: [
-					{ id: 'r1', name: 'A', position: 0, matched: false, reason: 'cosmic_rays' }
+					{ id: 'r1', name: 'A', position: 0, matched: false, reason: 'cosmic_rays', draft: false }
 				],
 				rule: null,
 				matched: false
@@ -154,8 +168,10 @@ await suite.checkAsync('hostile content is escaped text, never markup', async ()
 		ok(
 			result({
 				title: evil,
-				rule: { id: 'r2', name: evil, position: 1, matched: true, reason: 'matched' },
-				rules_evaluated: [{ id: 'r2', name: evil, position: 1, matched: true, reason: 'matched' }],
+				rule: { id: 'r2', name: evil, position: 1, matched: true, reason: 'matched', draft: false },
+				rules_evaluated: [
+					{ id: 'r2', name: evil, position: 1, matched: true, reason: 'matched', draft: false }
+				],
 				alert: evil
 			})
 		)

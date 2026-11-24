@@ -5,19 +5,6 @@
  * not have the documented shape reads as `null`, so a half-understood answer is a load failure
  * rather than a half-rendered section. Codes the server may add later (outcomes, reasons, queue
  * causes, verdicts) stay plain strings; `status.ts` turns known ones into words.
- *
- * PENDING-B6 (the one place that lists what is written ahead of the server). The shapes below
- * follow the alert chain API with its five additions G1-G5. The server side arrives with batch B6;
- * until then these fields are read tolerantly, and the fallbacks listed here are the marked mocks.
- * The switch to the real answers (batch C5) searches for `PENDING-B6`, makes each field required
- * and deletes the fallback:
- *  - G1 `{sources, inbound_enabled, endpoint_url}` on the list and `endpoint_url` on create and
- *    rotate: `parseSourceList`, `parseSecretsAnswer`; `Cache-Control: no-store` is server-side only.
- *  - G3 `suspended`, `acting_user_name` on a source: optional in `parseSource`; the fallback is
- *    derived from the members list in `status.ts` (`isSuspended`, `actingUserName`).
- *  - G4 `work_item: {id, identifier}` on an event row: `parseEvent`.
- *  - G5 `draft_rule` / `replaces` in the rule test request (`TestInput` in `lib/api/inbound.ts`,
- *    `test-view.ts`) and `draft` on a verdict: optional in `parseVerdict`.
  */
 import { isRecord } from '#lib/project/connection/wire.js';
 
@@ -86,12 +73,9 @@ export interface Source {
 	last_used_ip: string | null;
 	created_at: string;
 	updated_at: string;
-	/**
-	 * Gap G3: the server's verdict that the acting user is no longer an owner or admin. `null`
-	 * while the server does not send it; `status.ts` then derives it from the members list.
-	 */
-	suspended: boolean | null;
-	/** Gap G3: the acting user's name; `null` when absent (or the user was removed). */
+	/** The server's verdict that the acting user is no longer an owner or admin of the workspace. */
+	suspended: boolean;
+	/** The acting user's name; `null` when the user was removed. */
 	acting_user_name: string | null;
 }
 
@@ -110,6 +94,7 @@ export function parseSource(value: unknown): Source | null {
 	const cap = int(value.daily_cap);
 	const created = str(value.created_at);
 	const updated = str(value.updated_at);
+	const actingName = strOrNull(value.acting_user_name);
 	if (
 		id === null ||
 		workspace === null ||
@@ -124,19 +109,13 @@ export function parseSource(value: unknown): Source | null {
 		cap === null ||
 		created === null ||
 		updated === null ||
+		actingName === undefined ||
+		typeof value.suspended !== 'boolean' ||
 		typeof value.require_signature !== 'boolean' ||
 		typeof value.has_signing_secret !== 'boolean' ||
 		typeof value.enabled !== 'boolean'
 	)
 		return null;
-	let suspended: boolean | null = null;
-	if (value.suspended !== undefined && value.suspended !== null) {
-		if (typeof value.suspended !== 'boolean') return null;
-		suspended = value.suspended;
-	}
-	const actingName =
-		value.acting_user_name === undefined ? null : strOrNull(value.acting_user_name);
-	if (actingName === undefined) return null;
 	return {
 		id,
 		workspace_id: workspace,
@@ -154,12 +133,12 @@ export function parseSource(value: unknown): Source | null {
 		last_used_ip: lastIp,
 		created_at: created,
 		updated_at: updated,
-		suspended,
+		suspended: value.suspended,
 		acting_user_name: actingName
 	};
 }
 
-/** Gap G1: the sources of a project with the server-wide switch and the public address. */
+/** The sources of a project with the server-wide switch and the public address. */
 export interface SourceList {
 	sources: Source[];
 	/** False when `[inbound] enabled = false`: every event is refused until it is switched on. */
@@ -231,7 +210,7 @@ export interface InboundEvent {
 	rule_id: string | null;
 	alert_id: string | null;
 	task_id: string | null;
-	/** Gap G4. */
+	/** The work item the event's alert belongs to; `null` when it led to none. */
 	work_item: WorkItemRef | null;
 }
 
@@ -458,7 +437,10 @@ export interface RuleVerdict {
 	matched: boolean;
 	/** `matched`, or why the rule does not handle the event (a code; may be new). */
 	reason: string;
-	/** Gap G5: this verdict is the unsaved draft rule. */
+	/**
+	 * This verdict is the unsaved draft rule. A draft that replaces nothing has the nil UUID as its
+	 * `id` (`isSavedRuleId`); a draft that replaces a rule carries that rule's id.
+	 */
 	draft: boolean;
 }
 
@@ -486,6 +468,14 @@ export interface TestResult {
 	title: string;
 }
 
+/** The id the server gives a draft rule that replaces no saved rule: nothing is stored under it. */
+export const NIL_UUID = '00000000-0000-0000-0000-000000000000';
+
+/** Whether a verdict's `id` names a rule that is stored; the nil id of a new draft does not. */
+export function isSavedRuleId(id: string): boolean {
+	return id !== NIL_UUID;
+}
+
 function parseVerdict(value: unknown): RuleVerdict | null {
 	if (!isRecord(value)) return null;
 	const id = str(value.id);
@@ -500,8 +490,8 @@ function parseVerdict(value: unknown): RuleVerdict | null {
 		typeof value.matched !== 'boolean'
 	)
 		return null;
-	if (value.draft !== undefined && typeof value.draft !== 'boolean') return null;
-	return { id, name, position, matched: value.matched, reason, draft: value.draft === true };
+	if (typeof value.draft !== 'boolean') return null;
+	return { id, name, position, matched: value.matched, reason, draft: value.draft };
 }
 
 function parseCaps(value: unknown): TestCaps | null {

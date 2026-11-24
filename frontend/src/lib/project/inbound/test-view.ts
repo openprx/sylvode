@@ -9,7 +9,7 @@
 import type { CallResult, RuleBody, TestInput } from '#lib/api/inbound.js';
 import { describeResult } from '#lib/i18n/describe.js';
 import { testAlertWord, testCauseWord, testReasonWord, testTaskWord, type Word } from './status.js';
-import type { RuleVerdict, TestCaps, TestResult } from './wire.js';
+import { isSavedRuleId, type RuleVerdict, type TestCaps, type TestResult } from './wire.js';
 
 // --- sample event ---------------------------------------------------------------------------
 
@@ -177,6 +177,11 @@ export function ordinalOf(result: TestResult, verdict: RuleVerdict): number {
 	return (index < 0 ? 0 : index) + 1;
 }
 
+/** A verdict of the unsaved draft; the nil id of a draft that replaces nothing also means "not saved". */
+function isUnsaved(verdict: RuleVerdict): boolean {
+	return verdict.draft || !isSavedRuleId(verdict.id);
+}
+
 export function verdictView(result: TestResult): VerdictView {
 	const rule = result.rule;
 	if (!result.matched || rule === null) return { kind: 'noMatch' };
@@ -184,7 +189,7 @@ export function verdictView(result: TestResult): VerdictView {
 		kind: 'match',
 		position: ordinalOf(result, rule),
 		name: rule.name,
-		draft: rule.draft,
+		draft: isUnsaved(rule),
 		alert: testAlertWord(result.alert),
 		task: testTaskWord(result.task),
 		cause: result.queue_cause === null ? null : testCauseWord(result.queue_cause)
@@ -206,7 +211,7 @@ export type RuleRowView = {
 export function ruleRows(result: TestResult): RuleRowView[] {
 	let decided = false;
 	return result.rules_evaluated.map((v, index) => {
-		const head = { id: v.id, position: index + 1, name: v.name, draft: v.draft };
+		const head = { id: v.id, position: index + 1, name: v.name, draft: isUnsaved(v) };
 		if (decided) return { ...head, state: 'notChecked' as const };
 		if (v.matched) {
 			decided = true;

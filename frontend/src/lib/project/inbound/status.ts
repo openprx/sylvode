@@ -22,45 +22,9 @@ export type SourceStatus = 'suspended' | 'paused' | 'waiting' | 'receiving' | 'i
 
 export const RECEIVING_WINDOW_MS = 24 * 3600 * 1000;
 
-/** A person of the workspace, as far as the status needs: the role decides who may act. */
-export interface PersonRef {
-	user_id: string;
-	name: string;
-	role: string;
-}
-
-const isAdminRole = (role: string): boolean => role === 'owner' || role === 'admin';
-
-/**
- * Whether the source is refused because its acting user can no longer act. The server's own
- * verdict (gap G3) wins; without it the answer is derived from the members list (the acting user
- * is missing or neither owner nor admin). With neither, the source is not shown as suspended.
- */
-export function isSuspended(source: Source, members: readonly PersonRef[] | null): boolean {
-	if (source.suspended !== null) return source.suspended;
-	if (members === null) return false;
-	if (source.acting_user_id === null) return true;
-	const person = members.find((m) => m.user_id === source.acting_user_id);
-	return !person || !isAdminRole(person.role);
-}
-
-/** The acting user's name: the server's (G3), else the members list, else `null` (removed). */
-export function actingUserName(
-	source: Source,
-	members: readonly PersonRef[] | null
-): string | null {
-	if (source.acting_user_name !== null) return source.acting_user_name;
-	if (source.acting_user_id === null || members === null) return null;
-	return members.find((m) => m.user_id === source.acting_user_id)?.name ?? null;
-}
-
 /** Suspended wins over the others; then paused; then by the last use. */
-export function sourceStatus(
-	source: Source,
-	now: Date,
-	members: readonly PersonRef[] | null
-): SourceStatus {
-	if (isSuspended(source, members)) return 'suspended';
+export function sourceStatus(source: Source, now: Date): SourceStatus {
+	if (source.suspended) return 'suspended';
 	if (!source.enabled) return 'paused';
 	if (source.last_used_at === null) return 'waiting';
 	const used = Date.parse(source.last_used_at);

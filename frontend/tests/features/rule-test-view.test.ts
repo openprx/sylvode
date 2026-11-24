@@ -22,18 +22,37 @@ import {
 	settle,
 	verdictView
 } from '../../src/lib/project/inbound/test-view';
-import { parseTestResult, type TestResult } from '../../src/lib/project/inbound/wire';
+import {
+	NIL_UUID,
+	isSavedRuleId,
+	parseTestResult,
+	type TestResult
+} from '../../src/lib/project/inbound/wire';
 
 const suite = new Suite('rule-test-view');
 
 const answer = (over: Record<string, unknown> = {}): TestResult => {
 	const parsed = parseTestResult({
 		matched: true,
-		rule: { id: 'r2', name: 'WAF high', position: 1, matched: true, reason: 'matched' },
+		rule: {
+			id: 'r2',
+			name: 'WAF high',
+			position: 1,
+			matched: true,
+			reason: 'matched',
+			draft: false
+		},
 		rules_evaluated: [
-			{ id: 'r1', name: 'Other', position: 0, matched: false, reason: 'kind_not_listed' },
-			{ id: 'r2', name: 'WAF high', position: 1, matched: true, reason: 'matched' },
-			{ id: 'r3', name: 'Later', position: 2, matched: true, reason: 'matched' }
+			{
+				id: 'r1',
+				name: 'Other',
+				position: 0,
+				matched: false,
+				reason: 'kind_not_listed',
+				draft: false
+			},
+			{ id: 'r2', name: 'WAF high', position: 1, matched: true, reason: 'matched', draft: false },
+			{ id: 'r3', name: 'Later', position: 2, matched: true, reason: 'matched', draft: false }
 		],
 		alert: 'would_open',
 		task: 'would_queue',
@@ -161,6 +180,29 @@ suite.check('verdict: match carries ordinal, draft flag, words and cause', () =>
 	assertEqual(none.kind, 'noMatch', 'no match');
 });
 
+suite.check('a draft that replaces nothing has the nil id and reads as not saved', () => {
+	assertEqual(isSavedRuleId(NIL_UUID), false, 'nil id');
+	assertEqual(isSavedRuleId('r2'), true, 'stored id');
+	const fresh = { id: NIL_UUID, name: 'New', position: 3, matched: true, reason: 'matched' };
+	const result = answer({
+		rule: { ...fresh, draft: true },
+		rules_evaluated: [
+			{ id: 'r1', name: 'Other', position: 0, matched: false, reason: 'disabled', draft: false },
+			{ ...fresh, draft: true }
+		]
+	});
+	const view = verdictView(result);
+	assert(view.kind === 'match' && view.draft && view.position === 2, 'draft verdict');
+	assertDeepEqual(
+		ruleRows(result).map((row) => [row.name, row.draft]),
+		[
+			['Other', false],
+			['New', true]
+		],
+		'only the new rule is marked'
+	);
+});
+
 suite.check('verdict: a draft is marked; unknown codes come back as the code itself', () => {
 	const drafted = answer({
 		rule: { id: 'r2', name: 'WAF high', position: 1, matched: true, reason: 'matched', draft: true }
@@ -200,7 +242,7 @@ suite.check(
 				matched: false,
 				rule: null,
 				rules_evaluated: [
-					{ id: 'a', name: 'A', position: 0, matched: false, reason: 'disabled' },
+					{ id: 'a', name: 'A', position: 0, matched: false, reason: 'disabled', draft: false },
 					{ id: 'b', name: 'B', position: 1, matched: false, reason: 'brand_new', draft: true }
 				]
 			})

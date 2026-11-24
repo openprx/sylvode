@@ -14,7 +14,7 @@
 		descriptionKey: string;
 		thingKey: string;
 		state: LoadState;
-		/** Gap G1: false shows the "switched off on this server" tip bar above the content. */
+		/** False shows the "switched off on this server" tip bar above the content. */
 		inboundEnabled?: boolean;
 		testId?: string;
 		onretry: () => void;
