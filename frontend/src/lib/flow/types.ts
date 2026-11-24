@@ -241,7 +241,7 @@ export interface HistorySummaryItem {
 
 // The five frozen adapter interfaces (`contracts/ui-surface-v1.md` "五个 adapter"), narrowed to
 // what this v0.4 delivery actually implements. Fields the contract lists but v0.4 does not use
-// (relation/search/grants reads, legacy-pages/package import/export) are intentionally omitted
+// (relation/search/grants reads, package import/export) are intentionally omitted
 // here rather than stubbed, so `bun run check` cannot be satisfied by a fake implementation --
 // see the delivery report for the exact list of contract members not built this round.
 

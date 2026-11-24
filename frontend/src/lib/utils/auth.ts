@@ -5,10 +5,5 @@ export function isAdminUser(user: User | null): boolean {
 		return false;
 	}
 
-	if (user.role === 'admin' || user.role === 'owner') {
-		return true;
-	}
-
-	const email = typeof user.email === 'string' ? user.email.toLowerCase() : '';
-	return email === 'admin@openpr.local';
+	return user.role === 'admin' || user.role === 'owner';
 }

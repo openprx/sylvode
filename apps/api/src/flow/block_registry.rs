@@ -15,7 +15,8 @@ pub struct PreparedBlock {
     pub parent_physical_cid: Option<String>,
     pub order_key: String,
     pub asset_id: Option<Uuid>,
-    pub legacy_alias: Option<String>,
+    /// Readable identifier a tree-prose Page carried before it was initialized into the editor doc.
+    pub tree_block_alias: Option<String>,
     /// Digest of normalized typed content only; never Page metadata or private comments.
     pub content_hash: [u8; 32],
 }
@@ -89,7 +90,7 @@ pub fn prepare(snapshot: &collab_core::SemanticSnapshot) -> Result<Vec<PreparedB
         result.push(PreparedBlock {
             physical_cid: cid.to_string(),
             parent_physical_cid: node.parent.as_ref().map(ToString::to_string),
-            legacy_alias: node
+            tree_block_alias: node
                 .properties
                 .get("logical_id")
                 .filter(|alias| !alias.is_empty() && alias.chars().count() <= 128 && alias.len() <= 256)
@@ -199,7 +200,7 @@ pub(crate) mod statement_probe {
 /// Maximum number of rows any registry statement whose size depends on the page carries. The
 /// per-statement cap (`DOCUMENT_LOCK_HOLD_MS_MAX`, 100 ms) was reached by a single statement of
 /// about 10,000 rows on a loaded database, so every such statement (the locking read, the removal
-/// scan, the retirement, every bulk write and the legacy seal) is issued in chunks of at most this
+/// scan, the retirement, every bulk write) is issued in chunks of at most this
 /// many rows. The statement count therefore depends only on the number of chunks.
 pub(crate) const REGISTRY_ROWS_PER_STATEMENT: usize = 500;
 
@@ -207,7 +208,7 @@ pub(crate) const REGISTRY_ROWS_PER_STATEMENT: usize = 500;
 /// than this many rows to the lock wait of a collaborator, even on fast hardware.
 pub(crate) const REGISTRATION_ROWS_PER_TRANSACTION_MAX: usize = 4 * REGISTRY_ROWS_PER_STATEMENT;
 
-/// Part of the staging budget kept back after registration for the checkpoint, share and seal statements.
+/// Part of the staging budget kept back after registration for the checkpoint and share statements.
 pub(crate) const REGISTRATION_TAIL_RESERVE: Duration = Duration::from_millis(DOCUMENT_LOCK_HOLD_MS_MAX);
 
 /// How many blocks without an active placement ("pending" blocks) one transaction may register.
@@ -768,8 +769,7 @@ pub async fn verify_registry(
 /// rows: the locking read and the removal scan walk the page in chunks, and so do all writes.
 /// Blocks that have an active placement are always processed in full. Blocks without one ("pending")
 /// are registered in chunk groups while `allowance` permits; the rest stays pending, is counted in
-/// `ReconcileOutcome::pending` and in the checkpoint, and is registered by a later call. The legacy
-/// comment seal runs only in the call that leaves nothing pending.
+/// `ReconcileOutcome::pending` and in the checkpoint, and is registered by a later call..
 pub(crate) async fn reconcile(
     tx: &DatabaseTransaction,
     scope_id: Uuid,
@@ -1074,7 +1074,6 @@ pub(crate) async fn reconcile_in_mode(
         }
     }
     if pending_left == 0 {
-        super::block_anchors::sync_legacy(tx, page_id, blocks).await?;
         // Remembered before the caller commits. If the transaction rolls back the checkpoint keeps
         // the older head and digest, and the guard refuses this entry.
         let remembered = BaselineEntry {
@@ -1129,9 +1128,9 @@ pub(crate) async fn reconcile_accepted(
     Ok(())
 }
 
-/// Only the server-generated legacy editor initializer may carry an existing legacy identity
-/// to its new canonical Map. Raw client aliases never enter this transition.
-pub(crate) async fn preserve_editor_aliases(
+/// Only the server-generated initializer of a tree-prose Page into the editor doc may carry an
+/// existing block identity to its new canonical Map. Raw client aliases never enter this transition.
+pub(crate) async fn carry_tree_block_identities(
     tx: &DatabaseTransaction,
     page: Uuid,
     blocks: &[PreparedBlock],
@@ -1142,7 +1141,7 @@ pub(crate) async fn preserve_editor_aliases(
     let scope = super::scope::identity(tx, page).await?.scope_id;
     let mut moved_any = false;
     for block in blocks {
-        let Some(alias) = &block.legacy_alias else {
+        let Some(alias) = &block.tree_block_alias else {
             continue;
         };
         if alias == &block.physical_cid {
@@ -1267,7 +1266,7 @@ pub(crate) mod fixtures {
             parent_physical_cid: None,
             order_key: format!("{index:08}"),
             asset_id: None,
-            legacy_alias: None,
+            tree_block_alias: None,
             content_hash,
         }
     }
@@ -1369,7 +1368,7 @@ mod tests {
                 parent_physical_cid: Some("hidden".into()),
                 order_key: "10".into(),
                 asset_id: None,
-                legacy_alias: None,
+                tree_block_alias: None,
                 content_hash: [1; 32],
             },
             PreparedBlock {
@@ -1377,7 +1376,7 @@ mod tests {
                 parent_physical_cid: None,
                 order_key: "20".into(),
                 asset_id: None,
-                legacy_alias: None,
+                tree_block_alias: None,
                 content_hash: [2; 32],
             },
         ];
@@ -1503,7 +1502,7 @@ mod tests {
             parent_physical_cid: None,
             order_key: "0".into(),
             asset_id: None,
-            legacy_alias: None,
+            tree_block_alias: None,
             content_hash: [7; 32],
         }];
         complete(&tx, scope, page, 0, &blocks).await.unwrap();
@@ -1536,7 +1535,7 @@ mod tests {
             parent_physical_cid: None,
             order_key: "0".into(),
             asset_id: None,
-            legacy_alias: None,
+            tree_block_alias: None,
             content_hash: [8; 32],
         }];
         complete(&tx, scope, page, 3, &edited).await.unwrap();
@@ -1596,8 +1595,7 @@ mod tests {
     use std::collections::{BTreeSet, HashMap};
     use std::time::{Duration, Instant};
 
-    /// Verbatim copy of the per-block implementation that `reconcile` replaced. Only the one-time
-    /// legacy seal at its end is the current `sync_legacy`; that function has its own reference.
+    /// Verbatim copy of the per-block implementation that `reconcile` replaced.
     #[derive(FromQueryResult)]
     struct ReferencePlacement {
         id: Uuid,
@@ -1749,7 +1747,6 @@ mod tests {
                 .await?;
             }
         }
-        crate::flow::block_anchors::sync_legacy(tx, page_id, blocks).await?;
         Ok(suspend)
     }
 
@@ -1826,16 +1823,15 @@ mod tests {
         let checkpoint = tx
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Postgres,
-                "SELECT accepted_head,legacy_anchors_sealed FROM flow_block_checkpoints WHERE page_id=$1",
+                "SELECT accepted_head FROM flow_block_checkpoints WHERE page_id=$1",
                 vec![page.into()],
             ))
             .await
             .unwrap()
             .unwrap();
         lines.push(format!(
-            "checkpoint head={} sealed={}",
+            "checkpoint head={}",
             checkpoint.try_get::<i64>("", "accepted_head").unwrap(),
-            checkpoint.try_get::<bool>("", "legacy_anchors_sealed").unwrap(),
         ));
         for row in tx
             .query_all(Statement::from_sql_and_values(
@@ -2443,24 +2439,11 @@ mod tests {
         scratch.drop_self().await;
     }
 
-    async fn anchor_count(db: &DatabaseConnection, page: Uuid) -> i64 {
-        db.query_one(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT count(*) AS n FROM flow_block_comment_anchors WHERE source_page_id=$1",
-            vec![page.into()],
-        ))
-        .await
-        .unwrap()
-        .unwrap()
-        .try_get("", "n")
-        .unwrap()
-    }
-
     /// A large Page written before the registry was active stays writable while its first
-    /// registration takes several bounded writes; the legacy seal runs once, in the write that
-    /// completes the registration, and the final state equals the old per-block loop's.
+    /// registration takes several bounded writes, and the final state equals the old per-block
+    /// loop's.
     #[tokio::test]
-    async fn large_legacy_page_stays_writable_and_seals_on_completion() {
+    async fn large_page_registration_stays_writable() {
         let Some(scratch) = scratch_with_leases(&format!("block_registry_upgrade_{}", Uuid::new_v4().simple())).await
         else {
             eprintln!("SKIPPED (no database)");
@@ -2470,40 +2453,12 @@ mod tests {
         db.execute_unprepared("UPDATE flow_runtime_capabilities SET minimum_reader_version=4 WHERE singleton")
             .await
             .unwrap();
-        let (actor_a, scope_a, page_a) = page(db).await;
-        let (actor_b, scope_b, page_b) = page(db).await;
-        let mut legacy = blocks(5_000, 1);
-        for (index, block) in legacy.iter_mut().enumerate() {
-            block.legacy_alias = Some(format!("legacy-{index}"));
-        }
-        for (actor, scope, page) in [(actor_a, scope_a, page_a), (actor_b, scope_b, page_b)] {
-            for index in (0..5_000).step_by(25) {
-                let target = if index % 50 == 0 {
-                    format!("legacy-{index}")
-                } else {
-                    format!("cid:{index}:Map")
-                };
-                exec(db,"INSERT INTO flow_comments(id,scope_id,object_id,block_id,author_id,body,created_at) VALUES($1,$2,$3,$4,$5,'Old private note',now()-interval '1 day')",vec![Uuid::new_v4().into(),scope.into(),page.into(),target.into(),actor.into()]).await;
-            }
-        }
+        let (_, _, page_a) = page(db).await;
+        let (_, scope_b, page_b) = page(db).await;
+        let registered = blocks(5_000, 1);
         db.execute_unprepared("UPDATE flow_runtime_capabilities SET minimum_reader_version=5 WHERE singleton")
             .await
             .unwrap();
-        let sealed = |db: &DatabaseConnection| {
-            let db = db.clone();
-            async move {
-                db.query_one(Statement::from_sql_and_values(
-                    DbBackend::Postgres,
-                    "SELECT legacy_anchors_sealed FROM flow_block_checkpoints WHERE page_id=$1",
-                    vec![page_a.into()],
-                ))
-                .await
-                .unwrap()
-                .unwrap()
-                .try_get::<bool>("", "legacy_anchors_sealed")
-                .unwrap()
-            }
-        };
         let mut timings = Vec::new();
         for expected in [3_000, 1_000, 0] {
             let tx = begin_capped(db).await;
@@ -2515,40 +2470,27 @@ mod tests {
                     min_rows: 0,
                 };
                 let (result, records) =
-                    statement_probe::count(reconcile_accepted(&tx, page_a, 0, &legacy, allowance)).await;
+                    statement_probe::count(reconcile_accepted(&tx, page_a, 0, &registered, allowance)).await;
                 result.unwrap();
                 (records, pending_of(&tx, page_a).await)
             };
             timings.push(started.elapsed());
             tx.commit().await.unwrap();
             eprintln!(
-                "legacy write: {:?}, pending {outcome}, slowest statements {:?}",
+                "registration write: {:?}, pending {outcome}, slowest statements {:?}",
                 timings.last().unwrap(),
                 statement_probe::slowest(&statements, 5)
             );
             assert_eq!(outcome, expected);
-            if expected > 0 {
-                assert!(!sealed(db).await, "no seal before the registration is complete");
-                assert_eq!(anchor_count(db, page_a).await, 0, "no anchor rows before completion");
-            }
         }
-        assert!(sealed(db).await, "the completing write seals the legacy anchors");
         let tx = db.begin().await.unwrap();
-        complete(&tx, scope_b, page_b, 0, &legacy).await.unwrap();
+        complete(&tx, scope_b, page_b, 0, &registered).await.unwrap();
         let (new_lines, _) = dump(&tx, page_a).await;
         let (old_lines, _) = dump(&tx, page_b).await;
         assert!(
             new_lines.len() > 15_000,
             "the page must be registered: {}",
             new_lines.len()
-        );
-        assert!(
-            new_lines
-                .iter()
-                .filter(|line| line.starts_with("anchor ") && line.contains(" known "))
-                .count()
-                >= 100,
-            "legacy comments must be adopted"
         );
         assert_eq!(new_lines, old_lines);
         tx.rollback().await.unwrap();

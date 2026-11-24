@@ -23,7 +23,7 @@ export interface StoredArrangement {
 
 /** Config keys that describe who sees a view, not how it looks. */
 const AUDIENCE_KEYS = new Set(['visibility', 'is_default']);
-const FILTER_KEYS = ['filter_expression', 'filter_groups', 'filters', 'filter'] as const;
+const FILTER_KEYS = ['filter_expression', 'filter_groups'] as const;
 export const ARRANGEMENT_CAP = 200;
 export const DEFAULT_PER_PAGE = 100;
 /** The server maximum for `per_page` (`list_form_records` clamps to 200). */

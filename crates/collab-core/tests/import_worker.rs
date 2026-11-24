@@ -236,44 +236,22 @@ fn a_snapshot_and_its_update_tail_import_to_the_validated_head() {
     assert!(observation.metered_cpu_us.is_some());
 }
 
-/// Every versioned package reader has its fingerprint read in the window, and only the one the
-/// request names; a request without a known reader is refused.
+/// The v4 package reader has its fingerprint read in the window; v5 needs no read beyond the
+/// projection; a request without a known reader (v1 to v3 included) is refused.
 #[test]
 fn the_window_reads_the_fingerprint_of_the_named_package_reader() {
     let engine = page(20, 10, 1);
     let upload = upload_of(&engine);
-    let expected = [
-        ("v1", engine.legacy_package_semantic_snapshot_v1()),
-        ("v2", engine.legacy_package_semantic_snapshot_v2()),
-        ("v3", engine.legacy_package_semantic_snapshot_v3()),
-        ("v4", engine.legacy_package_semantic_snapshot_v4()),
-    ];
-    for (model, snapshot) in expected {
-        let hash = snapshot.expect("the reader projects").semantic_hash();
-        let (result, _) = import_with_model(&upload, Some(model));
-        let success = result.expect("the import is accepted");
-        let reported = [
-            success.legacy_package_semantic_hash_v1.as_ref(),
-            success.legacy_package_semantic_hash_v2.as_ref(),
-            success.legacy_package_semantic_hash_v3.as_ref(),
-            success.legacy_package_semantic_hash_v4.as_ref(),
-        ];
-        let index = usize::from(model.as_bytes()[1] - b'1');
-        for (position, value) in reported.into_iter().enumerate() {
-            if position == index {
-                assert_eq!(value, Some(&hash), "{model}");
-            } else {
-                assert_eq!(value, None, "{model} reports no other reader");
-            }
-        }
-    }
+    let hash = engine
+        .package_semantic_snapshot_v4()
+        .expect("the reader projects")
+        .semantic_hash();
+    let (result, _) = import_with_model(&upload, Some("v4"));
+    let success = result.expect("the import is accepted");
+    assert_eq!(success.package_semantic_hash_v4, Some(hash));
     let (v5, _) = import_with_model(&upload, Some("v5"));
-    assert!(
-        v5.expect("the import is accepted")
-            .legacy_package_semantic_hash_v1
-            .is_none()
-    );
-    for model in [None, Some("v6"), Some("")] {
+    assert!(v5.expect("the import is accepted").package_semantic_hash_v4.is_none());
+    for model in [None, Some("v1"), Some("v2"), Some("v3"), Some("v6"), Some("")] {
         let CollabError::OperationFailed { reason } = (match import_with_model(&upload, model).0 {
             Err(IsolatedApplyError::Collab(error)) => error,
             other => panic!("expected a refusal, got {other:?}"),

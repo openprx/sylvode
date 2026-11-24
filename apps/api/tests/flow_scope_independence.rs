@@ -2243,7 +2243,7 @@ async fn personal_page_package_has_scope_provenance_real_snapshots_and_stable_jo
         .unwrap();
         let engine = <collab_core::LoroCollabEngine as collab_core::CollabEngine>::load(&data).unwrap();
         assert_eq!(
-            engine.legacy_package_semantic_snapshot_v4().unwrap().semantic_hash(),
+            engine.package_semantic_snapshot_v4().unwrap().semantic_hash(),
             metadata.field("semantic_hash").as_str().unwrap()
         );
     }
@@ -2666,7 +2666,7 @@ async fn pre_change_v1_browser_package_promotes_with_old_fingerprint_and_current
     scope::legacy_scope(db, workspace).await.unwrap();
     let path = std::path::PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/flow-v2/legacy-browser-package-v1"
+        "/tests/fixtures/flow-v2/browser-package-v4"
     ));
     let bytes = std::fs::read(path.join("package.zip")).unwrap();
     let contract: serde_json::Value =
@@ -2913,7 +2913,7 @@ async fn personal_import_transport_stages_real_archive_and_obeys_workflow_and_pl
         .unwrap();
     let bytes = std::fs::read(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/flow-v2/legacy-browser-package-v1/package.zip"
+        "/tests/fixtures/flow-v2/browser-package-v4/package.zip"
     ))
     .unwrap();
     let body = json!({"source":{"kind":"inline_base64","package_base64":base64::engine::general_purpose::STANDARD.encode(bytes)},"idempotency_key":"transport-upload"});
@@ -4026,11 +4026,15 @@ async fn stale_model_two_navigator_refreshes_from_order_map_without_mutation() {
         include_bytes!("../../../frontend/tests/fixtures/flow-navigator-order/browser-reedit.snapshot").to_vec();
     let engine = collab_core::LoroCollabEngine::load(&bytes).unwrap();
     let current = engine.semantic_snapshot().unwrap();
-    let mut old = serde_json::to_value(engine.legacy_package_semantic_snapshot_v2().unwrap()).unwrap();
+    let node = "33333333-3333-4333-8333-333333333333";
+    // A stored projection from before the navigator order map was applied: the node keeps its
+    // tree position instead of the order key of the map.
+    let mut old = serde_json::to_value(&current).unwrap();
+    *old.pointer_mut(&format!("/nodes/{node}/order_key"))
+        .expect("the node has an order key") = json!("00000002");
     old.as_object_mut()
         .expect("fixture object")
         .insert("__flow_projection_model".into(), json!(2));
-    let node = "33333333-3333-4333-8333-333333333333";
     assert_eq!(current.nodes.get(node).unwrap().order_key, "9");
     assert_ne!(old.field("nodes").field(node).field("order_key").as_str(), Some("9"));
     let frontier = engine.frontier().as_bytes().to_vec();

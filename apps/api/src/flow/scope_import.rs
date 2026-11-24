@@ -697,7 +697,7 @@ mod tests {
         let scope_id = scope.id;
         let path = std::path::PathBuf::from(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/flow-v2/legacy-browser-package-v1"
+            "/tests/fixtures/flow-v2/browser-package-v4"
         ));
         let bytes = std::fs::read(path.join("package.zip")).unwrap();
         exec(
@@ -760,22 +760,11 @@ mod tests {
         let proof = collab_core::isolation::wire::ReplayDiffResult {
             semantic_diff: collab_core::SemanticDiff::default(),
             to_snapshot: engine.semantic_snapshot().unwrap(),
-            legacy_package_semantic_hash_v4: Some(
-                engine.legacy_package_semantic_snapshot_v4().unwrap().semantic_hash(),
-            ),
-            legacy_package_semantic_hash_v3: Some(
-                engine.legacy_package_semantic_snapshot_v3().unwrap().semantic_hash(),
-            ),
+            package_semantic_hash_v4: Some(engine.package_semantic_snapshot_v4().unwrap().semantic_hash()),
             from_title: engine.title().unwrap(),
             to_title: engine.title().unwrap(),
             package_reference_remap_required: Some(
                 collab_core::isolation::wire::package_reference_remap_required(&engine).unwrap(),
-            ),
-            legacy_package_semantic_hash_v2: Some(
-                engine.legacy_package_semantic_snapshot_v2().unwrap().semantic_hash(),
-            ),
-            legacy_package_semantic_hash_v1: Some(
-                engine.legacy_package_semantic_snapshot_v1().unwrap().semantic_hash(),
             ),
             validated_head_snapshot_base64: Some(STANDARD.encode(engine.export_snapshot().unwrap())),
         };

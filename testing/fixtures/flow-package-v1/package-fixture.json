@@ -1,5 +1,5 @@
 {
-  "expected_package_sha256": "e54cd08412ed8bff92cf694a518ff49f1f841f1671049ba85dccc1f36b1d5b19",
+  "expected_package_sha256": "4f80f1ac439e57f7fd91bb4094f2aba531d4b780abb754651cecb3647712f7c0",
   "manifest": {
     "schema": "sylvode.flow.export-package.v1",
     "package_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
@@ -18,7 +18,8 @@
     "engine": {
       "name": "loro",
       "crate_version": "1.13.9",
-      "wire_format_version": 1
+      "wire_format_version": 1,
+      "semantic_model": "rich_page_v4"
     },
     "history": {
       "included": false,

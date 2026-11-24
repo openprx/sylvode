@@ -16,7 +16,6 @@ pub struct PageMetadata {
     pub head_seq: i64,
     pub head_frontier: Vec<u8>,
     pub registry_head: Option<i64>,
-    pub legacy_anchors_sealed: Option<bool>,
 }
 #[derive(Debug, FromQueryResult)]
 pub struct PlacementMetadata {
@@ -61,15 +60,12 @@ pub async fn pages<C: ConnectionTrait>(db: &C, source: Uuid, destination: Uuid) 
         return Err(Error::InvalidSelection);
     }
     let rows=PageMetadata::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
-        "SELECT o.id AS object_id,o.scope_id,o.workspace_id,o.object_type,o.lifecycle_status,d.id AS document_id,d.head_seq,d.head_frontier,c.accepted_head AS registry_head,c.legacy_anchors_sealed FROM flow_objects o JOIN collab_documents d ON d.object_id=o.id LEFT JOIN flow_block_checkpoints c ON c.page_id=o.id AND c.scope_id=o.scope_id WHERE o.id=ANY($1::uuid[]) ORDER BY o.id",
+        "SELECT o.id AS object_id,o.scope_id,o.workspace_id,o.object_type,o.lifecycle_status,d.id AS document_id,d.head_seq,d.head_frontier,c.accepted_head AS registry_head FROM flow_objects o JOIN collab_documents d ON d.object_id=o.id LEFT JOIN flow_block_checkpoints c ON c.page_id=o.id AND c.scope_id=o.scope_id WHERE o.id=ANY($1::uuid[]) ORDER BY o.id",
         vec![vec![source,destination].into()])).all(db).await?;
     if rows.len() != 2 || rows.iter().any(|row| row.object_type != "page") {
         return Err(Error::MissingPage);
     }
-    if rows
-        .iter()
-        .any(|row| row.registry_head != Some(row.head_seq) || row.legacy_anchors_sealed != Some(true))
-    {
+    if rows.iter().any(|row| row.registry_head != Some(row.head_seq)) {
         return Err(Error::RegistryNotCurrent);
     }
     Ok(rows)

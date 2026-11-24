@@ -316,9 +316,7 @@ pub async fn render(
             name: ENGINE_NAME.into(),
             crate_version: ENGINE_CRATE_VERSION.into(),
             wire_format_version: ENGINE_WIRE_FORMAT_VERSION,
-            semantic_model: super::package::RAW_PACKAGE_SEMANTIC_MODEL
-                .wire_name()
-                .map(str::to_owned),
+            semantic_model: Some(super::package::RAW_PACKAGE_SEMANTIC_MODEL.wire_name().to_owned()),
         },
         history: PackageHistory {
             included: include_history,

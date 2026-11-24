@@ -1,7 +1,5 @@
 //! Private comments never move between Pages. A CID is never used to rebind a known anchor.
-use super::block_registry::{
-    PreparedBlock, REGISTRY_ROWS_PER_STATEMENT, RegistrationAllowance, execute, query_all, query_one,
-};
+use super::block_registry::{PreparedBlock, REGISTRY_ROWS_PER_STATEMENT, RegistrationAllowance};
 use super::collab::bootstrap;
 use super::collab::write::LOCKED_PHASE_STAGING_BUDGET;
 use crate::error::ApiError;
@@ -100,97 +98,6 @@ pub(crate) async fn ensure(
     .await
 }
 
-/// Adopt the current legacy Page+identifier meaning exactly once under its accepted-head lock.
-/// This defines the first UUID baseline; it never claims prior UUID history or runs after seal.
-/// Callers run it only when no block of the Page is still pending registration.
-///
-/// The seal is driven by the aliases that comments actually use: the distinct comment block ids are
-/// read in keyset pages of `REGISTRY_ROWS_PER_STATEMENT`, and the adoption statement carries at
-/// most that many aliases, so its cost depends on commented blocks and not on Page size.
-pub(crate) async fn sync_legacy(
-    tx: &DatabaseTransaction,
-    page: Uuid,
-    blocks: &[PreparedBlock],
-) -> Result<(), ApiError> {
-    let checkpoint = query_one(
-        tx,
-        "SELECT accepted_head,legacy_anchors_sealed FROM flow_block_checkpoints WHERE page_id=$1 FOR UPDATE",
-        vec![page.into()],
-    )
-    .await?
-    .ok_or_else(ApiError::internal)?;
-    if !checkpoint.try_get::<bool>("", "legacy_anchors_sealed")? {
-        let head = query_one(
-            tx,
-            "SELECT head_seq FROM collab_documents WHERE object_id=$1 FOR UPDATE",
-            vec![page.into()],
-        )
-        .await?
-        .ok_or_else(ApiError::internal)?;
-        if head.try_get::<i64>("", "head_seq")? != checkpoint.try_get::<i64>("", "accepted_head")? {
-            return Err(ApiError::policy_rejected("legacy anchor baseline head changed"));
-        }
-        let mut aliases = std::collections::HashMap::<&str, Vec<&PreparedBlock>>::new();
-        for block in blocks {
-            aliases.entry(block.physical_cid.as_str()).or_default().push(block);
-            if let Some(alias) = &block.legacy_alias
-                && alias != &block.physical_cid
-            {
-                aliases.entry(alias.as_str()).or_default().push(block);
-            }
-        }
-        let mut alias_names = Vec::new();
-        let mut alias_cids = Vec::new();
-        let mut cursor = String::new();
-        let page_limit = i64::try_from(REGISTRY_ROWS_PER_STATEMENT).map_err(|_| ApiError::internal())?;
-        loop {
-            let rows = query_all(
-                tx,
-                REGISTRY_ROWS_PER_STATEMENT,
-                "SELECT DISTINCT block_id FROM flow_comments WHERE object_id=$1 AND block_id IS NOT NULL AND block_id>$2 ORDER BY block_id LIMIT $3",
-                vec![page.into(), cursor.clone().into(), page_limit.into()],
-            )
-            .await?;
-            let round = rows.len();
-            for row in rows {
-                cursor = row.try_get::<String>("", "block_id")?;
-                // Only an unambiguous alias is adopted.
-                if let Some([block]) = aliases.get(cursor.as_str()).map(Vec::as_slice) {
-                    alias_names.push(cursor.clone());
-                    alias_cids.push(block.physical_cid.clone());
-                }
-            }
-            if round < REGISTRY_ROWS_PER_STATEMENT {
-                break;
-            }
-        }
-        for (names, cids) in alias_names
-            .chunks(REGISTRY_ROWS_PER_STATEMENT)
-            .zip(alias_cids.chunks(REGISTRY_ROWS_PER_STATEMENT))
-        {
-            execute(tx, names.len(), r"INSERT INTO flow_block_comment_anchors(comment_id,source_page_id,original_block_id,logical_id,origin_placement_id,origin_generation,state)
-SELECT DISTINCT ON (c.id) c.id,c.object_id,c.block_id,p.logical_id,p.id,p.generation,'known'
-FROM unnest($2::text[],$3::text[]) AS a(alias,cid)
-JOIN flow_comments c ON c.object_id=$1 AND c.block_id=a.alias
-JOIN flow_block_placements p ON p.page_id=c.object_id AND p.physical_cid=a.cid AND p.state='active'
-JOIN flow_block_alias_fences f ON f.page_id=p.page_id AND f.scope_id=p.scope_id AND f.physical_cid=p.physical_cid AND f.first_logical_id=p.logical_id AND NOT f.ever_retired
-WHERE NOT EXISTS(SELECT 1 FROM flow_block_alias_fences retired WHERE retired.page_id=$1 AND retired.physical_cid=a.alias AND retired.ever_retired)
-ORDER BY c.id,p.alias_order DESC
-ON CONFLICT(comment_id) DO UPDATE SET logical_id=EXCLUDED.logical_id,origin_placement_id=EXCLUDED.origin_placement_id,origin_generation=EXCLUDED.origin_generation,state='known' WHERE flow_block_comment_anchors.logical_id IS NULL",vec![page.into(),names.to_vec().into(),cids.to_vec().into()]).await?;
-        }
-        execute(
-            tx,
-            1,
-            "UPDATE flow_block_checkpoints SET legacy_anchors_sealed=true WHERE page_id=$1",
-            vec![page.into()],
-        )
-        .await?;
-    }
-    // After sealing, even a currently matching CID cannot nominate a new identity for old rows.
-    execute(tx, 1,"INSERT INTO flow_block_comment_anchors(comment_id,source_page_id,original_block_id,state) SELECT id,object_id,block_id,'orphaned' FROM flow_comments WHERE object_id=$1 AND block_id IS NOT NULL ON CONFLICT(comment_id) DO NOTHING",vec![page.into()]).await?;
-    Ok(())
-}
-
 /// Upper bound on the transactions one `complete_registration` call may run.
 const COMPLETION_STEPS_MAX: usize = 64;
 /// How often the Page head may move under one `complete_registration` call before it gives up.
@@ -228,7 +135,7 @@ async fn load_snapshot(db: &DatabaseConnection, page: Uuid) -> Result<Prepared, 
 /// Result of one bounded registration transaction.
 #[derive(Debug, PartialEq, Eq)]
 enum RegistrationStep {
-    /// Nothing is pending any more and the legacy seal is done.
+    /// Nothing is pending any more.
     Complete,
     /// The transaction committed and blocks are still pending.
     Progress,
@@ -322,7 +229,7 @@ async fn registration_step(
     }
 }
 
-/// Register every block of a Page and seal its legacy comment anchors, in short capped
+/// Register every block of a Page, in short capped
 /// transactions, before an identity consumer (comment list, anchored comment, block share,
 /// transfer) reads the registry. A private metadata baseline does not alter the Loro document,
 /// native structure or history. Returns a retryable `server_draining{contention}` if the Page
@@ -336,7 +243,7 @@ pub(crate) async fn complete_registration(db: &DatabaseConnection, page: Uuid) -
     if db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT page_id FROM flow_block_checkpoints WHERE page_id=$1 AND legacy_anchors_sealed AND pending_registrations=0",
+            "SELECT page_id FROM flow_block_checkpoints WHERE page_id=$1 AND pending_registrations=0",
             vec![page.into()],
         ))
         .await?
@@ -381,7 +288,7 @@ pub(crate) async fn bind_new<C: ConnectionTrait>(
         return Ok(());
     };
     if let Some(parent) = parent {
-        // Replies inherit the exact private original identity, including unresolved legacy state.
+        // Replies inherit the exact private original identity, including an unresolved state.
         let changed=db.execute(Statement::from_sql_and_values(DbBackend::Postgres,"INSERT INTO flow_block_comment_anchors(comment_id,source_page_id,original_block_id,logical_id,origin_placement_id,origin_generation,state) SELECT $1,source_page_id,original_block_id,logical_id,origin_placement_id,origin_generation,state FROM flow_block_comment_anchors WHERE comment_id=$2 AND source_page_id=$3",vec![comment.into(),parent.into(),page.into()])).await?;
         if changed.rows_affected() == 0 {
             db.execute(Statement::from_sql_and_values(DbBackend::Postgres,"INSERT INTO flow_block_comment_anchors(comment_id,source_page_id,original_block_id,state) VALUES($1,$2,$3,'orphaned')",vec![comment.into(),page.into(),block.to_string().into()])).await?;
@@ -529,14 +436,14 @@ mod tests {
             .to_string();
         source
             .apply_content_operation(&collab_core::Operation::CreateNode {
-                id: "legacy-readable-alias".into(),
+                id: "second-block".into(),
                 parent: None,
                 index: 1,
                 kind: collab_core::NodeKind::Block,
             })
             .unwrap();
-        let aliased = source
-            .resolve_content_node_id(&"legacy-readable-alias".into())
+        let second_cid = source
+            .resolve_content_node_id(&"second-block".into())
             .unwrap()
             .to_string();
         let original_snapshot = source.export_snapshot().unwrap();
@@ -546,50 +453,10 @@ mod tests {
         assert_ne!(original_frontier, replayed_wire.as_bytes());
         assert!(replayed.matches_frontier(&original_frontier));
         exec(db,"UPDATE collab_documents SET snapshot=$2,snapshot_checksum=encode(digest($2,'sha256'),'hex'),byte_count=octet_length($2),snapshot_frontier=$3,head_frontier=$3 WHERE id=$1",vec![documents[0].into(),original_snapshot.clone().into(),original_frontier.clone().into()]).await;
-        let legacy = Uuid::new_v4();
-        let legacy_alias = Uuid::new_v4();
-        let unresolved = Uuid::new_v4();
-        for (id, block) in [
-            (legacy, cid.as_str()),
-            (legacy_alias, "legacy-readable-alias"),
-            (unresolved, "unresolved-old-id"),
-        ] {
-            exec(db,"INSERT INTO flow_comments(id,scope_id,object_id,block_id,author_id,body,created_at) VALUES($1,$2,$3,$4,$5,'Old private note',now()-interval '1 day')",vec![id.into(),scopes[0].into(),pages[0].into(),block.into(),owners[0].into()]).await;
-        }
         db.execute_unprepared("UPDATE flow_runtime_capabilities SET minimum_reader_version=5 WHERE singleton")
             .await
             .unwrap();
-        let before = super::super::comments::list_comments(db, pages[0]).await.unwrap();
-        assert_eq!(
-            before
-                .items
-                .iter()
-                .find(|view| view.id == legacy)
-                .unwrap()
-                .block_id
-                .as_deref(),
-            Some(cid.as_str())
-        );
-        assert_eq!(
-            before
-                .items
-                .iter()
-                .find(|view| view.id == legacy_alias)
-                .unwrap()
-                .block_id
-                .as_deref(),
-            Some(aliased.as_str())
-        );
-        assert_eq!(
-            before
-                .items
-                .iter()
-                .find(|view| view.id == unresolved)
-                .unwrap()
-                .anchor_status
-                .as_deref(),
-            Some("orphaned")
-        );
+        complete_registration(db, pages[0]).await.unwrap();
         let unchanged = db
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Postgres,
@@ -623,7 +490,7 @@ mod tests {
         tx.rollback().await.unwrap();
 
         // The same version re-encoded in canonical peer order is not a head change: frontiers
-        // are compared as version vectors, so legacy-order rows keep matching.
+        // are compared as version vectors, so rows in either peer order keep matching.
         let tx = db.begin().await.unwrap();
         exec(
             &tx,
@@ -647,34 +514,12 @@ mod tests {
             contention
         );
         tx.rollback().await.unwrap();
-        let sealed = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT legacy_anchors_sealed FROM flow_block_checkpoints WHERE page_id=$1",
-                vec![pages[0].into()],
-            ))
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(sealed.try_get::<bool>("", "legacy_anchors_sealed").unwrap());
-        let baseline_identity = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT logical_id FROM flow_block_comment_anchors WHERE comment_id=$1",
-                vec![legacy.into()],
-            ))
-            .await
-            .unwrap()
-            .unwrap()
-            .try_get::<Uuid>("", "logical_id")
-            .unwrap();
         db.execute_unprepared(include_str!("../../../../migrations/0095_flow_logical_blocks.sql"))
             .await
             .unwrap();
         let placement=db.query_one(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT id,logical_id FROM flow_block_placements WHERE page_id=$1 AND physical_cid=$2 AND state='active'",vec![pages[0].into(),cid.clone().into()])).await.unwrap().unwrap();
         let origin = placement.try_get::<Uuid>("", "id").unwrap();
         let logical = placement.try_get::<Uuid>("", "logical_id").unwrap();
-        assert_eq!(logical, baseline_identity);
         let tx = db.begin().await.unwrap();
         let known = super::super::comments::create_comment_on(
             &tx,
@@ -695,28 +540,32 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(known.anchor_status.as_deref(), Some("bound"));
+        let second = super::super::comments::create_comment_on(
+            &tx,
+            None,
+            Some(scopes[0]),
+            pages[0],
+            &super::super::comments::CommentActor {
+                user_id: owners[0],
+                level: super::super::collab::authz::PermissionLevel::FullAccess,
+            },
+            super::super::comments::NewComment {
+                body: "Second block note".into(),
+                block_id: Some(second_cid.clone()),
+                parent_id: None,
+                mentions: vec![],
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(second.anchor_status.as_deref(), Some("bound"));
         tx.commit().await.unwrap();
-        // A later legacy-shaped row cannot obtain a second baseline, even for an unchanged CID.
-        let late = Uuid::new_v4();
-        exec(db,"INSERT INTO flow_comments(id,scope_id,object_id,block_id,author_id,body) VALUES($1,$2,$3,$4,$5,'Unproven late legacy note')",vec![late.into(),scopes[0].into(),pages[0].into(),cid.clone().into(),owners[0].into()]).await;
         let blocks = super::super::block_registry::prepare(&source.semantic_snapshot().unwrap()).unwrap();
         let tx = db.begin().await.unwrap();
         super::super::block_registry::reconcile(&tx, scopes[0], pages[0], 0, &blocks, RegistrationAllowance::Complete)
             .await
             .unwrap();
         tx.commit().await.unwrap();
-        assert_eq!(
-            super::super::comments::list_comments(db, pages[0])
-                .await
-                .unwrap()
-                .items
-                .iter()
-                .find(|view| view.id == late)
-                .unwrap()
-                .anchor_status
-                .as_deref(),
-            Some("orphaned")
-        );
         // Trusted-move state-layer fixture: distinct destination native carrier, no copied comments.
         exec(
             db,
@@ -773,20 +622,18 @@ mod tests {
         assert_ne!(replacement, logical);
         exec(db, "DELETE FROM flow_block_placements WHERE id=$1", vec![origin.into()]).await;
         let after = super::super::comments::list_comments(db, pages[0]).await.unwrap();
-        for id in [legacy, known.id, late] {
-            let view = after.items.iter().find(|view| view.id == id).unwrap();
-            assert!(view.block_id.is_none());
-            assert_eq!(view.anchor_status.as_deref(), Some("orphaned"));
-        }
+        let view = after.items.iter().find(|view| view.id == known.id).unwrap();
+        assert!(view.block_id.is_none());
+        assert_eq!(view.anchor_status.as_deref(), Some("orphaned"));
         assert_eq!(
             after
                 .items
                 .iter()
-                .find(|view| view.id == legacy_alias)
+                .find(|view| view.id == second.id)
                 .unwrap()
                 .block_id
                 .as_deref(),
-            Some(aliased.as_str())
+            Some(second_cid.as_str())
         );
         let anchor = db
             .query_one(Statement::from_sql_and_values(
@@ -810,163 +657,6 @@ mod tests {
         let surviving=db.query_one(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT b.state,p.page_id FROM flow_logical_blocks b JOIN flow_block_placements p ON p.logical_id=b.id AND p.state='active' WHERE b.id=$1",vec![logical.into()])).await.unwrap().unwrap();
         assert_eq!(surviving.try_get::<String>("", "state").unwrap(), "active");
         assert_eq!(surviving.try_get::<Uuid>("", "page_id").unwrap(), pages[1]);
-        scratch.drop_self().await;
-    }
-
-    /// Verbatim copy of the per-alias seal that `sync_legacy` replaced.
-    async fn sync_legacy_reference(
-        tx: &DatabaseTransaction,
-        page: Uuid,
-        blocks: &[crate::flow::block_registry::PreparedBlock],
-    ) -> Result<(), ApiError> {
-        let checkpoint = tx
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT accepted_head,legacy_anchors_sealed FROM flow_block_checkpoints WHERE page_id=$1 FOR UPDATE",
-                vec![page.into()],
-            ))
-            .await?
-            .ok_or_else(ApiError::internal)?;
-        if !checkpoint.try_get::<bool>("", "legacy_anchors_sealed")? {
-            let head = tx
-                .query_one(Statement::from_sql_and_values(
-                    DbBackend::Postgres,
-                    "SELECT head_seq FROM collab_documents WHERE object_id=$1 FOR UPDATE",
-                    vec![page.into()],
-                ))
-                .await?
-                .ok_or_else(ApiError::internal)?;
-            if head.try_get::<i64>("", "head_seq")? != checkpoint.try_get::<i64>("", "accepted_head")? {
-                return Err(ApiError::policy_rejected("legacy anchor baseline head changed"));
-            }
-            let mut aliases =
-                std::collections::BTreeMap::<String, Vec<&crate::flow::block_registry::PreparedBlock>>::new();
-            for block in blocks {
-                aliases.entry(block.physical_cid.clone()).or_default().push(block);
-                if let Some(alias) = &block.legacy_alias
-                    && alias != &block.physical_cid
-                {
-                    aliases.entry(alias.clone()).or_default().push(block);
-                }
-            }
-            for (alias, candidates) in aliases {
-                if candidates.len() != 1 {
-                    continue;
-                }
-                let Some(block) = candidates.first() else {
-                    continue;
-                };
-                tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,r"INSERT INTO flow_block_comment_anchors(comment_id,source_page_id,original_block_id,logical_id,origin_placement_id,origin_generation,state)
-    SELECT c.id,c.object_id,c.block_id,p.logical_id,p.id,p.generation,'known'
-    FROM flow_comments c JOIN flow_block_placements p ON p.page_id=c.object_id AND p.physical_cid=$3 AND p.state='active'
-    JOIN flow_block_alias_fences f ON f.page_id=p.page_id AND f.scope_id=p.scope_id AND f.physical_cid=p.physical_cid AND f.first_logical_id=p.logical_id AND NOT f.ever_retired
-    WHERE c.object_id=$1 AND c.block_id=$2 AND NOT EXISTS(SELECT 1 FROM flow_block_alias_fences retired WHERE retired.page_id=$1 AND retired.physical_cid=$2 AND retired.ever_retired)
-    ON CONFLICT(comment_id) DO UPDATE SET logical_id=EXCLUDED.logical_id,origin_placement_id=EXCLUDED.origin_placement_id,origin_generation=EXCLUDED.origin_generation,state='known' WHERE flow_block_comment_anchors.logical_id IS NULL",vec![page.into(),alias.into(),block.physical_cid.clone().into()])).await?;
-            }
-            tx.execute(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "UPDATE flow_block_checkpoints SET legacy_anchors_sealed=true WHERE page_id=$1",
-                vec![page.into()],
-            ))
-            .await?;
-        }
-        // After sealing, even a currently matching CID cannot nominate a new identity for old rows.
-        tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,"INSERT INTO flow_block_comment_anchors(comment_id,source_page_id,original_block_id,state) SELECT id,object_id,block_id,'orphaned' FROM flow_comments WHERE object_id=$1 AND block_id IS NOT NULL ON CONFLICT(comment_id) DO NOTHING",vec![page.into()])).await?;
-        Ok(())
-    }
-
-    async fn unsealed_legacy_page(
-        db: &sea_orm::DatabaseConnection,
-    ) -> (Uuid, Vec<super::super::block_registry::PreparedBlock>) {
-        use super::super::block_registry::fixtures::{block, page};
-        let (actor, scope, page) = page(db).await;
-        let mut blocks = (0..6).map(|index| block(index, 1)).collect::<Vec<_>>();
-        // old1 and old4 identify one block each; old2 names two blocks; c5 claims the CID of c0, so
-        // c0 becomes ambiguous.
-        blocks[1].legacy_alias = Some("old1".into());
-        blocks[2].legacy_alias = Some("old2".into());
-        blocks[3].legacy_alias = Some("old2".into());
-        blocks[4].legacy_alias = Some("old4".into());
-        blocks[5].legacy_alias = Some(blocks[0].physical_cid.clone());
-        exec(
-            db,
-            "INSERT INTO flow_block_checkpoints(scope_id,page_id,accepted_head) VALUES($1,$2,0)",
-            vec![scope.into(), page.into()],
-        )
-        .await;
-        for block in &blocks {
-            let logical = Uuid::new_v4();
-            exec(
-                db,
-                "INSERT INTO flow_logical_blocks(id,state) VALUES($1,'active')",
-                vec![logical.into()],
-            )
-            .await;
-            exec(db,"INSERT INTO flow_block_placements(id,logical_id,scope_id,page_id,physical_cid,generation,state,content_hash) VALUES($1,$2,$3,$4,$5,1,'active',$6)",vec![Uuid::new_v4().into(),logical.into(),scope.into(),page.into(),block.physical_cid.clone().into(),block.content_hash.to_vec().into()]).await;
-            exec(db,"INSERT INTO flow_block_alias_fences(scope_id,page_id,physical_cid,first_logical_id,ever_retired) VALUES($1,$2,$3,$4,false)",vec![scope.into(),page.into(),block.physical_cid.clone().into(),logical.into()]).await;
-            if block.legacy_alias.as_deref() == Some("old4") {
-                // A retired readable alias must never be adopted.
-                exec(db,"INSERT INTO flow_block_alias_fences(scope_id,page_id,physical_cid,first_logical_id,ever_retired) VALUES($1,$2,'old4',$3,true)",vec![scope.into(),page.into(),logical.into()]).await;
-            }
-        }
-        for target in ["cid:0:Map", "old1", "old2", "old4", "cid:5:Map", "cid:2:Map", "unknown"] {
-            exec(db,"INSERT INTO flow_comments(id,scope_id,object_id,block_id,author_id,body,created_at) VALUES($1,$2,$3,$4,$5,'Old private note',now()-interval '1 day')",vec![Uuid::new_v4().into(),scope.into(),page.into(),target.into(),actor.into()]).await;
-        }
-        (page, blocks)
-    }
-
-    async fn anchor_rows(db: &sea_orm::DatabaseConnection, page: Uuid) -> Vec<String> {
-        db.query_all(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT a.original_block_id||' '||a.state||' gen='||coalesce(a.origin_generation::text,'-')||' cid='||coalesce(p.physical_cid,'-')||' sealed='||c.legacy_anchors_sealed::text AS line FROM flow_block_comment_anchors a LEFT JOIN flow_block_placements p ON p.id=a.origin_placement_id JOIN flow_block_checkpoints c ON c.page_id=a.source_page_id WHERE a.source_page_id=$1 ORDER BY a.original_block_id",
-            vec![page.into()],
-        ))
-        .await
-        .unwrap()
-        .iter()
-        .map(|row| row.try_get::<String>("", "line").unwrap())
-        .collect()
-    }
-
-    #[tokio::test]
-    async fn bulk_legacy_seal_matches_per_alias_reference() {
-        let scratch = scratch_or_skip!(&format!("block_anchor_seal_{}", Uuid::new_v4().simple()));
-        let db = &scratch.db;
-        super::super::scope_runtime::fixture::register_running_readers(db).await;
-        // Below floor 5 creating a Page registers nothing, so both Pages start unsealed.
-        db.execute_unprepared("UPDATE flow_runtime_capabilities SET minimum_reader_version=4 WHERE singleton")
-            .await
-            .unwrap();
-        let (page_new, blocks_new) = unsealed_legacy_page(db).await;
-        let (page_old, blocks_old) = unsealed_legacy_page(db).await;
-        db.execute_unprepared("UPDATE flow_runtime_capabilities SET minimum_reader_version=5 WHERE singleton")
-            .await
-            .unwrap();
-        let tx = db.begin().await.unwrap();
-        sync_legacy(&tx, page_new, &blocks_new).await.unwrap();
-        tx.commit().await.unwrap();
-        let tx = db.begin().await.unwrap();
-        sync_legacy_reference(&tx, page_old, &blocks_old).await.unwrap();
-        tx.commit().await.unwrap();
-        let new_rows = anchor_rows(db, page_new).await;
-        let old_rows = anchor_rows(db, page_old).await;
-        assert_eq!(new_rows, old_rows);
-        let adopted = |needle: &str| {
-            new_rows
-                .iter()
-                .any(|row| row.starts_with(needle) && row.contains(" known "))
-        };
-        assert!(adopted("cid:5:Map "), "{new_rows:?}");
-        assert!(adopted("old1 "), "{new_rows:?}");
-        assert!(adopted("cid:2:Map "), "{new_rows:?}");
-        for refused in ["cid:0:Map ", "old2 ", "old4 ", "unknown "] {
-            assert!(
-                new_rows
-                    .iter()
-                    .any(|row| row.starts_with(refused) && row.contains(" orphaned ")),
-                "{refused} must stay orphaned: {new_rows:?}"
-            );
-        }
         scratch.drop_self().await;
     }
 
@@ -1064,16 +754,6 @@ mod tests {
             "700 pending blocks need two groups of {REGISTRY_ROWS_PER_STATEMENT}"
         );
         assert_eq!(pending_registrations(db, page_id).await, 0);
-        let sealed = db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT legacy_anchors_sealed FROM flow_block_checkpoints WHERE page_id=$1",
-                vec![page_id.into()],
-            ))
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(sealed.try_get::<bool>("", "legacy_anchors_sealed").unwrap());
         let active = active_hashes(db, page_id).await;
         let expected = final_blocks
             .iter()
@@ -1093,7 +773,7 @@ mod tests {
         scratch.drop_self().await;
     }
 
-    /// `complete_registration` recognises a page that is registered and sealed but still has
+    /// `complete_registration` recognises a page that is registered but still has
     /// pending blocks, registers the real document and clears the counter.
     #[tokio::test]
     async fn complete_registration_finishes_a_partly_registered_page() {

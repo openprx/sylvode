@@ -31,15 +31,10 @@ pub const PORTABLE_PAGE_BYTES: usize = 32 * 1024 * 1024;
 pub const PORTABLE_PAGE_CONTENT_BYTES: u64 = 1024 * 1024;
 pub const PORTABLE_PAGE_ASSET_COUNT: usize = 128;
 
-pub const SEMANTIC_MODEL_V2: &str = "editor_cid_v2";
-pub const SEMANTIC_MODEL_V3: &str = "canonical_order_v3";
 pub const SEMANTIC_MODEL_V4: &str = "rich_page_v4";
 pub const SEMANTIC_MODEL_V5: &str = "rich_page_v5";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PackageSemanticModel {
-    V1,
-    V2,
-    V3,
     V4,
     V5,
 }
@@ -47,13 +42,10 @@ pub enum PackageSemanticModel {
 pub(crate) const RAW_PACKAGE_SEMANTIC_MODEL: PackageSemanticModel = PackageSemanticModel::V4;
 
 impl PackageSemanticModel {
-    pub(crate) const fn wire_name(self) -> Option<&'static str> {
+    pub(crate) const fn wire_name(self) -> &'static str {
         match self {
-            Self::V1 => None,
-            Self::V2 => Some(SEMANTIC_MODEL_V2),
-            Self::V3 => Some(SEMANTIC_MODEL_V3),
-            Self::V4 => Some(SEMANTIC_MODEL_V4),
-            Self::V5 => Some(SEMANTIC_MODEL_V5),
+            Self::V4 => SEMANTIC_MODEL_V4,
+            Self::V5 => SEMANTIC_MODEL_V5,
         }
     }
 
@@ -61,9 +53,6 @@ impl PackageSemanticModel {
     /// (`ReplayDiffRequest::package_semantic_model`).
     pub(crate) const fn wire_reader(self) -> &'static str {
         match self {
-            Self::V1 => "v1",
-            Self::V2 => "v2",
-            Self::V3 => "v3",
             Self::V4 => "v4",
             Self::V5 => "v5",
         }
@@ -71,10 +60,7 @@ impl PackageSemanticModel {
 
     pub(crate) fn semantic_hash(self, engine: &collab_core::LoroCollabEngine) -> Result<String, ApiError> {
         let semantic = match self {
-            Self::V1 => engine.legacy_package_semantic_snapshot_v1(),
-            Self::V2 => engine.legacy_package_semantic_snapshot_v2(),
-            Self::V3 => engine.legacy_package_semantic_snapshot_v3(),
-            Self::V4 => engine.legacy_package_semantic_snapshot_v4(),
+            Self::V4 => engine.package_semantic_snapshot_v4(),
             Self::V5 => engine.semantic_snapshot(),
         };
         Ok(semantic
@@ -85,9 +71,6 @@ impl PackageSemanticModel {
 
 pub fn semantic_model(manifest: &ExportPackageManifest) -> Result<PackageSemanticModel, ApiError> {
     match (manifest.schema.as_str(), manifest.engine.semantic_model.as_deref()) {
-        (PACKAGE_SCHEMA, None) => Ok(PackageSemanticModel::V1),
-        (SCOPE_PACKAGE_SCHEMA, None | Some(SEMANTIC_MODEL_V2)) => Ok(PackageSemanticModel::V2),
-        (SCOPE_PACKAGE_SCHEMA, Some(SEMANTIC_MODEL_V3)) => Ok(PackageSemanticModel::V3),
         (PACKAGE_SCHEMA | SCOPE_PACKAGE_SCHEMA, Some(SEMANTIC_MODEL_V4)) => Ok(PackageSemanticModel::V4),
         (PACKAGE_SCHEMA | SCOPE_PACKAGE_SCHEMA, Some(SEMANTIC_MODEL_V5)) => Ok(PackageSemanticModel::V5),
         _ => Err(ApiError::typed_with_details(
@@ -1144,7 +1127,7 @@ mod tests {
                 name: ENGINE_NAME.to_string(),
                 crate_version: ENGINE_CRATE_VERSION.to_string(),
                 wire_format_version: ENGINE_WIRE_FORMAT_VERSION,
-                semantic_model: None,
+                semantic_model: Some(SEMANTIC_MODEL_V4.to_owned()),
             },
             history: PackageHistory {
                 included: false,

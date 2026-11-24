@@ -209,11 +209,7 @@ for required_tool in \
   "flow.feature_set" \
   "objects.get" \
   "objects.query" \
-  "objects.history" \
-  "legacy_pages.inventory" \
-  "legacy_pages.import_preview" \
-  "legacy_pages.import_commit" \
-  "legacy_pages.import_status"; do
+  "objects.history"; do
   if ! printf '%s\n' "$tool_names" | grep -Fxq "$required_tool"; then
     echo "❌ Missing required MCP tool: $required_tool"
     echo "$tool_names"

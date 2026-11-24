@@ -1907,12 +1907,10 @@ mod tests {
         }
     }
     #[test]
-    fn rich_snapshot_roundtrip_and_frozen_legacy_fingerprints() {
+    fn rich_snapshot_roundtrip() {
         use crate::CollabEngine;
         let mut engine = crate::LoroCollabEngine::load(SNAPSHOT).unwrap();
-        let old = engine.legacy_package_semantic_snapshot_v3().unwrap();
         let current = engine.semantic_snapshot().unwrap();
-        assert_eq!(old, current);
         let id = current
             .nodes
             .iter()
@@ -1933,8 +1931,7 @@ mod tests {
             )
             .unwrap();
         let rich = engine.semantic_snapshot().unwrap();
-        assert_ne!(rich.semantic_hash(), old.semantic_hash());
-        assert_eq!(engine.legacy_package_semantic_snapshot_v3().unwrap(), old);
+        assert_ne!(rich.semantic_hash(), current.semantic_hash());
         let loaded = crate::LoroCollabEngine::load(&engine.export_snapshot().unwrap()).unwrap();
         assert_eq!(loaded.semantic_snapshot().unwrap(), rich);
         assert_eq!(loaded.resolve_content_node_id(&id).unwrap(), id);

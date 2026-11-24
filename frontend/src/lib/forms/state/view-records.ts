@@ -111,20 +111,7 @@ export class ViewRecordsController extends FormsController {
 			})
 			.filter((group): group is ParsedViewFilterGroup => Boolean(group));
 
-		if (parsedGroups.length > 0) return parsedGroups;
-
-		const filters = Array.isArray(config.filters) ? config.filters : [];
-		const parsed = filters
-			.map((filter) => (isRecord(filter) ? this.viewFilterConfigFromRecord(filter) : null))
-			.filter((filter): filter is ParsedViewFilter => Boolean(filter));
-
-		if (parsed.length > 0) return [{ logic: 'all', filters: parsed }];
-
-		const legacyFilter = this.viewFilterConfigFromRecord(
-			viewConfigRecord(this.s.selectedView, 'filter')
-		);
-
-		return legacyFilter ? [{ logic: 'all', filters: [legacyFilter] }] : [];
+		return parsedGroups;
 	};
 
 	viewFilterExpression = (): ParsedViewFilterExpression | null => {

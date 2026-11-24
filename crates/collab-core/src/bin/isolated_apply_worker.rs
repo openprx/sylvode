@@ -324,11 +324,8 @@ fn import_replay(
     // The fingerprint of the versioned reader the manifest names, a projection of the validated
     // document read in the window, so that no format version of a package needs a path outside it.
     let fingerprints = match request.package_semantic_model.as_deref() {
-        Some("v1") => Fingerprints::V1(engine.legacy_package_semantic_snapshot_v1()?.semantic_hash()),
-        Some("v2") => Fingerprints::V2(engine.legacy_package_semantic_snapshot_v2()?.semantic_hash()),
-        Some("v3") => Fingerprints::V3(engine.legacy_package_semantic_snapshot_v3()?.semantic_hash()),
         Some("v4") if engine.minimum_editor_model()? <= 4 => {
-            Fingerprints::V4(engine.legacy_package_semantic_snapshot_v4()?.semantic_hash())
+            Fingerprints::V4(engine.package_semantic_snapshot_v4()?.semantic_hash())
         }
         Some("v4" | "v5") => Fingerprints::None,
         _ => {
@@ -344,9 +341,6 @@ fn import_replay(
 /// named.
 #[cfg(target_os = "linux")]
 enum Fingerprints {
-    V1(String),
-    V2(String),
-    V3(String),
     V4(String),
     /// The model needs no read beyond the projection (`v5`), or is not readable for this
     /// document (`v4` of a document that needs a newer editor model).
@@ -355,28 +349,10 @@ enum Fingerprints {
 
 #[cfg(target_os = "linux")]
 impl Fingerprints {
-    fn v1(&self) -> Option<String> {
-        match self {
-            Self::V1(hash) => Some(hash.clone()),
-            _ => None,
-        }
-    }
-    fn v2(&self) -> Option<String> {
-        match self {
-            Self::V2(hash) => Some(hash.clone()),
-            _ => None,
-        }
-    }
-    fn v3(&self) -> Option<String> {
-        match self {
-            Self::V3(hash) => Some(hash.clone()),
-            _ => None,
-        }
-    }
     fn v4(&self) -> Option<String> {
         match self {
             Self::V4(hash) => Some(hash.clone()),
-            _ => None,
+            Self::None => None,
         }
     }
 }
@@ -398,10 +374,7 @@ fn import_result(
         to_snapshot: semantic,
         from_title: title.clone(),
         to_title: title,
-        legacy_package_semantic_hash_v1: fingerprints.v1(),
-        legacy_package_semantic_hash_v2: fingerprints.v2(),
-        legacy_package_semantic_hash_v3: fingerprints.v3(),
-        legacy_package_semantic_hash_v4: fingerprints.v4(),
+        package_semantic_hash_v4: fingerprints.v4(),
         package_reference_remap_required: Some(wire::package_reference_remap_required(engine)?),
         validated_head_snapshot_base64: Some(base64::engine::general_purpose::STANDARD.encode(snapshot)),
     })
@@ -456,11 +429,8 @@ fn replay_diff(base_snapshot: &[u8], request_bytes: &[u8]) -> Result<wire::Repla
         to_snapshot,
         from_title,
         to_title,
-        legacy_package_semantic_hash_v1: Some(to_engine.legacy_package_semantic_snapshot_v1()?.semantic_hash()),
-        legacy_package_semantic_hash_v2: Some(to_engine.legacy_package_semantic_snapshot_v2()?.semantic_hash()),
-        legacy_package_semantic_hash_v3: Some(to_engine.legacy_package_semantic_snapshot_v3()?.semantic_hash()),
-        legacy_package_semantic_hash_v4: if to_engine.minimum_editor_model()? <= 4 {
-            Some(to_engine.legacy_package_semantic_snapshot_v4()?.semantic_hash())
+        package_semantic_hash_v4: if to_engine.minimum_editor_model()? <= 4 {
+            Some(to_engine.package_semantic_snapshot_v4()?.semantic_hash())
         } else {
             None
         },

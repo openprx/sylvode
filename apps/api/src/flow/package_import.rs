@@ -1670,28 +1670,24 @@ mod tests {
     }
 
     #[test]
-    fn owned_v1_browser_package_uses_exact_legacy_fingerprint_and_v2_does_not() {
+    fn browser_package_fixture_fingerprints_with_the_declared_reader() {
         use super::super::package::*;
-        const OLD_HASH: &str = "1c60df0b968bf3771931d029a3fe501f1e0b51f760012ea458f8bf46a1fc6026";
         let path = std::path::PathBuf::from(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/flow-v2/legacy-browser-package-v1"
+            "/tests/fixtures/flow-v2/browser-package-v4"
         ));
-        if std::env::var_os("FLOW_WRITE_LEGACY_BROWSER_FIXTURE").is_some() {
+        if std::env::var_os("FLOW_WRITE_BROWSER_PACKAGE_FIXTURE").is_some() {
             let snapshot = std::fs::read(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/../../frontend/tests/fixtures/editor-doc-v1/browser.snapshot"
             ))
             .unwrap();
             let engine = LoroCollabEngine::load(&snapshot).unwrap();
-            assert_eq!(
-                engine.legacy_package_semantic_snapshot_v1().unwrap().semantic_hash(),
-                OLD_HASH
-            );
+            let declared_hash = engine.package_semantic_snapshot_v4().unwrap().semantic_hash();
             let object = Uuid::from_u128(0x1111_1111_1111_4111_8111_1111_1111_1111);
             let document = Uuid::from_u128(0x2222_2222_2222_4222_8222_2222_2222_2222);
             let workspace = Uuid::from_u128(0x3333_3333_3333_4333_8333_3333_3333_3333);
-            let metadata = json!({"source_object_id":object,"source_workspace_id":workspace,"object_type":"page","lifecycle_status":"active","project_id":null,"parent_object_id":null,"governance_metadata":{},"source_document_id":document,"engine":"loro","format_version":"loro-1","accepted_seq":0,"accepted_frontier":base64::engine::general_purpose::STANDARD.encode(engine.frontier().as_bytes()),"semantic_hash":OLD_HASH});
+            let metadata = json!({"source_object_id":object,"source_workspace_id":workspace,"object_type":"page","lifecycle_status":"active","project_id":null,"parent_object_id":null,"governance_metadata":{},"source_document_id":document,"engine":"loro","format_version":"loro-1","accepted_seq":0,"accepted_frontier":base64::engine::general_purpose::STANDARD.encode(engine.frontier().as_bytes()),"semantic_hash":declared_hash});
             let manifest = ExportPackageManifest {
                 schema: PACKAGE_SCHEMA.into(),
                 package_id: "44444444-4444-4444-8444-444444444444".into(),
@@ -1712,7 +1708,7 @@ mod tests {
                     name: ENGINE_NAME.into(),
                     crate_version: ENGINE_CRATE_VERSION.into(),
                     wire_format_version: ENGINE_WIRE_FORMAT_VERSION,
-                    semantic_model: None,
+                    semantic_model: Some(SEMANTIC_MODEL_V4.into()),
                 },
                 history: PackageHistory {
                     included: false,
@@ -1760,34 +1756,39 @@ mod tests {
             .unwrap();
             std::fs::create_dir_all(&path).unwrap();
             std::fs::write(path.join("package.zip"), &built.bytes).unwrap();
-            std::fs::write(path.join("contract.json"),serde_json::to_vec_pretty(&json!({"fixture_kind":"synthetic_pre_change_v1_format","reader_source":"d523d7c724b4122f7b83cb30e6614a36f51a1c65:crates/collab-core/src/engine.rs semantic_snapshot (tree-only)","package_sha256":built.package_sha256,"snapshot_sha256":super::super::collab::bootstrap::content_hash(&snapshot),"legacy_semantic_hash":OLD_HASH,"canonical_semantic_hash":engine.semantic_snapshot().unwrap().semantic_hash()})).unwrap()).unwrap();
+            std::fs::write(path.join("contract.json"),serde_json::to_vec_pretty(&json!({"fixture_kind":"synthetic_v4_package","package_sha256":built.package_sha256,"snapshot_sha256":super::super::collab::bootstrap::content_hash(&snapshot),"semantic_hash":declared_hash,"canonical_semantic_hash":engine.semantic_snapshot().unwrap().semantic_hash()})).unwrap()).unwrap();
         }
         let bytes = std::fs::read(path.join("package.zip")).unwrap();
         let contract: Value = serde_json::from_slice(&std::fs::read(path.join("contract.json")).unwrap()).unwrap();
         let plan = parse_plan(&bytes, contract["package_sha256"].as_str().unwrap()).unwrap();
         let snapshot = reconstruct_head(&bytes, &plan.verified.manifest, &plan.objects[0]).unwrap();
         let engine = LoroCollabEngine::load(&snapshot).unwrap();
+        let declared = contract["semantic_hash"].as_str().unwrap();
         assert_eq!(
             package_semantic_hash(&engine, &plan.verified.manifest).unwrap(),
-            OLD_HASH
+            declared
         );
-        assert_eq!(plan.objects[0].semantic_hash, OLD_HASH);
-        assert_ne!(engine.semantic_snapshot().unwrap().semantic_hash(), OLD_HASH);
-        let mut v2 = plan.verified.manifest.clone();
-        v2.schema = SCOPE_PACKAGE_SCHEMA.into();
-        v2.flow_schema_version = 2;
-        v2.source.scope_id = Some("55555555-5555-4555-8555-555555555555".into());
+        assert_eq!(plan.objects[0].semantic_hash, declared);
+        assert_eq!(declared, engine.package_semantic_snapshot_v4().unwrap().semantic_hash());
+        let mut v5 = plan.verified.manifest.clone();
+        v5.engine.semantic_model = Some(SEMANTIC_MODEL_V5.into());
         assert_eq!(
-            package_semantic_hash(&engine, &v2).unwrap(),
+            package_semantic_hash(&engine, &v5).unwrap(),
             contract["canonical_semantic_hash"].as_str().unwrap()
         );
-        assert_ne!(
-            package_semantic_hash(&engine, &v2).unwrap(),
-            plan.objects[0].semantic_hash
-        );
+        for refused in [
+            None,
+            Some("editor_cid_v2"),
+            Some("canonical_order_v3"),
+            Some("unknown_future_model"),
+        ] {
+            let mut old = plan.verified.manifest.clone();
+            old.engine.semantic_model = refused.map(str::to_owned);
+            assert!(package_semantic_hash(&engine, &old).is_err(), "{refused:?}");
+        }
     }
 
-    /// The stored legacy browser package, rebuilt with `snapshot` as its document snapshot and,
+    /// The stored browser package, rebuilt with `snapshot` as its document snapshot and,
     /// when given, `tail` as the single update after it.
     fn rebuilt_package(snapshot: &[u8], tail: Option<&[u8]>) -> (Vec<u8>, String) {
         rebuilt_package_with_frontier(snapshot, tail, None)
@@ -1802,7 +1803,7 @@ mod tests {
     ) -> (Vec<u8>, String) {
         let path = std::path::PathBuf::from(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/flow-v2/legacy-browser-package-v1"
+            "/tests/fixtures/flow-v2/browser-package-v4"
         ));
         let bytes = std::fs::read(path.join("package.zip")).unwrap();
         let contract: Value = serde_json::from_slice(&std::fs::read(path.join("contract.json")).unwrap()).unwrap();
@@ -1924,7 +1925,7 @@ mod tests {
     }
 
     #[test]
-    fn navigator_packages_select_explicit_frozen_or_current_semantic_models() {
+    fn navigator_packages_select_the_declared_semantic_model() {
         let snapshot =
             include_bytes!("../../../../frontend/tests/fixtures/flow-navigator-order/browser-reedit.snapshot").to_vec();
         let engine = LoroCollabEngine::load(&snapshot).unwrap();
@@ -1932,12 +1933,11 @@ mod tests {
         let frontier_before = engine.frontier();
         let state_before = engine.root_state_json();
         assert!(super::super::package::require_supported_snapshot(&engine).is_err());
-        let old_hash = engine.legacy_package_semantic_snapshot_v2().unwrap().semantic_hash();
+        let v4_hash = engine.package_semantic_snapshot_v4().unwrap().semantic_hash();
         let current_hash = engine.semantic_snapshot().unwrap().semantic_hash();
-        assert_ne!(old_hash, current_hash);
         let prior = std::fs::read(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/flow-v2/legacy-browser-package-v1/package.zip"
+            "/tests/fixtures/flow-v2/browser-package-v4/package.zip"
         ))
         .unwrap();
         let verified = super::super::package::verify_package(std::io::Cursor::new(prior), None).unwrap();
@@ -1947,14 +1947,23 @@ mod tests {
         manifest.source.workspace_id = None;
         manifest.source.scope_id = Some("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee".into());
         manifest.history.snapshot_history = Some("retained".into());
-        manifest.engine.semantic_model = None;
-        assert_eq!(package_semantic_hash(&engine, &manifest).unwrap(), old_hash);
-        manifest.engine.semantic_model = Some(super::super::package::SEMANTIC_MODEL_V2.into());
-        assert_eq!(package_semantic_hash(&engine, &manifest).unwrap(), old_hash);
-        manifest.engine.semantic_model = Some(super::super::package::SEMANTIC_MODEL_V3.into());
+        manifest.engine.semantic_model = Some(super::super::package::SEMANTIC_MODEL_V4.into());
+        assert_eq!(package_semantic_hash(&engine, &manifest).unwrap(), v4_hash);
+        manifest.engine.semantic_model = Some(super::super::package::SEMANTIC_MODEL_V5.into());
         assert_eq!(package_semantic_hash(&engine, &manifest).unwrap(), current_hash);
-        manifest.engine.semantic_model = Some("unknown_future_model".into());
-        assert!(package_semantic_hash(&engine, &manifest).is_err());
+        for refused in [
+            None,
+            Some("editor_cid_v2"),
+            Some("canonical_order_v3"),
+            Some("unknown_future_model"),
+        ] {
+            manifest.engine.semantic_model = refused.map(str::to_owned);
+            let error = package_semantic_hash(&engine, &manifest).expect_err("no reader for the model");
+            assert!(
+                format!("{error:?}").contains("package_semantic_model_unsupported"),
+                "{refused:?}: {error:?}"
+            );
+        }
         // Fingerprint readers may not materialize an editor structure root in a legacy snapshot.
         assert_eq!(engine.root_state_json(), state_before);
         assert_eq!(engine.frontier(), frontier_before);

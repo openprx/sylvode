@@ -21,8 +21,7 @@ apps/runner/tests/install_scripts.rs\tconst ODD: &str = r#"/Users/me/odd dir & 1
 apps/runner/tests/install_scripts.rs\tv=\'/Users/me/odd dir & 100% $HOME \\ "q" <x>\'\tthe same test input, assigned in the shell driver of the rendering test'
 
 # path<TAB>reason: whole files exempt because they are frozen and their hash or content is pinned
-FILE_EXEMPTIONS=$'scripts/schemas/sylvode-flow-legacy-pages-inventory-v1.schema.json\tfrozen v0.4 evidence schema; its description names where the frozen run read its inputs
-scripts/schemas/sylvode-flow-surface-coverage-result-v1.schema.json\tfrozen v0.4-v1.0 evidence schema; its description names the contract checkout of the frozen runs'
+FILE_EXEMPTIONS=$'scripts/schemas/sylvode-flow-surface-coverage-result-v1.schema.json\tfrozen v0.4-v1.0 evidence schema; its description names the contract checkout of the frozen runs'
 
 # scan ROOT LISTFILE -> prints "path:line:text" for every non-exempt hit
 scan() {
