@@ -26,6 +26,7 @@
 	} from '#lib/api/impact-reviews.js';
 	import { toast } from '#lib/stores/toast.js';
 	import { isMissingResult } from '#lib/utils/api-helpers.js';
+	import ExerciseVetoPanel from '#lib/governance/ExerciseVetoPanel.svelte';
 	import StateBlock from '#lib/ui/state-block/StateBlock.svelte';
 	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import { renderMarkdown } from '#lib/utils/markdown.js';
@@ -1042,6 +1043,12 @@
 					{#if proposal.status === 'archived'}
 						<p class="text-xs text-fg-muted">{$t('governance.archivedStatus')}</p>
 					{/if}
+					<ExerciseVetoPanel
+						proposalId={proposal.id}
+						status={proposal.status}
+						domains={proposal.domains ?? []}
+						userId={meId}
+					/>
 				</div>
 			</div>
 

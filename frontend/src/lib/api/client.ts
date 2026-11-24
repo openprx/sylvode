@@ -567,8 +567,8 @@ export class ApiClient {
 		return this.request<T>('PUT', endpoint, data);
 	}
 
-	delete<T>(endpoint: string): Promise<ApiResult<T>> {
-		return this.request<T>('DELETE', endpoint);
+	delete<T>(endpoint: string, data?: unknown): Promise<ApiResult<T>> {
+		return this.request<T>('DELETE', endpoint, data);
 	}
 
 	deleteWithHeaders<T>(endpoint: string, headers: Record<string, string>): Promise<ApiResult<T>> {

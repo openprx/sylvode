@@ -1,0 +1,51 @@
+{
+	"vetoExercise": {
+		"action": "Exercise veto",
+		"title": "Exercise veto",
+		"intro": "A veto stops this proposal. The proposal's author can start an escalation within 48 hours.",
+		"domain": "Domain",
+		"reason": "Reason",
+		"reasonCount": "{count} of {min} characters",
+		"enterReason": "Enter the reason for the veto.",
+		"reasonShort": "The reason needs at least {min} characters.",
+		"submit": "Exercise veto",
+		"submitting": "Sending...",
+		"done": "Veto exercised",
+		"failed": "Could not exercise the veto"
+	},
+	"vetoers": {
+		"title": "Vetoers",
+		"subtitle": "People and bots who can veto proposals of this project in a decision domain.",
+		"loadFailed": "Could not load the vetoers",
+		"membersFailed": "Could not load the workspace members",
+		"empty": "No vetoers in this project yet.",
+		"member": "Member",
+		"chooseMember": "Choose a member",
+		"domain": "Domain",
+		"domainPlaceholder": "For example engineering",
+		"domainHint": "Letters, digits, - and _. Other characters become _.",
+		"grant": "Granted by",
+		"grantedBy": {
+			"manual_grant": "An administrator",
+			"trust_score": "Trust score"
+		},
+		"grantedAt": "Granted",
+		"unknownUser": "Unknown user",
+		"bot": "Bot",
+		"add": "Add vetoer",
+		"adding": "Adding...",
+		"added": "Vetoer added",
+		"addFailed": "Could not add the vetoer",
+		"remove": "Remove",
+		"removeTitle": "Remove this vetoer?",
+		"removeBody": "{name} can no longer veto proposals in the domain {domain} of this project. Vetoes already exercised stay.",
+		"removeObject": "vetoer {name} ({domain})",
+		"removed": "Vetoer removed",
+		"removeFailed": "Could not remove the vetoer",
+		"problem": {
+			"member": "Choose a member.",
+			"domain": "Enter a domain.",
+			"duplicate": "This member is already a vetoer in this domain."
+		}
+	}
+}

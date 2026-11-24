@@ -103,11 +103,16 @@ total, pass rate, average cycle hours, vetoed count, and outcomes by type and by
 
 ## Veto and escalation
 
-Vetoers are people or bots registered per project and decision domain. They are managed through the
-API (`/api/v1/vetoers`, owners and admins); there is no page for them. A vetoer can veto a proposal
-in the domain while it is Open or Voting, with a reason of at least 100 characters. The veto is
-made through the API (`POST /api/v1/proposals/{id}/veto`); there is no veto button in the web
-interface. The proposal page then links to **Veto Details** (`/proposals/{id}/veto`).
+Vetoers are people or bots registered per project and decision domain. Owners and admins manage
+them under **Governance > Configuration**, section **Vetoers**: pick the project, then add a member
+with a domain and how the seat is granted, or remove a vetoer (the API is `/api/v1/vetoers`).
+
+A vetoer can veto a proposal in the domain while it is Open or Voting, with a reason of at least
+100 characters. On the proposal page a vetoer sees **Exercise veto** in the **Actions** box: choose the
+domain (when the proposal has several in which you are a vetoer), write the reason and confirm.
+The proposal becomes Vetoed and the page opens **Veto Details** (`/proposals/{id}/veto`), which the
+proposal page also links to. The same veto can be made through the API
+(`POST /api/v1/proposals/{id}/veto`).
 
 On **Veto Details**:
 

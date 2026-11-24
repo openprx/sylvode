@@ -4,6 +4,7 @@
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
 	import { governanceApi } from '#lib/api/governance.js';
+	import VetoersSection from '#lib/governance/VetoersSection.svelte';
 	import { toast } from '#lib/stores/toast.js';
 	import { projectOptionsStore } from '#lib/stores/project-options.js';
 	import { groupProjectOptionsByWorkspace } from '#lib/utils/project-options.js';
@@ -11,6 +12,9 @@
 	const projects = $derived($projectOptionsStore.items);
 	const groupedProjects = $derived.by(() => groupProjectOptionsByWorkspace(projects));
 	let selectedProjectId = $state('');
+	const selectedWorkspaceId = $derived(
+		projects.find((project) => project.id === selectedProjectId)?.workspace_id ?? ''
+	);
 	let loading = $state(true);
 	let saving = $state(false);
 
@@ -222,4 +226,8 @@
 			</div>
 		{/if}
 	</div>
+
+	{#if selectedProjectId && selectedWorkspaceId && !loading}
+		<VetoersSection projectId={selectedProjectId} workspaceId={selectedWorkspaceId} />
+	{/if}
 </div>
