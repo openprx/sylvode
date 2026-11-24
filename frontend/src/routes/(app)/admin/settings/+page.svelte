@@ -10,6 +10,7 @@
 	import Card from '#lib/components/Card.svelte';
 	import Input from '#lib/components/Input.svelte';
 	import ConnectedAppsAdmin from '#lib/oauth/ConnectedAppsAdmin.svelte';
+	import TestEmailControl from '#lib/notifications/TestEmailControl.svelte';
 
 	let basicSettings = $state({
 		siteName: 'Sylvode',
@@ -88,6 +89,8 @@
 			</label>
 		</div>
 	</Card>
+
+	<TestEmailControl />
 
 	<ConnectedAppsAdmin />
 

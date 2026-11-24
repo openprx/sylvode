@@ -1,0 +1,30 @@
+{
+	"notificationPrefs": {
+		"title": "通知偏好",
+		"email": "通过邮件通知我",
+		"digest": "改为每天发送一封汇总邮件",
+		"digestNeedsEmail": "每日汇总需要先开启邮件通知。",
+		"mentionOnly": "仅在有人提及我时通知",
+		"mentionOnlyHelp": "开启后，指派以及你的工作项的状态、优先级变更不再通知你（收件箱和邮件均不发送），告警通知仍会发送。",
+		"emailUnavailable": "此服务器尚未设置邮件发送。",
+		"languageNote": "邮件使用当前页面的语言（{language}），保存偏好时一并保存。",
+		"save": "保存偏好",
+		"saved": "通知偏好已保存",
+		"testEmail": {
+			"title": "测试邮件",
+			"description": "向你自己的邮箱发送一封测试邮件，用于检查此服务器的邮件发送。",
+			"send": "发送测试邮件",
+			"queued": "测试邮件已加入队列，将在后台发送，可能需要稍等片刻才能收到。",
+			"forbidden": "只有实例管理员可以发送测试邮件。",
+			"failed": "测试邮件无法加入队列。"
+		}
+	},
+	"notification": {
+		"issueStateChangedTitle": "状态已变更",
+		"issueStateChangedContent": "{title}：状态从 {old} 变为 {new}",
+		"issueStateChangedFallback": "一个工作项的状态已变更",
+		"issuePriorityChangedTitle": "优先级已变更",
+		"issuePriorityChangedContent": "{title}：优先级从 {old} 变为 {new}",
+		"issuePriorityChangedFallback": "一个工作项的优先级已变更"
+	}
+}

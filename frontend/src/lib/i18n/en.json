@@ -511,17 +511,11 @@
 		"newPassword": "New Password",
 		"confirmPassword": "Confirm New Password",
 		"updatePassword": "Update Password",
-		"notifications": "Notification Preferences",
-		"emailNotifications": "Receive email notifications",
-		"mentionsOnly": "Only receive  notifications",
-		"dailyDigest": "Daily digest",
-		"savePrefs": "Save Preferences",
 		"profileSaved": "Profile saved",
 		"passwordIncomplete": "Please fill in all password fields",
 		"passwordLength": "New password must be at least 8 characters",
 		"passwordMismatch": "New passwords do not match",
-		"passwordSaved": "Password updated",
-		"notificationsSaved": "Notification preferences saved"
+		"passwordSaved": "Password updated"
 	},
 	"activity": {
 		"statusChanged": "changed status from {from} to {to}",
