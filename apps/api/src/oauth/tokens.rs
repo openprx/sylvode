@@ -36,22 +36,19 @@ pub enum TokenKind {
     Access,
     /// `svr_`, rotated on every use.
     Refresh,
-    /// `sve_`, single use, 60 seconds.
-    EmbedTicket,
     /// 64 hex characters without a prefix, single use, bound to an authorization request.
     Consent,
 }
 
 impl TokenKind {
     /// The kinds that carry a prefix, in the order [`kind_of`] tests them.
-    pub const PREFIXED: [Self; 4] = [Self::AuthorizationCode, Self::Access, Self::Refresh, Self::EmbedTicket];
+    pub const PREFIXED: [Self; 3] = [Self::AuthorizationCode, Self::Access, Self::Refresh];
 
     pub const fn prefix(self) -> &'static str {
         match self {
             Self::AuthorizationCode => "svc_",
             Self::Access => "sva_",
             Self::Refresh => "svr_",
-            Self::EmbedTicket => "sve_",
             Self::Consent => "",
         }
     }
@@ -223,7 +220,6 @@ mod tests {
             (TokenKind::AuthorizationCode, "svc_"),
             (TokenKind::Access, "sva_"),
             (TokenKind::Refresh, "svr_"),
-            (TokenKind::EmbedTicket, "sve_"),
             (TokenKind::Consent, ""),
         ] {
             let minted = mint(kind).expect("mint");
@@ -281,7 +277,7 @@ mod tests {
         assert_eq!(kind_of(raw), Some(TokenKind::Access));
         assert_eq!(kind_of("svr_x"), Some(TokenKind::Refresh));
         assert_eq!(kind_of("svc_x"), Some(TokenKind::AuthorizationCode));
-        assert_eq!(kind_of("sve_x"), Some(TokenKind::EmbedTicket));
+        assert_eq!(kind_of("sve_x"), None);
         assert_eq!(kind_of("opr_x"), None);
         assert_eq!(kind_of(""), None);
         assert!(!is_well_formed(TokenKind::Refresh, raw));

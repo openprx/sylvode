@@ -3,8 +3,8 @@
 //! One row per security-relevant step. A record can not carry a secret by construction: the event
 //! is an enum, the `detail` object only takes values of [`DetailValue`] (reason codes chosen from
 //! static strings, ids, counts and flags), and the only free text, the user agent, is stripped of
-//! control characters and cut to 256 characters. Tokens, codes, verifiers, consent tokens and
-//! embed tickets have no way in; a token is identified by its row id.
+//! control characters and cut to 256 characters. Tokens, codes, verifiers and consent tokens
+//! have no way in; a token is identified by its row id.
 
 use std::net::IpAddr;
 

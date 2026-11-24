@@ -3439,8 +3439,13 @@ pub async fn get_form_record(
     if let Some(Extension(bot_ctx)) = bot {
         extensions.insert(bot_ctx);
     }
-    let flow_lineage =
-        crate::flow::bridge::record_flow_lineage(&state, &extensions, record.workspace_id, record.id).await?;
+    // Flow titles are read with the signed-in person's own Flow rights, which a connected
+    // application's grant does not include: it sees the record and no Flow lineage.
+    let flow_lineage = if crate::oauth::delegated::current().is_some() {
+        crate::flow::bridge::RecordFlowLineage::default()
+    } else {
+        crate::flow::bridge::record_flow_lineage(&state, &extensions, record.workspace_id, record.id).await?
+    };
     Ok(ApiResponse::success(RecordDetailResponse {
         record: filter_record_response_values(record, &denied_read_fields),
         flow_lineage,

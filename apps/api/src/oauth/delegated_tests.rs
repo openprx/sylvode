@@ -56,6 +56,8 @@ fn the_table_has_no_duplicates_and_every_pattern_names_its_resolver_parameter() 
             Resolver::Workspace(n)
             | Resolver::Project(n)
             | Resolver::Issue(n)
+            | Resolver::Form(n)
+            | Resolver::FormRecord(n)
             | Resolver::IssueIdentifier(n)
             | Resolver::Notification(n) => Some(n),
             Resolver::SelfOnly | Resolver::GrantSelf => None,
@@ -114,10 +116,7 @@ fn the_table_reaches_no_administration_secret_or_deletion_and_writes_need_write_
             );
         }
         assert!(
-            !matches!(
-                entry.required,
-                Required::One(Scope::OfflineAccess | Scope::SurfacesEmbed)
-            ),
+            !matches!(entry.required, Required::One(Scope::OfflineAccess)),
             "{}",
             entry.pattern
         );

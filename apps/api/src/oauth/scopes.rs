@@ -31,13 +31,12 @@ pub enum Scope {
     NotificationsRead,
     NotificationsWrite,
     TasksRead,
-    SurfacesEmbed,
     OfflineAccess,
 }
 
 impl Scope {
     /// The whole vocabulary, in the order metadata documents list it.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 9] = [
         Self::ProjectsRead,
         Self::WorkItemsRead,
         Self::WorkItemsWrite,
@@ -46,7 +45,6 @@ impl Scope {
         Self::NotificationsRead,
         Self::NotificationsWrite,
         Self::TasksRead,
-        Self::SurfacesEmbed,
         Self::OfflineAccess,
     ];
 
@@ -60,7 +58,6 @@ impl Scope {
             Self::NotificationsRead => "notifications:read",
             Self::NotificationsWrite => "notifications:write",
             Self::TasksRead => "tasks:read",
-            Self::SurfacesEmbed => "surfaces:embed",
             Self::OfflineAccess => "offline_access",
         }
     }
@@ -86,10 +83,7 @@ impl Scope {
     /// Whether the user may untick the scope on the consent page. A scope that is not optional is
     /// shown fixed when the client asked for it.
     pub const fn optional_on_consent(self) -> bool {
-        matches!(
-            self,
-            Self::WorkItemsWrite | Self::FormsWrite | Self::NotificationsWrite | Self::SurfacesEmbed
-        )
+        matches!(self, Self::WorkItemsWrite | Self::FormsWrite | Self::NotificationsWrite)
     }
 }
 
@@ -334,7 +328,6 @@ mod tests {
                 "notifications:read",
                 "notifications:write",
                 "tasks:read",
-                "surfaces:embed",
                 "offline_access"
             ]
         );
@@ -346,15 +339,7 @@ mod tests {
             .filter(|s| s.optional_on_consent())
             .map(|s| s.as_str())
             .collect();
-        assert_eq!(
-            optional,
-            [
-                "work_items:write",
-                "forms:write",
-                "notifications:write",
-                "surfaces:embed"
-            ]
-        );
+        assert_eq!(optional, ["work_items:write", "forms:write", "notifications:write"]);
     }
 
     #[test]
@@ -385,6 +370,9 @@ mod tests {
             ("projects:delete", ScopeError::Unknown),
             ("projects", ScopeError::Unknown),
             ("projects:read admin", ScopeError::Unknown),
+            // Left the vocabulary: no route needed it.
+            ("surfaces:embed", ScopeError::Unknown),
+            ("projects:read surfaces:embed", ScopeError::Unknown),
             ("flow:read", ScopeError::Reserved),
             ("flow:write", ScopeError::Reserved),
             ("tasks:dispatch", ScopeError::Reserved),
@@ -481,7 +469,7 @@ mod tests {
             TokenResource::Mcp.scopes_supported().to_scope_string(),
             "projects:read work_items:read work_items:write forms:read forms:write"
         );
-        assert_eq!(TokenResource::Api.scopes_supported().iter().count(), 9);
+        assert_eq!(TokenResource::Api.scopes_supported().iter().count(), 8);
         assert!(!TokenResource::Api.scopes_supported().contains(Scope::OfflineAccess));
     }
 

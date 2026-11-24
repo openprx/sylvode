@@ -156,6 +156,10 @@ pub enum Resolver {
     Workspace(&'static str),
     Project(&'static str),
     Issue(&'static str),
+    /// A form: its project decides, then the grant's project rule.
+    Form(&'static str),
+    /// A form record: the project of the record's form decides.
+    FormRecord(&'static str),
     /// `PREFIX-N` within the grant's workspace.
     IssueIdentifier(&'static str),
     /// A notification of the grant's user.
@@ -179,6 +183,8 @@ pub struct RouteEntry {
 const READ_PROJECTS: Required = Required::One(Scope::ProjectsRead);
 const READ_ITEMS: Required = Required::One(Scope::WorkItemsRead);
 const WRITE_ITEMS: Required = Required::One(Scope::WorkItemsWrite);
+const READ_FORMS: Required = Required::One(Scope::FormsRead);
+const WRITE_FORMS: Required = Required::One(Scope::FormsWrite);
 const READ_NOTIFICATIONS: Required = Required::One(Scope::NotificationsRead);
 const WRITE_NOTIFICATIONS: Required = Required::One(Scope::NotificationsWrite);
 const READ_TASKS: Required = Required::One(Scope::TasksRead);
@@ -196,10 +202,13 @@ const fn entry(method: &'static str, pattern: &'static str, required: Required, 
 /// The allow-list. A method and path pattern that is not here is refused for a delegated
 /// principal.
 ///
-/// Patterns are copied from `main.rs`. Forms and the form-record routes, the batch label route, the
-/// project label list and search are absent on purpose: they have not been reviewed for delegation,
-/// or decide permissions or results through paths that do not read the delegated grant, so they stay
-/// denied until each is made delegation-aware.
+/// Patterns are copied from the router files. Of the form routes only the six reviewed ones are
+/// listed (list, read, create record, list records, read record, update record): each authorizes
+/// through `require_form_action`, so a delegated caller is a `member` and the form's own field
+/// policies apply. Form design and permissions, attachments, import, export, views, events and
+/// every other form route stay denied, as do the batch label route, the project label list and
+/// search: they have not been reviewed for delegation, or decide permissions or results through
+/// paths that do not read the delegated grant.
 pub static DELEGATED_ROUTES: &[RouteEntry] = &[
     entry(
         "GET",
@@ -275,6 +284,37 @@ pub static DELEGATED_ROUTES: &[RouteEntry] = &[
         "/api/v1/issues/{issue_id}/labels/{label_id}",
         WRITE_ITEMS,
         Resolver::Issue("issue_id"),
+    ),
+    entry(
+        "GET",
+        "/api/v1/projects/{project_id}/forms",
+        READ_FORMS,
+        Resolver::Project("project_id"),
+    ),
+    entry("GET", "/api/v1/forms/{form_id}", READ_FORMS, Resolver::Form("form_id")),
+    entry(
+        "GET",
+        "/api/v1/forms/{form_id}/records",
+        READ_FORMS,
+        Resolver::Form("form_id"),
+    ),
+    entry(
+        "POST",
+        "/api/v1/forms/{form_id}/records",
+        WRITE_FORMS,
+        Resolver::Form("form_id"),
+    ),
+    entry(
+        "GET",
+        "/api/v1/form-records/{record_id}",
+        READ_FORMS,
+        Resolver::FormRecord("record_id"),
+    ),
+    entry(
+        "PATCH",
+        "/api/v1/form-records/{record_id}",
+        WRITE_FORMS,
+        Resolver::FormRecord("record_id"),
     ),
     entry("GET", "/api/v1/notifications", READ_NOTIFICATIONS, Resolver::SelfOnly),
     entry(
@@ -546,6 +586,32 @@ pub async fn resolve_target(
                 "SELECT p.workspace_id, w.project_id FROM work_items w \
                  JOIN projects p ON p.id = w.project_id WHERE w.id = $1",
                 vec![issue_id.into()],
+            ))
+            .one(db)
+            .await?
+            .map(target))
+        }
+        Resolver::Form(name) => {
+            let Some(form_id) = uuid_param(params, name) else {
+                return Ok(None);
+            };
+            Ok(WorkspaceProject::find_by_statement(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT f.workspace_id, f.project_id FROM project_forms f WHERE f.id = $1",
+                vec![form_id.into()],
+            ))
+            .one(db)
+            .await?
+            .map(target))
+        }
+        Resolver::FormRecord(name) => {
+            let Some(record_id) = uuid_param(params, name) else {
+                return Ok(None);
+            };
+            Ok(WorkspaceProject::find_by_statement(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT r.workspace_id, r.project_id FROM form_records r WHERE r.id = $1",
+                vec![record_id.into()],
             ))
             .one(db)
             .await?

@@ -63,7 +63,6 @@ fn debug_output_never_contains_a_secret_or_its_hash() {
         TokenKind::AuthorizationCode,
         TokenKind::Access,
         TokenKind::Refresh,
-        TokenKind::EmbedTicket,
         TokenKind::Consent,
     ] {
         let minted = mint(kind).expect("mint");
