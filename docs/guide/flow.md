@@ -175,8 +175,11 @@ A page can work with [Forms](forms.md) of a workspace:
   opens the target.
 
 What you can do with a referenced form depends on both your Flow access and the form's permissions.
-A form with no saved permission policy for your role is view-only from Flow; see
-[Forms permissions](forms.md#permissions).
+A form with no saved permission policy for your role is view-only from Flow, except for workspace
+owners and admins, who then hold every permission; see [Forms permissions](forms.md#permissions).
+A workspace admin can turn the whole Forms bridge off and on with `bridge_enabled` of
+`PUT /api/v1/workspaces/{workspace_id}/features/flow` (also returned by the matching `GET`); while it
+is off nobody can turn pages into forms or records.
 
 ### Converting a page to Forms
 
@@ -210,9 +213,11 @@ filled here and can be edited in Forms afterwards; if such a field is required, 
 be created from Flow.
 
 The preview expires. If it expires, or the form's fields change before you confirm, run the preview
-again. The target form must allow you to create records through Flow; if it has no permission
-policy for your role, the wizard says so and the conversion is refused until an owner or admin sets
-one (see [Forms permissions](forms.md#permissions)).
+again. The target form must allow you to create records through Flow. Workspace owners and admins
+may convert into any existing form: when no permission policy names their role they have every
+permission, as in Forms itself, and a policy row for their role still applies. For other members, a
+form with no permission policy for their role makes the wizard say so and the conversion is
+refused until an owner or admin sets one (see [Forms permissions](forms.md#permissions)).
 
 Creating a new form (**Define the Form**) asks for a **Destination project**, a **Form name**, a
 **Form key** (lowercase letters, digits and underscores, starting with a letter) and fields, each

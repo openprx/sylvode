@@ -1009,6 +1009,7 @@ pub fn feature_view_from_row(row: Option<FlowSettingsRow>) -> FlowFeatureView {
         || FlowFeatureView {
             flow_enabled: true,
             default_member_level: "edit".to_string(),
+            bridge_enabled: true,
             authz_epoch: 0,
             updated_at: None,
             updated_by: None,
@@ -1016,6 +1017,7 @@ pub fn feature_view_from_row(row: Option<FlowSettingsRow>) -> FlowFeatureView {
         |row| FlowFeatureView {
             flow_enabled: row.flow_enabled,
             default_member_level: row.default_member_level,
+            bridge_enabled: row.bridge_enabled,
             authz_epoch: row.authz_epoch,
             updated_at: Some(row.updated_at.to_rfc3339()),
             updated_by: row.updated_by,

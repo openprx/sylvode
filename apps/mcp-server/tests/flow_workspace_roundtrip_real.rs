@@ -163,6 +163,7 @@ async fn seed_workspace(state: &AppState, label: &str, token: &str) -> Result<(U
             actor_is_bot: false,
             enabled: Some(true),
             default_member_level: Some("edit".to_string()),
+            bridge_enabled: None,
             idempotency_key: format!("enable-{label}"),
             origin: CommandOrigin::first_request_from(EventSurface::Rest),
         },

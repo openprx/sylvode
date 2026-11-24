@@ -2014,6 +2014,7 @@ pub async fn get_flow_feature(
 pub struct SetFlowFeatureRequest {
     pub enabled: Option<bool>,
     pub default_member_level: Option<String>,
+    pub bridge_enabled: Option<bool>,
     pub idempotency_key: String,
 }
 
@@ -2040,6 +2041,7 @@ pub async fn set_flow_feature(
             actor_is_bot,
             enabled: req.enabled,
             default_member_level: req.default_member_level,
+            bridge_enabled: req.bridge_enabled,
             idempotency_key: req.idempotency_key,
             origin: request_origin(&extensions),
         },
@@ -4549,6 +4551,7 @@ mod flow_database_tests {
                 Json(SetFlowFeatureRequest {
                     enabled: Some(true),
                     default_member_level: None,
+                    bridge_enabled: None,
                     idempotency_key: Uuid::new_v4().to_string(),
                 }),
             )
@@ -4629,6 +4632,7 @@ mod flow_database_tests {
                 Json(SetFlowFeatureRequest {
                     enabled: Some(false),
                     default_member_level: None,
+                    bridge_enabled: None,
                     idempotency_key: Uuid::new_v4().to_string(),
                 }),
             )
@@ -4670,6 +4674,7 @@ mod flow_database_tests {
                 Json(SetFlowFeatureRequest {
                     enabled: Some(true),
                     default_member_level: None,
+                    bridge_enabled: None,
                     idempotency_key: Uuid::new_v4().to_string(),
                 }),
             )
@@ -4710,6 +4715,7 @@ mod flow_database_tests {
                 Json(SetFlowFeatureRequest {
                     enabled: None,
                     default_member_level: Some("full_access".to_string()),
+                    bridge_enabled: None,
                     idempotency_key: Uuid::new_v4().to_string(),
                 }),
             )
@@ -5231,6 +5237,7 @@ mod flow_database_tests {
                 Json(SetFlowFeatureRequest {
                     enabled: Some(true),
                     default_member_level: Some("view".to_string()),
+                    bridge_enabled: None,
                     idempotency_key: Uuid::new_v4().to_string(),
                 }),
             )
@@ -5372,9 +5379,19 @@ mod flow_database_tests {
         ))
         .await;
         assert_eq!(created["code"], 0, "{created}");
-        assert_eq!(created["data"]["permission_state"]["access"], "read_only");
-        assert_eq!(created["data"]["permission_state"]["configuration"], "unconfigured");
-        assert_eq!(created["data"]["permission_state"]["actions"], json!(["form.view"]));
+        // No policy row names the owner's role: workspace owners hold every form permission.
+        assert_eq!(created["data"]["permission_state"]["access"], "controlled");
+        assert_eq!(created["data"]["permission_state"]["configuration"], "explicit");
+        assert_eq!(
+            created["data"]["permission_state"]["actions"],
+            json!([
+                "form.view",
+                "record.create",
+                "record.update",
+                "record.delete",
+                "record.export"
+            ])
+        );
         let reference_id =
             Uuid::parse_str(created["data"]["reference_id"].as_str().expect("reference id")).expect("UUID");
 
@@ -6515,6 +6532,7 @@ mod flow_database_tests {
                 Json(SetFlowFeatureRequest {
                     enabled: Some(true),
                     default_member_level: Some("edit".to_string()),
+                    bridge_enabled: None,
                     idempotency_key: Uuid::new_v4().to_string(),
                 }),
             )
@@ -6610,6 +6628,7 @@ mod flow_database_tests {
                 Json(SetFlowFeatureRequest {
                     enabled: None,
                     default_member_level: Some("view".to_string()),
+                    bridge_enabled: None,
                     idempotency_key: Uuid::new_v4().to_string(),
                 }),
             )
@@ -9580,6 +9599,7 @@ mod flow_database_tests {
                 Json(SetFlowFeatureRequest {
                     enabled: Some(false),
                     default_member_level: None,
+                    bridge_enabled: None,
                     idempotency_key: Uuid::new_v4().to_string(),
                 }),
             )
@@ -11997,6 +12017,7 @@ mod flow_database_tests {
                 Json(SetFlowFeatureRequest {
                     enabled: Some(false),
                     default_member_level: None,
+                    bridge_enabled: None,
                     idempotency_key: Uuid::new_v4().to_string(),
                 }),
             )
@@ -12016,6 +12037,7 @@ mod flow_database_tests {
                 Json(SetFlowFeatureRequest {
                     enabled: Some(false),
                     default_member_level: None,
+                    bridge_enabled: None,
                     idempotency_key: Uuid::new_v4().to_string(),
                 }),
             )
@@ -13505,23 +13527,27 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
-    /// A form without any policy row is `permission_unconfigured` (ADR-0019 BR-4).
+    /// A form without any policy row does not stop a workspace owner or admin: they hold every
+    /// permission unless a row names their role. (A member with no row stays on the read-only
+    /// `permission_unconfigured` floor of ADR-0019 BR-4; `flow::bridge::permission_tests`.)
     #[tokio::test]
-    async fn unconfigured_target_form_is_policy_rejected_permission_unconfigured() {
+    async fn owner_converts_into_a_form_without_any_policy_row() {
         let scratch = scratch_or_skip!("bridge-unconfigured");
         let state = state_for(scratch.db.clone());
         let fx = conversion_seed(&state, false).await;
-        let rejected = conversion_preview(
+        let preview = conversion_preview(
             &state,
             &fx,
             json!({"target_form_id":fx.form_id,"values":{"req":"value"}}),
         )
         .await;
-        assert_typed(&rejected, "policy_rejected", 403);
-        assert_eq!(rejected["details"]["reason"], "permission_unconfigured", "{rejected}");
-        assert_eq!(
-            rejected["details"]["permission_state"]["configuration"], "unconfigured",
-            "{rejected}"
+        assert_eq!(preview["code"], 0, "{preview}");
+        assert_eq!(preview["data"]["permission_decision"]["configuration"], "explicit");
+        assert!(
+            preview["data"]["permission_decision"]["actions"]
+                .as_array()
+                .is_some_and(|actions| actions.iter().any(|action| action == "record.create")),
+            "{preview}"
         );
         scratch.drop_self().await;
     }
@@ -14460,6 +14486,7 @@ mod flow_database_tests {
                 Json(SetFlowFeatureRequest {
                     enabled: Some(false),
                     default_member_level: None,
+                    bridge_enabled: None,
                     idempotency_key: Uuid::new_v4().to_string(),
                 }),
             )

@@ -2358,6 +2358,7 @@ mod database_tests {
                 actor_is_bot: workspace_actor_is_bot,
                 enabled: Some(false),
                 default_member_level: Some("edit".to_string()),
+                bridge_enabled: None,
                 idempotency_key: Uuid::new_v4().to_string(),
             },
         )

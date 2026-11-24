@@ -269,7 +269,7 @@ pub struct FlowSearchResponse {
     pub index_frontier: SearchIndexFrontier,
 }
 
-/// `{flow_enabled,default_member_level,authz_epoch,updated_at,updated_by}` from `rest-api-v1.md`
+/// `{flow_enabled,default_member_level,bridge_enabled,authz_epoch,updated_at,updated_by}` from `rest-api-v1.md`
 /// (`GET|PUT /workspaces/{workspace_id}/features/flow`).
 ///
 /// `updated_at`/`updated_by` are `null` (key still present, matching every other field here) for a
@@ -280,6 +280,8 @@ pub struct FlowSearchResponse {
 pub struct FlowFeatureView {
     pub flow_enabled: bool,
     pub default_member_level: String,
+    /// Whether Flow pages may be turned into forms or form records (the forms bridge).
+    pub bridge_enabled: bool,
     pub authz_epoch: i64,
     pub updated_at: Option<String>,
     pub updated_by: Option<Uuid>,

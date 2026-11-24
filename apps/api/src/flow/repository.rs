@@ -906,6 +906,7 @@ pub async fn insert_integrity_record<C: ConnectionTrait>(
 pub struct FlowSettingsRow {
     pub flow_enabled: bool,
     pub default_member_level: String,
+    pub bridge_enabled: bool,
     pub authz_epoch: i64,
     pub updated_at: Timestamp,
     pub updated_by: Option<Uuid>,
@@ -923,7 +924,7 @@ pub async fn fetch_flow_settings<C: ConnectionTrait>(
 ) -> Result<Option<FlowSettingsRow>, ApiError> {
     Ok(FlowSettingsRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT flow_enabled, default_member_level, authz_epoch, updated_at, updated_by \
+        "SELECT flow_enabled, default_member_level, bridge_enabled, authz_epoch, updated_at, updated_by \
          FROM flow_workspace_settings WHERE workspace_id = $1",
         vec![workspace_id.into()],
     ))
@@ -955,7 +956,7 @@ pub async fn fetch_flow_settings_for_update<C: ConnectionTrait>(
 ) -> Result<Option<FlowSettingsRow>, ApiError> {
     Ok(FlowSettingsRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT flow_enabled, default_member_level, authz_epoch, updated_at, updated_by \
+        "SELECT flow_enabled, default_member_level, bridge_enabled, authz_epoch, updated_at, updated_by \
          FROM flow_workspace_settings WHERE workspace_id = $1 FOR UPDATE",
         vec![workspace_id.into()],
     ))
@@ -963,7 +964,7 @@ pub async fn fetch_flow_settings_for_update<C: ConnectionTrait>(
     .await?)
 }
 
-/// Writes the new `flow_enabled` and `default_member_level` values and stamps the updater.
+/// Writes the new `flow_enabled`, `default_member_level` and `bridge_enabled` values and stamps the updater.
 ///
 /// The caller advances `authz_epoch` in the same transaction before invoking this function when
 /// the baseline changes. Keeping that decision in the command layer lets a pure feature-flag
@@ -973,6 +974,7 @@ pub async fn update_flow_settings<C: ConnectionTrait>(
     workspace_id: Uuid,
     flow_enabled: bool,
     default_member_level: &str,
+    bridge_enabled: bool,
     // `None` when the actor is a bot: this column is `REFERENCES users(id)` and a bot id is
     // not a user id.
     updated_by: Option<Uuid>,
@@ -980,13 +982,14 @@ pub async fn update_flow_settings<C: ConnectionTrait>(
     conn.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "UPDATE flow_workspace_settings SET flow_enabled = $2, default_member_level = $3, \
-         updated_at = now(), updated_by = $4 \
+         bridge_enabled = $5, updated_at = now(), updated_by = $4 \
          WHERE workspace_id = $1",
         vec![
             workspace_id.into(),
             flow_enabled.into(),
             default_member_level.into(),
             updated_by.into(),
+            bridge_enabled.into(),
         ],
     ))
     .await?;

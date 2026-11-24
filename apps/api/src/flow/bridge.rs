@@ -487,9 +487,17 @@ async fn target_permission<C: ConnectionTrait>(
     ))
     .one(conn)
     .await?;
+    // Workspace owners and admins hold every form permission when no policy row names their role
+    // (as in the REST routes, where admins bypass field policies); an explicit row still applies.
+    let unrestricted = Value::Object(serde_json::Map::new());
+    let forms_policy = match policy.as_ref() {
+        Some(row) => Some(&row.policy),
+        None if matches!(actor.role.as_str(), "owner" | "admin") => Some(&unrestricted),
+        None => None,
+    };
     Ok(bridge_permission(
         actor.flow_level,
-        policy.as_ref().map(|row| &row.policy),
+        forms_policy,
         Some(target.created_by == Some(actor.id)),
     ))
 }
@@ -2442,6 +2450,9 @@ pub async fn record_flow_lineage(
             .collect(),
     })
 }
+
+#[cfg(test)]
+mod permission_tests;
 
 #[cfg(test)]
 mod tests {

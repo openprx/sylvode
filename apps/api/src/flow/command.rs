@@ -872,15 +872,17 @@ pub struct SetFlowFeatureInput {
     pub actor_is_bot: bool,
     pub enabled: Option<bool>,
     pub default_member_level: Option<String>,
+    /// The forms bridge switch. A change is stored in the same transaction as the other settings.
+    pub bridge_enabled: Option<bool>,
     pub idempotency_key: String,
     /// See [`CreateObjectInput::origin`].
     pub origin: CommandOrigin,
 }
 
 fn validate_set_flow_feature(input: &SetFlowFeatureInput) -> Result<(), ApiError> {
-    if input.enabled.is_none() && input.default_member_level.is_none() {
+    if input.enabled.is_none() && input.default_member_level.is_none() && input.bridge_enabled.is_none() {
         return Err(ApiError::invalid_update(
-            "at least one of enabled or default_member_level must be supplied".to_string(),
+            "at least one of enabled, default_member_level or bridge_enabled must be supplied".to_string(),
         ));
     }
     if let Some(level) = input.default_member_level.as_deref()
@@ -935,6 +937,7 @@ pub async fn set_flow_feature(state: &AppState, input: SetFlowFeatureInput) -> R
         .ok_or_else(ApiError::internal)?;
 
     let new_enabled = input.enabled.unwrap_or(current.flow_enabled);
+    let new_bridge_enabled = input.bridge_enabled.unwrap_or(current.bridge_enabled);
     let transition = input.enabled.filter(|&enabled| enabled != current.flow_enabled);
     let new_member_level = input
         .default_member_level
@@ -1040,6 +1043,7 @@ pub async fn set_flow_feature(state: &AppState, input: SetFlowFeatureInput) -> R
         input.workspace_id,
         new_enabled,
         new_member_level,
+        new_bridge_enabled,
         actor_user_id(input.actor_id, input.actor_is_bot),
     )
     .await?;
@@ -5205,6 +5209,7 @@ mod database_tests {
                 actor_is_bot: false,
                 enabled: Some(false),
                 default_member_level: None,
+                bridge_enabled: None,
                 idempotency_key: Uuid::new_v4().to_string(),
             },
         )
