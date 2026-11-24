@@ -1,0 +1,12 @@
+{
+	"agentTypes": {
+		"runner": "Runner",
+		"openclaw": "OpenClaw",
+		"openprx": "OpenPRX",
+		"webhook": "Webhook",
+		"custom": "Custom"
+	},
+	"admin": {
+		"agentTypeHelp": "Selects the runner agent that handles this bot's tasks. Agent settings live in the runner configuration."
+	}
+}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { agentTypeKey } from '#lib/admin/agent-types.js';
 	import { describeResult } from '#lib/i18n/describe.js';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
@@ -253,10 +254,7 @@
 	function getBotType(botId: string | null | undefined): string {
 		if (!botId) return '';
 		const bot = botUsers.find((item) => item.user_id === botId);
-		if (bot?.agent_type === 'openclaw') return get(t)('agentTypes.openclaw');
-		if (bot?.agent_type === 'webhook') return get(t)('agentTypes.webhook');
-		if (bot?.agent_type === 'custom') return get(t)('agentTypes.custom');
-		return get(t)('admin.botBadge');
+		return get(t)(agentTypeKey(bot?.agent_type) ?? 'admin.botBadge');
 	}
 
 	function getDeliveryStatus(delivery: WebhookDelivery): {

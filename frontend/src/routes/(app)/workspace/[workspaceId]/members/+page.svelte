@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { agentTypeKey } from '#lib/admin/agent-types.js';
 	import { describeResult } from '#lib/i18n/describe.js';
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
@@ -201,10 +202,8 @@
 
 	function getBotRoleLabel(member: WorkspaceMember): string {
 		const botLabel = get(t)('admin.botBadge');
-		if (member.agent_type === 'openclaw') return `${botLabel} (${get(t)('agentTypes.openclaw')})`;
-		if (member.agent_type === 'webhook') return `${botLabel} (${get(t)('agentTypes.webhook')})`;
-		if (member.agent_type === 'custom') return `${botLabel} (${get(t)('agentTypes.custom')})`;
-		return botLabel;
+		const key = agentTypeKey(member.agent_type);
+		return key ? `${botLabel} (${get(t)(key)})` : botLabel;
 	}
 
 	function openCreateTokenModal() {

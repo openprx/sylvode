@@ -7,7 +7,7 @@ export interface WorkspaceMember {
 	email: string;
 	name: string;
 	entity_type?: 'human' | 'bot' | string;
-	agent_type?: 'openclaw' | 'webhook' | 'custom' | string | null;
+	agent_type?: string | null;
 	role: WorkspaceMemberRole;
 	joined_at: string;
 }

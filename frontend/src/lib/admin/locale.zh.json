@@ -1,0 +1,12 @@
+{
+	"agentTypes": {
+		"runner": "Runner",
+		"openclaw": "OpenClaw",
+		"openprx": "OpenPRX",
+		"webhook": "Webhook",
+		"custom": "自定义"
+	},
+	"admin": {
+		"agentTypeHelp": "选择处理该机器人任务的 runner Agent。Agent 的设置在 runner 配置中。"
+	}
+}

@@ -346,30 +346,10 @@
 		"member": "成员",
 		"user": "用户"
 	},
-	"agentTypes": {
-		"openclaw": "OpenClaw",
-		"webhook": "Webhook",
-		"custom": "自定义"
-	},
 	"placeholders": {
 		"emailPlaceholder": "your@email.com",
 		"passwordPlaceholder": "••••••••",
-		"webhookUrl": "https://example.com/webhook",
-		"openclawCommand": "openclaw message send",
-		"openclawChannel": "signal",
-		"openclawTarget": "uuid:xxx",
-		"webhookUrlInput": "https://...",
-		"webhookSecret": "optional",
-		"customCommand": "/usr/bin/...",
-		"customArgs": "--mode run --target demo"
-	},
-	"formLabels": {
-		"command": "命令",
-		"channel": "渠道",
-		"target": "目标",
-		"url": "URL",
-		"secret": "密钥",
-		"args": "参数"
+		"webhookUrl": "https://example.com/webhook"
 	},
 	"landing": {
 		"title": "Sylvode",
@@ -392,7 +372,6 @@
 		"bot": "机器人",
 		"botBadge": "机器人",
 		"agentType": "Agent 类型",
-		"agentConfig": "Agent 配置",
 		"role": "角色",
 		"status": "状态",
 		"active": "启用",
