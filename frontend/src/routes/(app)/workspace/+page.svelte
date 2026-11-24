@@ -15,6 +15,7 @@
 	import Card from '#lib/components/Card.svelte';
 	import EmptyState from '#lib/components/EmptyState.svelte';
 	import { timeAgo } from '#lib/utils/timeago.js';
+	import { milestoneActivityText } from '#lib/milestones/rules.js';
 
 	type InputEventHandler = (
 		event: Event & { currentTarget: EventTarget & HTMLInputElement }
@@ -333,6 +334,8 @@
 					});
 				}
 				return get(t)('activity.sprintRemoved');
+			case 'milestone_changed':
+				return milestoneActivityText(get(t), detail, () => null);
 			case 'label_added':
 				return get(t)('activity.labelAdded', { values: { name: labelName } });
 			case 'label_removed':
