@@ -6,13 +6,14 @@
 	 */
 	import { onMount } from 'svelte';
 	import { locale, t } from 'svelte-i18n';
-	import { oauthApi, failureKey, type ConnectedGrant } from '#lib/api/oauth.js';
+	import { oauthApi, failureKey, isNotEnabled, type ConnectedGrant } from '#lib/api/oauth.js';
 	import { plural } from '#lib/ui/foundations/plural.js';
 	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import Button from '#lib/ui/button/Button.svelte';
 	import DataTable from '#lib/ui/data-table/DataTable.svelte';
 	import type { Column } from '#lib/ui/data-table/data-table.js';
 	import Skeleton from '#lib/ui/skeleton/Skeleton.svelte';
+	import StateBlock from '#lib/ui/state-block/StateBlock.svelte';
 	import StatusChip from '#lib/ui/status-chip/StatusChip.svelte';
 	import Switch from '#lib/ui/switch/Switch.svelte';
 	import Card from '#lib/components/Card.svelte';
@@ -26,7 +27,7 @@
 
 	let { workspaceId, workspaceName }: Props = $props();
 
-	let status = $state<'loading' | 'ready' | 'failed' | 'hidden'>('loading');
+	let status = $state<'loading' | 'ready' | 'failed' | 'hidden' | 'disabled'>('loading');
 	let allow = $state(true);
 	let switchValue = $state(true);
 	let grants = $state<ConnectedGrant[]>([]);
@@ -42,6 +43,10 @@
 		errorKey = null;
 		const setting = await oauthApi.getWorkspaceSetting(workspaceId);
 		if (!setting.ok) {
+			if (isNotEnabled(setting.failure, false)) {
+				status = 'disabled';
+				return;
+			}
 			if (setting.failure.status === 403 || setting.failure.status === 404) {
 				status = 'hidden';
 				return;
@@ -54,6 +59,10 @@
 		switchValue = allow;
 		const listed = await oauthApi.listWorkspace(workspaceId);
 		if (!listed.ok) {
+			if (isNotEnabled(listed.failure, true)) {
+				status = 'disabled';
+				return;
+			}
 			errorKey = failureKey(listed.failure);
 			status = 'failed';
 			return;
@@ -236,6 +245,12 @@
 					<Skeleton height="32px" label={$t('oauth.manage.loading')} />
 					<Skeleton height="48px" />
 				</div>
+			{:else if status === 'disabled'}
+				<StateBlock
+					kind="empty"
+					message={$t('oauth.notEnabled')}
+					data-testid="connected-apps-workspace-disabled"
+				/>
 			{:else if status === 'ready'}
 				<div class="switch-row">
 					<Switch

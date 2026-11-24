@@ -76,6 +76,15 @@ function parsed<T>(result: ApiResult<unknown>, parse: (data: unknown) => T | nul
 	return data === null ? malformed() : { ok: true, data };
 }
 
+/**
+ * The server has no authorization server (`[oauth]` absent). The management endpoints answer
+ * `feature_disabled` (403); a server that predates that answers a plain 404, which a list call
+ * (never a 404 on a server with OAuth) treats the same way.
+ */
+export function isNotEnabled(error: OAuthFailure, listCall: boolean): boolean {
+	return error.errorCode === 'feature_disabled' || (listCall && error.status === 404);
+}
+
 /** Translation key of the message for a failure; the pages pass it to `$t`. */
 export function failureKey(error: OAuthFailure): string {
 	switch (error.errorCode) {

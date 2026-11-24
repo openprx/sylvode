@@ -3,17 +3,18 @@
 	 * and the switch that disables it for the whole instance. */
 	import { onMount } from 'svelte';
 	import { locale, t } from 'svelte-i18n';
-	import { oauthApi, failureKey, type OAuthClient } from '#lib/api/oauth.js';
+	import { oauthApi, failureKey, isNotEnabled, type OAuthClient } from '#lib/api/oauth.js';
 	import { plural } from '#lib/ui/foundations/plural.js';
 	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import Button from '#lib/ui/button/Button.svelte';
 	import SettingRow from '#lib/ui/setting-row/SettingRow.svelte';
+	import StateBlock from '#lib/ui/state-block/StateBlock.svelte';
 	import Skeleton from '#lib/ui/skeleton/Skeleton.svelte';
 	import StatusChip from '#lib/ui/status-chip/StatusChip.svelte';
 	import Card from '#lib/components/Card.svelte';
 	import ManageNotice from './ManageNotice.svelte';
 
-	let status = $state<'loading' | 'ready' | 'failed'>('loading');
+	let status = $state<'loading' | 'ready' | 'failed' | 'disabled'>('loading');
 	let clients = $state<OAuthClient[]>([]);
 	let success = $state<string | null>(null);
 	let errorKey = $state<string | null>(null);
@@ -26,6 +27,10 @@
 		errorKey = null;
 		const listed = await oauthApi.listClients();
 		if (!listed.ok) {
+			if (isNotEnabled(listed.failure, true)) {
+				status = 'disabled';
+				return;
+			}
 			errorKey = failureKey(listed.failure);
 			status = 'failed';
 			return;
@@ -103,6 +108,12 @@
 			<div class="skeletons" data-testid="connected-apps-admin-loading">
 				<Skeleton height="48px" label={$t('oauth.manage.loading')} />
 			</div>
+		{:else if status === 'disabled'}
+			<StateBlock
+				kind="empty"
+				message={$t('oauth.notEnabled')}
+				data-testid="connected-apps-admin-disabled"
+			/>
 		{:else if status === 'ready'}
 			{#if clients.length === 0}
 				<p class="empty" data-testid="connected-apps-admin-empty">

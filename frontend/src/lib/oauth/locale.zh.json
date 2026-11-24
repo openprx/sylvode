@@ -214,6 +214,7 @@
 				"dialogBodyNone": "重新启用前，任何人都无法连接 {client}。",
 				"disabledDoneNone": "已停用 {client}。"
 			}
-		}
+		},
+		"notEnabled": "此服务器未启用已连接的应用。"
 	}
 }

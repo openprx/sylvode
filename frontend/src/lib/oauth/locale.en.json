@@ -220,6 +220,7 @@
 				"dialogBodyNone": "Nobody can connect {client} until it is enabled again.",
 				"disabledDoneNone": "{client} was disabled."
 			}
-		}
+		},
+		"notEnabled": "Connected applications are not enabled on this server."
 	}
 }
