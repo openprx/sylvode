@@ -11,6 +11,8 @@
 	import { workflowsApi, type WorkflowStateDef } from '#lib/api/workflows.js';
 	import { labelsApi, type Label } from '#lib/api/labels.js';
 	import { sprintsApi, type Sprint } from '#lib/api/sprints.js';
+	import { milestonesApi, type Milestone } from '#lib/api/milestones.js';
+	import { loadAllMilestones, sortMilestones } from '#lib/milestones/rules.js';
 	import { toast } from '#lib/stores/toast.js';
 	import { workflowStateLabel } from '#lib/utils/workflow-state.js';
 	import { requireRouteParam } from '#lib/utils/route-params.js';
@@ -26,6 +28,9 @@
 	let issues = $state<Issue[]>([]);
 	let project = $state<Project | null>(null);
 	let sprints = $state<Sprint[]>([]);
+	let milestones = $state<Milestone[]>([]);
+	// `all`, `none` (items in no milestone) or a milestone id.
+	let milestoneFilter = $state('all');
 	let loading = $state(true);
 	let keyword = $state('');
 	let workflowStates = $state<WorkflowStateDef[]>([]);
@@ -61,6 +66,7 @@
 				loadProject(),
 				loadWorkflow(),
 				loadSprints(),
+				loadMilestones(),
 				loadMembers(),
 				loadLabels()
 			]);
@@ -89,6 +95,7 @@
 			status: statusFilter === 'all' ? undefined : statusFilter,
 			priority: priorityFilter === 'all' ? undefined : priorityFilter,
 			assignee_id: assigneeFilter === 'all' ? undefined : assigneeFilter,
+			milestone_id: milestoneFilter === 'all' ? undefined : milestoneFilter,
 			label_ids: selectedLabelIds.length ? selectedLabelIds.join(',') : undefined,
 			search: keyword.trim() || undefined,
 			sort_by: sortBy,
@@ -136,6 +143,17 @@
 			sprints = response.data.items ?? [];
 		}
 	}
+
+	async function loadMilestones() {
+		const response = await loadAllMilestones(milestonesApi.list, workspaceId);
+		if (response.code !== 0) {
+			toast.error(get(t)('milestones.field.loadFailed'));
+			return;
+		}
+		milestones = response.data ?? [];
+	}
+
+	const milestoneFilterOptions = $derived(sortMilestones(milestones, $locale ?? undefined));
 
 	async function loadLabels() {
 		const res = await labelsApi.list(workspaceId);
@@ -288,7 +306,7 @@
 			>
 		</div>
 
-		<div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-7">
+		<div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-8">
 			<div class="xl:col-span-2">
 				<label class="mb-1 block text-sm font-medium text-fg" for="keyword"
 					>{$t('common.search')}</label
@@ -355,6 +373,27 @@
 					<option value="all">{$t('issue.all')}</option>
 					{#each assigneeOptions as assigneeId, idx (idx)}
 						<option value={assigneeId}>{getAssigneeLabel(assigneeId)}</option>
+					{/each}
+				</select>
+			</div>
+			<div>
+				<label class="mb-1 block text-sm font-medium text-fg" for="milestoneFilter"
+					>{$t('milestones.filterItems.label')}</label
+				>
+				<select
+					id="milestoneFilter"
+					bind:value={milestoneFilter}
+					onchange={resetPageAndLoad}
+					class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
+				>
+					<option value="all">{$t('milestones.filterItems.all')}</option>
+					<option value="none">{$t('milestones.filterItems.none')}</option>
+					{#each milestoneFilterOptions as milestone (milestone.id)}
+						<option value={milestone.id}
+							>{milestone.status === 'closed'
+								? `${milestone.name} (${$t('milestones.field.closed')})`
+								: milestone.name}</option
+						>
 					{/each}
 				</select>
 			</div>

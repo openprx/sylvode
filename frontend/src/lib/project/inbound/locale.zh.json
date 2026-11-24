@@ -1,0 +1,357 @@
+{
+	"inbound": {
+		"forbidden": "只有工作区所有者和管理员可以管理本项目的告警来源和规则。",
+		"disabledOnServer": "本服务器已关闭入站事件（[inbound] enabled = false）。可以先配置来源，但在管理员开启之前所有事件都会被拒绝。",
+		"sources": {
+			"title": "入站来源",
+			"description": "可以向本项目发送事件的外部系统。",
+			"thing": "入站来源",
+			"empty": "还没有来源。添加一个来源，让 prx-waf 等外部系统向本项目发送事件。",
+			"add": "添加来源",
+			"name": "名称",
+			"nameHelp": "产品和主机，例如 prx-waf edge-01。会用在告警标题中。",
+			"requireSignature": "要求请求签名",
+			"requireSignatureHelp": "每个请求都必须带有用签名密钥生成的有效签名。",
+			"unsignedWarning": "不要求签名时，任何持有令牌的人都能发送事件，截获的请求也可以换一个事件 ID 重放。",
+			"advanced": "高级",
+			"ratePerMinute": "每分钟事件数",
+			"dailyCap": "每天事件数",
+			"allowlist": "允许的地址",
+			"allowlistHelp": "每行一个地址或 CIDR 网段，例如 203.0.113.7 或 203.0.113.0/24。留空表示接受任何地址。",
+			"create": "创建来源",
+			"creating": "正在创建…",
+			"save": "保存",
+			"saving": "正在保存…",
+			"cancel": "取消",
+			"noChanges": "没有任何改动",
+			"status": {
+				"receiving": "接收中",
+				"waiting": "等待第一个事件",
+				"idle": "空闲",
+				"paused": "已暂停",
+				"suspended": "已挂起"
+			},
+			"row": {
+				"token": "令牌",
+				"signature": "签名",
+				"signatureRequired": "必需",
+				"signatureOptional": "非必需",
+				"lastEvent": "最近事件",
+				"lastEventValue": "{time}，来自 {ip}",
+				"never": "从未",
+				"actsAs": "代表",
+				"actsAsHelp": "告警事项以此人的名义创建。",
+				"removedUser": "已删除的用户",
+				"limits": "限额",
+				"limitsValue": "每分钟 {rate} 个 · 每天 {cap} 个",
+				"allowlist": "允许的地址",
+				"anyAddress": "任何地址",
+				"blocks": {
+					"other": "{count} 个网段"
+				}
+			},
+			"suspendedBody": "该来源已被拒绝，因为 {name} 已不再是工作区的所有者或管理员。接管后可重新接收它的事件。",
+			"recentEvents": "最近事件",
+			"edit": "编辑",
+			"pause": "暂停",
+			"resume": "恢复",
+			"resumed": "来源已恢复",
+			"rotate": "轮换凭据",
+			"delete": "删除来源",
+			"takeOver": "接管",
+			"pauseDialog": {
+				"title": "暂停 {source}？",
+				"body": "恢复之前，该来源的事件都会被拒绝。已打开的告警保持打开。",
+				"confirm": "暂停来源"
+			},
+			"unsignedDialog": {
+				"title": "接受来自 {source} 的未签名事件？",
+				"body": "之后任何持有令牌的人都能在没有签名密钥的情况下发送事件，截获的请求也可以换一个事件 ID 重放。",
+				"confirm": "接受未签名事件"
+			},
+			"rotateDialog": {
+				"title": "轮换 {source} 的凭据？",
+				"body": "将签发新的令牌和签名密钥，只显示一次。当前凭据立即失效：在配置新值之前，{source} 的事件都会被拒绝。",
+				"confirm": "轮换凭据",
+				"busy": "正在轮换…"
+			},
+			"takeOverDialog": {
+				"title": "接管 {source}？",
+				"body": "该来源的告警事项将以你的名义创建，只要你仍是所有者或管理员，该来源就会重新接收事件。",
+				"confirm": "接管"
+			},
+			"deleteDialog": {
+				"title": "删除 {source}？",
+				"body": "该来源的令牌立即失效，已存储的事件会被删除。它创建的事项会保留。此操作无法撤销。",
+				"bodyRules": "绑定到它的 {count} 条告警规则也会被删除：{rules}。",
+				"confirm": "删除来源",
+				"busy": "正在删除…"
+			}
+		},
+		"secrets": {
+			"title": "请立即复制这些凭据",
+			"body": "Sylvode 只保存令牌的指纹，无法再次显示令牌或签名密钥。请把它们填入 {source} 的 Sylvode 输出设置。",
+			"endpoint": "端点地址",
+			"endpointGuess": "请使用产品能访问到本 Sylvode 服务器的地址。",
+			"token": "令牌",
+			"signingSecret": "签名密钥",
+			"signingHelp": "每个请求用 HMAC-SHA256 对 timestamp.body 签名。",
+			"signingOptional": "该来源的签名是可选的；请保留密钥以备之后要求签名。",
+			"copy": "复制",
+			"copyAll": "全部复制为 JSON",
+			"copied": "已复制{field}",
+			"copyFailed": "复制失败，请选中文本手动复制",
+			"stored": "我已保存这些凭据",
+			"done": "完成",
+			"doneReason": "请先确认已保存凭据",
+			"leave": "未保存凭据就离开吗？它们无法再次显示。",
+			"leaveConfirm": "离开",
+			"lost": "凭据丢失了？轮换即可获得新凭据。"
+		},
+		"events": {
+			"title": "{source} 的最近事件",
+			"thing": "事件",
+			"empty": "还没有事件。第一个被接受的事件会显示在这里；被拒绝的请求不会保存。",
+			"older": "显示更早的",
+			"refresh": "刷新",
+			"col": {
+				"received": "接收时间",
+				"kind": "类型",
+				"severity": "严重级别",
+				"outcome": "结果",
+				"workItem": "事项",
+				"signed": "签名"
+			},
+			"signedYes": "已签名",
+			"signedNo": "未签名",
+			"untrusted": "由外部系统上报。以纯文本显示，绝不会被当作指令执行。",
+			"detail": {
+				"title": "事件 {id}",
+				"occurred": "发生时间",
+				"dedupKey": "去重键",
+				"from": "来源地址",
+				"rule": "规则",
+				"deletedRule": "已删除的规则",
+				"task": "机器人任务",
+				"reportedTitle": "标题",
+				"summary": "摘要",
+				"subject": "主体",
+				"payload": "载荷",
+				"test": "用此事件测试规则"
+			}
+		},
+		"outcome": {
+			"no_rule": "无匹配规则",
+			"alert_opened": "已创建告警",
+			"alert_attached": "已并入未关闭的告警",
+			"task_queued": "机器人任务排队中",
+			"suppressed_alert_cap": "已达告警上限",
+			"bot_unavailable": "机器人不可用"
+		},
+		"severity": {
+			"info": "信息",
+			"low": "低",
+			"medium": "中",
+			"high": "高",
+			"critical": "严重",
+			"unknown": "未知"
+		},
+		"rules": {
+			"title": "告警规则",
+			"description": "决定本项目来源发来的事件会触发什么。",
+			"thing": "告警规则",
+			"empty": "还没有规则。事件只会存储在来源下，不会触发任何操作。",
+			"emptyNoSource": "请先添加入站来源；规则作用于它的事件。",
+			"addSource": "添加来源",
+			"add": "添加规则",
+			"test": "测试规则",
+			"orderHelp": "规则从上到下检查；第一条匹配的已启用规则处理该事件。",
+			"enabled": "已启用",
+			"disabled": "已停用",
+			"moveUp": "上移",
+			"moveDown": "下移",
+			"first": "已在最前",
+			"last": "已在最后",
+			"edit": "编辑",
+			"delete": "删除规则",
+			"summary": "{source} · {kinds} · {severity} 及以上 · {action}",
+			"anySource": "任何来源",
+			"anyKind": "任何类型",
+			"andAbove": "{severity} 及以上",
+			"actionWorkItem": "创建事项",
+			"actionBot": "交给 {bot}",
+			"moreKinds": "+{count}",
+			"warnBotNotConnected": "{bot} 未连接到本项目，它的任务无法到达 runner。",
+			"warnNoRecipients": "此规则创建告警时不会通知任何人。",
+			"new": "新规则",
+			"editTitle": "编辑 {name}",
+			"groupWhen": "条件",
+			"groupThen": "动作",
+			"groupLimits": "安全限制",
+			"limitsDefault": "默认值",
+			"limitsChanged": "已修改",
+			"name": "名称",
+			"source": "来源",
+			"sourceAny": "本项目的任何来源",
+			"kinds": "事件类型",
+			"kindsHelp": "精确类型（如 waf.attack_detected）或前缀（如 waf.*）。留空表示所有类型。请匹配攻击类事件而不是配置变更，以免机器人自己的操作再次触发规则。",
+			"minSeverity": "最低严重级别",
+			"action": "动作",
+			"actionOpen": "创建事项并通知相关人员",
+			"actionHand": "创建事项并交给机器人",
+			"bot": "机器人",
+			"botConnectedSuffix": "· 已连接到本项目",
+			"instructions": "给机器人的指令",
+			"instructionsHelp": "机器人应如何处理这类告警。可以使用 {alert_identifier}、{severity}、{kind}、{source_name}、{occurrences}、{first_seen} 和 {last_seen}。",
+			"instructionsCount": "{count} / 4000",
+			"notify": "通知",
+			"notifyEmpty": "此规则创建告警时不会通知任何人。",
+			"labels": "标签",
+			"enabledSwitch": "启用",
+			"tasksPerHour": "每小时机器人任务数",
+			"tasksPerHourHelp": "超出的告警最多排队一小时。",
+			"tasksAtOnce": "同时运行的机器人任务数",
+			"attempts": "每个任务的尝试次数",
+			"dedupWindow": "合并重复事件的时长",
+			"dedupWindowHelp": "在此时间内，去重键相同的新事件会并入未关闭的告警。",
+			"rearm": "新任务前的等待",
+			"rearmHelp": "任务结束后，在此时间内告警的重复事件不会启动新任务。",
+			"unit": {
+				"label": "单位",
+				"seconds": "秒",
+				"minutes": "分钟",
+				"hours": "小时"
+			},
+			"priorityMap": "按严重级别设置优先级",
+			"priority": {
+				"low": "低",
+				"medium": "中",
+				"high": "高",
+				"urgent": "紧急"
+			},
+			"workspaceLimit": "本工作区同时最多运行 {count} 个告警机器人任务（服务器设置）。",
+			"saveRule": "保存规则",
+			"saving": "正在保存…",
+			"testDraft": "用此规则测试",
+			"invalid": "请先修正标记的字段",
+			"saved": "规则已保存",
+			"leave": "不保存此规则就离开吗？",
+			"leaveConfirm": "离开",
+			"conflict": "其他人修改了此规则。请重新加载以查看当前值。",
+			"reload": "重新加载",
+			"deleteDialog": {
+				"title": "删除规则 {name}？",
+				"body": "原本由此规则处理的事件会交给下一条匹配的规则，或只被存储。它创建的告警保持打开，机器人任务也保留。此操作无法撤销。",
+				"confirm": "删除规则",
+				"busy": "正在删除…"
+			}
+		},
+		"error": {
+			"nameRequired": "请输入名称。",
+			"nameLength": "最多 100 个字符。",
+			"rateRange": "请输入 1 到 6000 之间的数字。",
+			"capRange": "请输入 1 到 1000000 之间的数字。",
+			"allowlistCount": "最多填写 64 个地址或网段。",
+			"kindInvalid": "{pattern} 不是有效的类型或前缀（如 waf.*）。",
+			"kindCount": "最多填写 32 个类型。",
+			"botChoose": "请选择机器人。",
+			"instructionsLength": "最多 4000 个字符。",
+			"recipientsCount": "最多选择 50 人。",
+			"labelsCount": "最多选择 50 个标签。",
+			"range": "请输入 {min} 到 {max} 之间的数字。"
+		},
+		"test": {
+			"title": "测试告警规则",
+			"source": "来源",
+			"mode": {
+				"recent": "最近事件",
+				"sample": "示例事件"
+			},
+			"event": "事件",
+			"sample": "示例事件（JSON）",
+			"run": "运行测试",
+			"running": "正在测试…",
+			"noSource": "请先添加入站来源",
+			"noEvents": "该来源还没有已存储的事件",
+			"eventGone": "该事件已不再保存（事件保留 30 天）。",
+			"forecast": "这只是预测：期间到达的事件可能改变结果。未创建任何内容。",
+			"verdict": {
+				"match": "规则 {position}“{name}”会处理此事件：{alert}；{task}。",
+				"noMatch": "没有匹配的规则；该事件只会被存储。"
+			},
+			"alert": {
+				"would_open": "会创建新的告警事项",
+				"would_attach": "会并入未关闭的告警",
+				"would_refuse_alert_cap": "不会创建：已达到规则每小时的告警上限",
+				"no_rule": "无告警"
+			},
+			"task": {
+				"would_start": "会启动机器人任务",
+				"would_queue": "会排队等待（{cause}）",
+				"already_active": "该告警已有正在运行的任务",
+				"already_waiting": "该告警已在排队",
+				"rearm_delay": "处于新任务前的等待期内",
+				"bot_unavailable": "规则的机器人不可用",
+				"none": "无机器人任务"
+			},
+			"cause": {
+				"task_cap": "已达每小时任务数上限",
+				"active_cap": "已达同时运行任务数上限",
+				"workspace_cap": "已达工作区上限",
+				"queue_ahead": "此规则的其他告警正在排队"
+			},
+			"row": {
+				"alert": "告警",
+				"task": "机器人任务",
+				"escalation": "会发送升级通知",
+				"recipients": {
+					"other": "通知 {count} 人"
+				},
+				"title": "事项标题",
+				"limits": "限额",
+				"rules": "已检查的规则"
+			},
+			"limit": {
+				"tasksHour": "最近一小时的任务：{value} / {max}",
+				"active": "正在运行：{value} / {max}",
+				"workspace": "工作区内正在运行：{value} / {max}",
+				"alertsHour": "最近一小时创建的告警：{value} / {max}"
+			},
+			"reason": {
+				"matched": "匹配",
+				"disabled": "已停用",
+				"other_source": "绑定到其他来源",
+				"kind_not_listed": "类型不在列表中",
+				"below_minimum_severity": "低于最低严重级别",
+				"notChecked": "未检查",
+				"draft": "此规则（未保存）"
+			},
+			"more": {
+				"nothingCreated": "测试不会创建任何内容：不创建告警、事项、机器人任务或通知，也不计入任何限额。",
+				"draftIncluded": "正在编辑的规则会按当前内容（未保存）一并参与测试。",
+				"loadFailed": "无法加载来源或事件。",
+				"retry": "重试",
+				"failed": "无法运行测试。",
+				"loadingEvents": "正在加载事件…",
+				"recentOption": "{time} · {kind} · {severity}",
+				"sampleHelp": "符合 Sylvode 事件格式的 JSON 对象：spec、event_id、occurred_at、kind、severity 和 title。",
+				"sampleError": {
+					"empty": "请输入示例事件。",
+					"notJson": "不是有效的 JSON。",
+					"notObject": "示例必须是 JSON 对象。",
+					"tooLarge": "示例超过 {max} KiB。"
+				}
+			}
+		},
+		"extra": {
+			"unsignedTitle": "请求将不会被验证",
+			"paused": "来源已暂停",
+			"takenOver": "来源已接管",
+			"deleted": "来源已删除",
+			"saved": "来源已保存",
+			"stale": "该来源在此期间已被修改或删除。请重新加载以查看当前状态。",
+			"reload": "重新加载",
+			"rulesLoadFailed": "无法读取绑定到该来源的规则，因此未删除任何内容。请重试。"
+		}
+	}
+}

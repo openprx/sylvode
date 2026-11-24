@@ -1,0 +1,51 @@
+{
+	"vetoExercise": {
+		"action": "行使否决权",
+		"title": "行使否决权",
+		"intro": "否决会终止这份提案。提案发起人可在 48 小时内发起申诉升级。",
+		"domain": "领域",
+		"reason": "理由",
+		"reasonCount": "已输入 {count} / {min} 个字符",
+		"enterReason": "请填写否决理由。",
+		"reasonShort": "理由至少需要 {min} 个字符。",
+		"submit": "行使否决权",
+		"submitting": "正在提交...",
+		"done": "已行使否决权",
+		"failed": "无法行使否决权"
+	},
+	"vetoers": {
+		"title": "否决人",
+		"subtitle": "可在决策领域内否决本项目提案的成员和机器人。",
+		"loadFailed": "无法加载否决人",
+		"membersFailed": "无法加载工作区成员",
+		"empty": "本项目还没有否决人。",
+		"member": "成员",
+		"chooseMember": "选择成员",
+		"domain": "领域",
+		"domainPlaceholder": "例如 engineering",
+		"domainHint": "字母、数字、- 和 _，其他字符会替换为 _。",
+		"grant": "授予方式",
+		"grantedBy": {
+			"manual_grant": "管理员授予",
+			"trust_score": "信任分"
+		},
+		"grantedAt": "授予时间",
+		"unknownUser": "未知用户",
+		"bot": "机器人",
+		"add": "添加否决人",
+		"adding": "正在添加...",
+		"added": "已添加否决人",
+		"addFailed": "无法添加否决人",
+		"remove": "移除",
+		"removeTitle": "移除这位否决人？",
+		"removeBody": "{name} 将不能再否决本项目 {domain} 领域的提案。已经行使的否决不受影响。",
+		"removeObject": "否决人 {name}（{domain}）",
+		"removed": "已移除否决人",
+		"removeFailed": "无法移除否决人",
+		"problem": {
+			"member": "请选择成员。",
+			"domain": "请输入领域。",
+			"duplicate": "该成员已是此领域的否决人。"
+		}
+	}
+}

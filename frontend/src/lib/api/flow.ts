@@ -273,6 +273,8 @@ export type FlowMemberLevel = (typeof FLOW_MEMBER_LEVELS)[number];
 export interface FlowFeatureFlags {
 	flow_enabled: boolean;
 	default_member_level: FlowMemberLevel;
+	/** Whether Flow pages may be converted into forms and form records in this workspace. */
+	bridge_enabled: boolean;
 	/** Read-only. Advanced server-side by every authorization-affecting transition. */
 	authz_epoch: number;
 	/** `null` while the workspace has no `flow_workspace_settings` row yet. */
@@ -280,12 +282,13 @@ export interface FlowFeatureFlags {
 	updated_by: string | null;
 }
 
-/** `PUT /workspaces/{workspace_id}/features/flow` request. Both fields are optional but the
+/** `PUT /workspaces/{workspace_id}/features/flow` request. The fields are optional but the
  * request must carry at least one of them (`rest-api-v1.md`); callers build it through
  * `FlowSettingsController`, which refuses an empty change before any request is made. */
 export interface SetFlowFeatureInput {
 	enabled?: boolean;
 	default_member_level?: FlowMemberLevel;
+	bridge_enabled?: boolean;
 	idempotency_key: string;
 }
 

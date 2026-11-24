@@ -1,0 +1,15 @@
+{
+	"inbound": {
+		"rules": {
+			"moreActions": "More actions",
+			"toggleLabel": "Enable rule {name}",
+			"unknownBot": "Unknown bot",
+			"noBots": "This workspace has no bots yet.",
+			"botPlaceholder": "Choose a bot",
+			"error": {
+				"dedupRange": "Enter a length from 1 minute to 7 days.",
+				"rearmRange": "Enter a length from 0 to 1 day."
+			}
+		}
+	}
+}

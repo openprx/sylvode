@@ -12,6 +12,7 @@
 	import { isAdminUser } from '#lib/utils/auth.js';
 	import Button from '#lib/ui/button/Button.svelte';
 	import Input from '#lib/components/Input.svelte';
+	import { AGENT_TYPES, agentTypeKey, type AgentType } from '#lib/admin/agent-types.js';
 	import BotIcon from '#lib/components/BotIcon.svelte';
 	import Modal from '#lib/components/Modal.svelte';
 
@@ -31,12 +32,8 @@
 	let showCreateModal = $state(false);
 	let createForm = $state({ email: '', password: '', name: '' });
 	type EntityType = 'human' | 'bot';
-	type AgentType = 'openclaw' | 'webhook' | 'custom';
 	let entityType = $state<EntityType>('human');
-	let agentType = $state<AgentType>('openclaw');
-	let openclawConfig = $state({ command: '', channel: '', target: '' });
-	let webhookConfig = $state({ url: '', secret: '' });
-	let customConfig = $state({ command: '', args: '' });
+	let agentType = $state<AgentType>('runner');
 
 	let showEditModal = $state(false);
 	let editSaving = $state(false);
@@ -106,20 +103,6 @@
 			toast.error(get(t)('settings.passwordLength'));
 			return;
 		}
-		if (entityType === 'bot') {
-			if (
-				(agentType === 'openclaw' &&
-					(!openclawConfig.command.trim() ||
-						!openclawConfig.channel.trim() ||
-						!openclawConfig.target.trim())) ||
-				(agentType === 'webhook' && !webhookConfig.url.trim()) ||
-				(agentType === 'custom' && !customConfig.command.trim())
-			) {
-				toast.error(get(t)('admin.fillUserFields'));
-				return;
-			}
-		}
-
 		creating = true;
 		const body: {
 			name: string;
@@ -127,7 +110,6 @@
 			password?: string;
 			entity_type: EntityType;
 			agent_type?: AgentType;
-			agent_config?: Record<string, string>;
 		} = {
 			name: createForm.name.trim(),
 			email: createForm.email.trim(),
@@ -137,23 +119,6 @@
 			body.password = createForm.password;
 		} else {
 			body.agent_type = agentType;
-			if (agentType === 'openclaw') {
-				body.agent_config = {
-					command: openclawConfig.command.trim(),
-					channel: openclawConfig.channel.trim(),
-					target: openclawConfig.target.trim()
-				};
-			} else if (agentType === 'webhook') {
-				body.agent_config = {
-					url: webhookConfig.url.trim(),
-					secret: webhookConfig.secret.trim()
-				};
-			} else {
-				body.agent_config = {
-					command: customConfig.command.trim(),
-					args: customConfig.args.trim()
-				};
-			}
 		}
 		const response = await adminApi.createUser(body);
 
@@ -163,10 +128,7 @@
 			showCreateModal = false;
 			createForm = { email: '', password: '', name: '' };
 			entityType = 'human';
-			agentType = 'openclaw';
-			openclawConfig = { command: '', channel: '', target: '' };
-			webhookConfig = { url: '', secret: '' };
-			customConfig = { command: '', args: '' };
+			agentType = 'runner';
 			await loadUsers();
 			toast.success(get(t)('admin.userCreated'));
 		}
@@ -291,10 +253,7 @@
 		showCreateModal = true;
 		createForm = { email: '', password: '', name: '' };
 		entityType = 'human';
-		agentType = 'openclaw';
-		openclawConfig = { command: '', channel: '', target: '' };
-		webhookConfig = { url: '', secret: '' };
-		customConfig = { command: '', args: '' };
+		agentType = 'runner';
 	}
 
 	function isBot(user: ManagedUser): boolean {
@@ -302,16 +261,8 @@
 	}
 
 	function getAgentTypeLabel(agentTypeValue: string | null | undefined): string {
-		switch (agentTypeValue) {
-			case 'openclaw':
-				return get(t)('agentTypes.openclaw');
-			case 'webhook':
-				return get(t)('agentTypes.webhook');
-			case 'custom':
-				return get(t)('agentTypes.custom');
-			default:
-				return get(t)('admin.botBadge');
-		}
+		const key = agentTypeKey(agentTypeValue);
+		return get(t)(key ?? 'admin.botBadge');
 	}
 </script>
 
@@ -570,61 +521,11 @@
 					bind:value={agentType}
 					class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
 				>
-					<option value="openclaw">{$t('agentTypes.openclaw')}</option>
-					<option value="webhook">{$t('agentTypes.webhook')}</option>
-					<option value="custom">{$t('agentTypes.custom')}</option>
+					{#each AGENT_TYPES as type (type)}
+						<option value={type}>{$t(`agentTypes.${type}`)}</option>
+					{/each}
 				</select>
-			</div>
-
-			<div class="space-y-3 rounded-control border border-line p-3">
-				<p class="text-sm font-medium text-fg">
-					{$t('admin.agentConfig')}
-				</p>
-				{#if agentType === 'openclaw'}
-					<Input
-						label={$t('formLabels.command')}
-						bind:value={openclawConfig.command}
-						placeholder={$t('placeholders.openclawCommand')}
-						required
-					/>
-					<Input
-						label={$t('formLabels.channel')}
-						bind:value={openclawConfig.channel}
-						placeholder={$t('placeholders.openclawChannel')}
-						required
-					/>
-					<Input
-						label={$t('formLabels.target')}
-						bind:value={openclawConfig.target}
-						placeholder={$t('placeholders.openclawTarget')}
-						required
-					/>
-				{:else if agentType === 'webhook'}
-					<Input
-						type="url"
-						label={$t('formLabels.url')}
-						bind:value={webhookConfig.url}
-						placeholder={$t('placeholders.webhookUrlInput')}
-						required
-					/>
-					<Input
-						label={$t('formLabels.secret')}
-						bind:value={webhookConfig.secret}
-						placeholder={$t('placeholders.webhookSecret')}
-					/>
-				{:else if agentType === 'custom'}
-					<Input
-						label={$t('formLabels.command')}
-						bind:value={customConfig.command}
-						placeholder={$t('placeholders.customCommand')}
-						required
-					/>
-					<Input
-						label={$t('formLabels.args')}
-						bind:value={customConfig.args}
-						placeholder={$t('placeholders.customArgs')}
-					/>
-				{/if}
+				<p class="mt-1 text-xs text-fg-muted">{$t('admin.agentTypeHelp')}</p>
 			</div>
 		{/if}
 		<div class="flex justify-end gap-2 pt-2">

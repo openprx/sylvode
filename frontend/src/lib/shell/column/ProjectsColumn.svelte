@@ -13,6 +13,7 @@
 	import type { ColumnData } from './column-data.svelte';
 	import {
 		formsGroupToExpand,
+		milestonesRow,
 		projectToExpand,
 		projectsOfWorkspace,
 		shouldRefreshProjects,
@@ -96,7 +97,15 @@
 	// --- personal scope ---
 	const workspaceRows = $derived(workspaceChoiceRows(data.workspaces.items));
 
-	const selectedId = $derived(selectedRowId(personal ? workspaceRows : allRows, url));
+	// The workspace's Milestones row follows its projects.
+	const milestonesNav = $derived(personal ? null : milestonesRow(scope, tr));
+
+	const selectedId = $derived(
+		selectedRowId(
+			personal ? workspaceRows : milestonesNav ? [...allRows, milestonesNav] : allRows,
+			url
+		)
+	);
 
 	function toggle(id: string, open: boolean) {
 		const project = projects.find((p) => p.id === id);
@@ -267,8 +276,16 @@
 		{/each}
 	</div>
 {/if}
+{#if milestonesNav}
+	<div class="milestones" data-nav-section="milestones">
+		<NavList rows={[milestonesNav]} {selectedId} onfollow={follow} />
+	</div>
+{/if}
 
 <style>
+	.milestones {
+		margin-top: var(--rf-space-2);
+	}
 	.branches {
 		display: flex;
 		flex-direction: column;

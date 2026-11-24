@@ -1,7 +1,9 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 
-// The Pages-only browser hides the old table, board, and record editors. This gate verifies
-// that the retired UI does not erase or bypass the typed Collection and Record contracts.
+// Collections are part of the Flow browser: the navigator offers them, a collection opens its
+// table, board and schema editor, and a record opens its panel. This gate verifies that the UI
+// and the typed Collection and Record contracts agree, and that typed objects never open a
+// collaboration document.
 const runId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 const owner = {
 	email: `col-owner-${runId}@e2e.sylvode.test`,
@@ -76,7 +78,7 @@ async function signInAs(page: Page, session: LoginData): Promise<void> {
 	);
 }
 
-test('collection: retired browser controls, typed schema and record operations remain available', async ({
+test('collection: the navigator offers it, the browser opens it, typed schema and record operations work', async ({
 	browser,
 	request
 }) => {
@@ -111,7 +113,7 @@ test('collection: retired browser controls, typed schema and record operations r
 		const navigator = page.getByRole('navigation', { name: 'Navigator' });
 		await page.getByTestId('flow-nav-new').click();
 		await expect(navigator.getByRole('menuitem', { name: 'New Page' })).toBeVisible();
-		await expect(navigator.getByRole('menuitem', { name: 'New Collection' })).toHaveCount(0);
+		await expect(navigator.getByRole('menuitem', { name: 'New Collection' })).toBeVisible();
 
 		const nameId = crypto.randomUUID();
 		const statusId = crypto.randomUUID();
@@ -237,12 +239,12 @@ test('collection: retired browser controls, typed schema and record operations r
 			}
 			if (path.endsWith('/bootstrap')) collabTraffic.push(path.split('/').at(-2) ?? '');
 		});
-		for (const id of [collectionId, first.record.id]) {
-			await page.goto(`/workspace/${workspace.id}/flow/${id}?mode=schema`);
-			await expect(page.getByTestId('flow-typed-unavailable')).toBeVisible();
-			await expect(page.getByTestId('collection-schema-editor')).toHaveCount(0);
-			await expect(page.getByTestId('record-panel-body')).toHaveCount(0);
-		}
+		await page.goto(`/workspace/${workspace.id}/flow/${collectionId}?mode=schema`);
+		await expect(page.getByTestId('collection-renderer')).toBeVisible();
+		await expect(page.getByTestId('collection-schema-editor')).toBeVisible();
+		await page.goto(`/workspace/${workspace.id}/flow/${first.record.id}`);
+		await expect(page.getByTestId('flow-record-route')).toBeVisible();
+		await expect(page.getByTestId('record-panel')).toBeVisible();
 		const typedIds = [
 			collectionId,
 			created.object.document_id,

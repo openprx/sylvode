@@ -6,8 +6,7 @@ export interface AdminUser extends Omit<User, 'role' | 'status'> {
 	status?: string;
 	is_active?: boolean;
 	entity_type?: 'human' | 'bot' | string;
-	agent_type?: 'openclaw' | 'webhook' | 'custom' | string | null;
-	agent_config?: Record<string, unknown> | null;
+	agent_type?: string | null;
 }
 
 export const adminApi = {
@@ -51,7 +50,6 @@ export const adminApi = {
 		password?: string;
 		entity_type?: string;
 		agent_type?: string;
-		agent_config?: Record<string, unknown>;
 		role?: string;
 	}): Promise<ApiResult<User>> {
 		return apiClient.post<User>('/api/v1/admin/users', data);

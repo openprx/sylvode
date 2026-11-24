@@ -1,6 +1,4 @@
 import { apiClient, type ApiResult, type PaginatedData } from './client';
-import { get } from 'svelte/store';
-import { t } from 'svelte-i18n';
 
 export type VetoStatus = 'active' | 'overturned' | 'upheld' | 'withdrawn';
 
@@ -24,6 +22,7 @@ export interface VetoEvent {
 }
 
 export interface VetoerScope {
+	id?: number;
 	user_id: string;
 	project_id: string;
 	domain: string;
@@ -76,13 +75,62 @@ function mapVetoEvent(raw: Record<string, unknown>): VetoEvent {
 	};
 }
 
+/** How a vetoer's seat was granted: by an administrator or from the member's trust score. */
+export type VetoerGrant = 'manual_grant' | 'trust_score';
+
+/** What the server answers when a veto is exercised. */
+export interface ExercisedVeto {
+	veto_id: number;
+	proposal_id: string;
+	proposal_status: string;
+	domain: string;
+	status: VetoStatus;
+	created_at: string;
+}
+
+export interface VetoerKey {
+	user_id: string;
+	project_id: string;
+	domain: string;
+}
+
+/** The failure to hand on: the server's own text when it sent one, else a locale key. */
+function failed<T>(res: ApiResult<unknown>, messageKey: string): ApiResult<T> {
+	return {
+		code: res.code,
+		message: res.message,
+		...(res.message ? {} : { messageKey }),
+		data: null
+	};
+}
+
 export const vetoApi = {
+	/** A listed vetoer vetoes an open or voting proposal; the reason has at least 100 characters. */
+	async exercise(
+		proposalId: string,
+		input: { reason: string; domain?: string }
+	): Promise<ApiResult<ExercisedVeto>> {
+		const res = await apiClient.post<ExercisedVeto>(`/api/v1/proposals/${proposalId}/veto`, input);
+		if (res.code !== 0 || !res.data) return failed(res, 'vetoExercise.failed');
+		return res;
+	},
+
+	/** Owners and admins of the project name a vetoer for one decision domain. */
+	createVetoer(input: VetoerKey & { granted_by?: VetoerGrant }): Promise<ApiResult<null>> {
+		return apiClient.post<null>('/api/v1/vetoers', input);
+	},
+
+	/** The key travels in the request body, as the server reads it. */
+	deleteVetoer(key: VetoerKey): Promise<ApiResult<null>> {
+		return apiClient.delete<null>('/api/v1/vetoers', key);
+	},
+
 	async get(proposalId: string): Promise<ApiResult<VetoEvent>> {
 		const res = await apiClient.get<Record<string, unknown>>(
 			`/api/v1/proposals/${proposalId}/veto`
 		);
 		if (res.code !== 0 || !res.data) {
-			return { code: res.code, message: res.message || get(t)('api.loadVetoFailed'), data: null };
+			return failed(res, 'api.loadVetoFailed');
 		}
 		return { code: 0, message: res.message, data: mapVetoEvent(res.data) };
 	},
@@ -92,11 +140,7 @@ export const vetoApi = {
 			`/api/v1/proposals/${proposalId}/veto/escalation`
 		);
 		if (res.code !== 0 || !res.data) {
-			return {
-				code: res.code,
-				message: res.message || get(t)('api.startEscalationFailed'),
-				data: null
-			};
+			return failed(res, 'api.startEscalationFailed');
 		}
 		return { code: 0, message: res.message, data: mapVetoEvent(res.data) };
 	},
@@ -109,11 +153,7 @@ export const vetoApi = {
 			}
 		);
 		if (res.code !== 0 || !res.data) {
-			return {
-				code: res.code,
-				message: res.message || get(t)('api.voteEscalationFailed'),
-				data: null
-			};
+			return failed(res, 'api.voteEscalationFailed');
 		}
 		return { code: 0, message: res.message, data: mapVetoEvent(res.data) };
 	},
@@ -123,11 +163,7 @@ export const vetoApi = {
 			`/api/v1/proposals/${proposalId}/veto`
 		);
 		if (res.code !== 0 || !res.data) {
-			return {
-				code: res.code,
-				message: res.message || get(t)('api.withdrawVetoFailed'),
-				data: null
-			};
+			return failed(res, 'api.withdrawVetoFailed');
 		}
 		return { code: 0, message: res.message, data: mapVetoEvent(res.data) };
 	},

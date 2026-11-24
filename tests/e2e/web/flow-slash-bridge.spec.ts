@@ -9,7 +9,8 @@ import { expect, test, type APIRequestContext, type Page, type Request } from '@
  * field and one record, a second form, and one Page.
  * In the browser:
  *
- * 1. The Page menu omits the retired Collection embed entry and keeps Page text.
+ * 1. The Page menu offers the Collection embed entry next to the Forms entries, and Escape keeps
+ *    the typed `/` as Page text.
  * 2. `/` -> Reference a Form: project -> form -> record, the request carries
  *    `display.mode=reference`, a card with the record title and a permission badge appears; the
  *    card's link opens the record detail, whose Flow section lists the reference and links back
@@ -198,7 +199,7 @@ async function openSlashMenu(page: Page): Promise<void> {
 	await expect(page.getByRole('listbox')).toBeVisible();
 }
 
-test('Page slash menu omits the retired Collection editor and preserves Page text', async ({
+test('Page slash menu offers the Collection embed and preserves Page text', async ({
 	page,
 	request
 }) => {
@@ -208,7 +209,7 @@ test('Page slash menu omits the retired Collection editor and preserves Page tex
 	await page.goto(`/workspace/${f.workspaceId}/flow/${objectId}`);
 	await openSlashMenu(page);
 	const menu = page.getByRole('listbox');
-	await expect(menu.getByTestId('flow-slash-collection')).toHaveCount(0);
+	await expect(menu.getByTestId('flow-slash-collection')).toBeVisible();
 	await expect(menu.getByTestId('flow-slash-reference')).toBeVisible();
 	await page.keyboard.press('Escape');
 	await expect(menu).not.toBeVisible();

@@ -1,0 +1,15 @@
+{
+	"inbound": {
+		"rules": {
+			"moreActions": "更多操作",
+			"toggleLabel": "启用规则 {name}",
+			"unknownBot": "未知机器人",
+			"noBots": "此工作区还没有机器人。",
+			"botPlaceholder": "选择机器人",
+			"error": {
+				"dedupRange": "请输入 1 分钟到 7 天之间的时长。",
+				"rearmRange": "请输入 0 到 1 天之间的时长。"
+			}
+		}
+	}
+}

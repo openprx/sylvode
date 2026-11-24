@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { FLOW_TASK_SESSIONS, type FlowTaskSessions } from '#lib/workbench/flow-sessions.js';
 	import { TaskWorkbench, WORKBENCH_CONTEXT } from '#lib/workbench/tabs.js';
-	import { FLOW_COLLECTION_UI_ENABLED, pageOnlyParents } from '#lib/flow/product-mode.js';
 	import { observeNavigatorDocument } from '#lib/flow/navigator-doc-observer.js';
 	import { navigatorPlacements } from '#lib/flow/navigator-placements.js';
 	import { resolve } from '$app/paths';
@@ -161,7 +160,6 @@
 	let newMenuButton = $state<HTMLButtonElement | null>(null);
 	let newMenuEl = $state<HTMLDivElement | null>(null);
 	let collectionDialogOpen = $state(false);
-	let navigationParents = $state<Record<string, string | null>>({});
 	let trashOpen = $state(false);
 	let trashItems = $state<FlowTrashItem[]>([]);
 	let trashFailureKey = $state<string | null>(null);
@@ -170,6 +168,9 @@
 	let trashNextCursor = $state<string | null>(null);
 	let trashRequest = 0;
 	let confirmingDelete = $state<string | null>(null);
+
+	const isNavigatorTrashItem = (item: FlowTrashItem) =>
+		item.object_type === 'page' || item.object_type === 'collection';
 
 	async function loadTrash(cursor: string | null = null): Promise<void> {
 		const request = ++trashRequest;
@@ -185,13 +186,13 @@
 			trashItems = cursor
 				? [
 						...new Map(
-							[
-								...trashItems,
-								...result.data.items.filter((item) => item.object_type === 'page')
-							].map((item) => [item.id, item])
+							[...trashItems, ...result.data.items.filter(isNavigatorTrashItem)].map((item) => [
+								item.id,
+								item
+							])
 						).values()
 					]
-				: result.data.items.filter((item) => item.object_type === 'page');
+				: result.data.items.filter(isNavigatorTrashItem);
 			trashNextCursor = result.data.next_cursor ?? null;
 			trashFailureKey = null;
 		} else {
@@ -262,11 +263,8 @@
 		void orderVersion;
 		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local scratch collection, not reactive state
 		const byParent = new Map<string | null, FlowObjectView[]>();
-		const displayParents = rootObjectId
-			? pageOnlyParents(objects, navigationParents, rootObjectId)
-			: null;
 		for (const object of objects) {
-			const parentKey = displayParents?.get(object.id) ?? object.parent_id ?? null;
+			const parentKey = object.parent_id ?? null;
 			const siblings = byParent.get(parentKey) ?? [];
 			siblings.push(object);
 			byParent.set(parentKey, siblings);
@@ -370,13 +368,18 @@
 		}
 	}
 
-	async function loadObjects(): Promise<void> {
+	/** Pages and collections make the tree; the records of a collection are read inside it. */
+	const NAVIGATOR_OBJECT_TYPES = ['page', 'collection'] as const;
+
+	async function loadObjectsOfType(
+		objectType: (typeof NAVIGATOR_OBJECT_TYPES)[number]
+	): Promise<FlowObjectView[]> {
 		let cursor: string | undefined;
 		const loaded: FlowObjectView[] = [];
 		for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
 			const result = await commandService.listObjects(scopeId, {
 				limit: 100,
-				object_type: 'page',
+				object_type: objectType,
 				...(cursor ? { cursor } : {})
 			});
 			if (result.code !== 0 || !result.data) {
@@ -385,14 +388,11 @@
 			}
 			loaded.push(
 				...result.data.items.filter(
-					(object) => object.scope_id === scopeId && object.object_type === 'page'
+					(object) => object.scope_id === scopeId && object.object_type === objectType
 				)
 			);
 			cursor = result.data.next_cursor ?? undefined;
-			if (!cursor) {
-				objects = loaded;
-				return;
-			}
+			if (!cursor) return loaded;
 		}
 		throw {
 			code: 'limit_exceeded',
@@ -401,14 +401,18 @@
 		};
 	}
 
+	async function loadObjects(): Promise<void> {
+		const loaded: FlowObjectView[] = [];
+		for (const objectType of NAVIGATOR_OBJECT_TYPES)
+			loaded.push(...(await loadObjectsOfType(objectType)));
+		objects = loaded;
+	}
+
 	async function loadNavigatorRoot(): Promise<string> {
 		const result = await commandService.getNavigator(scopeId);
 		if (result.code !== 0 || !result.data) {
 			throw flowErrorFromResult(result);
 		}
-		navigationParents = Object.fromEntries(
-			result.data.nodes.map((node) => [node.object_id, node.parent_id ?? null])
-		);
 		placements = navigatorPlacements(result.data.nodes.filter((node) => node.type === 'page'));
 		rootObjectId = result.data.root_object_id;
 		return result.data.root_object_id;
@@ -614,7 +618,6 @@
 	}
 
 	function chooseNewCollection(): void {
-		if (!FLOW_COLLECTION_UI_ENABLED) return;
 		closeNewMenu(false);
 		collectionDialogOpen = true;
 	}
@@ -1019,16 +1022,14 @@
 					>
 						{$t('flow.nav.newPage')}
 					</button>
-					{#if FLOW_COLLECTION_UI_ENABLED}
-						<button
-							type="button"
-							role="menuitem"
-							class="block min-h-11 w-full px-3 text-left text-fg hover:bg-surface focus:bg-surface"
-							onclick={chooseNewCollection}
-						>
-							{$t('flow.nav.createCollection.menuItem')}
-						</button>
-					{/if}
+					<button
+						type="button"
+						role="menuitem"
+						class="block min-h-11 w-full px-3 text-left text-fg hover:bg-surface focus:bg-surface"
+						onclick={chooseNewCollection}
+					>
+						{$t('flow.nav.createCollection.menuItem')}
+					</button>
 				</div>
 			{/if}
 		</div>
@@ -1348,7 +1349,7 @@
 			</button>
 			{#if trashOpen}
 				{#if trashItems.length === 0 && !trashLoading && !trashFailureKey}
-					<p class="px-2 py-1 text-xs text-fg-muted">{$t('flow.pageOnly.trashEmpty')}</p>
+					<p class="px-2 py-1 text-xs text-fg-muted">{$t('flow.trash.noItems')}</p>
 				{/if}
 				<ul class="space-y-1">
 					{#each trashItems as item (item.id)}

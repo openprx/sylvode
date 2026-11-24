@@ -498,7 +498,7 @@ test("personal and directly shared collections keep typed record operations and 
     await page.getByTestId("flow-nav-new").click();
     await expect(
       page.getByRole("menuitem", { name: "New Collection", exact: true }),
-    ).toHaveCount(0);
+    ).toBeVisible();
     const fieldId = crypto.randomUUID();
     const created = await unwrap<{ object: ObjectView }>(
       await page.request.post("/api/v2/flow/objects", {
@@ -579,10 +579,8 @@ test("personal and directly shared collections keep typed record operations and 
     };
     await patch(page, auth, `Typed owner ${run}`);
     await page.goto(`/flow/${record.id}`);
-    await expect(page.getByTestId("flow-typed-unavailable")).toContainText(
-      "Existing Collection and Record data is preserved.",
-    );
-    await expect(page.getByTestId("record-panel")).toHaveCount(0);
+    await expect(page.getByTestId("flow-record-route")).toBeVisible();
+    await expect(page.getByTestId("record-panel")).toBeVisible();
     const before = await unwrap<ObjectView>(
       await request.get(`/api/v2/flow/objects/${record.id}`, { headers: auth }),
     );
@@ -608,8 +606,8 @@ test("personal and directly shared collections keep typed record operations and 
     const guestPage = await signIn(visitorContext, visitor);
     captureTickets(guestPage);
     await guestPage.goto(`/flow/${collection.id}`);
-    await expect(guestPage.getByTestId("flow-typed-unavailable")).toBeVisible();
-    await expect(guestPage.getByTestId("collection-table")).toHaveCount(0);
+    await expect(guestPage.getByTestId("collection-renderer")).toBeVisible();
+    await expect(guestPage.getByTestId("collection-table")).toBeVisible();
     expect(
       (await readRecord(guestPage, visitorAuth)).values_by_field_id[fieldId],
     ).toBe(`Typed owner ${run}`);

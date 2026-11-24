@@ -346,30 +346,10 @@
 		"member": "成员",
 		"user": "用户"
 	},
-	"agentTypes": {
-		"openclaw": "OpenClaw",
-		"webhook": "Webhook",
-		"custom": "自定义"
-	},
 	"placeholders": {
 		"emailPlaceholder": "your@email.com",
 		"passwordPlaceholder": "••••••••",
-		"webhookUrl": "https://example.com/webhook",
-		"openclawCommand": "openclaw message send",
-		"openclawChannel": "signal",
-		"openclawTarget": "uuid:xxx",
-		"webhookUrlInput": "https://...",
-		"webhookSecret": "optional",
-		"customCommand": "/usr/bin/...",
-		"customArgs": "--mode run --target demo"
-	},
-	"formLabels": {
-		"command": "命令",
-		"channel": "渠道",
-		"target": "目标",
-		"url": "URL",
-		"secret": "密钥",
-		"args": "参数"
+		"webhookUrl": "https://example.com/webhook"
 	},
 	"landing": {
 		"title": "Sylvode",
@@ -392,7 +372,6 @@
 		"bot": "机器人",
 		"botBadge": "机器人",
 		"agentType": "Agent 类型",
-		"agentConfig": "Agent 配置",
 		"role": "角色",
 		"status": "状态",
 		"active": "启用",
@@ -4140,13 +4119,6 @@
 			"recordReviewAction": "以当前版本为草稿保存基础",
 			"recordCurrentValue": "当前已保存的值",
 			"recordContainerReadonly": "所属容器未激活时，记录内容为只读。如有权限，仍可归档此记录以完成清理。"
-		},
-		"pageOnly": {
-			"title": "此功能暂未开放",
-			"body": "Flow 当前只开放 Page，原有集合和记录数据已保留。",
-			"back": "返回 Page",
-			"embedHidden": "集合暂未开放，原有数据已保留。",
-			"trashEmpty": "此页暂无 Page 回收记录。"
 		},
 		"layout": {
 			"more": "更多",

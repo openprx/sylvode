@@ -67,6 +67,19 @@ export function projectsOfWorkspace<T extends ProjectLike>(
 		.sort((a, b) => collator.compare(a.name, b.name) || a.id.localeCompare(b.id));
 }
 
+/** The workspace's Milestones row, listed under its projects. */
+export function milestonesRow(workspaceId: string, tr: Translate): NavRow {
+	return {
+		id: 'milestones',
+		label: tr('milestones.title'),
+		href: `/workspace/${enc(workspaceId)}/milestones`,
+		glyph: 'flag',
+		level: 0,
+		parentId: null,
+		attrs: { 'data-nav-milestones': workspaceId }
+	};
+}
+
 /** Personal scope: one row per workspace; choosing one sets the scope. */
 export function workspaceChoiceRows(workspaces: readonly WorkspaceRef[]): NavRow[] {
 	return workspaces.map((w) => ({

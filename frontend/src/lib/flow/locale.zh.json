@@ -1,0 +1,17 @@
+{
+	"flow": {
+		"settings": {
+			"bridge": {
+				"status": "页面转换为表单",
+				"heading": "允许将 Flow 页面转换为表单",
+				"description": "关闭后，任何人都不能把 Flow 页面转换为表单或表单记录。",
+				"turnOn": "开启",
+				"turnOff": "关闭",
+				"saved": "已保存。"
+			}
+		},
+		"trash": {
+			"noItems": "回收站的这一部分没有页面或集合。"
+		}
+	}
+}

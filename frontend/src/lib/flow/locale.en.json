@@ -1,0 +1,17 @@
+{
+	"flow": {
+		"settings": {
+			"bridge": {
+				"status": "Converting pages into forms",
+				"heading": "Allow converting Flow pages into forms",
+				"description": "When off, nobody can turn Flow pages into forms or form records.",
+				"turnOn": "Turn on",
+				"turnOff": "Turn off",
+				"saved": "Saved."
+			}
+		},
+		"trash": {
+			"noItems": "No pages or collections in this part of the trash."
+		}
+	}
+}

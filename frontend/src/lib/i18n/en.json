@@ -346,30 +346,10 @@
 		"member": "Member",
 		"user": "User"
 	},
-	"agentTypes": {
-		"openclaw": "OpenClaw",
-		"webhook": "Webhook",
-		"custom": "Custom"
-	},
 	"placeholders": {
 		"emailPlaceholder": "your@email.com",
 		"passwordPlaceholder": "••••••••",
-		"webhookUrl": "https://example.com/webhook",
-		"openclawCommand": "openclaw message send",
-		"openclawChannel": "signal",
-		"openclawTarget": "uuid:xxx",
-		"webhookUrlInput": "https://...",
-		"webhookSecret": "optional",
-		"customCommand": "/usr/bin/...",
-		"customArgs": "--mode run --target demo"
-	},
-	"formLabels": {
-		"command": "Command",
-		"channel": "Channel",
-		"target": "Target",
-		"url": "URL",
-		"secret": "Secret",
-		"args": "Args"
+		"webhookUrl": "https://example.com/webhook"
 	},
 	"landing": {
 		"title": "Sylvode",
@@ -392,7 +372,6 @@
 		"bot": "Bot",
 		"botBadge": "Bot",
 		"agentType": "Agent Type",
-		"agentConfig": "Agent Config",
 		"role": "Role",
 		"status": "Status",
 		"active": "Active",
@@ -4140,13 +4119,6 @@
 			"recordReviewAction": "Use current version for my drafts",
 			"recordCurrentValue": "Current saved value",
 			"recordContainerReadonly": "Record content is read-only while its container is inactive. Authorized archive cleanup remains available."
-		},
-		"pageOnly": {
-			"title": "This feature is not currently available",
-			"body": "Flow currently focuses on Pages. Existing Collection and Record data is preserved.",
-			"back": "Back to Pages",
-			"embedHidden": "Collection is currently hidden. Its existing data is preserved.",
-			"trashEmpty": "No Page items in this trash page."
 		},
 		"layout": {
 			"more": "More",

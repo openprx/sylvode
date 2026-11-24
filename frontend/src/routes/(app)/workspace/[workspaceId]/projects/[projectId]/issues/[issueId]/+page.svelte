@@ -11,9 +11,11 @@
 	import { issuesApi, type Issue, type IssuePriority, type IssueStatus } from '#lib/api/issues.js';
 	import { labelsApi, type Label } from '#lib/api/labels.js';
 	import { sprintsApi, type Sprint } from '#lib/api/sprints.js';
+	import { milestonesApi, type Milestone } from '#lib/api/milestones.js';
 	import { membersApi, type WorkspaceMember } from '#lib/api/members.js';
 	import { workflowsApi, type WorkflowStateDef } from '#lib/api/workflows.js';
 	import { authStore } from '#lib/stores/auth.js';
+	import { isWorkspaceAdminRole } from '#lib/workspace/home.js';
 	import { toast } from '#lib/stores/toast.js';
 	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import { renderMarkdown } from '#lib/utils/markdown.js';
@@ -34,11 +36,18 @@
 	import Tag from '#lib/components/Tag.svelte';
 	import DatePicker from '#lib/ui/date/DatePicker.svelte';
 	import { sprintChoices } from '#lib/sprints/rules.js';
+	import {
+		loadAllMilestones,
+		milestoneActivityText,
+		milestoneChoices,
+		milestoneNameOf
+	} from '#lib/milestones/rules.js';
 	import { workflowStateLabel } from '#lib/utils/workflow-state.js';
 	import { dueDateToTimestamp, timestampToDueDate } from '#lib/utils/due-date.js';
 	import Textarea from '#lib/components/Textarea.svelte';
 	import BotIcon from '#lib/components/BotIcon.svelte';
 	import AgentTasksPanel from '#lib/project/agent-tasks/AgentTasksPanel.svelte';
+	import AlertPanel from '#lib/project/alert-panel/AlertPanel.svelte';
 
 	type SelectOption = {
 		label: string;
@@ -72,6 +81,7 @@
 	let projectLabels = $state<Label[]>([]);
 	let issueLabels = $state<Label[]>([]);
 	let sprints = $state<Sprint[]>([]);
+	let milestones = $state<Milestone[]>([]);
 	let workspaceMembers = $state<WorkspaceMember[]>([]);
 	let memberNameMap = $state<Record<string, string>>({});
 	let memberEntityTypeMap = $state<Record<string, string>>({});
@@ -89,8 +99,11 @@
 	let priorityValue = $state<IssuePriority>('medium');
 	let assigneeValue = $state('');
 	let sprintValue = $state('');
+	let milestoneValue = $state('');
 	let dueValue = $state<string | null>(null);
-	let updatingField = $state<'status' | 'priority' | 'assignee' | 'sprint' | 'due' | null>(null);
+	let updatingField = $state<
+		'status' | 'priority' | 'assignee' | 'sprint' | 'milestone' | 'due' | null
+	>(null);
 
 	let selectedLabelId = $state('');
 	let labelSaving = $state(false);
@@ -143,6 +156,15 @@
 		sprintChoices(sprints, issue?.sprint_id ?? null, {
 			none: get(t)('issue.noSprint'),
 			status: (status) => get(t)(`cycles.status.${status}`)
+		})
+	);
+
+	// "No milestone" and the open milestones of the workspace; a closed milestone is listed only
+	// while the item is still in it, and cannot be chosen.
+	const milestoneSelectOptions = $derived.by<SelectOption[]>(() =>
+		milestoneChoices(milestones, issue?.milestone_id ?? null, {
+			none: get(t)('milestones.field.none'),
+			closed: get(t)('milestones.field.closed')
 		})
 	);
 
@@ -199,7 +221,8 @@
 			labelsResponse,
 			issueLabelsResponse,
 			sprintsResponse,
-			workflowResponse
+			workflowResponse,
+			milestonesResponse
 		] = await Promise.all([
 			issuesApi.get(issueId),
 			commentsApi.list(issueId),
@@ -207,7 +230,8 @@
 			labelsApi.list(workspaceId),
 			labelsApi.listForIssue(issueId),
 			sprintsApi.list(projectId),
-			workflowsApi.getEffectiveByProject(projectId)
+			workflowsApi.getEffectiveByProject(projectId),
+			loadAllMilestones(milestonesApi.list, workspaceId)
 		]);
 
 		if (issueResponse.code !== 0) {
@@ -222,6 +246,7 @@
 			priorityValue = issueResponse.data.priority;
 			assigneeValue = issueResponse.data.assignee_id ?? '';
 			sprintValue = issueResponse.data.sprint_id ?? '';
+			milestoneValue = issueResponse.data.milestone_id ?? '';
 			dueValue = timestampToDueDate(issueResponse.data.due_at);
 			issueLabels = extractIssueLabels(issueResponse.data);
 		}
@@ -252,6 +277,12 @@
 			toast.error(describeResult(sprintsResponse));
 		} else if (sprintsResponse.data) {
 			sprints = sprintsResponse.data.items ?? [];
+		}
+
+		if (milestonesResponse.code !== 0) {
+			toast.error(get(t)('milestones.field.loadFailed'));
+		} else if (milestonesResponse.data) {
+			milestones = milestonesResponse.data;
 		}
 
 		if (workflowResponse.code === 0 && workflowResponse.data?.states?.length) {
@@ -331,6 +362,7 @@
 		priority?: IssuePriority;
 		assignee_id?: string | null;
 		sprint_id?: string | null;
+		milestone_id?: string | null;
 		due_at?: string | null;
 	}): Promise<boolean> {
 		if (!issue) {
@@ -354,6 +386,7 @@
 			priorityValue = response.data.priority;
 			assigneeValue = response.data.assignee_id ?? '';
 			sprintValue = response.data.sprint_id ?? '';
+			milestoneValue = response.data.milestone_id ?? '';
 			dueValue = timestampToDueDate(response.data.due_at);
 		}
 
@@ -464,6 +497,25 @@
 			sprintValue = previous;
 		} else {
 			toast.success(get(t)('issue.sprintUpdated'));
+		}
+		updatingField = null;
+	}
+
+	async function handleMilestoneChange() {
+		if (!issue || updatingField) {
+			return;
+		}
+		if ((issue.milestone_id ?? '') === milestoneValue) {
+			return;
+		}
+
+		updatingField = 'milestone';
+		const previous = issue.milestone_id ?? '';
+		const success = await updateIssue({ milestone_id: milestoneValue || null });
+		if (!success) {
+			milestoneValue = previous;
+		} else {
+			toast.success(get(t)('milestones.field.updated'));
 		}
 		updatingField = null;
 	}
@@ -1002,6 +1054,8 @@
 					});
 				}
 				return get(t)('activity.sprintRemoved');
+			case 'milestone_changed':
+				return milestoneActivityText(get(t), detail, (id) => milestoneNameOf(milestones, id));
 			case 'label_added':
 				return get(t)('activity.labelAdded', { values: { name: labelName } });
 			case 'label_removed':
@@ -1183,6 +1237,16 @@
 						{/if}
 					</div>
 
+					<AlertPanel
+						{issueId}
+						{workspaceId}
+						{projectId}
+						isAdmin={isWorkspaceAdminRole(
+							workspaceMembers.find((member) => member.user_id === currentUserId)?.role
+						)}
+						refreshKey={agentTasksRefresh}
+					/>
+
 					<AgentTasksPanel {issueId} names={memberNameMap} refreshKey={agentTasksRefresh} />
 
 					<div class="rounded-card border border-line bg-raised p-5">
@@ -1308,6 +1372,13 @@
 							options={sprintSelectOptions}
 							bind:value={sprintValue}
 							onchange={handleSprintChange}
+							disabled={updatingField !== null}
+						/>
+						<Select
+							label={$t('milestones.field.label')}
+							options={milestoneSelectOptions}
+							bind:value={milestoneValue}
+							onchange={handleMilestoneChange}
 							disabled={updatingField !== null}
 						/>
 						<DatePicker

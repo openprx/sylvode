@@ -23,6 +23,7 @@ export type GlyphName =
 	| 'bot'
 	| 'sparkles'
 	| 'landmark'
+	| 'flag'
 	| 'users'
 	| 'briefcase';
 

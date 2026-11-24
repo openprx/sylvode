@@ -1,0 +1,84 @@
+{
+	"milestones": {
+		"title": "Milestones",
+		"subtitle": "Goals that span projects. An item belongs to at most one milestone.",
+		"pageTitle": {
+			"list": "Milestones",
+			"detail": "Milestone"
+		},
+		"things": {
+			"milestones": "milestones"
+		},
+		"create": "New milestone",
+		"edit": "Edit milestone",
+		"editAction": "Edit",
+		"name": "Name",
+		"namePlaceholder": "For example Beta",
+		"description": "Description",
+		"descriptionPlaceholder": "What this milestone is for",
+		"targetDate": "Target date",
+		"noTargetDate": "No target date",
+		"overdue": "Overdue",
+		"status": {
+			"open": "Open",
+			"closed": "Closed"
+		},
+		"filter": {
+			"label": "Show milestones",
+			"open": "Open",
+			"closed": "Closed"
+		},
+		"loading": "Loading milestones",
+		"empty": "No milestones yet",
+		"emptyAdmin": "Create a milestone to group work items from several projects.",
+		"emptyMember": "An owner or admin of the workspace creates milestones.",
+		"emptyClosed": "No closed milestones",
+		"emptyOpen": "No open milestones",
+		"readOnly": "Only owners and admins of the workspace change milestones.",
+		"progress": "{done} of {total} items done",
+		"noItems": "No items yet",
+		"byProject": "By project",
+		"projectCount": "{key}: {done} of {total}",
+		"back": "All milestones",
+		"close": "Close milestone",
+		"reopen": "Reopen milestone",
+		"deleteAction": "Delete",
+		"deleteTitle": "Delete milestone {name}?",
+		"deleteBody": "Its work items stay and are removed from the milestone. This cannot be undone.",
+		"deleteConfirm": "Delete milestone {name}",
+		"createdToast": "Milestone created",
+		"updatedToast": "Milestone updated",
+		"closedToast": "Milestone closed",
+		"reopenedToast": "Milestone reopened",
+		"deletedToast": "Milestone deleted",
+		"enterName": "Enter a name.",
+		"nameTooLong": "The name is at most 100 characters.",
+		"items": "Work items",
+		"itemsNone": "No work item is in this milestone.",
+		"truncated": "Only the first 500 items are listed.",
+		"projectItems": "{key} ({count})",
+		"itemDone": "Done",
+		"notFound": "This milestone does not exist, or you cannot see it.",
+		"error": {
+			"nameTaken": "A milestone with this name already exists.",
+			"failed": "The milestone request failed."
+		},
+		"field": {
+			"label": "Milestone",
+			"none": "No milestone",
+			"closed": "closed",
+			"updated": "Milestone updated",
+			"loadFailed": "Could not load the milestones."
+		},
+		"filterItems": {
+			"label": "Milestone",
+			"all": "All",
+			"none": "No milestone"
+		},
+		"activity": {
+			"set": "set the milestone to {name}",
+			"setUnnamed": "changed the milestone",
+			"removed": "removed the milestone"
+		}
+	}
+}

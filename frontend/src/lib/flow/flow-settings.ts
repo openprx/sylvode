@@ -32,7 +32,8 @@ export { FLOW_MEMBER_LEVELS, type FlowMemberLevel };
 
 export type FlowSettingsChange =
 	| { readonly field: 'enabled'; readonly value: boolean }
-	| { readonly field: 'default_member_level'; readonly value: FlowMemberLevel };
+	| { readonly field: 'default_member_level'; readonly value: FlowMemberLevel }
+	| { readonly field: 'bridge_enabled'; readonly value: boolean };
 
 export interface FlowSettingsIntent {
 	readonly change: FlowSettingsChange;
@@ -93,6 +94,10 @@ export function buildFlowFeatureRequest(
 		if (typeof change.value !== 'boolean') throw new FlowSettingsChangeError('invalid_value');
 		return { enabled: change.value, idempotency_key: idempotencyKey };
 	}
+	if (change.field === 'bridge_enabled') {
+		if (typeof change.value !== 'boolean') throw new FlowSettingsChangeError('invalid_value');
+		return { bridge_enabled: change.value, idempotency_key: idempotencyKey };
+	}
 	if (change.field === 'default_member_level') {
 		if (!isFlowMemberLevel(change.value)) throw new FlowSettingsChangeError('invalid_value');
 		return { default_member_level: change.value, idempotency_key: idempotencyKey };
@@ -100,9 +105,15 @@ export function buildFlowFeatureRequest(
 	throw new FlowSettingsChangeError('empty_change');
 }
 
-/** Disabling Flow and any baseline change are confirmed; enabling is not. */
+/**
+ * Disabling Flow and any baseline change are confirmed; enabling is not, and neither is the
+ * conversion switch (it only gates new conversions and turns back on at once).
+ */
 export function changeRequiresConfirmation(change: FlowSettingsChange): boolean {
-	return change.field === 'default_member_level' || change.value === false;
+	return (
+		change.field === 'default_member_level' ||
+		(change.field === 'enabled' && change.value === false)
+	);
 }
 
 /**
@@ -149,6 +160,7 @@ function stripEventId(update: FlowFeatureUpdate): FlowFeatureFlags {
 	return {
 		flow_enabled: update.flow_enabled,
 		default_member_level: update.default_member_level,
+		bridge_enabled: update.bridge_enabled,
 		authz_epoch: update.authz_epoch,
 		updated_at: update.updated_at,
 		updated_by: update.updated_by
@@ -284,8 +296,13 @@ export class FlowSettingsController {
 	private matchesCurrent(change: FlowSettingsChange): boolean {
 		const feature = this.feature;
 		if (!feature) return false;
-		return change.field === 'enabled'
-			? feature.flow_enabled === change.value
-			: feature.default_member_level === change.value;
+		switch (change.field) {
+			case 'enabled':
+				return feature.flow_enabled === change.value;
+			case 'bridge_enabled':
+				return feature.bridge_enabled === change.value;
+			case 'default_member_level':
+				return feature.default_member_level === change.value;
+		}
 	}
 }

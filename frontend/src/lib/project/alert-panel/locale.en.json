@@ -1,0 +1,23 @@
+{
+	"alertPanel": {
+		"title": "Alert",
+		"refresh": "Refresh",
+		"open": "Open",
+		"closed": "Closed",
+		"source": "Source",
+		"deletedSource": "Deleted source",
+		"kind": "Kind",
+		"occurrences": "Occurrences",
+		"firstSeen": "First seen",
+		"lastSeen": "Last seen",
+		"rule": "Rule",
+		"deletedRule": "Deleted rule",
+		"task": "Bot task",
+		"taskNone": "No bot task",
+		"taskWaiting": "Waiting for a free slot",
+		"taskWaitingUntil": "until {time}",
+		"taskSuppressed": "Not started: safety limit",
+		"viewTask": "View task",
+		"thing": "alert details"
+	}
+}

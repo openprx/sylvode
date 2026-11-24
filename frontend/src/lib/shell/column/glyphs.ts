@@ -5,6 +5,7 @@ import Bot from '@lucide/svelte/icons/bot';
 import Briefcase from '@lucide/svelte/icons/briefcase';
 import Clock from '@lucide/svelte/icons/clock';
 import FileText from '@lucide/svelte/icons/file-text';
+import Flag from '@lucide/svelte/icons/flag';
 import Folder from '@lucide/svelte/icons/folder';
 import FolderKanban from '@lucide/svelte/icons/folder-kanban';
 import House from '@lucide/svelte/icons/house';
@@ -40,6 +41,7 @@ export const GLYPHS: Record<GlyphName, GlyphComponent> = {
 	bot: Bot,
 	sparkles: Sparkles,
 	landmark: Landmark,
+	flag: Flag,
 	users: Users,
 	briefcase: Briefcase
 };

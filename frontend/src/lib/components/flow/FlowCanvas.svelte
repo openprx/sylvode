@@ -10,7 +10,6 @@
 
 	import { rememberEditorSelection, recalledEditorSelection } from '#lib/flow/editor-session.js';
 	import type { FlowMark } from '#lib/flow/editor-schema.js';
-	import { FLOW_COLLECTION_UI_ENABLED } from '#lib/flow/product-mode.js';
 	import { onDestroy, onMount, getContext, tick } from 'svelte';
 	import { FLOW_REPOSITORY_CONTEXT } from '#lib/flow/context-keys.js';
 	import type { FlowObjectRepository } from '#lib/flow/object-repository.js';
@@ -392,11 +391,7 @@
 	// Entries whose result is not a text block: a server-created Collection embed, a Forms
 	// Bridge Reference / Embed, and the conversion wizard. Each carries its ownership note.
 	const filteredBridgeOptions = $derived(
-		SLASH_BRIDGE_OPTIONS.filter(
-			(option) =>
-				(FLOW_COLLECTION_UI_ENABLED || option.action !== 'collection') &&
-				(option.action !== 'convert' || canConvert)
-		).filter(
+		SLASH_BRIDGE_OPTIONS.filter((option) => option.action !== 'convert' || canConvert).filter(
 			(option) =>
 				commandQuery === '' ||
 				(

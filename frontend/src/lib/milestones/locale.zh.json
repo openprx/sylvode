@@ -1,0 +1,84 @@
+{
+	"milestones": {
+		"title": "里程碑",
+		"subtitle": "跨项目的目标。一个工作项最多属于一个里程碑。",
+		"pageTitle": {
+			"list": "里程碑",
+			"detail": "里程碑"
+		},
+		"things": {
+			"milestones": "里程碑"
+		},
+		"create": "新建里程碑",
+		"edit": "编辑里程碑",
+		"editAction": "编辑",
+		"name": "名称",
+		"namePlaceholder": "例如 Beta",
+		"description": "描述",
+		"descriptionPlaceholder": "这个里程碑的用途",
+		"targetDate": "目标日期",
+		"noTargetDate": "没有目标日期",
+		"overdue": "已逾期",
+		"status": {
+			"open": "进行中",
+			"closed": "已关闭"
+		},
+		"filter": {
+			"label": "显示里程碑",
+			"open": "进行中",
+			"closed": "已关闭"
+		},
+		"loading": "正在加载里程碑",
+		"empty": "还没有里程碑",
+		"emptyAdmin": "创建一个里程碑，把多个项目的工作项归在一起。",
+		"emptyMember": "里程碑由工作区的所有者或管理员创建。",
+		"emptyClosed": "没有已关闭的里程碑",
+		"emptyOpen": "没有进行中的里程碑",
+		"readOnly": "只有工作区的所有者和管理员可以修改里程碑。",
+		"progress": "已完成 {done} / {total} 个工作项",
+		"noItems": "还没有工作项",
+		"byProject": "按项目",
+		"projectCount": "{key}：{done} / {total}",
+		"back": "全部里程碑",
+		"close": "关闭里程碑",
+		"reopen": "重新打开里程碑",
+		"deleteAction": "删除",
+		"deleteTitle": "删除里程碑 {name}？",
+		"deleteBody": "其中的工作项会保留，并从该里程碑中移除。此操作无法撤销。",
+		"deleteConfirm": "删除里程碑 {name}",
+		"createdToast": "里程碑已创建",
+		"updatedToast": "里程碑已更新",
+		"closedToast": "里程碑已关闭",
+		"reopenedToast": "里程碑已重新打开",
+		"deletedToast": "里程碑已删除",
+		"enterName": "请输入名称。",
+		"nameTooLong": "名称最多 100 个字符。",
+		"items": "工作项",
+		"itemsNone": "没有工作项属于这个里程碑。",
+		"truncated": "只列出前 500 个工作项。",
+		"projectItems": "{key}（{count}）",
+		"itemDone": "已完成",
+		"notFound": "这个里程碑不存在，或你无权查看。",
+		"error": {
+			"nameTaken": "已有同名的里程碑。",
+			"failed": "里程碑请求失败。"
+		},
+		"field": {
+			"label": "里程碑",
+			"none": "无里程碑",
+			"closed": "已关闭",
+			"updated": "里程碑已更新",
+			"loadFailed": "无法加载里程碑。"
+		},
+		"filterItems": {
+			"label": "里程碑",
+			"all": "全部",
+			"none": "无里程碑"
+		},
+		"activity": {
+			"set": "将里程碑设为 {name}",
+			"setUnnamed": "更改了里程碑",
+			"removed": "移除了里程碑"
+		}
+	}
+}
