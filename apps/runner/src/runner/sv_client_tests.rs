@@ -260,3 +260,19 @@ async fn a_body_over_the_cap_is_refused_while_it_is_read() {
     assert!(seen < 8 * 1024 * 1024, "{seen} bytes were pulled");
     assert_eq!(c.task_view("declared", 1, WAIT).await, Err(SvError::Transport));
 }
+
+#[tokio::test]
+async fn a_refusal_in_the_envelope_of_an_http_200_answer_is_a_status_error() {
+    let (listener, addr) = bind().await;
+    let refuse = || async { json!({"code": 400, "message": "task is not active for attempt 2"}).to_string() };
+    let app = Router::new().fallback(get(refuse).post(refuse));
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    let sv = client(addr, "mcp_stdio");
+    assert!(matches!(sv.task_view("t1", 2, WAIT).await, Err(SvError::Status(400))));
+    assert!(matches!(
+        sv.complete("t1", 2, "done", WAIT).await,
+        Err(SvError::Status(400))
+    ));
+}

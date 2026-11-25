@@ -22,7 +22,7 @@ pub enum SvError {
     Timeout,
     /// The server could not be reached or answered something unreadable.
     Transport,
-    /// An HTTP status other than success.
+    /// A status other than success: the HTTP status, or the `code` of the answer's envelope.
     Status(u16),
 }
 
@@ -125,7 +125,13 @@ impl SvClient {
             }
             bytes.extend_from_slice(&chunk);
         }
-        serde_json::from_slice::<Value>(&bytes).map_err(|_| SvError::Transport)
+        let answer = serde_json::from_slice::<Value>(&bytes).map_err(|_| SvError::Transport)?;
+        // The REST API transports a refusal as HTTP 200 with the status in the envelope's `code`
+        // (0 is success), so the envelope decides, not the HTTP status alone.
+        match answer.get("code").and_then(Value::as_u64) {
+            Some(0) | None => Ok(answer),
+            Some(code) => Err(SvError::Status(u16::try_from(code).unwrap_or(500))),
+        }
     }
 
     /// `GET /api/v1/ai/tasks/{id}?attempt=N`: the task view (the `data` of the envelope).
