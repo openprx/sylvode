@@ -2602,7 +2602,11 @@ pub async fn list_scope_references(
                     }
                     values
                 });
-            (title, summary)
+            // Relation snapshots rendered from a target form that hides fields from this reader
+            // leave the summary, whether or not the record's own form denies anything.
+            let form = crate::routes::form::find_form(state, target.form_id).await?;
+            let read_policy = crate::routes::form::record_read_policy(state, &form, &actor.role).await?;
+            (title, read_policy.redact_relation_snapshots(summary))
         } else {
             (target.title, target.summary)
         };

@@ -213,8 +213,8 @@ pub fn apply_default_values(schema: &Value, values: Value) -> Result<Value, ApiE
 /// `submitted` is the caller's own value map, before formulas and defaults. On create a value equal
 /// to the field's default is accepted (clients prefill it; the default is part of the schema). On
 /// update a value equal to the stored one is accepted (clients send back every field), except for a
-/// field the caller may not read: there any non-empty value is refused, so the answer never says
-/// whether a guess matched the hidden value. An empty value is a clear, accepted only when nothing
+/// field the caller may not read: there any submitted key, `null` included, is refused, so the
+/// answer never says whether a guess matched or whether the hidden value is empty. An empty value is a clear, accepted only when nothing
 /// is stored.
 pub fn ensure_read_only_fields_untouched(
     schema: &Value,
@@ -237,11 +237,10 @@ pub fn ensure_read_only_fields_untouched(
         let Some(raw) = submitted.get(&field.key) else {
             continue;
         };
+        // Any key at all, even `null`, is refused for a field the caller may not read: accepting a
+        // clear only when nothing is stored would reveal whether the hidden field is empty.
         let allowed = if existing.is_some() && denied_read_fields.contains(&field.key) {
-            is_missing(Some(raw))
-                && existing
-                    .map(|existing| is_missing(existing.get(&field.key)))
-                    .unwrap_or(true)
+            false
         } else {
             read_only_write_allowed(field, field_rules, raw, existing)
         };

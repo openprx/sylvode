@@ -160,6 +160,16 @@ pub fn render_record_title(
     }
 }
 
+/// A writer-supplied title, cut to [`MAX_TITLE_CHARS`] on a character boundary, so stored titles
+/// share the bound of rendered ones.
+#[must_use]
+pub fn cap_title(title: String) -> String {
+    match title.char_indices().nth(MAX_TITLE_CHARS) {
+        Some((end, _)) => title.get(..end).unwrap_or_default().to_string(),
+        None => title,
+    }
+}
+
 /// The text a single field value contributes to a title or a relation label.
 pub fn title_display_value(value: &Value) -> String {
     if let Some(value) = value.as_str() {
@@ -216,8 +226,8 @@ pub fn reader_title(
 #[cfg(test)]
 mod tests {
     use super::{
-        FIELD_READ_DENIED, MAX_TITLE_CHARS, QueryReadGuard, RecordReadPolicy, ensure_field_readable, reader_title,
-        render_record_title,
+        FIELD_READ_DENIED, MAX_TITLE_CHARS, QueryReadGuard, RecordReadPolicy, cap_title, ensure_field_readable,
+        reader_title, render_record_title,
     };
     use crate::error::ApiError;
     use serde_json::json;
@@ -241,6 +251,13 @@ mod tests {
         assert_eq!(title.chars().count(), MAX_TITLE_CHARS);
         let long = render_record_title("{notes} {notes}", record_id, &values, &BTreeSet::new());
         assert_eq!(long.chars().count(), MAX_TITLE_CHARS);
+    }
+
+    #[test]
+    fn writer_titles_are_capped_on_a_char_boundary() {
+        let capped = cap_title("é".repeat(MAX_TITLE_CHARS + 10));
+        assert_eq!(capped.chars().count(), MAX_TITLE_CHARS);
+        assert_eq!(cap_title("short".to_string()), "short");
     }
 
     #[test]

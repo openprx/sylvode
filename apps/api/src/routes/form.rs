@@ -3601,7 +3601,7 @@ pub async fn list_form_events(
     } else {
         None
     };
-    let denied_read_fields = denied_read_field_keys(&state, form.id, &role).await?;
+    let read_policy = record_read_policy(&state, &form, &role).await?;
     list_business_events(
         &state,
         EventScope::Form {
@@ -3610,7 +3610,7 @@ pub async fn list_form_events(
             owned_by,
         },
         query,
-        &denied_read_fields,
+        &read_policy,
     )
     .await
 }
@@ -3627,7 +3627,7 @@ pub async fn list_form_record_events(
     let (actor_id, role, _) =
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "form.view").await?;
     ensure_record_scope_allows_created_by(&state, form.id, &role, actor_id, record.created_by).await?;
-    let denied_read_fields = denied_read_field_keys(&state, form.id, &role).await?;
+    let read_policy = record_read_policy(&state, &form, &role).await?;
     list_business_events(
         &state,
         EventScope::Record {
@@ -3635,7 +3635,7 @@ pub async fn list_form_record_events(
             record_id,
         },
         query,
-        &denied_read_fields,
+        &read_policy,
     )
     .await
 }
@@ -3885,6 +3885,7 @@ async fn update_record_for_form_internal(
     let title = req
         .title
         .filter(|value| !value.trim().is_empty())
+        .map(crate::forms::read_policy::cap_title)
         .unwrap_or_else(|| render_title(&form.title_template, record_id, &values));
 
     let written=tx.execute(Statement::from_sql_and_values(
@@ -4302,7 +4303,9 @@ pub async fn list_relation_targets(
         RelationTargetResponse::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres, sql, values))
             .all(&state.db)
             .await?;
+    let target_read_policy = record_read_policy(&state, &target_form, &target_role).await?;
     for item in &mut items {
+        item.values = target_read_policy.redact_relation_snapshots(std::mem::take(&mut item.values));
         item.title = reader_title(
             &target_form.title_template,
             item.record_id,
@@ -6203,6 +6206,7 @@ async fn preview_import_row(
         .title
         .clone()
         .filter(|value| !value.trim().is_empty())
+        .map(crate::forms::read_policy::cap_title)
         .unwrap_or_else(|| render_title(&form.title_template, preview_id, &calculated));
     let _ = source;
     Ok((title, calculated))
@@ -6265,7 +6269,11 @@ fn filter_record_response_values(mut record: RecordResponse, policy: &RecordRead
 
 /// Builds the read policy of `role` on `form`, including which relation fields point at a form that
 /// hides fields from this role (an unresolvable target counts as restricted).
-async fn record_read_policy(state: &AppState, form: &FormResponse, role: &str) -> Result<RecordReadPolicy, ApiError> {
+pub(crate) async fn record_read_policy(
+    state: &AppState,
+    form: &FormResponse,
+    role: &str,
+) -> Result<RecordReadPolicy, ApiError> {
     let denied_read_fields = denied_read_field_keys(state, form.id, role).await?;
     let mut restricted_relation_fields = BTreeSet::new();
     if !role_is_form_admin(role) {
@@ -6326,8 +6334,14 @@ async fn relation_target_restricts_reader(
 /// titles, bare values at the top level, signature audit trails).
 fn filter_event_response_values(
     mut event: BusinessEventResponse,
-    denied_read_fields: &BTreeSet<String>,
+    read_policy: &RecordReadPolicy,
 ) -> BusinessEventResponse {
+    // Relation snapshots of restricted target forms leave the payload whether or not the reader has
+    // a denied field on this form.
+    if let Some(values) = event.payload.get_mut("values") {
+        *values = read_policy.redact_relation_snapshots(std::mem::take(values));
+    }
+    let denied_read_fields = &read_policy.denied_read_fields;
     if denied_read_fields.is_empty() {
         return event;
     }
@@ -6693,7 +6707,7 @@ async fn list_business_events(
     state: &AppState,
     scope: EventScope,
     query: ListEventsQuery,
-    denied_read_fields: &BTreeSet<String>,
+    read_policy: &RecordReadPolicy,
 ) -> Result<Json<ApiResponse<PaginatedData<BusinessEventResponse>>>, ApiError> {
     if let Some(event_type) = query.event_type.as_deref() {
         normalize_event_type(event_type)?;
@@ -6741,7 +6755,7 @@ async fn list_business_events(
             .await?;
     let items = items
         .into_iter()
-        .map(|event| filter_event_response_values(event, denied_read_fields))
+        .map(|event| filter_event_response_values(event, read_policy))
         .collect();
 
     Ok(ApiResponse::success(PaginatedData {
@@ -7439,6 +7453,34 @@ mod tests {
         keys.iter().map(|key| (*key).to_string()).collect()
     }
 
+    fn policy_denying(keys: &[&str]) -> crate::forms::read_policy::RecordReadPolicy {
+        crate::forms::read_policy::RecordReadPolicy {
+            denied_read_fields: denied_fields(keys),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn event_values_lose_relation_snapshots_even_without_denied_fields() {
+        let event = business_event(
+            "form.record.created",
+            json!({"record_id": "r1", "values": {"customer": {"record_id": "c1", "title": "Ada 9000"}, "name": "x"}}),
+            json!({"type": "user"}),
+        );
+        let policy = crate::forms::read_policy::RecordReadPolicy {
+            restricted_relation_fields: denied_fields(&["customer"]),
+            ..Default::default()
+        };
+
+        let filtered = filter_event_response_values(event, &policy);
+
+        assert_eq!(
+            filtered.payload.pointer("/values/customer"),
+            Some(&json!({"record_id": "c1"}))
+        );
+        assert_eq!(filtered.payload.pointer("/values/name"), Some(&json!("x")));
+    }
+
     fn view_with(config: Value, created_by: Option<Uuid>) -> super::ViewResponse {
         let now = platform::timestamp::Timestamp::now();
         super::ViewResponse {
@@ -7715,7 +7757,7 @@ mod tests {
             json!({"type": "user", "values": {"salary": "9000"}}),
         );
 
-        let filtered = filter_event_response_values(event, &denied_fields(&["salary"]));
+        let filtered = filter_event_response_values(event, &policy_denying(&["salary"]));
 
         assert!(filtered.payload.pointer("/values/salary").is_none());
         assert_eq!(
@@ -7734,7 +7776,7 @@ mod tests {
             json!({"type": "user"}),
         );
 
-        let filtered = filter_event_response_values(event, &denied_fields(&["salary"]));
+        let filtered = filter_event_response_values(event, &policy_denying(&["salary"]));
 
         assert!(filtered.payload.get("title").is_none());
         assert_eq!(filtered.payload.get("record_id").and_then(Value::as_str), Some("r1"));
@@ -7755,7 +7797,7 @@ mod tests {
             }),
         );
 
-        let filtered = filter_event_response_values(event, &denied_fields(&["signature"]));
+        let filtered = filter_event_response_values(event, &policy_denying(&["signature"]));
 
         assert!(filtered.source.get("signature_media").is_none());
         assert!(!filtered.source.to_string().contains("approved"));
@@ -7774,7 +7816,7 @@ mod tests {
             json!({"type": "system"}),
         );
 
-        let filtered = filter_event_response_values(event, &denied_fields(&["table_id"]));
+        let filtered = filter_event_response_values(event, &policy_denying(&["table_id"]));
 
         assert!(filtered.payload.get("table_id").is_none());
         assert!(filtered.payload.get("previous_table_id").is_none());

@@ -182,6 +182,7 @@ pub async fn create_record_in_transaction(
     let title = req
         .title
         .filter(|value| !value.trim().is_empty())
+        .map(crate::forms::read_policy::cap_title)
         .unwrap_or_else(|| render_title(&form.title_template, record_id, &normalized));
 
     tx.execute(Statement::from_sql_and_values(
