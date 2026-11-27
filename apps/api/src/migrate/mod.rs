@@ -664,6 +664,10 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
     ("0135_layouts.sql", SchemaProbe::Relation("layout_placements")),
     ("0136_form_schema_v2.sql", SchemaProbe::Rerunnable),
     (
+        "0137_sites.sql",
+        SchemaProbe::Trigger("form_records", "trg_sv_site_record_origin"),
+    ),
+    (
         "0139_artefact_drafts.sql",
         SchemaProbe::Trigger("artefact_drafts", "trg_sv_hint_draft_status"),
     ),
