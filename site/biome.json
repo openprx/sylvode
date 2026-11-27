@@ -1,12 +1,38 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.6.9/schema.json",
   "root": true,
-  "vcs": { "enabled": false },
+  "vcs": {
+    "enabled": false
+  },
   "files": {
     "includes": ["src/**", "index.html", "*.json", "*.ts"]
   },
-  "formatter": { "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },
-  "css": { "parser": { "tailwindDirectives": true } },
-  "linter": { "enabled": true },
-  "assist": { "actions": { "source": { "organizeImports": "on" } } }
+  "formatter": {
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  },
+  "linter": {
+    "enabled": true
+  },
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["src/lib/rules/**"],
+      "linter": {
+        "enabled": false
+      }
+    }
+  ]
 }

@@ -5,6 +5,7 @@
       "name": "sylvode-site",
       "dependencies": {
         "@kobalte/core": "2.0.0-alpha.5",
+        "@marcbachmann/cel-js": "8.0.0",
         "@solidjs/router": "2.0.1",
         "@solidjs/web": "2.0.3",
         "lucide": "1.79.0",
@@ -72,6 +73,8 @@
     "@kobalte/core": ["@kobalte/core@2.0.0-alpha.5", "", { "dependencies": { "@floating-ui/dom": "^1.8.0", "@internationalized/number": "^3.6.9", "@kobalte/utils": "2.0.0-alpha.2", "@solid-primitives/a11y": "1.0.0", "@solid-primitives/controlled-signal": "1.0.0", "@solid-primitives/event-listener": "3.0.0", "@solid-primitives/focus": "1.0.0", "@solid-primitives/form": "1.0.0", "@solid-primitives/i18n": "3.0.0", "@solid-primitives/interaction": "1.0.0", "@solid-primitives/keyboard": "2.0.0", "@solid-primitives/platform": "1.0.0", "@solid-primitives/presence": "1.0.0", "@solid-primitives/props": "4.0.0", "@solid-primitives/refs": "3.0.0", "@solid-primitives/resize-observer": "4.0.0", "@solid-primitives/scroll": "3.0.0", "@solid-primitives/upload": "1.0.0", "@solid-primitives/utils": "7.0.0" }, "peerDependencies": { "@solidjs/web": "^2.0.0", "solid-js": "^2.0.0" } }, "sha512-/QVTdJZsOI2Uf7dp7OchrdlbLYCaqLl5tJrdMlVhll3gDpk10rWsFPDtbJ9Z7wv/WD3JOVgRN4Ch13lTWXyfFA=="],
 
     "@kobalte/utils": ["@kobalte/utils@2.0.0-alpha.2", "", { "dependencies": { "@solid-primitives/event-listener": "3.0.0", "@solid-primitives/keyed": "3.0.0", "@solid-primitives/map": "1.0.0", "@solid-primitives/media": "4.0.0", "@solid-primitives/props": "4.0.0", "@solid-primitives/refs": "3.0.0", "@solid-primitives/utils": "7.0.0" }, "peerDependencies": { "@solidjs/web": "^2.0.0", "solid-js": "^2.0.0" } }, "sha512-vmF2JTm4rTBEIAUhCGAb0bCDKmGOcdzUGkDLqAdzN6vUIqDyzdjNIvviuFV9YREoQeQrvsEtyFyBB67pwxJY0w=="],
+
+    "@marcbachmann/cel-js": ["@marcbachmann/cel-js@8.0.0", "", { "bin": { "cel-evaluate": "bin/cel-evaluate.js" } }, "sha512-oaTrAziGr3zDLFiMt/yLU3nZuRMawyWQB5X1a0I7s9eGy3JYzX9l8ZXXHyMd64nzbeVFZTewuUShwsZQdK6UCA=="],
 
     "@napi-rs/wasm-runtime": ["@napi-rs/wasm-runtime@1.2.6", "", { "dependencies": { "@tybys/wasm-util": "^0.10.3" }, "peerDependencies": { "@emnapi/core": "^1.7.1 || 2.0.0-beta.2", "@emnapi/runtime": "^1.7.1 || 2.0.0-beta.2" } }, "sha512-mRyDmEw9/fCDXCGfL1sbgIw/GUK0PVxRW4YwgPN61F3LQ+fSyoBFarJVzgGyhF6kRzEQZ0FejDqm4WLXSeqQmw=="],
 

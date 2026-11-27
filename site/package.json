@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@kobalte/core": "2.0.0-alpha.5",
+    "@marcbachmann/cel-js": "8.0.0",
     "@solidjs/router": "2.0.1",
     "@solidjs/web": "2.0.3",
     "lucide": "1.79.0",
