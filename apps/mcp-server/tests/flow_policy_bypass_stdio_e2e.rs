@@ -514,6 +514,7 @@ fn alias_api_router() -> Router {
                 "workspace_id":WORKSPACE,
                 "project_id":OWNING_PROJECT,
                 "form_id":OWNED_OBJECT,
+                "scope":{"id":SCOPE},
                 "recent_decisions":[],
                 "mcp":{"tool_registry":{}}
             }
