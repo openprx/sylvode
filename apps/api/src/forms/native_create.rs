@@ -51,6 +51,36 @@ pub struct NativeFormCreateRequest {
     pub change_summary: String,
 }
 
+/// The 409 for a form key the project already uses (archived forms keep their key).
+#[must_use]
+pub fn form_key_taken() -> ApiError {
+    ApiError::conflict_coded(
+        "form_key_taken",
+        "a form with this key already exists in the project (an archived one still holds its key)",
+        None,
+    )
+}
+
+/// Maps the unique violations of form and view keys to the 409 they stand for.
+///
+/// A check before the write answers the common case where one exists; this catches every create
+/// path and two requests racing. Any other database error passes through unchanged.
+#[must_use]
+pub fn key_violation(err: sea_orm::DbErr) -> ApiError {
+    let text = err.to_string();
+    if text.contains("project_forms_project_id_key_key") {
+        form_key_taken()
+    } else if text.contains("form_views_form_id_key_key") {
+        ApiError::conflict_coded(
+            "form_view_key_taken",
+            "a view with this key already exists on the form (an archived one still holds its key)",
+            None,
+        )
+    } else {
+        ApiError::from(err)
+    }
+}
+
 /// Runs the native Forms form-create validation, insert, event, and schema-version pipeline.
 pub async fn create_form_in_transaction(
     tx: &DatabaseTransaction,
@@ -92,7 +122,8 @@ pub async fn create_form_in_transaction(
             req.created_by.into(),
         ],
     ))
-    .await?;
+    .await
+    .map_err(key_violation)?;
     let form = find_form_with_conn(tx, form_id).await?;
     insert_form_event_with_idempotency(
         tx,
@@ -301,4 +332,44 @@ pub async fn finish_record_creation(
         recalculate_parent_records_for_child(state, creation.record_id, creation.created_by).await?;
     }
     find_record(state, creation.record_id).await
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use sea_orm::DbErr;
+
+    use super::key_violation;
+    use crate::error::ApiError;
+
+    fn unique(constraint: &str) -> DbErr {
+        DbErr::Custom(format!(
+            "duplicate key value violates unique constraint \"{constraint}\""
+        ))
+    }
+
+    fn coded(err: &ApiError) -> Option<(i32, &'static str)> {
+        match err {
+            ApiError::Coded { status, code, .. } => Some((*status, *code)),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_taken_form_key_is_a_409_form_key_taken() {
+        let err = key_violation(unique("project_forms_project_id_key_key"));
+        assert_eq!(coded(&err), Some((409, "form_key_taken")));
+    }
+
+    #[test]
+    fn a_taken_view_key_is_a_409_form_view_key_taken() {
+        let err = key_violation(unique("form_views_form_id_key_key"));
+        assert_eq!(coded(&err), Some((409, "form_view_key_taken")));
+    }
+
+    #[test]
+    fn any_other_database_error_stays_a_database_error() {
+        let err = key_violation(unique("form_records_pkey"));
+        assert!(matches!(err, ApiError::Database(_)));
+    }
 }

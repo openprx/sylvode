@@ -35,6 +35,7 @@ use crate::{
         calculation::{evaluate_calculated_values, merge_values_for_calculation, overlay_calculated_values},
         event_redaction::{redact_event_metadata, redact_event_payload, redact_event_source},
         job_context::{add_form_job_worker_context, form_job_requester, form_job_worker_context},
+        native_create::{form_key_taken, key_violation},
         permissions::{
             append_record_scope_sql, denied_read_field_keys, ensure_field_read_policy_allows,
             ensure_field_write_policy_allows, ensure_record_scope_allows_created_by, filter_values_for_read_policy,
@@ -754,7 +755,8 @@ pub async fn duplicate_form(
             if is_bot { None::<Uuid> } else { Some(actor_id) }.into(),
         ],
     ))
-    .await?;
+    .await
+    .map_err(key_violation)?;
     let duplicated_form = find_form_with_conn(&tx, new_form_id).await?;
     let copied_view_count = duplicate_form_views(
         &tx,
@@ -867,7 +869,8 @@ pub async fn create_project_form_from_template(
             actor_id.into(),
         ],
     ))
-    .await?;
+    .await
+    .map_err(key_violation)?;
     let form = find_form_with_conn(&tx, form_id).await?;
     create_default_template_views(&tx, &form, &schema, actor_id).await?;
     insert_form_event(
@@ -1222,7 +1225,8 @@ pub async fn create_form_view(
             if is_bot { None::<Uuid> } else { Some(actor_id) }.into(),
         ],
     ))
-    .await?;
+    .await
+    .map_err(key_violation)?;
 
     let view = find_view_with_conn(&tx, view_id).await?;
     insert_form_event(
@@ -7321,7 +7325,7 @@ async fn next_duplicate_form_key(state: &AppState, project_id: Uuid, source_key:
 
 async fn ensure_form_key_available(state: &AppState, project_id: Uuid, key: &str) -> Result<(), ApiError> {
     if form_key_exists(state, project_id, key).await? {
-        Err(ApiError::BadRequest("form key already exists".to_string()))
+        Err(form_key_taken())
     } else {
         Ok(())
     }
