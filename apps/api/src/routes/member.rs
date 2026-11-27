@@ -422,6 +422,8 @@ pub async fn remove_member(
     // Personal form views are visible to their creator alone; nobody could see or clean them up
     // once the creator has left.
     crate::routes::form::archive_departed_member_private_views(&tx, workspace_id, target_user_id).await?;
+    // A departed member keeps no site role and no operator session at the workspace's sites.
+    crate::site::remove_member_site_access(&tx, workspace_id, target_user_id).await?;
     tx.commit().await?;
     if let Some(committed_epoch) = advanced_epoch {
         crate::flow::collab::permission_cache::invalidate_workspace_after_commit(&state, workspace_id);

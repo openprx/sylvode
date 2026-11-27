@@ -13,7 +13,10 @@ use sv_layout::{Analysis, Context, LayoutError, Options, SlotDescriptor, Validat
 use uuid::Uuid;
 
 use super::{
-    access::{Principal, ScopeKind, authenticated, require_read, require_write, resolve_scope, resolve_stored_scope},
+    access::{
+        Principal, ScopeKind, authenticated, require_read, require_write, resolve_project, resolve_scope,
+        resolve_stored_scope,
+    },
     store::{self, LayoutRow, LayoutSummary},
 };
 use crate::{
@@ -196,6 +199,7 @@ pub async fn update_layout(
     let (row, scope) = load_with_scope(&state, id).await?;
     require_write(&state, &who, &scope).await?;
     ensure_user_layout(&row)?;
+    crate::site::layouts::refuse_bot_layout_write_on_published_site(&state.db, who.bot_id().is_some(), id).await?;
     let validated = console_validate(&req.spec, None)?;
 
     let tx = state.db.begin().await?;
@@ -235,6 +239,7 @@ pub async fn delete_layout(
     let (row, scope) = load_with_scope(&state, id).await?;
     require_write(&state, &who, &scope).await?;
     ensure_user_layout(&row)?;
+    crate::site::layouts::refuse_bot_layout_write_on_published_site(&state.db, who.bot_id().is_some(), id).await?;
     store::archive_layout(&state.db, id).await?;
     Ok(ApiResponse::success(json!({ "id": id, "status": "archived" })))
 }
@@ -267,12 +272,17 @@ pub async fn validate_layout(
     crate::middleware::validate_limit::check(&claims.sub)?;
     let who = Principal::new(claims, bot);
     authenticated(&who)?;
-    if req.site_id.flatten().is_some() {
-        return Err(ApiError::bad_request_coded(
-            "site_context_unsupported",
-            "site layouts are validated when their site page is saved",
-        ));
-    }
+    // A site context needs read access to the site's project; its bindings are the sources.
+    let site_bindings = match req.site_id.flatten() {
+        Some(site_id) => {
+            let not_found = || ApiError::not_found("site not found");
+            let (project_id, bindings) = crate::site::layouts::site_context_bindings(&state.db, site_id).await?;
+            let scope = resolve_project(&state.db, project_id).await.map_err(|_| not_found())?;
+            require_read(&state, &who, &scope).await.map_err(|_| not_found())?;
+            Some(bindings)
+        }
+        None => None,
+    };
     // A named scope must be one the caller can read; the verdict itself does not depend on it.
     if let (Some(Some(kind)), Some(Some(id))) = (&req.scope_kind, req.scope_id) {
         let scope = resolve_scope(&state.db, ScopeKind::parse(kind)?, id).await?;
@@ -287,7 +297,7 @@ pub async fn validate_layout(
     };
     let opts = Options {
         slot: slot.as_ref(),
-        context: Context::Console,
+        context: site_bindings.map_or(Context::Console, |bindings| Context::Site { bindings }),
     };
     Ok(ApiResponse::success(match validate_value(&req.spec, &opts) {
         Ok(validated) => json!({ "valid": true, "errors": [], "analysis": validated.analysis }),
