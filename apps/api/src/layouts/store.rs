@@ -1,9 +1,9 @@
 //! SQL access to `layouts`, `layout_placements` and `layout_user_prefs`.
 //!
-//! Rows that belong to a package installation (`installation_id` set) are never returned by the
-//! reads here: showing them needs the join with the installation's active generation, which the
-//! install flow adds together with its table (migration 0138). Until then they stay hidden and
-//! only the install flow may change them.
+//! Rows that belong to a package installation (`installation_id` set) are returned by the reads here
+//! only while the installation is `active` and the row's `generation` is its active one (contract C3
+//! section 3); a disabled or revoked installation, or a superseded generation, shows nothing. Only
+//! the install flow changes such rows.
 
 use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement, Value as SqlValue};
@@ -12,6 +12,11 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::error::ApiError;
+
+/// A layout row that is shown: the user's own, or a package's while its generation is the active one
+/// of an active installation. Needs the layouts table aliased `l`.
+pub(super) const VISIBLE_LAYOUT: &str = "(l.installation_id IS NULL OR EXISTS (SELECT 1 FROM installations i \
+     WHERE i.id = l.installation_id AND i.status = 'active' AND i.active_generation = l.generation))";
 
 pub(super) const LAYOUT_COLUMNS: &str = "id, workspace_id, scope_kind, scope_id, layout_key, version, spec, source, \
      installation_id, generation, status, updated_at";
@@ -88,8 +93,9 @@ pub(super) async fn list_layouts(
     }
     let total = Count::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT COUNT(*)::bigint AS total FROM layouts \
-         WHERE scope_kind = $1 AND scope_id = $2 AND installation_id IS NULL",
+        format!(
+            "SELECT COUNT(*)::bigint AS total FROM layouts l WHERE l.scope_kind = $1 AND l.scope_id = $2 AND {VISIBLE_LAYOUT}"
+        ),
         vec![scope_kind.to_owned().into(), scope_id.into()],
     ))
     .one(db)
@@ -98,9 +104,8 @@ pub(super) async fn list_layouts(
     let rows = LayoutRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         format!(
-            "SELECT {LAYOUT_COLUMNS} FROM layouts \
-             WHERE scope_kind = $1 AND scope_id = $2 AND installation_id IS NULL \
-             ORDER BY updated_at DESC, id LIMIT $3 OFFSET $4"
+            "SELECT {LAYOUT_COLUMNS} FROM layouts l WHERE l.scope_kind = $1 AND l.scope_id = $2 AND {VISIBLE_LAYOUT} \
+             ORDER BY l.updated_at DESC, l.id LIMIT $3 OFFSET $4"
         ),
         vec![
             scope_kind.to_owned().into(),
@@ -417,7 +422,8 @@ pub(super) struct ResolvedRow {
 
 /// The enabled placements of `slot_id` that apply to `(workspace, project, form)`, outer scopes
 /// first, then by the viewer's own position (else the placement's), then by creation; hidden ones
-/// removed. Only rows of active layouts without an installation (see the module comment).
+/// removed. Only rows of active layouts; a package's placement and layout show only while their
+/// generation is the active one of an active installation (see the module comment).
 pub(super) async fn resolve_slot(
     db: &impl ConnectionTrait,
     slot_id: &str,
@@ -435,8 +441,11 @@ pub(super) async fn resolve_slot(
          FROM layout_placements p \
          JOIN layouts l ON l.id = p.layout_id AND l.workspace_id = p.workspace_id AND l.status = 'active' \
          LEFT JOIN layout_user_prefs u ON u.placement_id = p.id AND u.user_id = $5 \
+         LEFT JOIN installations pi ON pi.id = p.installation_id \
+         LEFT JOIN installations li ON li.id = l.installation_id \
          WHERE p.slot_id = $1 AND p.workspace_id = $2 AND p.enabled \
-           AND p.installation_id IS NULL AND l.installation_id IS NULL \
+           AND (p.installation_id IS NULL OR (pi.status = 'active' AND pi.active_generation = p.generation)) \
+           AND (l.installation_id IS NULL OR (li.status = 'active' AND li.active_generation = l.generation)) \
            AND NOT COALESCE(u.hidden, false) \
            AND ((p.scope_kind = 'workspace' AND p.scope_id = $2) \
              OR (p.scope_kind = 'project' AND p.scope_id = $3) \
@@ -503,4 +512,30 @@ pub(super) async fn upsert_prefs(
     .one(db)
     .await?
     .ok_or_else(ApiError::internal)
+}
+
+/// The package keys of the installations that placed the entries, by installation id, for the
+/// `installations` map of a slot answer.
+pub(super) async fn installation_keys(
+    db: &impl ConnectionTrait,
+    ids: &[Uuid],
+) -> Result<Vec<(String, Uuid)>, ApiError> {
+    #[derive(FromQueryResult)]
+    struct Key {
+        id: Uuid,
+        package_key: String,
+    }
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(Key::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id, package_key FROM installations WHERE id = ANY($1) AND status = 'active'",
+        vec![ids.to_vec().into()],
+    ))
+    .all(db)
+    .await?
+    .into_iter()
+    .map(|row| (row.package_key, row.id))
+    .collect())
 }

@@ -256,8 +256,7 @@ struct Entry {
 struct Resolved {
     slot: SlotDescriptor,
     entries: Vec<Entry>,
-    /// Active installations of the scope that the entries reference, by package key. Empty until
-    /// the install flow stores package placements.
+    /// Active installations of the scope that the entries reference, by package key.
     installations: BTreeMap<String, Uuid>,
 }
 
@@ -340,9 +339,14 @@ pub async fn resolve_slot(
         who.user_id()?,
     )
     .await?;
+    let rows: Vec<_> = rows.into_iter().take(slot.max_entries as usize).collect();
+    let installation_ids: Vec<Uuid> = rows.iter().filter_map(|row| row.installation_id).collect();
+    let installations: BTreeMap<String, Uuid> = store::installation_keys(&state.db, &installation_ids)
+        .await?
+        .into_iter()
+        .collect();
     let entries = rows
         .into_iter()
-        .take(slot.max_entries as usize)
         .map(|row| Entry {
             placement_id: row.placement_id,
             layout_id: row.layout_id,
@@ -357,7 +361,7 @@ pub async fn resolve_slot(
     Ok(ApiResponse::success(Resolved {
         slot,
         entries,
-        installations: BTreeMap::new(),
+        installations,
     }))
 }
 
