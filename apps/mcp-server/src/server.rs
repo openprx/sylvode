@@ -30,7 +30,7 @@ enum PolicyScope {
     OwnedBy(OwnerLookup),
     /// Nothing the call touches belongs to a project: workspace wide surfaces
     /// (workspace labels, workspace search, members, uploads) and global catalogues
-    /// (project types, scenario templates). No project agent policy can govern these;
+    /// (project types). No project agent policy can govern these;
     /// see `report`/`README` notes and `TOOL_POLICY_SCOPES` for the full list.
     WorkspaceWide,
     /// `WorkspaceWide`, plus the call is a Flow administrative operation
@@ -161,12 +161,6 @@ const TOOL_POLICY_SCOPES: &[(&str, PolicyScope)] = &[
     ("projects.delete", PolicyScope::DeclaredProject { required: true }),
     ("project_types.list", PolicyScope::WorkspaceWide),
     ("project_types.get", PolicyScope::WorkspaceWide),
-    ("scenario_templates.list", PolicyScope::WorkspaceWide),
-    ("scenario_templates.get", PolicyScope::WorkspaceWide),
-    (
-        "scenario_templates.install",
-        PolicyScope::DeclaredProject { required: true },
-    ),
     // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
     // (
     //     "project_resources.list",
@@ -187,10 +181,6 @@ const TOOL_POLICY_SCOPES: &[(&str, PolicyScope)] = &[
     ("forms.list", PolicyScope::DeclaredProject { required: true }),
     ("forms.get", PolicyScope::OwnedBy(OwnerLookup::FormData)),
     ("forms.create", PolicyScope::DeclaredProject { required: true }),
-    (
-        "forms.create_from_template",
-        PolicyScope::DeclaredProject { required: true },
-    ),
     ("forms.update_schema", PolicyScope::OwnedBy(OwnerLookup::FormData)),
     ("forms.duplicate", PolicyScope::OwnedBy(OwnerLookup::FormData)),
     ("forms.schema_summary", PolicyScope::OwnedBy(OwnerLookup::FormData)),
@@ -1091,11 +1081,6 @@ impl McpServer {
             "projects.delete" => tools::projects::handle_delete_project(&self.client, args).await,
             "project_types.list" => tools::project_types::list_project_types(&self.client, args).await,
             "project_types.get" => tools::project_types::get_project_type(&self.client, args).await,
-            "scenario_templates.list" => tools::scenario_templates::list_scenario_templates(&self.client, args).await,
-            "scenario_templates.get" => tools::scenario_templates::get_scenario_template(&self.client, args).await,
-            "scenario_templates.install" => {
-                tools::scenario_templates::install_scenario_template(&self.client, args).await
-            }
             // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
             // "project_resources.list" => tools::project_types::list_project_resources(&self.client, args).await,
             // "project_resources.create" => tools::project_types::create_project_resource(&self.client, args).await,
@@ -1104,7 +1089,6 @@ impl McpServer {
             "forms.list" => tools::forms::list_forms(&self.client, args).await,
             "forms.get" => tools::forms::get_form(&self.client, args).await,
             "forms.create" => tools::forms::create_form(&self.client, args).await,
-            "forms.create_from_template" => tools::forms::create_form_from_template(&self.client, args).await,
             "forms.update_schema" => tools::forms::update_form_schema(&self.client, args).await,
             "forms.duplicate" => tools::forms::duplicate_form(&self.client, args).await,
             "forms.schema_summary" => tools::forms::get_form_schema_summary(&self.client, args).await,
@@ -1856,15 +1840,9 @@ impl McpServer {
                 "description": "Recipes: fix an assigned issue, answer a mention, vote on a proposal, find and change data.",
                 "mimeType": "text/markdown"
             }),
-            json!({
-                "uri": "sylvode://scenario-templates",
-                "name": "Scenario Templates",
-                "description": "Project creation templates with workflow, fields, resources, AI roles, governance, and connection suggestions.",
-                "mimeType": "application/json"
-            }),
         ];
         if self.delegated.is_some() {
-            // Only the static guides: the scenario template list is read from the API.
+            // Only the static guides.
             resources.retain(|resource| {
                 resource
                     .get("uri")
@@ -1930,12 +1908,6 @@ impl McpServer {
                 "uriTemplate": "sylvode://form-records/{record_id}/events",
                 "name": "Form Record Events",
                 "description": "Read recent business events for one universal form record",
-                "mimeType": "application/json"
-            }),
-            json!({
-                "uriTemplate": "sylvode://scenario-templates/{key}",
-                "name": "Scenario Template",
-                "description": "Read one project creation scenario template by key",
                 "mimeType": "application/json"
             }),
             json!({
@@ -2077,12 +2049,6 @@ impl McpServer {
             "sylvode://skills/sylvode-mcp" => return Ok(ResourceRead::markdown(guides::SKILL_MD)),
             "sylvode://skills/sylvode-mcp/tools" => return Ok(ResourceRead::markdown(guides::TOOLS_MD)),
             "sylvode://guides/workflows" => return Ok(ResourceRead::markdown(guides::RECIPES_MD)),
-            "sylvode://scenario-templates" => {
-                return ResourceRead::from_api(
-                    self.client.list_scenario_templates(None, None).await,
-                    "Failed to read scenario templates",
-                );
-            }
             _ => {}
         }
 
@@ -2128,13 +2094,6 @@ impl McpServer {
                 Err(error) => Err(error),
             };
             return ResourceRead::from_api(navigator, "Failed to read Flow navigator resource");
-        }
-
-        if let Some(key) = parse_scenario_template_uri(uri) {
-            return ResourceRead::from_api(
-                self.client.get_scenario_template(&key).await,
-                "Failed to read scenario template",
-            );
         }
 
         if let Some(project_id) = parse_project_resource_uri(uri, "/issues") {
@@ -2491,16 +2450,11 @@ enum ResourceSubject {
 /// value is interpolated into the API URL that both the policy lookup and the read
 /// itself address, so a value that could reshape that URL must never reach either.
 fn resource_policy_subject(uri: &str) -> Result<ResourceSubject, String> {
-    // The guides are compile time constants and the scenario catalogue is a global
-    // catalogue served by `scenario_templates.list`/`get`, both `WorkspaceWide`.
+    // The guides are compile time constants.
     if matches!(
         uri,
-        "sylvode://skills/sylvode-mcp"
-            | "sylvode://skills/sylvode-mcp/tools"
-            | "sylvode://guides/workflows"
-            | "sylvode://scenario-templates"
-    ) || parse_scenario_template_uri(uri).is_some()
-    {
+        "sylvode://skills/sylvode-mcp" | "sylvode://skills/sylvode-mcp/tools" | "sylvode://guides/workflows"
+    ) {
         return Ok(ResourceSubject::Ungoverned);
     }
 
@@ -2677,15 +2631,6 @@ fn parse_issue_identifier_uri(uri: &str) -> Option<String> {
     }
 
     Some(identifier.to_string())
-}
-
-fn parse_scenario_template_uri(uri: &str) -> Option<String> {
-    let key = uri.strip_prefix("sylvode://scenario-templates/")?;
-    if key.is_empty() || key.contains('/') {
-        return None;
-    }
-
-    Some(key.to_string())
 }
 
 /// The project whose policy filters `tools/list`. Validated as a UUID for the same

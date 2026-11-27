@@ -36,21 +36,6 @@
   },
   {
     "access": "read",
-    "category": "scenario_templates",
-    "name": "scenario_templates.list"
-  },
-  {
-    "access": "read",
-    "category": "scenario_templates",
-    "name": "scenario_templates.get"
-  },
-  {
-    "access": "write",
-    "category": "scenario_templates",
-    "name": "scenario_templates.install"
-  },
-  {
-    "access": "read",
     "category": "forms",
     "name": "forms.list"
   },
@@ -63,11 +48,6 @@
     "access": "write",
     "category": "forms",
     "name": "forms.create"
-  },
-  {
-    "access": "write",
-    "category": "forms",
-    "name": "forms.create_from_template"
   },
   {
     "access": "write",

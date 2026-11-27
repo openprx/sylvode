@@ -104,7 +104,7 @@ async fn tools_list_offers_nine_tools_in_search_mode_and_the_registry_in_full_mo
         ]
     );
     let full = listed_names(&rpc(&server(&api, McpToolMode::Full)?, "tools/list", None).await);
-    assert_eq!(full.len(), 163);
+    assert_eq!(full.len(), 159);
     assert_eq!(
         full.iter().cloned().collect::<BTreeSet<_>>(),
         registry().into_iter().map(|tool| tool.name).collect::<BTreeSet<_>>()
@@ -780,7 +780,7 @@ async fn sylvode_search_with_a_project_reads_its_policy_once_and_filters() -> Te
         .await;
     let overview: Value = serde_json::from_str(&text(&overview))?;
     assert_eq!(overview["policy_filtered_for_project"], json!(UUID));
-    assert_eq!(overview["categories"].as_array().map(Vec::len), Some(21));
+    assert_eq!(overview["categories"].as_array().map(Vec::len), Some(20));
     Ok(())
 }
 

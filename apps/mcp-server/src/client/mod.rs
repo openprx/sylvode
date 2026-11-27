@@ -584,43 +584,6 @@ impl OpenPrClient {
             .await
     }
 
-    pub async fn list_scenario_templates(
-        &self,
-        project_type_key: Option<&str>,
-        industry: Option<&str>,
-    ) -> Result<Value, String> {
-        let mut path = "/api/v1/scenario-templates".to_string();
-        let mut params = Vec::new();
-        if let Some(project_type_key) = project_type_key {
-            params.push(format!("project_type_key={}", urlencoding::encode(project_type_key)));
-        }
-        if let Some(industry) = industry {
-            params.push(format!("industry={}", urlencoding::encode(industry)));
-        }
-        if !params.is_empty() {
-            path.push('?');
-            path.push_str(&params.join("&"));
-        }
-        self.get(&path).await
-    }
-
-    pub async fn get_scenario_template(&self, key: &str) -> Result<Value, String> {
-        self.get(&format!("/api/v1/scenario-templates/{}", urlencoding::encode(key)))
-            .await
-    }
-
-    pub async fn install_scenario_template(&self, project_id: &str, template_key: &str) -> Result<Value, String> {
-        self.post(
-            &format!(
-                "/api/v1/projects/{}/scenario-templates/{}/install",
-                urlencoding::encode(project_id),
-                urlencoding::encode(template_key)
-            ),
-            &serde_json::json!({}),
-        )
-        .await
-    }
-
     // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
     // pub async fn list_project_resources(&self, project_id: &str) -> Result<Value, String> {
     //     self.get(&format!(
@@ -717,17 +680,6 @@ impl OpenPrClient {
     pub async fn create_form(&self, project_id: &str, body: Value) -> Result<Value, String> {
         self.post(
             &format!("/api/v1/projects/{}/forms", urlencoding::encode(project_id)),
-            &body,
-        )
-        .await
-    }
-
-    pub async fn create_form_from_template(&self, project_id: &str, body: Value) -> Result<Value, String> {
-        self.post(
-            &format!(
-                "/api/v1/projects/{}/forms/from-template",
-                urlencoding::encode(project_id)
-            ),
             &body,
         )
         .await

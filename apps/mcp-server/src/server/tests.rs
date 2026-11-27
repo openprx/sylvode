@@ -124,7 +124,6 @@ async fn every_registered_resource_is_served_by_its_sylvode_identity_only() -> T
         "sylvode://skills/sylvode-mcp",
         "sylvode://skills/sylvode-mcp/tools",
         "sylvode://guides/workflows",
-        "sylvode://scenario-templates",
         "sylvode://projects/{project_id}/issues",
         "sylvode://projects/{project_id}/forms",
         "sylvode://forms/{form_id}",
@@ -132,7 +131,6 @@ async fn every_registered_resource_is_served_by_its_sylvode_identity_only() -> T
         "sylvode://forms/{form_id}/events",
         "sylvode://form-records/{record_id}",
         "sylvode://form-records/{record_id}/events",
-        "sylvode://scenario-templates/{key}",
         "sylvode://projects/{project_id}/context",
         "sylvode://projects/{project_id}/governance",
         "sylvode://projects/{project_id}/agent-policy",
@@ -156,8 +154,8 @@ async fn every_registered_resource_is_served_by_its_sylvode_identity_only() -> T
                 .filter_map(|row| row.get("uriTemplate").and_then(Value::as_str)),
         )
         .collect::<Vec<_>>();
-    assert_eq!(resources.len(), 4, "static resource registry cardinality drifted");
-    assert_eq!(templates.len(), 21, "template registry cardinality drifted");
+    assert_eq!(resources.len(), 3, "static resource registry cardinality drifted");
+    assert_eq!(templates.len(), 20, "template registry cardinality drifted");
     assert_eq!(
         observed.len(),
         expected.len(),
@@ -412,7 +410,6 @@ async fn the_resource_list_and_the_embedded_skill_match_the_catalogue() -> TestR
             "sylvode://skills/sylvode-mcp",
             "sylvode://skills/sylvode-mcp/tools",
             "sylvode://guides/workflows",
-            "sylvode://scenario-templates",
         ]
     );
     let count = crate::tools::get_all_tool_definitions().len();
@@ -1822,13 +1819,11 @@ fn every_readable_resource_uri_is_governed_like_its_tool() -> TestResult {
     );
 
     // The resources no project agent policy can govern, and why: the guides are compile time
-    // constants, the scenario catalogue is global and its tools are `WorkspaceWide`.
+    // constants.
     for uri in [
         "sylvode://skills/sylvode-mcp",
         "sylvode://skills/sylvode-mcp/tools",
         "sylvode://guides/workflows",
-        "sylvode://scenario-templates",
-        "sylvode://scenario-templates/software-delivery",
     ] {
         assert_eq!(
             resource_policy_subject(uri)?,
@@ -2163,13 +2158,6 @@ mod protocol_eras {
                 "public",
                 3_600_000,
             ),
-            // A board read is never cached.
-            (
-                "resources/read",
-                json!({"uri": "sylvode://scenario-templates"}),
-                "private",
-                0,
-            ),
         ];
         for (method, params, scope, ttl) in cases {
             let result = result_of(&server, request(1, method, Some(modern_params(params)))).await?;
@@ -2192,7 +2180,7 @@ mod protocol_eras {
             ("tools/list", json!({})),
             ("resources/list", json!({})),
             ("resources/templates/list", json!({})),
-            ("resources/read", json!({"uri": "sylvode://scenario-templates"})),
+            ("resources/read", json!({"uri": "sylvode://guides/workflows"})),
         ] {
             let result = result_of(&server, request(1, method, Some(params))).await?;
             for key in ["resultType", "ttlMs", "cacheScope", "_meta", "structuredContent"] {
@@ -2345,9 +2333,6 @@ mod resource_errors {
             assert_eq!(code, expected);
             assert_eq!(message, "Resource not found");
             assert_eq!(data, json!({"uri": "sylvode://issues/NOPE-999999"}));
-            // An ungoverned read reaches its own arm and is mapped the same way.
-            let (code, ..) = error_of(&read(&server, "sylvode://scenario-templates/missing", &era).await?)?;
-            assert_eq!(code, expected);
         }
         // The same server keeps answering.
         let guide = read(&server, "sylvode://guides/workflows", &Era::Legacy).await?;
@@ -2359,11 +2344,18 @@ mod resource_errors {
     async fn a_forbidden_answer_is_a_refusal_with_a_reason() -> TestResult {
         let server = api_answering(403, "this bot may not do this in this project").await?;
         for era in [modern_era(), Era::Legacy] {
-            let (code, message, data) = error_of(&read(&server, "sylvode://scenario-templates", &era).await?)?;
+            let (code, message, data) = error_of(
+                &read(
+                    &server,
+                    "sylvode://projects/22222222-2222-4222-8222-222222222222/type",
+                    &era,
+                )
+                .await?,
+            )?;
             assert_eq!((code, message.as_str()), (-32602, "Resource access refused"));
             assert_eq!(
                 data,
-                json!({"uri": "sylvode://scenario-templates", "reason": "forbidden"})
+                json!({"uri": "sylvode://projects/22222222-2222-4222-8222-222222222222/type", "reason": "forbidden"})
             );
         }
         Ok(())
@@ -2398,11 +2390,18 @@ mod resource_errors {
             },
         );
         for era in [modern_era(), Era::Legacy] {
-            let (code, message, data) = error_of(&read(&delegated, "sylvode://scenario-templates", &era).await?)?;
+            let (code, message, data) = error_of(
+                &read(
+                    &delegated,
+                    "sylvode://projects/22222222-2222-4222-8222-222222222222/type",
+                    &era,
+                )
+                .await?,
+            )?;
             assert_eq!((code, message.as_str()), (-32602, "Resource access refused"));
             assert_eq!(
                 data,
-                json!({"uri": "sylvode://scenario-templates", "reason": "not_available_to_connected_applications"})
+                json!({"uri": "sylvode://projects/22222222-2222-4222-8222-222222222222/type", "reason": "not_available_to_connected_applications"})
             );
         }
         let guide = read(&delegated, "sylvode://guides/workflows", &modern_era()).await?;
@@ -2432,9 +2431,16 @@ mod resource_errors {
         for (code, message) in [(401, "bad token"), (500, "database is down")] {
             let server = api_answering(code, message).await?;
             for era in [modern_era(), Era::Legacy] {
-                let (rpc_code, text, data) = error_of(&read(&server, "sylvode://scenario-templates", &era).await?)?;
+                let (rpc_code, text, data) = error_of(
+                    &read(
+                        &server,
+                        "sylvode://projects/22222222-2222-4222-8222-222222222222/type",
+                        &era,
+                    )
+                    .await?,
+                )?;
                 assert_eq!(rpc_code, -32603, "{code}");
-                assert_eq!(text, "Failed to read scenario templates", "{rpc_code}");
+                assert_eq!(text, "Failed to check the access policy of the resource", "{rpc_code}");
                 assert!(!text.contains("127.0.0.1"), "{text}");
                 assert!(data.is_null());
             }
@@ -2451,11 +2457,7 @@ mod resource_errors {
     async fn a_successful_read_never_has_an_empty_contents_array() -> TestResult {
         let router = Router::new().fallback(get(|| async { Json(json!({"code": 0, "data": []})) }));
         let server = server(crate::client::test_api::spawn(router).await?)?;
-        for uri in [
-            "sylvode://skills/sylvode-mcp",
-            "sylvode://scenario-templates",
-            "sylvode://scenario-templates/software-delivery",
-        ] {
+        for uri in ["sylvode://skills/sylvode-mcp"] {
             for era in [modern_era(), Era::Legacy] {
                 let answer = read(&server, uri, &era).await?;
                 let contents = answer

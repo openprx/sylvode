@@ -305,13 +305,6 @@ for proto, call in CALLERS.items():
     print("\n🧭 Project Types & Resources")
     check(proto, "project_types.list", call("project_types.list"), is_ok)
     check(proto, "project_types.get", call("project_types.get", {"key": "code_project"}), is_ok)
-    check(proto, "scenario_templates.list", call("scenario_templates.list"), is_ok)
-    check(
-        proto,
-        "scenario_templates.get",
-        call("scenario_templates.get", {"key": "contract_review_default"}),
-        is_ok,
-    )
 
     # === Context ===
     print("\n🧠 Context")

@@ -64,11 +64,6 @@ pub static CATEGORIES: &[Category] = &[
         summary: "Read the project scenario types and their capability schemas",
     },
     Category {
-        name: "scenario_templates",
-        title: "Scenario templates",
-        summary: "Browse and install ready-made multi-form setups",
-    },
-    Category {
         name: "context",
         title: "Context",
         summary: "Read project context, governance and the agent policy",
@@ -265,27 +260,6 @@ pub static CATALOG: &[ToolMeta] = &[
         keywords: &["project type", "capabilities"],
     },
     ToolMeta {
-        name: "scenario_templates.list",
-        category: "scenario_templates",
-        access: Access::Read,
-        summary: "List scenario templates for project setup",
-        keywords: &["template", "scenario", "catalog"],
-    },
-    ToolMeta {
-        name: "scenario_templates.get",
-        category: "scenario_templates",
-        access: Access::Read,
-        summary: "Get one scenario template by key",
-        keywords: &["template", "scenario", "usage guide"],
-    },
-    ToolMeta {
-        name: "scenario_templates.install",
-        category: "scenario_templates",
-        access: Access::Write,
-        summary: "Install a scenario template into an existing project",
-        keywords: &["apply template", "set up forms", "bootstrap"],
-    },
-    ToolMeta {
         name: "forms.list",
         category: "forms",
         access: Access::Read,
@@ -305,13 +279,6 @@ pub static CATALOG: &[ToolMeta] = &[
         access: Access::Write,
         summary: "Create a universal form in a project",
         keywords: &["new form", "add form", "define form"],
-    },
-    ToolMeta {
-        name: "forms.create_from_template",
-        category: "forms",
-        access: Access::Write,
-        summary: "Create a form from a scenario template",
-        keywords: &["form from template", "new form"],
     },
     ToolMeta {
         name: "forms.update_schema",
@@ -1435,10 +1402,9 @@ mod tests {
     use serde_json::json;
     use std::collections::BTreeSet;
 
-    const FROZEN_CATEGORIES: [&str; 21] = [
+    const FROZEN_CATEGORIES: [&str; 20] = [
         "projects",
         "project_types",
-        "scenario_templates",
         "context",
         "forms",
         "layouts",

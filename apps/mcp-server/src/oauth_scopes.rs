@@ -78,11 +78,7 @@ pub const WITHHELD_TOOLS: &[&str] = &[
     "projects.delete",
     "project_types.list",
     "project_types.get",
-    "scenario_templates.list",
-    "scenario_templates.get",
-    "scenario_templates.install",
     "forms.create",
-    "forms.create_from_template",
     "forms.update_schema",
     "forms.duplicate",
     "forms.field_usage",
@@ -295,11 +291,11 @@ mod tests {
     #[test]
     fn the_first_release_exposes_exactly_these_totals() {
         assert_eq!(SCOPED_TOOLS.len(), 15);
-        assert_eq!(WITHHELD_TOOLS.len(), 154);
-        // The main registry (163 tools) and the four search mode entry tools are fully covered; the two
+        assert_eq!(WITHHELD_TOOLS.len(), 150);
+        // The main registry (159 tools) and the four search mode entry tools are fully covered; the two
         // extra names are Flow-only.
-        assert_eq!(crate::tools::get_all_tool_definitions().len(), 163);
-        assert_eq!(SCOPED_TOOLS.len() + WITHHELD_TOOLS.len(), 163 + 4 + 2);
+        assert_eq!(crate::tools::get_all_tool_definitions().len(), 159);
+        assert_eq!(SCOPED_TOOLS.len() + WITHHELD_TOOLS.len(), 159 + 4 + 2);
     }
 
     /// The five task tools are closed to every connected application, whatever its scopes, and

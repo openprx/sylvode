@@ -1,7 +1,7 @@
 # Sylvode MCP server
 
 `mcp-server` is the Model Context Protocol (MCP) server of Sylvode. It gives AI agents and MCP
-clients tools for projects, project types and scenario templates, work items, comments, labels,
+clients tools for projects, project types, work items, comments, labels,
 sprints, universal forms and their records, WASM plugins, governance proposals and check results,
 release readiness, governed code, document and operations work, files, workspace members and
 search, bot operation records, Sylvode Flow, and the agent task protocol. The generated table in
@@ -439,11 +439,10 @@ How calls are scoped:
 | `sylvode://skills/sylvode-mcp` | The agent skill: the task procedure, finding and calling tools, conventions and recipes |
 | `sylvode://skills/sylvode-mcp/tools` | Every tool with its category, whether it reads or writes, and a one-line summary |
 | `sylvode://guides/workflows` | Common workflow recipes: fix an assigned issue, answer a mention, vote on a proposal, find and change data |
-| `sylvode://scenario-templates` | Project creation templates with workflow, fields, resources, AI roles and governance |
 
 `resources/templates/list` returns URI templates under the `sylvode://` scheme for project issues,
 forms, context, governance, agent policy, release readiness, type, recent decisions and sprints;
-forms, their records and events; form records and their events; scenario templates by key; issues
+forms, their records and events; form records and their events; issues
 by identifier; and Flow objects, their history and schema, Collection records and the workspace
 navigator. `resources/read` reads one with the caller's credential.
 
@@ -459,15 +458,14 @@ A failed read is answered with a JSON-RPC error; `data.uri` is the requested tex
 ## Tools
 
 <!-- BEGIN GENERATED: tool-table (sylvode-skillgen; do not edit) -->
-The MCP server registers 163 tools in 21 categories. By default it lists nine of them (search mode) and reaches the rest through `sylvode_search`, `sylvode_read` and `sylvode_write`. Every tool, with its category and access, is in [reference/tools.md](../../skills/sylvode-mcp/reference/tools.md).
+The MCP server registers 159 tools in 20 categories. By default it lists nine of them (search mode) and reaches the rest through `sylvode_search`, `sylvode_read` and `sylvode_write`. Every tool, with its category and access, is in [reference/tools.md](../../skills/sylvode-mcp/reference/tools.md).
 
 | Category | Tools | Read | Write | Covers |
 |---|---:|---:|---:|---|
 | `projects`: Projects | 5 | 2 | 3 | Create, read, update and delete projects |
 | `project_types`: Project types | 2 | 2 | 0 | Read the project scenario types and their capability schemas |
-| `scenario_templates`: Scenario templates | 3 | 2 | 1 | Browse and install ready-made multi-form setups |
 | `context`: Context | 3 | 3 | 0 | Read project context, governance and the agent policy |
-| `forms`: Universal forms | 37 | 18 | 19 | Forms, records, attachments, permissions, imports and business events |
+| `forms`: Universal forms | 36 | 18 | 18 | Forms, records, attachments, permissions, imports and business events |
 | `layouts`: Layouts | 2 | 1 | 1 | Check layouts and propose them as drafts for a person to approve |
 | `plugins`: Plugins | 5 | 3 | 2 | Install, inspect and invoke WASM plugins |
 | `work_items`: Work items | 14 | 6 | 8 | Issues of a project: list, read, create, update, label |

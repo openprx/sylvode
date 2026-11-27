@@ -23,7 +23,6 @@ pub mod project_types;
 pub mod projects;
 pub mod proposals;
 pub mod release;
-pub mod scenario_templates;
 pub mod scenario_tools;
 pub mod schema_check;
 pub mod search;
@@ -44,9 +43,6 @@ pub fn get_all_tool_definitions() -> Vec<ToolDefinition> {
         projects::delete_project_tool(),
         project_types::list_project_types_tool(),
         project_types::get_project_type_tool(),
-        scenario_templates::list_scenario_templates_tool(),
-        scenario_templates::get_scenario_template_tool(),
-        scenario_templates::install_scenario_template_tool(),
         // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
         // project_types::list_project_resources_tool(),
         // project_types::create_project_resource_tool(),
@@ -55,7 +51,6 @@ pub fn get_all_tool_definitions() -> Vec<ToolDefinition> {
         forms::list_forms_tool(),
         forms::get_form_tool(),
         forms::create_form_tool(),
-        forms::create_form_from_template_tool(),
         forms::update_form_schema_tool(),
         forms::duplicate_form_tool(),
         forms::get_form_schema_summary_tool(),
@@ -478,13 +473,9 @@ mod tests {
         for expected in [
             "project_types.list",
             "project_types.get",
-            "scenario_templates.list",
-            "scenario_templates.get",
-            "scenario_templates.install",
             "forms.list",
             "forms.get",
             "forms.create",
-            "forms.create_from_template",
             "forms.update_schema",
             "forms.duplicate",
             "forms.schema_summary",

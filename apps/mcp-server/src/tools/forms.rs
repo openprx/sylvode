@@ -100,26 +100,6 @@ pub fn create_form_tool() -> ToolDefinition {
     }
 }
 
-pub fn create_form_from_template_tool() -> ToolDefinition {
-    ToolDefinition {
-        annotations: None,
-        name: "forms.create_from_template".to_string(),
-        description: "Create one universal form from a scenario template inside an existing project".to_string(),
-        input_schema: json!({
-            "type": "object",
-            "properties": {
-                "project_id": { "type": "string" },
-                "template_key": { "type": "string", "description": "Scenario template key, for example restaurant_ordering_default" },
-                "key": { "type": "string", "description": "Optional form key override" },
-                "name": { "type": "string", "description": "Optional form name override" },
-                "description": { "type": "string", "description": "Optional description override" },
-                "title_template": { "type": "string", "description": "Optional title template override" }
-            },
-            "required": ["project_id", "template_key"]
-        }),
-    }
-}
-
 pub fn update_form_schema_tool() -> ToolDefinition {
     ToolDefinition {
         annotations: None,
@@ -799,16 +779,6 @@ struct CreateFormInput {
 }
 
 #[derive(Debug, Deserialize)]
-struct CreateFormFromTemplateInput {
-    project_id: String,
-    template_key: String,
-    key: Option<String>,
-    name: Option<String>,
-    description: Option<String>,
-    title_template: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 struct UpdateFormSchemaInput {
     form_id: String,
     name: Option<String>,
@@ -1023,24 +993,6 @@ pub async fn create_form(client: &OpenPrClient, args: Value) -> CallToolResult {
         "detail_layout": input.detail_layout
     });
     match client.create_form(&input.project_id, body).await {
-        Ok(value) => CallToolResult::success(pretty(&value)),
-        Err(err) => CallToolResult::error(err),
-    }
-}
-
-pub async fn create_form_from_template(client: &OpenPrClient, args: Value) -> CallToolResult {
-    let input: CreateFormFromTemplateInput = match parse_input(args) {
-        Ok(value) => value,
-        Err(err) => return err,
-    };
-    let body = json!({
-        "template_key": input.template_key,
-        "key": input.key,
-        "name": input.name,
-        "description": input.description,
-        "title_template": input.title_template
-    });
-    match client.create_form_from_template(&input.project_id, body).await {
         Ok(value) => CallToolResult::success(pretty(&value)),
         Err(err) => CallToolResult::error(err),
     }

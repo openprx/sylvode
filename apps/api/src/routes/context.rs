@@ -489,8 +489,6 @@ fn build_mcp_tool_registry(capabilities: &Value) -> Value {
                 "forms.list",
                 "forms.get",
                 "forms.create",
-                "forms.create_from_template",
-                "scenario_templates.install",
                 "forms.update_schema",
                 "forms.duplicate",
                 "forms.schema_summary",
@@ -647,8 +645,6 @@ mod tests {
         ] {
             assert!(!tools.contains(&parked.to_string()), "{parked} is parked");
         }
-        assert!(tools.contains(&"forms.create_from_template".to_string()));
-        assert!(tools.contains(&"scenario_templates.install".to_string()));
         assert!(tools.contains(&"forms.duplicate".to_string()));
         assert!(tools.contains(&"forms.schema_summary".to_string()));
         assert!(tools.contains(&"form_schema_versions.list".to_string()));

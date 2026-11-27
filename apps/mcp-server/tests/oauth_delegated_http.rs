@@ -1090,7 +1090,6 @@ async fn delegated_callers_read_the_static_guides_and_nothing_else() -> TestResu
     for uri in [
         format!("sylvode://forms/{PROJECT}/records"),
         format!("sylvode://projects/{PROJECT}/issues"),
-        "sylvode://scenario-templates".to_string(),
         format!("sylvode://workspaces/{GRANT_WORKSPACE}/navigator"),
     ] {
         let reply = server
