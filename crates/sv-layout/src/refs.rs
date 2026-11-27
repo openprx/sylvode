@@ -56,15 +56,14 @@ pub fn parse_ref(s: &str) -> Option<Reference> {
                 first = Some(name.to_owned());
             }
             tail = next;
-        } else if let Some(after) = tail.strip_prefix('[') {
+        } else {
+            let after = tail.strip_prefix('[')?;
             let end = after.find(']')?;
             let (digits, next) = after.split_at(end);
             if digits.is_empty() || digits.len() > 4 || !digits.bytes().all(|b| b.is_ascii_digit()) {
                 return None;
             }
             tail = next.strip_prefix(']')?;
-        } else {
-            return None;
         }
     }
     Some(Reference { root, first })

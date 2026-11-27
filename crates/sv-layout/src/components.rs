@@ -50,7 +50,7 @@ pub enum Align {
 }
 
 /// Props of `stack`.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct StackProps {
     /// Direction.
@@ -65,7 +65,7 @@ pub struct StackProps {
 }
 
 /// Props of `grid`.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GridProps {
     /// Columns, 1..=4 (collapses to 1 on narrow screens).
@@ -78,7 +78,7 @@ pub struct GridProps {
 }
 
 /// Props of `card`.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CardProps {
     /// Title.
@@ -93,7 +93,7 @@ pub struct CardProps {
 }
 
 /// One tab.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TabDef {
     /// Tab key.
@@ -103,7 +103,7 @@ pub struct TabDef {
 }
 
 /// Props of `tabs`; child `i` belongs to tab `i`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TabsProps {
     /// Tabs, at most 8.
@@ -126,7 +126,7 @@ pub enum TextStyle {
 }
 
 /// Props of `text`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TextProps {
     /// The text.
@@ -136,8 +136,8 @@ pub struct TextProps {
     pub style: Option<TextStyle>,
 }
 
-/// Props of `markdown` (CommonMark, sanitised; value at most 32 KiB).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+/// Props of `markdown` (`CommonMark`, sanitised; value at most 32 KiB).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MarkdownProps {
     /// Markdown source.
@@ -161,7 +161,7 @@ pub enum Format {
 }
 
 /// Props of `stat`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct StatProps {
     /// Label.
@@ -211,7 +211,7 @@ pub struct ToneMap {
 }
 
 /// Props of `badge`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BadgeProps {
     /// Value (text or reference).
@@ -222,7 +222,7 @@ pub struct BadgeProps {
 }
 
 /// One table column.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ColumnDef {
     /// Field key.
@@ -236,7 +236,7 @@ pub struct ColumnDef {
 }
 
 /// Props of `table`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TableProps {
     /// Reference to a list.
@@ -253,7 +253,7 @@ pub struct TableProps {
 }
 
 /// Props of `field-display`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FieldDisplayProps {
     /// Reference to a record result.
@@ -266,7 +266,7 @@ pub struct FieldDisplayProps {
 }
 
 /// Props of `form`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FormProps {
     /// Name of a `form` data source.
@@ -296,7 +296,7 @@ pub enum ButtonVariant {
 }
 
 /// Props of `button`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ButtonProps {
     /// Label.
@@ -311,7 +311,7 @@ pub struct ButtonProps {
 }
 
 /// Typed props of a node, by component.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ComponentProps {
     /// `stack`
     Stack(StackProps),
@@ -352,7 +352,7 @@ pub enum ChildrenRule {
 }
 
 /// Descriptor of one component, as served by `GET /api/v1/layouts/components`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ComponentDescriptor {
     /// Component type name.
     #[serde(rename = "type")]

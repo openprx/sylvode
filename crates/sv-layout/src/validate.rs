@@ -337,10 +337,9 @@ impl Cx {
         if let Some(src) = v
             .as_str()
             .filter(|s| !s.trim().is_empty() && s.chars().count() <= MAX_EXPR_CHARS)
+            && let Err(e) = sv_rules::compile(src, sv_rules::Env::LayoutWhen)
         {
-            if let Err(e) = sv_rules::compile(src, sv_rules::Env::LayoutWhen) {
-                self.push(path, ErrorCode::Cel(e.code), &format!("expression refused: {}", e.code));
-            }
+            self.push(path, ErrorCode::Cel(e.code), &format!("expression refused: {}", e.code));
         }
     }
 
@@ -509,14 +508,14 @@ impl Cx {
                 }
             }
         }
-        if let Some(n) = m.get("page_size").and_then(Value::as_u64) {
-            if n == 0 || n > u64::from(MAX_PAGE_SIZE) {
-                self.push(
-                    &join(p, "page_size"),
-                    ErrorCode::LimitExceeded,
-                    "page_size must be 1..=200",
-                );
-            }
+        if let Some(n) = m.get("page_size").and_then(Value::as_u64)
+            && (n == 0 || n > u64::from(MAX_PAGE_SIZE))
+        {
+            self.push(
+                &join(p, "page_size"),
+                ErrorCode::LimitExceeded,
+                "page_size must be 1..=200",
+            );
         }
     }
 
@@ -525,9 +524,8 @@ impl Cx {
         let Context::Site { bindings } = &self.context else {
             return;
         };
-        let name = match v.and_then(Value::as_str).and_then(parse_form_ref) {
-            Some(FormRef::Bind(n) | FormRef::Key(n)) => n,
-            None => return,
+        let Some(FormRef::Bind(name) | FormRef::Key(name)) = v.and_then(Value::as_str).and_then(parse_form_ref) else {
+            return;
         };
         if !bindings.contains(&name) {
             self.push(
@@ -612,14 +610,14 @@ impl Cx {
             self.push(p, ErrorCode::ShapeInvalid, "action members have the wrong shape");
             return;
         };
-        if let Some(slot) = slot {
-            if !slot.allowed_actions.contains(&action.kind_name()) {
-                self.push(
-                    &join(p, "kind"),
-                    ErrorCode::SlotNodeNotAllowed,
-                    "action kind not allowed in this slot",
-                );
-            }
+        if let Some(slot) = slot
+            && !slot.allowed_actions.contains(&action.kind_name())
+        {
+            self.push(
+                &join(p, "kind"),
+                ErrorCode::SlotNodeNotAllowed,
+                "action kind not allowed in this slot",
+            );
         }
         if matches!(self.context, Context::Site { .. }) {
             match &action {
@@ -795,11 +793,11 @@ impl Cx {
                 }
             }
             Value::Object(m) => {
-                if m.len() == 1 {
-                    if let Some(expr) = m.get("cel") {
-                        self.expr(expr, &join(path, "cel"));
-                        return;
-                    }
+                if m.len() == 1
+                    && let Some(expr) = m.get("cel")
+                {
+                    self.expr(expr, &join(path, "cel"));
+                    return;
                 }
                 for (k, x) in m {
                     self.prop_texts(x, &join(path, k));
@@ -843,17 +841,7 @@ impl Cx {
                 match self.sources.get(&p.data) {
                     Some((SourceKind::Form, fields)) => {
                         let fields = fields.clone();
-                        if !fields.is_empty() {
-                            for (i, f) in p.fields.iter().enumerate() {
-                                if !fields.contains(f) {
-                                    self.push(
-                                        &format!("{}/{i}", join(path, "fields")),
-                                        ErrorCode::PropsInvalid,
-                                        "field is not in the form source",
-                                    );
-                                }
-                            }
-                        }
+                        self.form_fields(&p.fields, &fields, path);
                     }
                     _ => self.push(
                         &join(path, "data"),
@@ -898,14 +886,29 @@ impl Cx {
         }
     }
 
+    fn form_fields(&mut self, wanted: &[String], source_fields: &[String], path: &str) {
+        if source_fields.is_empty() {
+            return;
+        }
+        for (i, f) in wanted.iter().enumerate() {
+            if !source_fields.contains(f) {
+                self.push(
+                    &format!("{}/{i}", join(path, "fields")),
+                    ErrorCode::PropsInvalid,
+                    "field is not in the form source",
+                );
+            }
+        }
+    }
+
     fn action_name(&mut self, name: &str, want_kind: Option<&str>, path: &str) {
         match self.actions.get(name) {
             None => self.push(path, ErrorCode::ActionUnknown, "undeclared action"),
             Some(kind) => {
-                if let Some(w) = want_kind {
-                    if *kind != w {
-                        self.push(path, ErrorCode::ActionUnknown, &format!("action must be of kind {w}"));
-                    }
+                if let Some(w) = want_kind
+                    && *kind != w
+                {
+                    self.push(path, ErrorCode::ActionUnknown, &format!("action must be of kind {w}"));
                 }
             }
         }
@@ -914,11 +917,10 @@ impl Cx {
     fn children_rule(&mut self, rule: ChildrenRule, kind: &str, props: Option<&Value>, n: usize, path: &str) {
         let p = join(path, "children");
         match rule {
-            ChildrenRule::Any => {}
             ChildrenRule::None if n > 0 => {
                 self.push(&p, ErrorCode::ChildrenInvalid, &format!("{kind} takes no children"));
             }
-            ChildrenRule::None => {}
+            ChildrenRule::Any | ChildrenRule::None => {}
             ChildrenRule::Fixed => {
                 let tabs = props
                     .and_then(|p| p.get("tabs"))
@@ -956,17 +958,18 @@ impl Cx {
             );
             return;
         }
-        if kind == "stack" && !slot.stack_children.is_empty() {
-            if let Some(children) = root.get("children").and_then(Value::as_array) {
-                for (i, c) in children.iter().enumerate() {
-                    let ck = c.get("type").and_then(Value::as_str).unwrap_or("");
-                    if !slot.stack_children.contains(&ck) {
-                        self.push(
-                            &format!("/root/children/{i}/type"),
-                            ErrorCode::SlotNodeNotAllowed,
-                            "child component not allowed in this slot",
-                        );
-                    }
+        if kind == "stack"
+            && !slot.stack_children.is_empty()
+            && let Some(children) = root.get("children").and_then(Value::as_array)
+        {
+            for (i, c) in children.iter().enumerate() {
+                let ck = c.get("type").and_then(Value::as_str).unwrap_or("");
+                if !slot.stack_children.contains(&ck) {
+                    self.push(
+                        &format!("/root/children/{i}/type"),
+                        ErrorCode::SlotNodeNotAllowed,
+                        "child component not allowed in this slot",
+                    );
                 }
             }
         }

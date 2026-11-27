@@ -36,7 +36,7 @@ pub struct Layout {
 /// A text value: literal, i18n map (`en` required) or computed CEL expression.
 ///
 /// A literal or map value starting with `$` is a reference resolved by the renderer.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum Text {
     /// Plain literal or reference string.
@@ -48,7 +48,7 @@ pub enum Text {
 }
 
 /// Computed text.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CelText {
     /// The CEL expression source.
@@ -94,7 +94,7 @@ pub struct Node {
     pub when: Option<String>,
     /// Child nodes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub children: Vec<Node>,
+    pub children: Vec<Self>,
     /// Action name for the `click` event (buttons).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_click: Option<String>,
@@ -123,7 +123,7 @@ pub enum FilterOp {
 }
 
 /// One filter condition; `value` may be a reference.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Filter {
     /// Field key.
@@ -156,7 +156,7 @@ pub struct SortSpec {
 }
 
 /// Single-record read.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RecordSource {
     /// Form reference (`$bind.<name>` or `form:<key>`).
     pub form: String,
@@ -168,7 +168,7 @@ pub struct RecordSource {
 }
 
 /// List query.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct QuerySource {
     /// Form reference.
     pub form: String,
@@ -187,7 +187,7 @@ pub struct QuerySource {
 }
 
 /// Form descriptor source (input target of `form` nodes).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct FormSource {
     /// Form reference.
     pub form: String,
@@ -197,7 +197,7 @@ pub struct FormSource {
 }
 
 /// Reserved plugin source (refused in the MVP).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PluginSource {
     /// Package id.
     pub package: String,
@@ -209,7 +209,7 @@ pub struct PluginSource {
 }
 
 /// A named data source.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "source", rename_all = "lowercase")]
 pub enum DataSource {
     /// One record.
@@ -233,7 +233,7 @@ pub enum SubmitMode {
 }
 
 /// Target of a record navigation.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RecordTarget {
     /// Form reference.
@@ -253,7 +253,7 @@ pub struct ViewTarget {
 }
 
 /// Navigation target; external URLs are not allowed in v1.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum NavTarget {
     /// A record.
@@ -267,7 +267,7 @@ pub enum NavTarget {
 }
 
 /// A named action.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Action {
     /// Invoke a package action export.
