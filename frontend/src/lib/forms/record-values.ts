@@ -3,13 +3,13 @@
  * because every editor input is a DOM control) and the structured record
  * values the forms API stores.
  *
- * Why this has to be exhaustive: `PATCH /api/v1/form-records/:id` replaces the
- * whole `values` map instead of merging it (see `apps/api/src/forms/values.rs`,
- * `normalize_record_values_with_existing` rebuilds an empty map). Any field the
- * frontend fails to put back into the payload is therefore permanently deleted
- * from the stored record. `FIELD_CODECS` is keyed by `FormFieldType`, so adding
- * a field type to the union without adding a codec is a compile error rather
- * than a silent data loss bug.
+ * Update contract (`PATCH /api/v1/form-records/:id`, see
+ * `apps/api/src/forms/values.rs`): an absent key leaves the stored value
+ * unchanged and an explicit `null` clears it. An edit that empties a field
+ * must therefore send `null` (`clearedFieldPayload`); omitting the key would
+ * silently keep the old value. `FIELD_CODECS` is keyed by `FormFieldType`, so
+ * adding a field type to the union without adding a codec is a compile error
+ * rather than a silent mapping gap.
  *
  * Decimal-ish types (`amount`, `number`) are always submitted as strings: the
  * backend rejects JSON numbers for them ("must be a decimal string, not a JSON
@@ -323,6 +323,33 @@ export function recordValueFromDraftValue(
 	context: DraftToValueContext = {}
 ): unknown {
 	return codecFor(field).toValue(field, draft, context);
+}
+
+/**
+ * Payload entry for a field whose draft maps to no value. On update a stored
+ * value is cleared with an explicit `null`; on create, or when nothing is
+ * stored, the key is omitted (`undefined`) so the server keeps the stored
+ * state or applies the field's `default_value`.
+ */
+export function clearedFieldPayload(editing: boolean, existingValue: unknown): null | undefined {
+	if (!editing) return undefined;
+	if (existingValue === undefined || existingValue === null) return undefined;
+	if (typeof existingValue === 'string' && existingValue.trim() === '') return undefined;
+	if (Array.isArray(existingValue) && existingValue.length === 0) return undefined;
+	return null;
+}
+
+/**
+ * Title sent with a save: only a title the user changed. The server renders
+ * the title from the form's template when none is sent, so an unchanged title
+ * (which may be a reader's view with denied fields left out) is never written
+ * back over the stored one.
+ */
+export function titleForSave(edited: string, loaded: string | undefined): string | undefined {
+	const title = edited.trim();
+	if (!title) return undefined;
+	if (loaded !== undefined && title === loaded.trim()) return undefined;
+	return title;
 }
 
 /** True when omitting the field from the payload would fail backend validation. */

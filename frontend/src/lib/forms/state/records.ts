@@ -6,7 +6,12 @@ import {
 	formsApi
 } from '#lib/api/forms.js';
 import type { FormWorkflowMode } from '#lib/components/forms/FormWorkflowTabs.svelte';
-import { isMissingRequiredValue, recordValueFromDraftValue } from '#lib/forms/record-values.js';
+import {
+	clearedFieldPayload,
+	isMissingRequiredValue,
+	recordValueFromDraftValue,
+	titleForSave
+} from '#lib/forms/record-values.js';
 import { toast } from '#lib/stores/toast.js';
 import { confirmAction } from '#lib/ui/dialog/confirm.js';
 import { fieldHiddenByCondition } from '#lib/forms/field-conditions.js';
@@ -36,7 +41,7 @@ export class RecordsController extends FormsController {
 
 		const response = this.s.editingRecordId
 			? await this.fp.session.updateRecordWithVersion(this.s.editingRecordId, {
-					title: this.s.recordTitle.trim() || undefined,
+					title: titleForSave(this.s.recordTitle, this.editedRecordTitle()),
 					values,
 					source: { type: 'web' }
 				})
@@ -309,6 +314,16 @@ export class RecordsController extends FormsController {
 		return this.buildValuesFromDraft(formFields, this.s.recordDraft, this.editedRecordValues());
 	};
 
+	editedRecordTitle = (): string | undefined => {
+		if (!this.s.editingRecordId) return undefined;
+
+		const current =
+			this.s.records.find((record) => record.id === this.s.editingRecordId) ??
+			this.s.selectedRecord;
+
+		return current?.id === this.s.editingRecordId ? current.title : undefined;
+	};
+
 	editedRecordValues = (): Record<string, unknown> | undefined => {
 		if (!this.s.editingRecordId) return undefined;
 
@@ -320,10 +335,9 @@ export class RecordsController extends FormsController {
 	};
 
 	/**
-	 * The API replaces the whole `values` map on PATCH, so every field the
-	 * payload omits is deleted from the stored record. The per-type mapping in
-	 * `#lib/forms/record-values` is exhaustive over `FormFieldType` to keep that
-	 * from silently happening again.
+	 * Builds the `values` payload. On update an absent key means "unchanged"
+	 * and `null` clears, so a field the user emptied is sent as `null` when the
+	 * record holds a value for it (`existingValues` is set only when editing).
 	 */
 	buildValuesFromDraft = (
 		formFields: FormField[],
@@ -352,7 +366,16 @@ export class RecordsController extends FormsController {
 				);
 			}
 
-			if (value === undefined) continue;
+			if (value === undefined) {
+				const cleared = clearedFieldPayload(
+					existingValues !== undefined,
+					existingValues?.[field.key]
+				);
+
+				if (cleared === null) values[field.key] = null;
+
+				continue;
+			}
 
 			values[field.key] = value;
 		}

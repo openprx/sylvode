@@ -3,9 +3,9 @@
  *
  * Run with: `bun run test:record-values`
  *
- * The API replaces the whole `values` map on update, so a field that survives
- * `value -> draft -> value` unchanged is a field that cannot be silently wiped
- * by an edit. Every `FormFieldType` must appear in `CASES`; the guard at the
+ * On update the API keeps an absent key and clears an explicit `null`, so a
+ * field that survives `value -> draft -> value` unchanged is a field an edit
+ * neither wipes nor silently keeps stale. Every `FormFieldType` must appear in `CASES`; the guard at the
  * bottom fails when a new type is added without a case.
  */
 
@@ -13,9 +13,11 @@ import assert from 'node:assert/strict';
 import type { FormField, FormFieldType } from '../src/lib/api/forms';
 import {
 	FORM_FIELD_TYPES,
+	clearedFieldPayload,
 	draftValueFromRecordValue,
 	isMissingRequiredValue,
 	recordValueFromDraftValue,
+	titleForSave,
 	type DraftToValueContext
 } from '../src/lib/forms/record-values';
 
@@ -224,6 +226,25 @@ check('location keeps free text as free text', () => {
 	assert.equal(recordValueFromDraftValue(where, 'Beijing, Chaoyang', {}), 'Beijing, Chaoyang');
 	assert.deepEqual(recordValueFromDraftValue(where, '1,2', {}), { lat: 1, lng: 2 });
 	assert.equal(recordValueFromDraftValue(where, '999,2', {}), '999,2');
+});
+
+check('an edit that empties a stored value sends null; a create omits the key', () => {
+	assert.equal(clearedFieldPayload(true, 'old note'), null);
+	assert.equal(clearedFieldPayload(true, ['a']), null);
+	assert.equal(clearedFieldPayload(true, { type: 'integer', value: 3 }), null);
+	assert.equal(clearedFieldPayload(true, undefined), undefined);
+	assert.equal(clearedFieldPayload(true, null), undefined);
+	assert.equal(clearedFieldPayload(true, ''), undefined);
+	assert.equal(clearedFieldPayload(true, []), undefined);
+	assert.equal(clearedFieldPayload(false, 'old note'), undefined);
+});
+
+check('only a title the user changed is sent with a save', () => {
+	assert.equal(titleForSave('Order 1', 'Order 1'), undefined);
+	assert.equal(titleForSave('  Order 1 ', 'Order 1'), undefined);
+	assert.equal(titleForSave('', 'Order 1'), undefined);
+	assert.equal(titleForSave('Order 2', 'Order 1'), 'Order 2');
+	assert.equal(titleForSave('New order', undefined), 'New order');
 });
 
 if (failures > 0) {

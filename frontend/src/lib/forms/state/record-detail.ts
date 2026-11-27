@@ -10,6 +10,7 @@ import { confirmAction } from '#lib/ui/dialog/confirm.js';
 import { parseFields } from '#lib/forms/designer-schema.js';
 import { fieldType, optionArchived, optionDisabled } from '#lib/forms/field-options.js';
 import { translate } from '#lib/forms/i18n.js';
+import { titleForSave } from '#lib/forms/record-values.js';
 import {
 	childRelationKeyForField,
 	defaultDraftForFields,
@@ -195,7 +196,7 @@ export class RecordDetailController extends FormsController {
 
 		const response = this.s.childEditor.recordId
 			? await this.fp.session.updateRecordWithVersion(this.s.childEditor.recordId, {
-					title: this.s.childEditor.title.trim() || undefined,
+					title: titleForSave(this.s.childEditor.title, editedChild?.record.title),
 					values,
 					source: { type: 'web', parent_record_id: this.s.selectedRecord.id }
 				})
