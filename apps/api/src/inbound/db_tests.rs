@@ -371,6 +371,17 @@ async fn a_signed_high_event_opens_one_alert_one_task_and_one_notification() {
         Some(w.admin),
         "the source acts as the admin who registered it"
     );
+    // The work item's log opens with its creation and the alert, both written by the source's actor.
+    for action in ["created", "alert_opened"] {
+        assert_eq!(
+            w.n(&format!(
+                "SELECT count(*) AS count FROM activities WHERE action = '{action}' AND issue_id IS NOT NULL"
+            ))
+            .await,
+            1,
+            "{action}"
+        );
+    }
     assert!(item.description.contains("Reported data (untrusted)"));
     assert!(item.description.contains("SQL injection burst on /login"));
     assert!(item.description.contains("Triage "), "{}", item.description);
@@ -1150,6 +1161,33 @@ async fn one_active_task_per_alert_and_the_rearm_delay_after_it_ends() {
         1
     );
     assert_eq!(w.n("SELECT count(*) AS count FROM work_items").await, 1);
+    w.scratch.drop_self().await;
+}
+
+#[tokio::test]
+async fn a_new_alert_task_assigns_the_item_to_the_bot_and_logs_it() {
+    let w = world!("inbound_assign_log");
+    assert_eq!(w.post(&w.event("e-1", "k", "high")).await.0, StatusCode::ACCEPTED);
+    exec(
+        w.db(),
+        "UPDATE ai_tasks SET status = 'completed', completed_at = now()",
+        vec![],
+    )
+    .await;
+    exec(w.db(), "UPDATE work_items SET assignee_id = NULL", vec![]).await;
+    exec(w.db(), "UPDATE alert_rules SET rearm_after_secs = 0", vec![]).await;
+    assert_eq!(w.post(&w.event("e-2", "k", "high")).await.0, StatusCode::ACCEPTED);
+    assert_eq!(w.n("SELECT count(*) AS count FROM ai_tasks").await, 2);
+    assert_eq!(
+        w.n(&format!(
+            "SELECT count(*) AS count FROM activities WHERE action = 'assigned' AND user_id = '{}' \
+             AND detail->>'to' = '{}' AND detail->'from' = 'null'::jsonb",
+            w.bot, w.bot
+        ))
+        .await,
+        1,
+        "the assignment the task made is in the log"
+    );
     w.scratch.drop_self().await;
 }
 

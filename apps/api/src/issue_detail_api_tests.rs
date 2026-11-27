@@ -7,6 +7,8 @@ use crate::item_api_tests::{Api, exec};
 use axum::http::Method;
 use serde_json::{Value, json};
 
+const ATTACHED: &str = "SELECT COUNT(*)::bigint AS n FROM work_item_labels WHERE work_item_id = $1";
+
 fn actions(list: &Value) -> Vec<String> {
     list["items"]
         .as_array()
@@ -184,5 +186,50 @@ async fn activity_is_newest_first_and_paged_beyond_one_hundred_entries() {
     let items = last.data()["items"].as_array().expect("items");
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["action"], "created", "the oldest entry is last");
+    api.finish().await;
+}
+
+/// A label change and its activity row commit together: when the row cannot be written, the label
+/// is neither attached nor detached.
+#[tokio::test]
+async fn a_failed_activity_write_rolls_back_the_single_label_change() {
+    let Some(api) = Api::new("detail_label_atomic").await else {
+        return;
+    };
+    let issue = api.create_item("Atomic", json!({})).await;
+    let label = api.create_label("flaky").await;
+    let uri = format!("/api/v1/issues/{issue}/labels/{label}");
+
+    exec(
+        &api.db,
+        "CREATE FUNCTION refuse_activity() RETURNS trigger LANGUAGE plpgsql AS \
+         $$ BEGIN RAISE EXCEPTION 'activity refused'; END $$",
+        vec![],
+    )
+    .await;
+    exec(
+        &api.db,
+        "CREATE TRIGGER refuse_label_added BEFORE INSERT ON activities FOR EACH ROW \
+         WHEN (NEW.action = 'label_added') EXECUTE FUNCTION refuse_activity()",
+        vec![],
+    )
+    .await;
+    let refused = api.post(&uri, api.alice, json!({})).await;
+    assert_ne!(refused.code(), Some(0), "the attach fails: {}", refused.body);
+    assert_eq!(api.db_count(ATTACHED, issue).await, 0, "the label was not attached");
+    exec(&api.db, "DROP TRIGGER refuse_label_added ON activities", vec![]).await;
+
+    assert_eq!(api.post(&uri, api.alice, json!({})).await.code(), Some(0));
+    assert_eq!(api.db_count(ATTACHED, issue).await, 1);
+    exec(
+        &api.db,
+        "CREATE TRIGGER refuse_label_removed BEFORE INSERT ON activities FOR EACH ROW \
+         WHEN (NEW.action = 'label_removed') EXECUTE FUNCTION refuse_activity()",
+        vec![],
+    )
+    .await;
+    let refused = api.call(Method::DELETE, &uri, api.alice, None).await;
+    assert_ne!(refused.code(), Some(0), "the detach fails: {}", refused.body);
+    assert_eq!(api.db_count(ATTACHED, issue).await, 1, "the label is still attached");
     api.finish().await;
 }

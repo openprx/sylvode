@@ -71,7 +71,7 @@ Full mode is an explicit choice of whoever configured the server. Then the tool 
 #### Fix an assigned issue
 
 1. `sylvode_task_get`, then `sylvode_task_ack` with your plan.
-2. `sylvode_read` `comments.list` with `work_item_id` for the discussion.
+2. `sylvode_read` `comments.list` with `work_item_id` for the discussion. It returns the newest 20 comments first; read further with `page` (and `per_page`, up to 100) while `total_pages` says there are more, so the first comment you read is the latest one.
 3. Change the code. Run the project's tests.
 4. `sylvode_task_progress` after the tests pass.
 5. `sylvode_task_complete` with `outcome: "done"`, the summary and a `commit` or `branch` artifact.

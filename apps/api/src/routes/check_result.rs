@@ -1268,4 +1268,45 @@ mod tests {
         assert!(validate_priority_arg("urgent").is_ok());
         assert!(validate_priority_arg("blocker").is_err());
     }
+
+    /// An approved `comments.create` effect writes the comment and its `comment_added` entry, as
+    /// the author of the check result; against a database (skipped without one).
+    #[tokio::test]
+    #[allow(clippy::expect_used, clippy::indexing_slicing)]
+    async fn an_approved_comment_effect_logs_the_comment() {
+        use super::{CheckResultApplyRow, apply_comment_create_effect};
+        use crate::routes::context::tenant_fixture::{count, seed_tenant, seed_work_item};
+        use crate::scratch_or_skip;
+
+        let scratch = scratch_or_skip!("check_result_comment_activity");
+        let db = &scratch.db;
+        let tenant = seed_tenant(db, "cr").await;
+        let issue = seed_work_item(db, &tenant, "Checked").await;
+        let row = CheckResultApplyRow {
+            id: uuid::Uuid::new_v4(),
+            project_id: tenant.project_id,
+            result: json!({}),
+            created_by: Some(tenant.member_id),
+        };
+        let answer = apply_comment_create_effect(
+            db,
+            &row,
+            &json!({"work_item_id": issue, "content": "result text"}),
+            platform::timestamp::Timestamp::now(),
+        )
+        .await
+        .expect("the effect applies");
+        let comment_id = answer["comment_id"].as_str().expect("comment id").to_string();
+        assert_eq!(
+            count(
+                db,
+                "SELECT COUNT(*)::bigint AS count FROM activities \
+                 WHERE issue_id = $1 AND action = 'comment_added' AND user_id = $2 AND detail->>'comment_id' = $3",
+                vec![issue.into(), tenant.member_id.into(), comment_id.into()],
+            )
+            .await,
+            1
+        );
+        scratch.drop_self().await;
+    }
 }

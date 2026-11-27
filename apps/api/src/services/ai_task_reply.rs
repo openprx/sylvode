@@ -900,6 +900,30 @@ mod tests {
             .await,
             1
         );
+        // The bot's reply and its label are in the activity log, as the bot's own entries.
+        for action in ["comment_added", "label_added"] {
+            assert_eq!(
+                count(
+                    &env.db,
+                    "SELECT COUNT(*)::bigint AS count FROM activities \
+                     WHERE issue_id = $1 AND action = $2 AND user_id = $3",
+                    vec![env.issue.into(), action.into(), env.bot.into()],
+                )
+                .await,
+                1,
+                "{action}"
+            );
+        }
+        assert_eq!(
+            count(
+                &env.db,
+                "SELECT COUNT(*)::bigint AS count FROM activities \
+                 WHERE issue_id = $1 AND action = 'label_added' AND detail->>'label_name' = 'agent-failed'",
+                vec![env.issue.into()],
+            )
+            .await,
+            1
+        );
         assert_eq!(env.state().await, "todo");
 
         // A label of another workspace is not added.

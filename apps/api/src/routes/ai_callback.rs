@@ -342,7 +342,7 @@ pub async fn list_issue_ai_tasks(
              WHERE project_id = $1 \
                AND ((reference_type = 'work_item' AND reference_id = $2) \
                     OR (reference_type = 'comment' AND payload->>'issue_id' = $2::text)) \
-             ORDER BY created_at DESC, id LIMIT $3 OFFSET $4",
+             ORDER BY created_at DESC, id DESC LIMIT $3 OFFSET $4",
             task_with_protocol_columns()
         ),
         vec![
