@@ -548,7 +548,9 @@ pub async fn update_page(
             ));
         }
         // Without a layout change the draft names the page's current layout, so the reviewer sees it.
-        let layout_id = req.layout_id.or(req.layout_spec.is_none().then_some(page.layout_id));
+        let layout_id = req
+            .layout_id
+            .or_else(|| req.layout_spec.is_none().then_some(page.layout_id));
         let layout_version = store::load_layout(&state.db, page.layout_id)
             .await?
             .map_or(0, |layout| layout.version);

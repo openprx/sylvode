@@ -22,11 +22,14 @@ use uuid::Uuid;
 
 use crate::error::ApiError;
 
-/// The `projection_affected` warnings of a form schema save (contract C3 section 6.2): one per
-/// site binding of the form whose saved projection loses fields under the new schema, or still
-/// shows fields whose label, type, options, requiredness or masking change. The save itself is not
-/// refused; the site drops fields that no longer qualify at read. `titles` are the title templates
-/// before and after the save.
+/// The `projection_affected` warnings of a form schema save (contract C3 section 6.2).
+///
+/// One per site
+/// binding of the form whose saved projection loses fields under the new schema, or still shows
+/// fields whose label, type, options, requiredness or masking change.
+///
+/// The save itself is not refused; the site drops fields that no longer qualify at read. `titles`
+/// are the title templates before and after the save.
 ///
 /// # Errors
 /// The database error of reading the bindings.
@@ -63,9 +66,13 @@ pub async fn projection_affected(
 }
 
 /// Whether a form schema save changes what anonymous visitors of a published site get from any
-/// binding of the form (LEAD BOT-SCHEMA): the visitor output of each binding is built with the
-/// functions the public site routes use, before and after. Runs in the caller's write transaction
-/// and share-locks the published sites found, so a publish cannot slip past the decision.
+/// binding of the form (LEAD BOT-SCHEMA).
+///
+/// The visitor output of each binding is built with the
+/// functions the public site routes use, before and after.
+///
+/// Runs in the caller's write transaction and share-locks the published sites found, so a publish
+/// cannot slip past the decision.
 ///
 /// # Errors
 /// The database error, or `internal` when a schema cannot be read as site fields; the caller

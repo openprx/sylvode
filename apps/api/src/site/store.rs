@@ -79,7 +79,7 @@ fn statement(sql: &str, values: Vec<sea_orm::Value>) -> Statement {
     Statement::from_sql_and_values(DbBackend::Postgres, sql, values)
 }
 
-pub(crate) async fn load_site(db: &impl ConnectionTrait, id: Uuid) -> Result<Option<SiteRow>, ApiError> {
+pub async fn load_site(db: &impl ConnectionTrait, id: Uuid) -> Result<Option<SiteRow>, ApiError> {
     Ok(SiteRow::find_by_statement(statement(
         &format!("SELECT {SITE_COLUMNS} FROM sites WHERE id = $1"),
         vec![id.into()],
@@ -88,7 +88,7 @@ pub(crate) async fn load_site(db: &impl ConnectionTrait, id: Uuid) -> Result<Opt
     .await?)
 }
 
-pub(crate) async fn load_site_by_slug(db: &impl ConnectionTrait, slug: &str) -> Result<Option<SiteRow>, ApiError> {
+pub async fn load_site_by_slug(db: &impl ConnectionTrait, slug: &str) -> Result<Option<SiteRow>, ApiError> {
     Ok(SiteRow::find_by_statement(statement(
         &format!("SELECT {SITE_COLUMNS} FROM sites WHERE slug = $1"),
         vec![slug.into()],
@@ -97,7 +97,7 @@ pub(crate) async fn load_site_by_slug(db: &impl ConnectionTrait, slug: &str) -> 
     .await?)
 }
 
-pub(crate) async fn list_sites(
+pub async fn list_sites(
     db: &impl ConnectionTrait,
     project_id: Uuid,
     limit: i64,
@@ -129,7 +129,7 @@ async fn count(db: &impl ConnectionTrait, sql: &str, id: Uuid) -> Result<i64, Ap
         .map_or(0, |row| row.n))
 }
 
-pub(crate) struct NewSite<'a> {
+pub struct NewSite<'a> {
     pub(crate) workspace_id: Uuid,
     pub(crate) project_id: Uuid,
     pub(crate) slug: &'a str,
@@ -138,7 +138,7 @@ pub(crate) struct NewSite<'a> {
 }
 
 /// Inserts a draft site; `None` when the slug is taken.
-pub(crate) async fn insert_site(db: &impl ConnectionTrait, site: NewSite<'_>) -> Result<Option<SiteRow>, ApiError> {
+pub async fn insert_site(db: &impl ConnectionTrait, site: NewSite<'_>) -> Result<Option<SiteRow>, ApiError> {
     Ok(SiteRow::find_by_statement(statement(
         &format!(
             "INSERT INTO sites (workspace_id, project_id, slug, title, created_by) VALUES ($1, $2, $3, $4, $5) \
@@ -156,11 +156,7 @@ pub(crate) async fn insert_site(db: &impl ConnectionTrait, site: NewSite<'_>) ->
     .await?)
 }
 
-pub(crate) async fn update_title(
-    db: &impl ConnectionTrait,
-    id: Uuid,
-    title: &Value,
-) -> Result<Option<SiteRow>, ApiError> {
+pub async fn update_title(db: &impl ConnectionTrait, id: Uuid, title: &Value) -> Result<Option<SiteRow>, ApiError> {
     Ok(SiteRow::find_by_statement(statement(
         &format!("UPDATE sites SET title = $2 WHERE id = $1 RETURNING {SITE_COLUMNS}"),
         vec![id.into(), title.clone().into()],
@@ -169,7 +165,7 @@ pub(crate) async fn update_title(
     .await?)
 }
 
-pub(crate) async fn set_status(db: &impl ConnectionTrait, id: Uuid, status: &str) -> Result<Option<SiteRow>, ApiError> {
+pub async fn set_status(db: &impl ConnectionTrait, id: Uuid, status: &str) -> Result<Option<SiteRow>, ApiError> {
     Ok(SiteRow::find_by_statement(statement(
         &format!("UPDATE sites SET status = $2 WHERE id = $1 RETURNING {SITE_COLUMNS}"),
         vec![id.into(), status.into()],
@@ -178,7 +174,7 @@ pub(crate) async fn set_status(db: &impl ConnectionTrait, id: Uuid, status: &str
     .await?)
 }
 
-pub(crate) async fn update_settings(
+pub async fn update_settings(
     db: &impl ConnectionTrait,
     id: Uuid,
     settings: &Value,
@@ -193,7 +189,7 @@ pub(crate) async fn update_settings(
 
 /// Deletes a site (pages, bindings, roles, visitors and sessions cascade) and then the layouts
 /// stored at its scope, which nothing else can reference.
-pub(crate) async fn delete_site(db: &impl ConnectionTrait, id: Uuid) -> Result<(), ApiError> {
+pub async fn delete_site(db: &impl ConnectionTrait, id: Uuid) -> Result<(), ApiError> {
     db.execute(statement("DELETE FROM sites WHERE id = $1", vec![id.into()]))
         .await?;
     db.execute(statement(
@@ -207,7 +203,7 @@ pub(crate) async fn delete_site(db: &impl ConnectionTrait, id: Uuid) -> Result<(
 const PAGE_COLUMNS: &str = "id, site_id, route, layout_id, audience, nav, position, installation_id";
 
 #[derive(Debug, Clone, FromQueryResult, Serialize)]
-pub(crate) struct PageRow {
+pub struct PageRow {
     pub(crate) id: Uuid,
     pub(crate) site_id: Uuid,
     pub(crate) route: String,
@@ -218,7 +214,7 @@ pub(crate) struct PageRow {
     pub(crate) installation_id: Option<Uuid>,
 }
 
-pub(crate) async fn list_pages(db: &impl ConnectionTrait, site_id: Uuid) -> Result<Vec<PageRow>, ApiError> {
+pub async fn list_pages(db: &impl ConnectionTrait, site_id: Uuid) -> Result<Vec<PageRow>, ApiError> {
     Ok(PageRow::find_by_statement(statement(
         &format!(
             "SELECT {PAGE_COLUMNS} FROM site_pages WHERE site_id = $1 AND installation_id IS NULL \
@@ -230,7 +226,7 @@ pub(crate) async fn list_pages(db: &impl ConnectionTrait, site_id: Uuid) -> Resu
     .await?)
 }
 
-pub(crate) async fn load_page(db: &impl ConnectionTrait, id: Uuid) -> Result<Option<PageRow>, ApiError> {
+pub async fn load_page(db: &impl ConnectionTrait, id: Uuid) -> Result<Option<PageRow>, ApiError> {
     Ok(PageRow::find_by_statement(statement(
         &format!("SELECT {PAGE_COLUMNS} FROM site_pages WHERE id = $1 AND installation_id IS NULL"),
         vec![id.into()],
@@ -239,7 +235,7 @@ pub(crate) async fn load_page(db: &impl ConnectionTrait, id: Uuid) -> Result<Opt
     .await?)
 }
 
-pub(crate) struct PageValues<'a> {
+pub struct PageValues<'a> {
     pub(crate) route: &'a str,
     pub(crate) layout_id: Uuid,
     pub(crate) audience: &'a str,
@@ -248,7 +244,7 @@ pub(crate) struct PageValues<'a> {
 }
 
 /// Inserts a page; `None` when the route is taken.
-pub(crate) async fn insert_page(
+pub async fn insert_page(
     db: &impl ConnectionTrait,
     site_id: Uuid,
     page: PageValues<'_>,
@@ -272,7 +268,7 @@ pub(crate) async fn insert_page(
 }
 
 /// Replaces a page's values; `None` when the new route is taken by another page.
-pub(crate) async fn update_page(
+pub async fn update_page(
     db: &impl ConnectionTrait,
     id: Uuid,
     page: PageValues<'_>,
@@ -306,14 +302,14 @@ pub(crate) async fn update_page(
     .await?)
 }
 
-pub(crate) async fn delete_page(db: &impl ConnectionTrait, id: Uuid) -> Result<(), ApiError> {
+pub async fn delete_page(db: &impl ConnectionTrait, id: Uuid) -> Result<(), ApiError> {
     db.execute(statement("DELETE FROM site_pages WHERE id = $1", vec![id.into()]))
         .await?;
     Ok(())
 }
 
 /// Whether a published site has a page showing the layout `layout_id` (index `site_pages_layout`).
-pub(crate) async fn layout_on_published_site(db: &impl ConnectionTrait, layout_id: Uuid) -> Result<bool, ApiError> {
+pub async fn layout_on_published_site(db: &impl ConnectionTrait, layout_id: Uuid) -> Result<bool, ApiError> {
     Ok(db
         .query_one(statement(
             "SELECT 1 AS one FROM site_pages p JOIN sites s ON s.id = p.site_id \
@@ -326,7 +322,7 @@ pub(crate) async fn layout_on_published_site(db: &impl ConnectionTrait, layout_i
 
 /// The published-site pages that show a layout, in a stable order. `lock` takes a share lock on
 /// their sites, so a concurrent publish or unpublish waits for the caller's transaction.
-pub(crate) async fn published_pages_with_layout(
+pub async fn published_pages_with_layout(
     db: &impl ConnectionTrait,
     layout_id: Uuid,
     lock: bool,
@@ -347,7 +343,7 @@ pub(crate) async fn published_pages_with_layout(
 
 /// The site's status under a share lock: a publish, unpublish or disable of the site waits for
 /// the caller's transaction, so a bot's direct write cannot land on a site published meanwhile.
-pub(crate) async fn site_status_for_share(db: &impl ConnectionTrait, site_id: Uuid) -> Result<String, ApiError> {
+pub async fn site_status_for_share(db: &impl ConnectionTrait, site_id: Uuid) -> Result<String, ApiError> {
     #[derive(FromQueryResult)]
     struct Status {
         status: String,
@@ -363,7 +359,7 @@ pub(crate) async fn site_status_for_share(db: &impl ConnectionTrait, site_id: Uu
 }
 
 /// A page row locked for the rest of the transaction.
-pub(crate) async fn lock_page(db: &impl ConnectionTrait, id: Uuid) -> Result<Option<PageRow>, ApiError> {
+pub async fn lock_page(db: &impl ConnectionTrait, id: Uuid) -> Result<Option<PageRow>, ApiError> {
     Ok(PageRow::find_by_statement(statement(
         &format!("SELECT {PAGE_COLUMNS} FROM site_pages WHERE id = $1 AND installation_id IS NULL FOR UPDATE"),
         vec![id.into()],
@@ -373,7 +369,7 @@ pub(crate) async fn lock_page(db: &impl ConnectionTrait, id: Uuid) -> Result<Opt
 }
 
 /// A layout's version, with the row locked for the rest of the transaction.
-pub(crate) async fn lock_layout_version(db: &impl ConnectionTrait, id: Uuid) -> Result<Option<i32>, ApiError> {
+pub async fn lock_layout_version(db: &impl ConnectionTrait, id: Uuid) -> Result<Option<i32>, ApiError> {
     #[derive(FromQueryResult)]
     struct Version {
         version: i32,
@@ -388,7 +384,7 @@ pub(crate) async fn lock_layout_version(db: &impl ConnectionTrait, id: Uuid) -> 
 }
 
 /// The sites (any status) with a page showing a layout.
-pub(crate) async fn sites_showing_layout(db: &impl ConnectionTrait, layout_id: Uuid) -> Result<Vec<Uuid>, ApiError> {
+pub async fn sites_showing_layout(db: &impl ConnectionTrait, layout_id: Uuid) -> Result<Vec<Uuid>, ApiError> {
     #[derive(FromQueryResult)]
     struct Id {
         site_id: Uuid,
@@ -405,7 +401,7 @@ pub(crate) async fn sites_showing_layout(db: &impl ConnectionTrait, layout_id: U
 }
 
 /// Whether another page of the site already has this route (`except` is the page being edited).
-pub(crate) async fn route_taken(
+pub async fn route_taken(
     db: &impl ConnectionTrait,
     site_id: Uuid,
     route: &str,
@@ -422,11 +418,7 @@ pub(crate) async fn route_taken(
 }
 
 /// Whether a form belongs to a project.
-pub(crate) async fn form_in_project(
-    db: &impl ConnectionTrait,
-    form_id: Uuid,
-    project_id: Uuid,
-) -> Result<bool, ApiError> {
+pub async fn form_in_project(db: &impl ConnectionTrait, form_id: Uuid, project_id: Uuid) -> Result<bool, ApiError> {
     Ok(db
         .query_one(statement(
             "SELECT 1 AS one FROM project_forms WHERE id = $1 AND project_id = $2",
@@ -437,7 +429,7 @@ pub(crate) async fn form_in_project(
 }
 
 /// The console slots a layout is placed in.
-pub(crate) async fn layout_slots(db: &impl ConnectionTrait, layout_id: Uuid) -> Result<Vec<String>, ApiError> {
+pub async fn layout_slots(db: &impl ConnectionTrait, layout_id: Uuid) -> Result<Vec<String>, ApiError> {
     #[derive(FromQueryResult)]
     struct Slot {
         slot_id: String,
@@ -455,7 +447,7 @@ pub(crate) async fn layout_slots(db: &impl ConnectionTrait, layout_id: Uuid) -> 
 
 /// A binding with the schema and title template of its form, as the exposure lists read it.
 #[derive(Debug, Clone, FromQueryResult)]
-pub(crate) struct ExposedBinding {
+pub struct ExposedBinding {
     pub(crate) site_id: Uuid,
     pub(crate) binding_key: String,
     pub(crate) projection: Value,
@@ -468,7 +460,7 @@ const EXPOSED_BINDING_SQL: &str = "SELECT b.site_id, b.binding_key, b.projection
      WHERE f.project_id = s.project_id AND f.archived_at IS NULL";
 
 /// The bindings of a site whose form is still in the site's project and not archived.
-pub(crate) async fn exposed_bindings_of_site(
+pub async fn exposed_bindings_of_site(
     db: &impl ConnectionTrait,
     site_id: Uuid,
 ) -> Result<Vec<ExposedBinding>, ApiError> {
@@ -484,7 +476,7 @@ pub(crate) async fn exposed_bindings_of_site(
 /// caller's transaction (a publish or unpublish waits for it). An archived form counts too: the
 /// site serves its bindings again once it is restored, so the bot gates on saving, restoring and
 /// archiving it all see them.
-pub(crate) async fn published_bindings_of_form_locked(
+pub async fn published_bindings_of_form_locked(
     db: &impl ConnectionTrait,
     form_id: Uuid,
 ) -> Result<Vec<ExposedBinding>, ApiError> {
@@ -500,7 +492,7 @@ pub(crate) async fn published_bindings_of_form_locked(
 }
 
 /// The bindings of a form; `published_only` keeps those of published sites.
-pub(crate) async fn bindings_of_form(
+pub async fn bindings_of_form(
     db: &impl ConnectionTrait,
     form_id: Uuid,
     published_only: bool,
@@ -518,7 +510,7 @@ pub(crate) async fn bindings_of_form(
 
 /// A site-scope layout row: the layout a site page shows.
 #[derive(Debug, Clone, FromQueryResult)]
-pub(crate) struct LayoutRow {
+pub struct LayoutRow {
     pub(crate) id: Uuid,
     pub(crate) workspace_id: Uuid,
     pub(crate) scope_kind: String,
@@ -530,7 +522,7 @@ pub(crate) struct LayoutRow {
     pub(crate) installation_id: Option<Uuid>,
 }
 
-pub(crate) async fn load_layout(db: &impl ConnectionTrait, id: Uuid) -> Result<Option<LayoutRow>, ApiError> {
+pub async fn load_layout(db: &impl ConnectionTrait, id: Uuid) -> Result<Option<LayoutRow>, ApiError> {
     Ok(LayoutRow::find_by_statement(statement(
         "SELECT id, workspace_id, scope_kind, scope_id, layout_key, version, spec, status, installation_id \
          FROM layouts WHERE id = $1",
@@ -541,7 +533,7 @@ pub(crate) async fn load_layout(db: &impl ConnectionTrait, id: Uuid) -> Result<O
 }
 
 /// Inserts a site-scope layout; `None` when the key is taken at that site.
-pub(crate) async fn insert_site_layout(
+pub async fn insert_site_layout(
     db: &impl ConnectionTrait,
     workspace_id: Uuid,
     site_id: Uuid,
@@ -572,7 +564,7 @@ pub(crate) async fn insert_site_layout(
 /// Replaces the spec of a layout (a site-scope layout, or the layout an approved draft edits in
 /// place); `false` when the key is taken by another layout of its scope, or when
 /// `expected_version` is given and is not the layout's version.
-pub(crate) async fn update_site_layout(
+pub async fn update_site_layout(
     db: &impl ConnectionTrait,
     id: Uuid,
     key: &str,
@@ -602,7 +594,7 @@ pub(crate) async fn update_site_layout(
 }
 
 /// Deletes a site-scope layout once no page of its site shows it any more.
-pub(crate) async fn delete_unused_site_layout(db: &impl ConnectionTrait, id: Uuid) -> Result<(), ApiError> {
+pub async fn delete_unused_site_layout(db: &impl ConnectionTrait, id: Uuid) -> Result<(), ApiError> {
     db.execute(statement(
         "DELETE FROM layouts l WHERE l.id = $1 AND l.scope_kind = 'site' \
          AND NOT EXISTS (SELECT 1 FROM site_pages p WHERE p.layout_id = l.id)",
@@ -613,14 +605,14 @@ pub(crate) async fn delete_unused_site_layout(db: &impl ConnectionTrait, id: Uui
 }
 
 #[derive(Debug, Clone, FromQueryResult)]
-pub(crate) struct BindingRow {
+pub struct BindingRow {
     pub(crate) site_id: Uuid,
     pub(crate) binding_key: String,
     pub(crate) form_id: Uuid,
     pub(crate) projection: Value,
 }
 
-pub(crate) async fn list_bindings(db: &impl ConnectionTrait, site_id: Uuid) -> Result<Vec<BindingRow>, ApiError> {
+pub async fn list_bindings(db: &impl ConnectionTrait, site_id: Uuid) -> Result<Vec<BindingRow>, ApiError> {
     Ok(BindingRow::find_by_statement(statement(
         "SELECT site_id, binding_key, form_id, projection FROM site_bindings WHERE site_id = $1 ORDER BY binding_key",
         vec![site_id.into()],
@@ -629,11 +621,7 @@ pub(crate) async fn list_bindings(db: &impl ConnectionTrait, site_id: Uuid) -> R
     .await?)
 }
 
-pub(crate) async fn load_binding(
-    db: &impl ConnectionTrait,
-    site_id: Uuid,
-    key: &str,
-) -> Result<Option<BindingRow>, ApiError> {
+pub async fn load_binding(db: &impl ConnectionTrait, site_id: Uuid, key: &str) -> Result<Option<BindingRow>, ApiError> {
     Ok(BindingRow::find_by_statement(statement(
         "SELECT site_id, binding_key, form_id, projection FROM site_bindings WHERE site_id = $1 AND binding_key = $2",
         vec![site_id.into(), key.into()],
@@ -642,7 +630,7 @@ pub(crate) async fn load_binding(
     .await?)
 }
 
-pub(crate) async fn upsert_binding(
+pub async fn upsert_binding(
     db: &impl ConnectionTrait,
     site_id: Uuid,
     key: &str,
@@ -659,7 +647,7 @@ pub(crate) async fn upsert_binding(
     .await?)
 }
 
-pub(crate) async fn delete_binding(db: &impl ConnectionTrait, site_id: Uuid, key: &str) -> Result<bool, ApiError> {
+pub async fn delete_binding(db: &impl ConnectionTrait, site_id: Uuid, key: &str) -> Result<bool, ApiError> {
     let done = db
         .execute(statement(
             "DELETE FROM site_bindings WHERE site_id = $1 AND binding_key = $2",
@@ -670,13 +658,13 @@ pub(crate) async fn delete_binding(db: &impl ConnectionTrait, site_id: Uuid, key
 }
 
 #[derive(Debug, Clone, FromQueryResult, Serialize)]
-pub(crate) struct RoleRow {
+pub struct RoleRow {
     pub(crate) site_id: Uuid,
     pub(crate) user_id: Uuid,
     pub(crate) role: String,
 }
 
-pub(crate) async fn list_roles(db: &impl ConnectionTrait, site_id: Uuid) -> Result<Vec<RoleRow>, ApiError> {
+pub async fn list_roles(db: &impl ConnectionTrait, site_id: Uuid) -> Result<Vec<RoleRow>, ApiError> {
     Ok(RoleRow::find_by_statement(statement(
         "SELECT site_id, user_id, role FROM site_roles WHERE site_id = $1 ORDER BY user_id",
         vec![site_id.into()],
@@ -685,11 +673,7 @@ pub(crate) async fn list_roles(db: &impl ConnectionTrait, site_id: Uuid) -> Resu
     .await?)
 }
 
-pub(crate) async fn load_role(
-    db: &impl ConnectionTrait,
-    site_id: Uuid,
-    user_id: Uuid,
-) -> Result<Option<RoleRow>, ApiError> {
+pub async fn load_role(db: &impl ConnectionTrait, site_id: Uuid, user_id: Uuid) -> Result<Option<RoleRow>, ApiError> {
     Ok(RoleRow::find_by_statement(statement(
         "SELECT site_id, user_id, role FROM site_roles WHERE site_id = $1 AND user_id = $2",
         vec![site_id.into(), user_id.into()],
@@ -698,7 +682,7 @@ pub(crate) async fn load_role(
     .await?)
 }
 
-pub(crate) async fn upsert_role(
+pub async fn upsert_role(
     db: &impl ConnectionTrait,
     site_id: Uuid,
     user_id: Uuid,
@@ -714,7 +698,7 @@ pub(crate) async fn upsert_role(
 }
 
 /// Deletes a role and, in the same transaction (the caller's), that user's sessions of the site.
-pub(crate) async fn delete_role(db: &impl ConnectionTrait, site_id: Uuid, user_id: Uuid) -> Result<bool, ApiError> {
+pub async fn delete_role(db: &impl ConnectionTrait, site_id: Uuid, user_id: Uuid) -> Result<bool, ApiError> {
     let done = db
         .execute(statement(
             "DELETE FROM site_roles WHERE site_id = $1 AND user_id = $2",
@@ -730,7 +714,7 @@ pub(crate) async fn delete_role(db: &impl ConnectionTrait, site_id: Uuid, user_i
 }
 
 /// Whether the user is an active member of the workspace; the workspace role when so.
-pub(crate) async fn workspace_role(
+pub async fn workspace_role(
     db: &impl ConnectionTrait,
     workspace_id: Uuid,
     user_id: Uuid,
@@ -750,7 +734,7 @@ pub(crate) async fn workspace_role(
 }
 
 /// The visitor id of a visitor token at a site.
-pub(crate) async fn find_visitor(
+pub async fn find_visitor(
     db: &impl ConnectionTrait,
     site_id: Uuid,
     token_hash: &[u8],
@@ -768,11 +752,7 @@ pub(crate) async fn find_visitor(
     .map(|row| row.id))
 }
 
-pub(crate) async fn insert_visitor(
-    db: &impl ConnectionTrait,
-    site_id: Uuid,
-    token_hash: &[u8],
-) -> Result<Uuid, ApiError> {
+pub async fn insert_visitor(db: &impl ConnectionTrait, site_id: Uuid, token_hash: &[u8]) -> Result<Uuid, ApiError> {
     #[derive(FromQueryResult)]
     struct Id {
         id: Uuid,
@@ -789,7 +769,7 @@ pub(crate) async fn insert_visitor(
 
 /// An operator session with the facts its per-request re-check needs.
 #[derive(Debug, Clone, FromQueryResult)]
-pub(crate) struct SessionRow {
+pub struct SessionRow {
     pub(crate) user_id: Uuid,
     pub(crate) display_name: String,
     pub(crate) role: String,
@@ -800,7 +780,7 @@ pub(crate) struct SessionRow {
 /// section 6.3): unexpired and used within the idle window, the user active with an unchanged
 /// session version, still a member of the site's workspace and still holding a site role. A
 /// session that fails any check is deleted. A live session's `last_seen` moves forward.
-pub(crate) async fn live_session(
+pub async fn live_session(
     db: &impl ConnectionTrait,
     site_id: Uuid,
     workspace_id: Uuid,
@@ -837,7 +817,7 @@ pub(crate) async fn live_session(
     Ok(row)
 }
 
-pub(crate) async fn insert_session(
+pub async fn insert_session(
     db: &impl ConnectionTrait,
     token_hash: &[u8],
     site_id: Uuid,
@@ -860,7 +840,7 @@ pub(crate) async fn insert_session(
     Ok(())
 }
 
-pub(crate) async fn delete_session(db: &impl ConnectionTrait, token_hash: &[u8]) -> Result<(), ApiError> {
+pub async fn delete_session(db: &impl ConnectionTrait, token_hash: &[u8]) -> Result<(), ApiError> {
     db.execute(statement(
         "DELETE FROM site_sessions WHERE token_hash = $1",
         vec![token_hash.to_vec().into()],
@@ -870,7 +850,7 @@ pub(crate) async fn delete_session(db: &impl ConnectionTrait, token_hash: &[u8])
 }
 
 /// Records a visitor submitted to one form of a site within the last hour.
-pub(crate) async fn visitor_submissions_last_hour(
+pub async fn visitor_submissions_last_hour(
     db: &impl ConnectionTrait,
     form_id: Uuid,
     site_id: Uuid,
@@ -897,11 +877,7 @@ pub(crate) async fn visitor_submissions_last_hour(
 
 /// Removes a departed member's site roles and operator sessions at the sites of that workspace,
 /// in the caller's transaction (contract C3 section 6.3, re-audit F2).
-pub(crate) async fn remove_member(
-    db: &impl ConnectionTrait,
-    workspace_id: Uuid,
-    user_id: Uuid,
-) -> Result<(), ApiError> {
+pub async fn remove_member(db: &impl ConnectionTrait, workspace_id: Uuid, user_id: Uuid) -> Result<(), ApiError> {
     for table in ["site_roles", "site_sessions"] {
         db.execute(statement(
             &format!(

@@ -164,8 +164,18 @@ pub(super) async fn site_page(
 
 /// Judges a form schema in the project it is written for.
 pub(super) fn form_schema(workspace_id: Uuid, project_id: Uuid, spec: Value) -> Prepared {
-    match ensure_schema_field_ids(spec.clone()) {
-        Ok(schema) => {
+    ensure_schema_field_ids(spec.clone()).map_or_else(
+        |_| Prepared {
+            spec,
+            validation: json!({
+                "valid": false,
+                "errors": [{ "path": "", "code": "field_invalid" }],
+                "warnings": [],
+            }),
+            capability_diff: json!([]),
+            public: Vec::new(),
+        },
+        |schema| {
             let issues = validate_schema_report(
                 &schema,
                 Some(SchemaScope {
@@ -184,18 +194,8 @@ pub(super) fn form_schema(workspace_id: Uuid, project_id: Uuid, spec: Value) -> 
                 capability_diff: json!([]),
                 public: Vec::new(),
             }
-        }
-        Err(_) => Prepared {
-            spec,
-            validation: json!({
-                "valid": false,
-                "errors": [{ "path": "", "code": "field_invalid" }],
-                "warnings": [],
-            }),
-            capability_diff: json!([]),
-            public: Vec::new(),
         },
-    }
+    )
 }
 
 /// The risk of a capability id as the catalogue holds it.
@@ -297,17 +297,14 @@ async fn judge_stored(tx: &DatabaseTransaction, row: &DraftRow) -> Result<(Prepa
     match row.kind.as_str() {
         KIND_FORM_SCHEMA => {
             let target: FormTarget = stored(&row.target)?;
-            let plan = match target.form_id {
-                Some(form_id) => {
-                    check_form_unchanged(tx, row, form_id, target.base_schema_version).await?;
-                    Plan::UpdateForm { form_id }
-                }
-                None => {
-                    let key = target.key.ok_or_else(ApiError::internal)?;
-                    let name = target.name.ok_or_else(ApiError::internal)?;
-                    ensure_key_free(tx, row.project_id, &key).await?;
-                    Plan::CreateForm { key, name }
-                }
+            let plan = if let Some(form_id) = target.form_id {
+                check_form_unchanged(tx, row, form_id, target.base_schema_version).await?;
+                Plan::UpdateForm { form_id }
+            } else {
+                let key = target.key.ok_or_else(ApiError::internal)?;
+                let name = target.name.ok_or_else(ApiError::internal)?;
+                ensure_key_free(tx, row.project_id, &key).await?;
+                Plan::CreateForm { key, name }
             };
             Ok((form_schema(row.workspace_id, row.project_id, row.spec.clone()), plan))
         }

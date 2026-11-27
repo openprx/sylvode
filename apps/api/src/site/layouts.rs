@@ -1,6 +1,7 @@
-//! Site page layouts: validation in site context (contract C3 sections 1.3 and 6.2, M10), the
-//! `binding:<key>` form references the site app reads, route matching, and the hooks the layout
-//! routes call (site-context validation and the published-site rule for bot writes).
+//! Site page layouts (contract C3 sections 1.3 and 6.2, M10).
+//!
+//! Validation in site context, the `binding:<key>` form references the site app reads, route
+//! matching, and the hooks the layout routes call (site-context validation and the published-site rule for bot writes).
 
 use std::collections::BTreeSet;
 
@@ -85,16 +86,15 @@ pub(crate) fn match_route<'a>(pages: &'a [PageRow], path: &str) -> Option<(&'a P
             continue;
         }
         let mut params = Map::new();
-        let matched = pattern
-            .iter()
-            .zip(&wanted)
-            .all(|(part, segment)| match part.strip_prefix(':') {
-                Some(name) => {
+        let matched = pattern.iter().zip(&wanted).all(|(part, segment)| {
+            part.strip_prefix(':').map_or_else(
+                || part == segment,
+                |name| {
                     params.insert(name.to_string(), Value::String((*segment).to_string()));
                     true
-                }
-                None => part == segment,
-            });
+                },
+            )
+        });
         if matched && best.as_ref().is_none_or(|(_, current)| params.len() < current.len()) {
             best = Some((page, params));
         }
@@ -114,14 +114,18 @@ pub async fn site_context_bindings(
     Ok((site.project_id, binding_keys(db, site_id).await?))
 }
 
-/// The published-site rule for a bot's layout edit (LEAD C3-6, contract C3 section 3): when a
-/// page of a published site shows the layout, the edit is not applied but stored as a `site_page`
-/// draft (`op: update` of the first such page, with `layout_id` and the new `layout_spec`, which
-/// the approval writes into the layout in place, and the base: the page as it is and
-/// `expected_version`). Returns the draft id when it was stored; a person, or a layout no
-/// published page shows, gets `None` and the edit applies directly. `tx` is the caller's write
-/// transaction: the sites of the pages found stay share-locked in it, so a concurrent publish
-/// cannot slip between this decision and the direct write.
+/// The published-site rule for a bot's layout edit (LEAD C3-6, contract C3 section 3).
+///
+/// When a page
+/// of a published site shows the layout, the edit is not applied but stored as a `site_page` draft
+/// (`op: update` of the first such page, with `layout_id` and the new `layout_spec`, which the
+/// approval writes into the layout in place, and the base: the page as it is and
+/// `expected_version`).
+///
+/// Returns the draft id when it was stored; a person, or a layout no published page shows, gets
+/// `None` and the edit applies directly. `tx` is the caller's write transaction: the sites of the
+/// pages found stay share-locked in it, so a concurrent publish cannot slip between this decision
+/// and the direct write.
 ///
 /// # Errors
 /// `version_conflict` when `expected_version` is not the layout's version; the draft's errors.

@@ -35,7 +35,7 @@ use crate::response::ApiResponse;
 /// What a `site_page` draft does to its page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum PageOp {
+pub enum PageOp {
     Create,
     Update,
     Delete,
@@ -44,7 +44,7 @@ pub(crate) enum PageOp {
 /// The page values a draft was written against.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct BasePage {
+pub struct BasePage {
     route: String,
     audience: String,
     #[serde(default)]
@@ -68,7 +68,7 @@ impl BasePage {
 /// `target` of a `site_page` draft.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct PageTarget {
+pub struct PageTarget {
     pub(crate) site_id: Uuid,
     #[serde(default)]
     pub(crate) page_id: Option<Uuid>,
@@ -84,7 +84,7 @@ pub(crate) struct PageTarget {
 
 /// Whether the page and layout of a draft are still as the draft found them.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Base {
+pub enum Base {
     Unchanged,
     Missing,
     Changed,
@@ -186,7 +186,7 @@ impl PageSpec {
 }
 
 /// Stores a bot's write to a published site as a `site_page` draft and answers `{draft_id}`.
-pub(crate) async fn submit(
+pub async fn submit(
     state: &AppState,
     who: &Who,
     site: &SiteRow,
@@ -207,7 +207,7 @@ pub(crate) async fn submit(
 }
 
 /// The judged state of a `site_page` draft.
-pub(crate) struct Judgement {
+pub struct Judgement {
     /// The spec as stored (normalised).
     pub(crate) spec: Value,
     /// `{valid, errors, analysis}`.
@@ -282,7 +282,7 @@ impl Report {
     }
 }
 
-fn code_of(error: &ApiError) -> Option<&'static str> {
+const fn code_of(error: &ApiError) -> Option<&'static str> {
     match error {
         ApiError::Coded { code, .. } => Some(*code),
         _ => None,
@@ -327,7 +327,7 @@ async fn resolve(
 
 /// Locks the draft's page and its layout for the rest of the review transaction and compares them
 /// with the base the draft recorded.
-pub(crate) async fn check_base(tx: &DatabaseTransaction, target: &PageTarget) -> Result<Base, ApiError> {
+pub async fn check_base(tx: &DatabaseTransaction, target: &PageTarget) -> Result<Base, ApiError> {
     let Some(page_id) = target.page_id else {
         return Ok(Base::Unchanged);
     };
@@ -349,7 +349,7 @@ pub(crate) async fn check_base(tx: &DatabaseTransaction, target: &PageTarget) ->
 
 /// Judges a `site_page` draft against the current state of its site. A missing site or page is
 /// `not_found` (the review turns it into `draft_stale`); everything else is in the report.
-pub(crate) async fn judge(
+pub async fn judge(
     db: &impl ConnectionTrait,
     workspace_id: Uuid,
     project_id: Uuid,
@@ -484,7 +484,7 @@ fn route_taken() -> ApiError {
 /// Saves an approved `site_page` draft in the review's transaction. The approver is a human
 /// workspace owner or admin (checked by the review), who may write every page of the site; new
 /// site layouts are created in the approver's name. Returns `{page_id, layout_id}`.
-pub(crate) async fn apply(
+pub async fn apply(
     tx: &DatabaseTransaction,
     workspace_id: Uuid,
     project_id: Uuid,
@@ -581,7 +581,7 @@ fn page_values(spec: &PageSpec) -> Result<(&str, &str), ApiError> {
 // Public exposure
 
 /// The binding keys a layout's data sources read (`$bind.<key>` or `form:<key>`).
-pub(crate) fn layout_bindings(spec: &Value) -> BTreeSet<String> {
+pub fn layout_bindings(spec: &Value) -> BTreeSet<String> {
     spec.get("data")
         .and_then(Value::as_object)
         .map(|data| {
@@ -650,7 +650,7 @@ async fn page_items(
 /// What a `site_page` draft would show visitors of a published site: the new title, or each
 /// visitor page with the bindings and fields its layout reads. A layout edit lists every visitor
 /// page of a published site that shows the layout. A delete exposes nothing new.
-pub(crate) async fn page_exposure(
+pub async fn page_exposure(
     db: &impl ConnectionTrait,
     workspace_id: Uuid,
     project_id: Uuid,
@@ -679,19 +679,17 @@ pub(crate) async fn page_exposure(
     };
     let audience = spec.audience.as_deref().unwrap_or_default();
     if let (Some(layout_spec), Some(page)) = (spec.layout_spec.as_ref(), page.as_ref()) {
-        match spec.layout_id {
+        if let Some(layout_id) = spec.layout_id {
             // A layout edit changes the layout only: every page showing it, as each page is now.
-            Some(layout_id) => return shared_layout_items(db, layout_id, None, layout_spec).await,
-            None => {
-                // The page's own site layout is replaced in place: every page sharing it changes.
-                let own = store::load_layout(db, page.layout_id)
-                    .await?
-                    .is_some_and(|layout| layout.scope_kind == "site" && layout.scope_id == site.id);
-                if own {
-                    let this = Some((page.id, route, audience));
-                    return shared_layout_items(db, page.layout_id, this, layout_spec).await;
-                }
-            }
+            return shared_layout_items(db, layout_id, None, layout_spec).await;
+        }
+        // The page's own site layout is replaced in place: every page sharing it changes.
+        let own = store::load_layout(db, page.layout_id)
+            .await?
+            .is_some_and(|layout| layout.scope_kind == "site" && layout.scope_id == site.id);
+        if own {
+            let this = Some((page.id, route, audience));
+            return shared_layout_items(db, page.layout_id, this, layout_spec).await;
         }
     }
     if audience != "visitor" {
@@ -737,11 +735,7 @@ async fn shared_layout_items(
 /// What a schema for form `form_id` would show visitors: per binding of a published site, the
 /// visitor fields under that schema and the visitor pages whose layout reads the binding (an item
 /// without a page when none does: the site API serves a binding without a page).
-pub(crate) async fn form_exposure(
-    db: &impl ConnectionTrait,
-    form_id: Uuid,
-    schema: &Value,
-) -> Result<Vec<Value>, ApiError> {
+pub async fn form_exposure(db: &impl ConnectionTrait, form_id: Uuid, schema: &Value) -> Result<Vec<Value>, ApiError> {
     let mut items = Vec::new();
     for binding in store::bindings_of_form(db, form_id, true).await? {
         let (read, submit) = visitor_fields(&binding, schema);

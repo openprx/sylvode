@@ -515,7 +515,7 @@ fn shown_differently(old: &SiteField, new: &SiteField) -> bool {
 /// What a schema change does to a saved projection: the listed fields that stop qualifying under
 /// the new schema (`lost`), and the fields still shown whose label, type, options, requiredness
 /// or masking change (`changed`). Both sorted, without duplicates.
-pub(crate) fn affected(
+pub fn affected(
     raw: &Value,
     (old_title, new_title): (&str, &str),
     old: &[SiteField],
@@ -541,7 +541,7 @@ pub(crate) fn affected(
 
 /// The field descriptions the site API serves for `keys` (`GET /bindings/{b}/fields`): form fields
 /// with their label, type, requiredness, options and client rules, and the record columns.
-pub(crate) fn field_items(keys: &[String], fields: &[SiteField]) -> Vec<Value> {
+pub fn field_items(keys: &[String], fields: &[SiteField]) -> Vec<Value> {
     keys.iter()
         .filter_map(|key| match find(fields, key) {
             Some(field) => {
@@ -575,7 +575,7 @@ pub(crate) fn field_items(keys: &[String], fields: &[SiteField]) -> Vec<Value> {
 /// public routes use: the manifest's visitor block (read, submit, filter and sort fields), the
 /// `fields` answer in its order, the masked fields with the mask rule each is shown under (the
 /// input of the read path's masking), and the title template when the title is shown.
-pub(crate) fn visitor_output(projection: &Projection, fields: &[SiteField], title_template: &str) -> Value {
+pub fn visitor_output(projection: &Projection, fields: &[SiteField], title_template: &str) -> Value {
     let none = BTreeSet::new();
     let read = projection
         .read(Audience::Visitor)
