@@ -45,10 +45,10 @@ fn layout_body(row: &LayoutRow) -> Layout {
 
 /// Validates a spec value; the serialised size is checked first, like an uploaded document.
 pub(super) fn validate_value(spec: &Value, opts: &Options<'_>) -> Result<Validated, Vec<LayoutError>> {
-    match serde_json::to_vec(spec) {
-        Ok(bytes) => sv_layout::validate_bytes(&bytes, opts),
-        Err(_) => sv_layout::validate(spec, opts),
-    }
+    serde_json::to_vec(spec).map_or_else(
+        |_| sv_layout::validate(spec, opts),
+        |bytes| sv_layout::validate_bytes(&bytes, opts),
+    )
 }
 
 /// The refusal of an invalid spec: `layout_invalid` with every error and its node path.
@@ -240,6 +240,10 @@ pub async fn delete_layout(
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(
+    clippy::option_option,
+    reason = "absent, null and a value are three different requests"
+)]
 pub struct ValidateRequest {
     spec: Value,
     #[serde(default, deserialize_with = "nullable")]
@@ -290,6 +294,7 @@ pub async fn validate_layout(
 }
 
 /// `GET /api/v1/layouts/components`
+#[allow(clippy::unused_async, reason = "axum handlers are async functions")]
 pub async fn list_components(
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
@@ -301,6 +306,7 @@ pub async fn list_components(
 }
 
 /// `GET /api/v1/slots`
+#[allow(clippy::unused_async, reason = "axum handlers are async functions")]
 pub async fn list_slots(
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,

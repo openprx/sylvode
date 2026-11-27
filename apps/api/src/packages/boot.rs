@@ -25,7 +25,7 @@ use crate::error::ApiError;
 /// `[packages] builtin_public_key`.
 const PINNED_RELEASE_KEY: Option<&str> = option_env!("SV_RELEASE_PACKAGE_KEY");
 
-fn api_err(e: ApiError) -> anyhow::Error {
+fn api_err(e: &ApiError) -> anyhow::Error {
     anyhow!("{e:?}")
 }
 
@@ -50,7 +50,7 @@ pub async fn sync_builtin(db: &DatabaseConnection, cfg: &PackagesConfig) -> anyh
     let key = effective_key(cfg)?;
     keys::sync_builtin_key(db, key.as_ref().map(|(id, public)| (id.as_str(), public.as_slice())))
         .await
-        .map_err(api_err)?;
+        .map_err(|e| api_err(&e))?;
     if let Some(dir) = &cfg.builtin_dir {
         store_directory(db, dir).await?;
     }
@@ -60,10 +60,10 @@ pub async fn sync_builtin(db: &DatabaseConnection, cfg: &PackagesConfig) -> anyh
 /// Re-reads every built-in package of an active key from `package_blobs` and repeats the whole
 /// verification; the digest of the result must equal the row's.
 async fn reverify_stored(db: &DatabaseConnection) -> anyhow::Result<()> {
-    for row in store::list_builtin(db).await.map_err(api_err)? {
+    for row in store::list_builtin(db).await.map_err(|e| api_err(&e))? {
         let bytes = store::blob_bytes(db, &row.blob_digest)
             .await
-            .map_err(api_err)?
+            .map_err(|e| api_err(&e))?
             .ok_or_else(|| anyhow!("blob of built-in package {} is missing", row.package_key))?;
         if sv_package::sha256_digest(&bytes) != row.blob_digest {
             return Err(anyhow!(
@@ -107,14 +107,14 @@ async fn store_directory(db: &DatabaseConnection, dir: &Path) -> anyhow::Result<
         let tx = db.begin().await?;
         if store::find_owned(&tx, None, &package.digest)
             .await
-            .map_err(api_err)?
+            .map_err(|e| api_err(&e))?
             .is_some()
         {
             continue;
         }
         if store::version_taken(&tx, None, &package.manifest.id, &package.manifest.version)
             .await
-            .map_err(api_err)?
+            .map_err(|e| api_err(&e))?
         {
             return Err(anyhow!(
                 "built-in package {} {} is already stored with different content; bump its version",
@@ -124,7 +124,7 @@ async fn store_directory(db: &DatabaseConnection, dir: &Path) -> anyhow::Result<
         }
         store::put_blob(&tx, &package.blob_digest, bytes)
             .await
-            .map_err(api_err)?;
+            .map_err(|e| api_err(&e))?;
         let kind = serde_json::to_value(package.manifest.kind)?;
         let files = verified.files_json();
         let new = NewPackage {
@@ -141,7 +141,7 @@ async fn store_directory(db: &DatabaseConnection, dir: &Path) -> anyhow::Result<
             tier: "builtin",
             created_by: None,
         };
-        store::insert_package(&tx, &new).await.map_err(api_err)?;
+        store::insert_package(&tx, &new).await.map_err(|e| api_err(&e))?;
         tx.commit().await?;
         tracing::info!(package = %package.manifest.id, version = %package.manifest.version, "built-in package stored");
     }

@@ -349,6 +349,10 @@ pub(super) async fn insert_placement(
 }
 
 /// New values of a placement; `None` leaves a column alone, `condition: Some(None)` clears it.
+#[allow(
+    clippy::option_option,
+    reason = "unchanged, cleared and set are three different updates"
+)]
 pub(super) struct PlacementChange {
     pub(super) position: Option<i32>,
     pub(super) enabled: Option<bool>,
@@ -360,10 +364,10 @@ pub(super) async fn update_placement(
     id: Uuid,
     change: &PlacementChange,
 ) -> Result<PlacementRow, ApiError> {
-    let (set_condition, condition) = match &change.condition {
-        Some(value) => (true, value.clone()),
-        None => (false, None),
-    };
+    let (set_condition, condition) = change
+        .condition
+        .as_ref()
+        .map_or((false, None), |value| (true, value.clone()));
     PlacementRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         format!(
@@ -457,6 +461,10 @@ pub struct Prefs {
 }
 
 /// New preference values; `position: Some(None)` clears the viewer's own order.
+#[allow(
+    clippy::option_option,
+    reason = "unchanged, cleared and set are three different updates"
+)]
 pub(super) struct PrefsChange {
     pub(super) hidden: Option<bool>,
     pub(super) collapsed: Option<bool>,
@@ -469,10 +477,7 @@ pub(super) async fn upsert_prefs(
     placement_id: Uuid,
     change: &PrefsChange,
 ) -> Result<Prefs, ApiError> {
-    let (set_position, position) = match change.position {
-        Some(value) => (true, value),
-        None => (false, None),
-    };
+    let (set_position, position) = change.position.map_or((false, None), |value| (true, value));
     Prefs::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "INSERT INTO layout_user_prefs (user_id, placement_id, hidden, collapsed, position) \

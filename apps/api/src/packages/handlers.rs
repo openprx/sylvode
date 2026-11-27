@@ -164,13 +164,13 @@ pub async fn list_packages(
     Query(query): Query<ListQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     Caller::resolve(&state, &claims, bot, workspace_id).await?;
-    if let Some(kind) = query.kind.as_deref() {
-        if !KINDS.contains(&kind) {
-            return Err(ApiError::bad_request_coded(
-                "kind_invalid",
-                "kind must be one of: form-template, page-template, app, plugin",
-            ));
-        }
+    if let Some(kind) = query.kind.as_deref()
+        && !KINDS.contains(&kind)
+    {
+        return Err(ApiError::bad_request_coded(
+            "kind_invalid",
+            "kind must be one of: form-template, page-template, app, plugin",
+        ));
     }
     let q = query.q.as_deref().map(str::trim).filter(|q| !q.is_empty());
     if q.is_some_and(|q| q.chars().count() > 100) {
@@ -225,9 +225,11 @@ fn analysis(manifest: &Manifest) -> Value {
     })
 }
 
-/// `GET /api/v1/workspaces/{w}/packages/{digest}`: the summary, the manifest, the file list and
-/// the analysis, all from the stored row: a read never opens the blob (the manifest column is
-/// display-only; install re-derives everything from the blob).
+/// `GET /api/v1/workspaces/{w}/packages/{digest}`: the stored package in detail.
+///
+/// The summary, the manifest, the file list and the analysis, all from the stored row: a read
+/// never opens the blob (the manifest column is display-only; install re-derives everything from
+/// the blob).
 pub async fn get_package(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
@@ -248,7 +250,7 @@ pub async fn get_package(
     let files = row.files.as_array().cloned().unwrap_or_default();
     Ok(ApiResponse::success(PackageDetail {
         summary: PackageSummary::from(&row),
-        manifest: row.manifest.clone(),
+        manifest: row.manifest,
         files,
         analysis: analysis(&manifest),
     }))

@@ -230,6 +230,7 @@ pub async fn delete_placement(
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(clippy::struct_field_names, reason = "the field names are the query parameter names")]
 pub struct ResolveQuery {
     project_id: Uuid,
     form_id: Option<Uuid>,

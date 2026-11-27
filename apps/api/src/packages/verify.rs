@@ -39,7 +39,7 @@ pub(super) struct Verified {
 
 /// Why a package was refused: `package_invalid` with `details.reason`.
 #[derive(Debug)]
-pub(crate) struct Refusal {
+pub(super) struct Refusal {
     reason: &'static str,
     /// For `signature_invalid`: `key_unknown` or `key_revoked`.
     cause: Option<&'static str>,
@@ -109,13 +109,16 @@ impl From<sv_package::PackageError> for Refusal {
 
 impl From<Refusal> for ApiError {
     fn from(r: Refusal) -> Self {
-        let mut details = json!({ "reason": r.reason, "message": r.message });
+        let mut details = serde_json::Map::new();
+        details.insert("reason".into(), json!(r.reason));
+        details.insert("message".into(), json!(r.message));
         if let Some(cause) = r.cause {
-            details["cause"] = json!(cause);
+            details.insert("cause".into(), json!(cause));
         }
         if let Some(errors) = r.errors {
-            details["errors"] = errors;
+            details.insert("errors".into(), errors);
         }
+        let details = Value::Object(details);
         Self::Coded {
             status: 400,
             code: "package_invalid",
@@ -239,6 +242,7 @@ pub(super) async fn verify_blob(
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 mod tests {
     use serde_json::json;
     use sv_package::{ErrorCode, PackageError};

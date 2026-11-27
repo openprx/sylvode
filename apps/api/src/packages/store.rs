@@ -221,6 +221,10 @@ pub(super) async fn list_visible(
     limit: i64,
     offset: i64,
 ) -> Result<(Vec<PackageRow>, i64), ApiError> {
+    #[derive(FromQueryResult)]
+    struct Count {
+        n: i64,
+    }
     let filter = "(tier = 'builtin' OR workspace_id = $1) AND ($2::text IS NULL OR kind = $2) \
                   AND ($3::text IS NULL OR package_key ILIKE $3 ESCAPE '\\' OR (manifest->'summary'->>'en') ILIKE $3 ESCAPE '\\')";
     let pattern = q.map(like_pattern);
@@ -231,10 +235,6 @@ pub(super) async fn list_visible(
             pattern.clone().into(),
         ]
     };
-    #[derive(FromQueryResult)]
-    struct Count {
-        n: i64,
-    }
     let total = Count::find_by_statement(stmt(
         &format!("SELECT count(*) AS n FROM packages WHERE {filter}"),
         args(),
