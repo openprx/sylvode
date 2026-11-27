@@ -167,6 +167,7 @@ dependencies = [
  "sha2",
  "sv-layout",
  "sv-package",
+ "sv-rules",
  "thiserror 1.0.69",
  "time",
  "tokio",
@@ -4510,6 +4511,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "sv-rules",
 ]
 
 [[package]]

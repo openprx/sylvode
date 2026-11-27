@@ -9,6 +9,7 @@ description = "Sylvode layout schema: component catalogue, validation and schema
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+sv-rules = { path = "../sv-rules" }
 schemars = "1"
 jsonschema = { version = "0.50", default-features = false }
 

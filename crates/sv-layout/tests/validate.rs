@@ -178,3 +178,17 @@ fn site_context_refuses_invoke_and_unbound_sources() {
     v["root"] = json!({"type": "form", "props": {"data": "form", "submit": "send"}});
     validate(&v, &site(&["requests"])).expect("site layout");
 }
+
+#[test]
+fn invalid_when_and_cel_text_are_refused_with_node_paths() {
+    let mut v = example();
+    v["root"]["children"][3]["when"] = json!("nope.field == 1");
+    v["root"]["children"][0]["props"]["label"] = json!({"cel": "1 +"});
+    let e = codes(&v);
+    assert!(e.contains(&("/root/children/3/when".into(), ErrorCode::Cel("cel_unknown_variable"))));
+    assert!(e.contains(&("/root/children/0/props/label/cel".into(), ErrorCode::Cel("cel_syntax"))));
+    assert_eq!(
+        serde_json::to_value(ErrorCode::Cel("cel_syntax")).expect("serialises"),
+        json!("cel_syntax")
+    );
+}

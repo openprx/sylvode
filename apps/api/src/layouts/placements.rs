@@ -32,8 +32,9 @@ fn placement_not_found() -> ApiError {
     ApiError::not_found("placement not found")
 }
 
-/// A `condition` is display-only CEL. The CEL environment `layout_when` is not linked into the API
-/// yet, so the save checks what it can: not empty, within the column limit.
+/// A `condition` is display-only CEL in the `layout_when` environment: not empty, within the column
+/// limit, and accepted by the `sv-rules` compiler. A refusal carries the `cel_*` code and the path
+/// `/condition`.
 fn check_condition(condition: &str) -> Result<(), ApiError> {
     if condition.trim().is_empty() || condition.chars().count() > MAX_CONDITION_CHARS {
         return Err(ApiError::bad_request_coded(
@@ -41,6 +42,12 @@ fn check_condition(condition: &str) -> Result<(), ApiError> {
             "condition must be 1 to 1024 characters",
         ));
     }
+    sv_rules::compile(condition, sv_rules::Env::LayoutWhen).map_err(|e| ApiError::Coded {
+        status: 400,
+        code: e.code,
+        message: "the condition does not compile".to_string(),
+        details: Some(serde_json::json!({ "errors": [{ "path": "/condition", "code": e.code }] })),
+    })?;
     Ok(())
 }
 

@@ -27,8 +27,7 @@ const MAX_MARKDOWN_BYTES: usize = 32 * 1024;
 const MAX_EXPR_CHARS: usize = 1024;
 
 /// Machine-readable error code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorCode {
     /// `schema` is not `sv.layout.v1`.
     SchemaUnsupported,
@@ -60,6 +59,39 @@ pub enum ErrorCode {
     ActionNotAllowedOnSite,
     /// A data source does not resolve to a binding of the site.
     BindingMissing,
+    /// A CEL expression was refused by `sv-rules` (`cel_syntax`, `cel_unknown_variable`, ...).
+    Cel(&'static str),
+}
+
+impl ErrorCode {
+    /// The wire name (`snake_case`).
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SchemaUnsupported => "schema_unsupported",
+            Self::ShapeInvalid => "shape_invalid",
+            Self::KeyInvalid => "key_invalid",
+            Self::NameInvalid => "name_invalid",
+            Self::NodeTypeUnknown => "node_type_unknown",
+            Self::PropsInvalid => "props_invalid",
+            Self::ChildrenInvalid => "children_invalid",
+            Self::RefInvalid => "ref_invalid",
+            Self::RefUnknownSource => "ref_unknown_source",
+            Self::ActionUnknown => "action_unknown",
+            Self::SourceNotAvailable => "source_not_available",
+            Self::LimitExceeded => "limit_exceeded",
+            Self::SlotNodeNotAllowed => "slot_node_not_allowed",
+            Self::ActionNotAllowedOnSite => "action_not_allowed_on_site",
+            Self::BindingMissing => "binding_missing",
+            Self::Cel(code) => code,
+        }
+    }
+}
+
+impl Serialize for ErrorCode {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
 }
 
 /// One validation error.
@@ -297,7 +329,18 @@ impl Cx {
                 ErrorCode::LimitExceeded,
                 "expression empty or longer than 1024 characters",
             ),
-            None => self.push(path, ErrorCode::ShapeInvalid, "expression must be a string"),
+            None => {
+                self.push(path, ErrorCode::ShapeInvalid, "expression must be a string");
+                return;
+            }
+        }
+        if let Some(src) = v
+            .as_str()
+            .filter(|s| !s.trim().is_empty() && s.chars().count() <= MAX_EXPR_CHARS)
+        {
+            if let Err(e) = sv_rules::compile(src, sv_rules::Env::LayoutWhen) {
+                self.push(path, ErrorCode::Cel(e.code), &format!("expression refused: {}", e.code));
+            }
         }
     }
 
@@ -752,6 +795,12 @@ impl Cx {
                 }
             }
             Value::Object(m) => {
+                if m.len() == 1 {
+                    if let Some(expr) = m.get("cel") {
+                        self.expr(expr, &join(path, "cel"));
+                        return;
+                    }
+                }
                 for (k, x) in m {
                     self.prop_texts(x, &join(path, k));
                 }
