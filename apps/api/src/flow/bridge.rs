@@ -1620,7 +1620,7 @@ async fn execute_claimed(
     actor: BridgeActor,
     run: ConversionRun,
 ) -> Result<ConversionJobResponse, ApiError> {
-    match run_conversion(state, source, actor, &run).await {
+    match with_target_rules(state, &run, Box::pin(run_conversion(state, source, actor, &run))).await {
         Ok(job) => Ok(job),
         Err(error) => {
             let (typed, code) = conversion_failure(run.job_id, error);
@@ -1658,6 +1658,34 @@ async fn execute_claimed(
             })
         }
     }
+}
+
+/// Runs `future` (a conversion run) with the plugin rules of its target form prepared, like every
+/// other record writer: the rules are loaded before the run's transaction opens, so no rule does
+/// I/O or compiles while the transaction and its locks are held. The schema is read unlocked here;
+/// the run re-reads it under the form lock and refuses a schema version other than the preview's,
+/// so a write that commits ran against the schema these rules were prepared from. A conversion that
+/// creates a form, or whose target form is gone (the run refuses it), needs no rules.
+async fn with_target_rules<F>(
+    state: &AppState,
+    run: &ConversionRun,
+    future: F,
+) -> Result<ConversionJobResponse, ApiError>
+where
+    F: std::future::Future<Output = Result<ConversionJobResponse, ApiError>>,
+{
+    let target = match run.preview.target_form_id {
+        Some(form_id) => form_schema(&state.db, run.preview.workspace_id, form_id).await?,
+        None => None,
+    };
+    let rules = match target {
+        Some((project_id, _, schema)) => {
+            crate::extensions::rules::PreparedRules::prepare(state, run.preview.workspace_id, project_id, &schema)
+                .await?
+        }
+        None => crate::extensions::rules::PreparedRules::default(),
+    };
+    rules.scope(future).await
 }
 
 async fn run_conversion(
@@ -3073,7 +3101,7 @@ async fn execute_scope_claimed(
     user: Uuid,
     run: ConversionRun,
 ) -> Result<ConversionJobResponse, ApiError> {
-    match run_scope_conversion(state, user, &run).await {
+    match with_target_rules(state, &run, Box::pin(run_scope_conversion(state, user, &run))).await {
         Ok(job) => Ok(job),
         Err(error) => {
             let (typed, code) = conversion_failure(run.job_id, error);
