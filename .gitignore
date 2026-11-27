@@ -77,3 +77,7 @@ deploy/flow-deployed-websocket.json
 
 # The e2e stand-in CLI must never leave files in the tree; ignored as a second line of defence.
 standin.*
+
+# Front site
+/site/node_modules
+/site/dist

@@ -1,0 +1,29 @@
+{
+  "name": "sylvode-site",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check",
+    "format": "biome format --write ."
+  },
+  "dependencies": {
+    "@kobalte/core": "2.0.0-alpha.5",
+    "@solidjs/router": "2.0.1",
+    "@solidjs/web": "2.0.3",
+    "lucide": "1.79.0",
+    "solid-js": "2.0.3"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.9",
+    "@tailwindcss/vite": "4.3.5",
+    "tailwindcss": "4.3.5",
+    "typescript": "7.0.2",
+    "vite": "8.3.8",
+    "vite-plugin-solid": "3.0.0-next.27"
+  }
+}
