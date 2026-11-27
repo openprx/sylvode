@@ -3789,7 +3789,7 @@ mod flow_database_tests {
                     color: None,
                     title_template: Some("{ticket_no}".to_string()),
                     schema: Some(json!({
-                        "version":"openpr.form.schema.v1",
+                        "version":"sv.form.schema.v2",
                         "fields":[
                             {
                                 "field_id":"fld_ticket_no",
@@ -4130,7 +4130,7 @@ mod flow_database_tests {
                 "target_project_id":project_id,
                 "key":format!("converted_{}",Uuid::new_v4().simple()),
                 "name":"Converted form",
-                "schema":{"version":"openpr.form.schema.v1","fields":[]}
+                "schema":{"version":"sv.form.schema.v2","fields":[]}
             }),
             idempotency_key: Uuid::new_v4().to_string(),
         };
@@ -9647,7 +9647,7 @@ mod flow_database_tests {
 
     fn conversion_text_schema() -> Value {
         json!({
-            "version":"openpr.form.schema.v1",
+            "version":"sv.form.schema.v2",
             "fields":[
                 {"field_id":"fld_conversion_req","key":"req","type":"text","required":true},
                 {"field_id":"fld_conversion_opt","key":"opt","type":"text","required":false}
