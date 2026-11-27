@@ -131,6 +131,9 @@ macro_rules! opaque_type {
                 let rule: fn(Outlet) -> OutletRule = $outlet;
                 rule(outlet)
             }
+            fn server_written(&self) -> bool {
+                $name == "formula"
+            }
         }
     };
 }

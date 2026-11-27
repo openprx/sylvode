@@ -3,7 +3,7 @@
 //! form a browser `datetime-local` input produces).
 
 use serde_json::Value;
-use sv_rules::{Operand, RuleKind};
+use sv_rules::{Bound, Operand, RuleKind};
 use time::{
     Date as CalendarDate, OffsetDateTime, PrimitiveDateTime, format_description::well_known::Rfc3339,
     macros::format_description,
@@ -57,6 +57,9 @@ impl FieldType for Date {
     fn normalize(&self, _field: &FormField, raw: &Value, _prior: Option<&Value>) -> Result<Value, TypeError> {
         string_value(raw)
     }
+    fn accepts_bound(&self, bound: &Bound) -> bool {
+        matches!(bound, Bound::Date(_))
+    }
     fn operand(&self, _field: &FormField, value: &Value) -> Option<Operand> {
         value.as_str().and_then(parse_iso_date).map(Operand::Date)
     }
@@ -83,6 +86,9 @@ impl FieldType for DateTime {
     }
     fn normalize(&self, _field: &FormField, raw: &Value, _prior: Option<&Value>) -> Result<Value, TypeError> {
         string_value(raw)
+    }
+    fn accepts_bound(&self, bound: &Bound) -> bool {
+        matches!(bound, Bound::DateTime(_))
     }
     fn operand(&self, _field: &FormField, value: &Value) -> Option<Operand> {
         value.as_str().and_then(parse_date_time).map(Operand::DateTime)

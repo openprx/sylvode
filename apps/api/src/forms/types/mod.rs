@@ -19,7 +19,7 @@ mod text;
 
 use serde::Serialize;
 use serde_json::{Map, Value, json};
-use sv_rules::{Operand, RuleKind};
+use sv_rules::{Bound, Operand, RuleKind};
 
 use super::schema::{AmountFieldConfig, FormField, SignatureFieldConfig};
 
@@ -247,6 +247,19 @@ pub trait FieldType: Send + Sync + 'static {
     }
     /// Type check and canonical form; `prior` is the stored value (option carry-over).
     fn normalize(&self, field: &FormField, raw: &Value, prior: Option<&Value>) -> Result<Value, TypeError>;
+    /// Whether a `min` / `max` bound has the form this type compares against.
+    fn accepts_bound(&self, _bound: &Bound) -> bool {
+        false
+    }
+    /// Whether a JSON number default is given to the type as its decimal text (decimal types
+    /// refuse JSON numbers from callers; a designer default may still be one).
+    fn number_default_as_text(&self) -> bool {
+        false
+    }
+    /// Whether the server writes the value (formula output, autonumber, AI summary).
+    fn server_written(&self) -> bool {
+        false
+    }
     /// Operand for `min` / `max` / length rules; `None` = not comparable.
     fn operand(&self, _field: &FormField, _value: &Value) -> Option<Operand> {
         None

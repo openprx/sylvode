@@ -6,7 +6,7 @@ use std::str::FromStr;
 
 use rust_decimal::Decimal;
 use serde_json::{Map, Value, json};
-use sv_rules::{Operand, RuleKind};
+use sv_rules::{Bound, Operand, RuleKind};
 
 use super::{CelType, DefError, FieldType, ORDERED_RULES, StorageKind, TypeError, TypeSettings};
 use crate::forms::{
@@ -65,6 +65,9 @@ macro_rules! integer_type {
                 }
                 Ok(json!({ "type": $name, "value": value }))
             }
+            fn accepts_bound(&self, bound: &Bound) -> bool {
+                matches!(bound, Bound::Int(_))
+            }
             fn operand(&self, _field: &FormField, value: &Value) -> Option<Operand> {
                 stored_integer(value).map(Operand::Int)
             }
@@ -112,6 +115,12 @@ impl FieldType for Number {
             .ok_or(TypeError::Mismatch)?;
         let parsed = Decimal::from_str(decimal.trim()).map_err(|_| TypeError::Mismatch)?;
         Ok(json!({ "type": "decimal", "decimal": parsed.to_string() }))
+    }
+    fn accepts_bound(&self, bound: &Bound) -> bool {
+        matches!(bound, Bound::Int(_) | Bound::Decimal(_))
+    }
+    fn number_default_as_text(&self) -> bool {
+        true
     }
     fn operand(&self, _field: &FormField, value: &Value) -> Option<Operand> {
         stored_decimal(value).map(Operand::Decimal)
@@ -173,6 +182,12 @@ impl FieldType for Amount {
             "currency": config.currency,
             "scale": config.scale
         }))
+    }
+    fn accepts_bound(&self, bound: &Bound) -> bool {
+        matches!(bound, Bound::Int(_) | Bound::Decimal(_))
+    }
+    fn number_default_as_text(&self) -> bool {
+        true
     }
     fn operand(&self, _field: &FormField, value: &Value) -> Option<Operand> {
         stored_decimal(value).map(Operand::Decimal)

@@ -553,8 +553,8 @@ pub fn apply_defaults(schema: &Value, values: Value) -> Result<(Value, BTreeSet<
 
 /// Decimal fields refuse JSON numbers from callers; a designer default may still be one.
 fn default_input(ty: &dyn FieldType, default: &Value) -> Value {
-    match (ty.name(), default) {
-        ("number" | "amount", Value::Number(number)) => Value::String(number.to_string()),
+    match default {
+        Value::Number(number) if ty.number_default_as_text() => Value::String(number.to_string()),
         _ => default.clone(),
     }
 }

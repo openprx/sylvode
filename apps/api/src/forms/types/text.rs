@@ -166,6 +166,9 @@ macro_rules! system_string {
             fn normalize(&self, _field: &FormField, raw: &Value, _prior: Option<&Value>) -> Result<Value, TypeError> {
                 string_value(raw)
             }
+            fn server_written(&self) -> bool {
+                true
+            }
         }
     };
 }

@@ -301,7 +301,7 @@ fn parse_field_plan(
             false
         }
     };
-    let derived = object.contains_key("formula") || matches!(ty.name(), "formula" | "autonumber" | "ai_summary");
+    let derived = object.contains_key("formula") || ty.server_written();
     let mut plan = FieldPlan {
         field,
         ty,
@@ -492,14 +492,7 @@ fn check_validate_spec(
 ) -> Result<(), SchemaIssue> {
     match &spec.kind {
         RuleSpecKind::Builtin(BuiltinRule::Min { bound, .. } | BuiltinRule::Max { bound, .. }) => {
-            let fits = match plan.ty.name() {
-                "integer" | "rating" | "progress" => matches!(bound, Bound::Int(_)),
-                "number" | "amount" => matches!(bound, Bound::Int(_) | Bound::Decimal(_)),
-                "date" => matches!(bound, Bound::Date(_)),
-                "datetime" => matches!(bound, Bound::DateTime(_)),
-                _ => false,
-            };
-            if fits {
+            if plan.ty.accepts_bound(bound) {
                 Ok(())
             } else {
                 Err(SchemaIssue::new(
