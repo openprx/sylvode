@@ -77,7 +77,7 @@ function exprCase(c: Case): [string, string] {
 	if (!compiled.ok) {
 		got = `compile_error=${compiled.code}`;
 	} else {
-		const r = compiled.program.eval(obj(c.vars));
+		const r = compiled.program.evaluate(obj(c.vars));
 		got = r.ok ? `value=${canonicalCel(r.value)}` : `eval_error=${r.code}`;
 	}
 	const e = obj(c.expect);

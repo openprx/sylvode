@@ -44,7 +44,7 @@ export function evaluateText(
 ): string {
 	const compiled = program(expression);
 	if (!compiled) return '';
-	const result = compiled.eval(variables(scope));
+	const result = compiled.evaluate(variables(scope));
 	if (!result.ok) return '';
 	const value = result.value;
 	if (typeof value === 'string') return value;

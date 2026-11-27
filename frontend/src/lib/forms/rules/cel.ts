@@ -168,7 +168,7 @@ export class CelProgram {
 	) {}
 
 	/** Evaluates with JSON variables; names outside the environment are ignored. */
-	eval(vars: Readonly<Record<string, unknown>>): EvalResult {
+	evaluate(vars: Readonly<Record<string, unknown>>): EvalResult {
 		const ctx: Record<string, CelValue> = {};
 		try {
 			for (const name of ENV_VARIABLES[this.env]) {
@@ -189,7 +189,7 @@ export class CelProgram {
 	evalBool(
 		vars: Readonly<Record<string, unknown>>
 	): { ok: true; value: boolean } | { ok: false; code: EvalCode } {
-		const r = this.eval(vars);
+		const r = this.evaluate(vars);
 		if (!r.ok) return r;
 		return typeof r.value === 'boolean'
 			? { ok: true, value: r.value }
