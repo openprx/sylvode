@@ -290,7 +290,7 @@ impl RawConfig {
         let inbound = self.inbound.validate(&mut issues);
         let packages = self.packages.validate(&mut issues);
         let extensions = self.extensions.validate();
-        let site = self.site.validate(&mut issues);
+        let site = self.site.validate();
         let email = self.email.validate(server.public_url.as_deref(), &mut issues);
         cross_check_oauth_and_mcp(oauth.as_ref(), &mcp, &mut issues);
 

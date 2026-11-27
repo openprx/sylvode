@@ -966,6 +966,7 @@ impl AppConfig {
     /// the `Secure` cookie attribute is only ever safe on a listener nothing off-machine can
     /// reach, and an operator who set the flag without also pinning the bind to loopback gets a
     /// startup failure instead of a cookie silently sent in the clear on a public interface.
+    /// `site.cookie_insecure = true` follows the same rule.
     pub fn from_config(config: &OpenPrConfig, default_name: &str, default_bind: &str) -> Result<Self, ConfigError> {
         let (Some(database_url), Some(jwt_secret)) = (config.database.url.as_ref(), config.auth.jwt_secret.as_ref())
         else {
@@ -990,6 +991,17 @@ impl AppConfig {
                     "auth.allow_insecure_cookies=true requires server.bind_addr to resolve to a loopback host \
                      (127.0.0.1, ::1 or localhost); it resolves to '{bind_addr}'. Either bind to loopback for \
                      local development, or remove auth.allow_insecure_cookies so auth cookies stay Secure"
+                )],
+            ));
+        }
+
+        if config.site.cookie_insecure && !raw::is_loopback_bind_addr(&bind_addr) {
+            return Err(missing_values(
+                &config.origin,
+                vec![format!(
+                    "site.cookie_insecure=true requires server.bind_addr to resolve to a loopback host \
+                     (127.0.0.1, ::1 or localhost) behind a local proxy; it resolves to '{bind_addr}'. Either \
+                     bind to loopback, or remove site.cookie_insecure so site cookies stay Secure"
                 )],
             ));
         }

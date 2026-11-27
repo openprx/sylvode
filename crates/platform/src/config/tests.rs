@@ -1098,6 +1098,47 @@ allow_insecure_cookies = true
     assert!(matches!(error, ConfigError::Invalid { .. }), "{error}");
 }
 
+// ---- site.cookie_insecure (same loopback gate) ----
+
+fn site_insecure_file(bind: &str) -> String {
+    format!(
+        r#"
+[server]
+bind_addr = "{bind}"
+
+[database]
+url = "postgres://localhost/openpr"
+
+[auth]
+jwt_secret = "0123456789abcdef0123456789abcdef"
+
+[site]
+cookie_insecure = true
+"#
+    )
+}
+
+#[test]
+fn site_cookie_insecure_is_accepted_on_a_loopback_bind() {
+    let config = parse(&site_insecure_file("127.0.0.1:8081")).expect("minimal file");
+    assert!(config.site.cookie_insecure);
+    AppConfig::from_config(&config, "api", "0.0.0.0:8081").expect("a loopback bind may drop Secure on site cookies");
+}
+
+#[test]
+fn site_cookie_insecure_fails_closed_on_a_non_loopback_bind() {
+    let config = parse(&site_insecure_file("0.0.0.0:8081")).expect("minimal file");
+    let error = AppConfig::from_config(&config, "api", "0.0.0.0:8081")
+        .expect_err("a non-loopback bind must refuse insecure site cookies");
+    let ConfigError::Invalid { issues, .. } = error else {
+        panic!("expected ConfigError::Invalid, got {error}");
+    };
+    assert!(
+        issues.iter().any(|issue| issue.contains("site.cookie_insecure")),
+        "{issues:?}"
+    );
+}
+
 // ---- redaction ----
 
 #[test]

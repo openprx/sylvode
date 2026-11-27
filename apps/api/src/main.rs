@@ -76,6 +76,12 @@ async fn main() -> anyhow::Result<()> {
     // from_config first: it reports a missing database url and signing key together, so the
     // operator fixes both in one pass instead of being walked through them one at a time.
     let cfg = AppConfig::from_config(&config, "api", "0.0.0.0:8081")?;
+    if config.site.cookie_insecure {
+        tracing::warn!(
+            bind_addr = %cfg.bind_addr,
+            "site.cookie_insecure is on: site cookies lack Secure and operator login is allowed over plain HTTP"
+        );
+    }
     let db = connect_db(&config.database_runtime()?).await?;
     migrate::run_migrations(&db, config.migrations).await?;
     migrate::verify_governance_schema(&db).await?;

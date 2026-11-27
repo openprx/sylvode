@@ -2,12 +2,11 @@
 //!
 //! Both switches are off by default. `same_origin_trial` lets a site without its own origin be
 //! served under the console origin (QA and intranet only). `cookie_insecure` drops the `Secure`
-//! flag of the site cookies and allows operator login over plain HTTP; a release build refuses to
-//! start with it.
+//! flag of the site cookies and allows operator login over plain HTTP; like
+//! `auth.allow_insecure_cookies` it is accepted only when the API binds to a loopback address
+//! (checked in `AppConfig::from_config` against the resolved `server.bind_addr`).
 
 use serde::Deserialize;
-
-use super::raw::Issues;
 
 /// The validated `[site]` section.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -26,14 +25,10 @@ pub(super) struct RawSite {
 }
 
 impl RawSite {
-    pub(super) fn validate(self, issues: &mut Issues) -> SiteConfig {
-        let cookie_insecure = self.cookie_insecure.unwrap_or(false);
-        if cookie_insecure && cfg!(not(debug_assertions)) {
-            issues.push("site.cookie_insecure is refused by release builds");
-        }
+    pub(super) fn validate(self) -> SiteConfig {
         SiteConfig {
             same_origin_trial: self.same_origin_trial.unwrap_or(false),
-            cookie_insecure,
+            cookie_insecure: self.cookie_insecure.unwrap_or(false),
         }
     }
 }

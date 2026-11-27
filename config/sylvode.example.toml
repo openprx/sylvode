@@ -459,7 +459,8 @@ enabled = false
 # same_origin_trial serves sites that have no `allowed_origin` setting under this server's own
 # origin (QA and intranet only); without it such a site is not reachable at all.
 # cookie_insecure drops the `Secure` flag of the site cookies and allows operator login over plain
-# HTTP; release builds refuse to start with it.
+# HTTP; like auth.allow_insecure_cookies it is accepted only when server.bind_addr is a loopback
+# address (the API behind a local proxy).
 # ---------------------------------------------------------------------------------------------
 [site]
 # same_origin_trial = false
