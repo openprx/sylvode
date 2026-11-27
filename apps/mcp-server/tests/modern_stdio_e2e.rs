@@ -26,7 +26,12 @@ struct Pipe {
 }
 
 impl Pipe {
+    /// Starts the server with the test-only hold on, so a listen stream stays open.
     async fn start(extra_keys: &str) -> Result<Self, Box<dyn Error>> {
+        Self::start_with(extra_keys, true).await
+    }
+
+    async fn start_with(extra_keys: &str, hold: bool) -> Result<Self, Box<dyn Error>> {
         let router = Router::new().fallback(get(|| async {
             Json(json!({"code": 0, "message": "ok", "data": {"items": [], "total": 0}}))
         }));
@@ -48,6 +53,7 @@ impl Pipe {
         let mut child = Command::new(env!("CARGO_BIN_EXE_mcp-server"))
             .args(["serve", "--config"])
             .arg(config.path())
+            .env("SYLVODE_MCP_TEST_HOLD_LISTEN", if hold { "1" } else { "0" })
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -220,5 +226,50 @@ async fn sigterm_sends_the_final_result_of_every_open_listen_and_exits_zero() ->
     }
     let exit = tokio::time::timeout(Duration::from_secs(10), pipe.child.wait()).await??;
     assert_eq!(exit.code(), Some(0));
+    Ok(())
+}
+
+/// Without the hold a listen is the acknowledgment and then the final result, and its id is free
+/// again at once.
+#[tokio::test]
+async fn without_the_hold_a_listen_ends_with_the_final_result() -> TestResult {
+    let mut pipe = Pipe::start_with("", false).await?;
+    for round in 1..=3 {
+        pipe.send(&listen(round)).await?;
+        assert!(is_ack_for(&pipe.next().await?.ok_or("closed")?, round));
+        let end = pipe.next().await?.ok_or("closed")?;
+        assert_eq!(end["id"], round, "{end}");
+        assert_eq!(end["result"]["resultType"], "complete");
+    }
+    Ok(())
+}
+
+/// The acknowledgment of a listen id is on the pipe before the refusal of its duplicate.
+#[tokio::test]
+async fn the_acknowledgment_precedes_the_refusal_of_a_duplicate_id() -> TestResult {
+    let mut pipe = Pipe::start("").await?;
+    pipe.send(&listen(1)).await?;
+    pipe.send(&listen(1)).await?;
+    let first = pipe.next().await?.ok_or("closed")?;
+    assert!(is_ack_for(&first, 1), "{first}");
+    let second = pipe.next().await?.ok_or("closed")?;
+    assert_eq!(second["error"]["code"], -32600, "{second}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_listen_with_a_bad_envelope_is_refused() -> TestResult {
+    let mut pipe = Pipe::start("").await?;
+    let mut bad_version = listen(1);
+    bad_version["jsonrpc"] = json!("1.0");
+    pipe.send(&bad_version).await?;
+    let answer = pipe.next().await?.ok_or("closed")?;
+    assert_eq!(answer["error"]["code"], -32600, "{answer}");
+    let mut object_id = listen(2);
+    object_id["id"] = json!({"a": 1});
+    pipe.send(&object_id).await?;
+    let answer = pipe.next().await?.ok_or("closed")?;
+    assert_eq!(answer["error"]["code"], -32600, "{answer}");
+    assert!(answer["id"].is_null());
     Ok(())
 }

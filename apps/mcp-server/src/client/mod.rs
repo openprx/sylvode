@@ -491,7 +491,7 @@ impl OpenPrClient {
             .header("Authorization", self.authorization()?)
             .send()
             .await
-            .map_err(|e| format!("Request failed: {e}"))?;
+            .map_err(|e| format!("Request failed: {}", e.without_url()))?;
 
         let status = resp.status();
         let body = resp

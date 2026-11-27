@@ -183,22 +183,26 @@ The server speaks two protocol eras on the same endpoints (`POST /mcp/rpc` and s
 * `Origin`: a request without an `Origin` header is served. A request whose `Origin` is present
   and not listed in `[mcp] allowed_origins` (exact `scheme://host[:port]`, empty by default) is
   answered `403` on every route except `/health` and the well-known metadata, before
-  authentication.
+  authentication. A request with more than one `Origin` header is refused too.
+* A connection that does not send its request head within 10 seconds is closed.
 
 #### Listen streams
 
 `subscriptions/listen` answers on `POST /mcp/rpc` with `text/event-stream` (`Cache-Control:
-no-cache`, `X-Accel-Buffering: no`): one `data:` event per JSON-RPC message, a comment line every
-15 seconds, and the first message is the acknowledgment
-(`notifications/subscriptions/acknowledged`, whose `_meta` subscription id is the request id).
-This release acknowledges the empty subset and delivers nothing; the server declares no push
-capability yet. On SIGTERM or SIGINT every open stream ends with a final result
-(`resultType: complete`) before the process exits. Limits: 1,000 open streams per credential (the
-key is a digest of the bearer token), `[mcp] max_listen_streams` (default 10,000) per process;
-beyond either the request is answered `429`. `[mcp] listen = false` removes the method
+no-cache`, `X-Accel-Buffering: no`), one `data:` event per JSON-RPC message. The first message is
+the acknowledgment (`notifications/subscriptions/acknowledged`, whose `_meta` subscription id is
+the request id). This release delivers nothing and the server declares no push capability, so
+the acknowledgment carries the empty subset and the final result (`resultType: complete`) follows
+at once; the response then ends and holds no stream slot. The request needs `jsonrpc` `"2.0"` and
+a string or number id (else `-32600`). A stream that is held open will come with push; its
+limits are already in place: 1,000 open streams per credential (the key is a digest of the
+bearer token), `[mcp] max_listen_streams` (default 10,000) per process, beyond either the request
+is answered `429`; every open stream ends with its final result on SIGTERM or SIGINT. A comment
+line every 15 seconds keeps an idle stream alive. `[mcp] listen = false` removes the method
 (`-32601`).
 
-Over stdio a listen request runs next to ordinary requests on the same pipe; a second listen
+Over stdio the acknowledgment is written before anything else is answered; a listen request
+runs next to ordinary requests on the same pipe, a second listen
 with an id that is still open is answered `-32600`, and `notifications/cancelled` with the
 listen's `requestId` ends it without a final result.
 

@@ -577,6 +577,9 @@ fn unix_now() -> i64 {
         .map_or(0, |elapsed| i64::try_from(elapsed.as_secs()).unwrap_or(i64::MAX))
 }
 
+/// Limits the log line of a request without a token to one per second.
+static NO_TOKEN_LOG: http_modern::LogRate = http_modern::LogRate::new();
+
 /// Rejects any inbound request that does not carry a usable token, and hands the caller it does
 /// carry to the handler.
 ///
@@ -593,10 +596,12 @@ pub async fn inbound_auth(State(auth): State<Arc<InboundAuth>>, mut request: Req
     let settings = auth.settings().map(AsRef::as_ref);
     let Some(token) = caller_token(request.headers()) else {
         // The rejection names no header value, on either the too-long or the absent branch.
-        tracing::warn!(
-            path = %request.uri().path(),
-            "Rejected an inbound MCP request that carried no usable caller token"
-        );
+        if NO_TOKEN_LOG.allow() {
+            tracing::warn!(
+                path = %request.uri().path(),
+                "Rejected an inbound MCP request that carried no usable caller token"
+            );
+        }
         return with_challenge(
             StatusCode::UNAUTHORIZED,
             &challenge_missing_token(settings),

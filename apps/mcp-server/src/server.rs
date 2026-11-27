@@ -1742,7 +1742,7 @@ impl McpServer {
             ResourceSubject::Tool { tool, args } => self
                 .enforce_project_tool_policy(tool, &args)
                 .await
-                .map_err(ResourceError::from_policy),
+                .map_err(|error| ResourceError::from_policy(&error)),
         }
     }
 
@@ -2302,22 +2302,29 @@ enum ResourceError {
 
 impl ResourceError {
     /// A failure of an API read: a missing object is not found, a refusal is a refusal, anything
-    /// else is a backend failure that keeps its message.
+    /// else is a backend failure. The answer names only what was being read; the detail (an
+    /// internal address, the requested identifier) goes to the log, never to the caller.
     fn from_backend(context: &str, error: &str) -> Self {
         match classify_api_error(error) {
             ApiErrorClass::NotFound => Self::NotFound,
             ApiErrorClass::Forbidden => Self::Refused("forbidden"),
-            ApiErrorClass::Unauthorized | ApiErrorClass::Other => Self::Backend(format!("{context}: {error}")),
+            ApiErrorClass::Unauthorized | ApiErrorClass::Other => {
+                tracing::warn!(context, detail = %sanitize_for_error(error), "A resource read failed in the backend");
+                Self::Backend(context.to_string())
+            }
         }
     }
 
     /// A failure of the policy check. A lookup the API failed is classified like a read; text
     /// that is no API failure is the policy's own refusal.
-    fn from_policy(error: String) -> Self {
-        match classify_api_error(&error) {
+    fn from_policy(error: &str) -> Self {
+        match classify_api_error(error) {
             ApiErrorClass::NotFound => Self::NotFound,
             ApiErrorClass::Forbidden => Self::Refused("forbidden"),
-            ApiErrorClass::Unauthorized | ApiErrorClass::Other if is_backend_failure(&error) => Self::Backend(error),
+            ApiErrorClass::Unauthorized | ApiErrorClass::Other if is_backend_failure(error) => {
+                tracing::warn!(detail = %sanitize_for_error(error), "The resource access check failed in the backend");
+                Self::Backend("Failed to check the access policy of the resource".to_string())
+            }
             ApiErrorClass::Unauthorized | ApiErrorClass::Other => Self::Refused("policy"),
         }
     }

@@ -2433,14 +2433,16 @@ mod resource_errors {
             for era in [modern_era(), Era::Legacy] {
                 let (rpc_code, text, data) = error_of(&read(&server, "sylvode://scenario-templates", &era).await?)?;
                 assert_eq!(rpc_code, -32603, "{code}");
-                assert!(text.starts_with("Failed to read scenario templates: "), "{text}");
+                assert_eq!(text, "Failed to read scenario templates", "{rpc_code}");
+                assert!(!text.contains("127.0.0.1"), "{text}");
                 assert!(data.is_null());
             }
         }
         // A transport failure is internal too.
         let down = server("http://127.0.0.1:1".to_string())?;
-        let (code, ..) = error_of(&read(&down, "sylvode://scenario-templates", &modern_era()).await?)?;
+        let (code, text, _) = error_of(&read(&down, "sylvode://issues/PRX-4242", &modern_era()).await?)?;
         assert_eq!(code, -32603);
+        assert!(!text.contains("127.0.0.1") && !text.contains("PRX-4242"), "{text}");
         Ok(())
     }
 
@@ -2497,7 +2499,7 @@ mod resource_errors {
     #[test]
     fn policy_failures_are_classified_by_what_they_say() {
         use super::super::ResourceError;
-        let class = |text: &str| ResourceError::from_policy(text.to_string());
+        let class = ResourceError::from_policy;
         assert_eq!(
             class("Failed to load project agent policy for tools/call: API error 404 from /p: gone"),
             ResourceError::NotFound

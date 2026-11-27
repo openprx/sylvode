@@ -108,12 +108,52 @@ pub fn error_response(id: Option<Value>, error: JsonRpcError, modern: bool) -> R
 /// Whether a request may proceed as far as its `Origin` goes: without the header it may (agent
 /// CLIs and servers send none), with it the value must be configured exactly.
 pub fn origin_allowed(headers: &HeaderMap, allowed: &[String]) -> bool {
-    headers.get(header::ORIGIN).is_none_or(|origin| {
-        origin
+    let mut origins = headers.get_all(header::ORIGIN).iter();
+    let Some(origin) = origins.next() else {
+        return true;
+    };
+    // A browser sends one `Origin`; a request with several is not from one.
+    origins.next().is_none()
+        && origin
             .to_str()
             .is_ok_and(|origin| allowed.iter().any(|known| known == origin))
-    })
 }
+
+/// Lets a log line through at most once per second, so a caller that is refused over and over
+/// cannot fill the log.
+pub struct LogRate {
+    last_second: std::sync::atomic::AtomicU64,
+}
+
+impl LogRate {
+    pub const fn new() -> Self {
+        Self {
+            last_second: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+
+    /// Whether a line may be written now.
+    pub fn allow(&self) -> bool {
+        use std::sync::atomic::Ordering;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_secs().max(1));
+        let last = self.last_second.load(Ordering::Relaxed);
+        last != now
+            && self
+                .last_second
+                .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+    }
+}
+
+impl Default for LogRate {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+static ORIGIN_REFUSAL_LOG: LogRate = LogRate::new();
 
 /// The answer to a request whose `Origin` is not allowed.
 pub fn origin_refusal() -> Response {
@@ -125,7 +165,9 @@ pub async fn origin_layer(State(allowed): State<Arc<Vec<String>>>, request: Requ
     if origin_allowed(request.headers(), &allowed) {
         return next.run(request).await;
     }
-    tracing::warn!(path = %request.uri().path(), "Refused an MCP request with an Origin that is not allowed");
+    if ORIGIN_REFUSAL_LOG.allow() {
+        tracing::warn!(path = %request.uri().path(), "Refused an MCP request with an Origin that is not allowed");
+    }
     origin_refusal()
 }
 
@@ -327,6 +369,14 @@ mod tests {
     }
 
     #[test]
+    fn the_log_rate_allows_one_line_per_second() {
+        let rate = LogRate::new();
+        assert!(rate.allow());
+        assert!(!rate.allow());
+        assert!(!rate.allow());
+    }
+
+    #[test]
     fn a_too_many_streams_response_carries_retry_after() {
         let response = error_response(Some(json!(1)), JsonRpcError::too_many_streams(1000), true);
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
@@ -364,6 +414,13 @@ mod tests {
         }
         // With nothing configured every present Origin is refused.
         assert!(!origin_allowed(&headers(&[("Origin", "https://app.example.com")]), &[]));
+        // More than one Origin header is refused even when the first one is allowed.
+        let mut two = headers(&[("Origin", "https://app.example.com")]);
+        two.append(header::ORIGIN, HeaderValue::from_static("https://evil.example.com"));
+        assert!(!origin_allowed(&two, &allowed));
+        let mut same = headers(&[("Origin", "https://app.example.com")]);
+        same.append(header::ORIGIN, HeaderValue::from_static("https://app.example.com"));
+        assert!(!origin_allowed(&same, &allowed));
         assert_eq!(origin_refusal().status(), StatusCode::FORBIDDEN);
     }
 

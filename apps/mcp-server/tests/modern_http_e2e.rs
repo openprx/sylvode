@@ -11,6 +11,7 @@ use std::error::Error;
 use std::process::Stdio;
 use std::time::Duration;
 use support::{McpSettings, write_config_with_extra_mcp_keys};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, Command};
 
 type TestResult = Result<(), Box<dyn Error>>;
@@ -40,6 +41,12 @@ struct Server {
 
 impl Server {
     async fn start(extra_keys: &str) -> Result<Self, Box<dyn Error>> {
+        Self::start_with(extra_keys, false).await
+    }
+
+    /// As [`Self::start`]; `hold` keeps listen streams open (the test-only hold, which the test
+    /// build of the binary contains and a release build does not).
+    async fn start_with(extra_keys: &str, hold: bool) -> Result<Self, Box<dyn Error>> {
         let api_url = spawn_api().await?;
         let bind = {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
@@ -58,6 +65,7 @@ impl Server {
         let child = Command::new(env!("CARGO_BIN_EXE_mcp-server"))
             .args(["serve", "--config"])
             .arg(config.path())
+            .env("SYLVODE_MCP_TEST_HOLD_LISTEN", if hold { "1" } else { "0" })
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .kill_on_drop(true)
@@ -332,7 +340,7 @@ fn listen_body(id: i64) -> Value {
 
 #[tokio::test]
 async fn listen_answers_an_event_stream_with_the_acknowledgment_first_then_keepalives() -> TestResult {
-    let server = Server::start("").await?;
+    let server = Server::start_with("", true).await?;
     let mut response = server.modern(TOKEN, &listen_body(7), &[]).await?;
     assert_eq!(response.status(), StatusCode::OK);
     let content_type = response.headers().get("content-type").and_then(|v| v.to_str().ok());
@@ -392,7 +400,7 @@ async fn a_legacy_listen_request_is_method_not_found() -> TestResult {
 
 #[tokio::test]
 async fn the_stream_cap_refuses_with_429_and_retry_after_and_frees_on_close() -> TestResult {
-    let server = Server::start("max_listen_streams = 2\n").await?;
+    let server = Server::start_with("max_listen_streams = 2\n", true).await?;
     let mut first = server.modern(TOKEN, &listen_body(1), &[]).await?;
     let mut second = server.modern(OTHER_TOKEN, &listen_body(1), &[]).await?;
     let (mut b1, mut b2) = (String::new(), String::new());
@@ -426,7 +434,7 @@ async fn the_stream_cap_refuses_with_429_and_retry_after_and_frees_on_close() ->
 
 #[tokio::test]
 async fn sigterm_ends_an_open_stream_with_the_final_result_and_exits_zero() -> TestResult {
-    let mut server = Server::start("").await?;
+    let mut server = Server::start_with("", true).await?;
     let mut stream = server.modern(TOKEN, &listen_body(9), &[]).await?;
     let mut buffer = String::new();
     assert!(next_event(&mut stream, &mut buffer).await?.is_some());
@@ -449,5 +457,142 @@ async fn sigterm_ends_an_open_stream_with_the_final_result_and_exits_zero() -> T
 
     let exit = tokio::time::timeout(Duration::from_secs(10), server.child.wait()).await??;
     assert_eq!(exit.code(), Some(0));
+    Ok(())
+}
+
+/// Without the hold a listen request is the empty acknowledgment followed by the final result, and
+/// the connection ends: a caller whose token nobody checked holds no stream and no cap slot.
+#[tokio::test]
+async fn a_made_up_bearer_gets_the_acknowledgment_and_the_final_result_and_the_connection_ends() -> TestResult {
+    let server = Server::start("").await?;
+    let mut response = server.modern("totally-not-a-token", &listen_body(7), &[]).await?;
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut buffer = String::new();
+    let ack = next_event(&mut response, &mut buffer).await?.ok_or("stream ended")?;
+    assert_eq!(ack["method"], "notifications/subscriptions/acknowledged", "{ack}");
+    assert_eq!(ack["params"]["notifications"], json!({"resourceSubscriptions": []}));
+    let end = next_event(&mut response, &mut buffer).await?.ok_or("no final result")?;
+    assert_eq!(end["id"], 7, "{end}");
+    assert_eq!(end["result"]["resultType"], "complete");
+    assert!(
+        next_event(&mut response, &mut buffer).await?.is_none(),
+        "the stream must end"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn made_up_tokens_never_fill_the_stream_caps() -> TestResult {
+    let server = Server::start("max_listen_streams = 2\n").await?;
+    for index in 0..25 {
+        let token = format!("made-up-token-{index}");
+        let mut response = server.modern(&token, &listen_body(index), &[]).await?;
+        assert_eq!(response.status(), StatusCode::OK, "token {index}");
+        let mut buffer = String::new();
+        assert!(next_event(&mut response, &mut buffer).await?.is_some());
+        assert!(next_event(&mut response, &mut buffer).await?.is_some());
+        assert!(next_event(&mut response, &mut buffer).await?.is_none());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_listen_request_with_a_bad_envelope_is_refused_with_400() -> TestResult {
+    let server = Server::start("").await?;
+    for body in [
+        json!({"jsonrpc": "1.0", "id": 1, "method": "subscriptions/listen",
+               "params": {"_meta": {META: "2026-07-28"}}}),
+        json!({"jsonrpc": "2.0", "id": {"a": 1}, "method": "subscriptions/listen",
+               "params": {"_meta": {META: "2026-07-28"}}}),
+    ] {
+        let response = server.modern(TOKEN, &body, &[]).await?;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(response.json::<Value>().await?["error"]["code"], -32600);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn two_origin_headers_are_refused_and_a_silent_connection_is_closed() -> TestResult {
+    let server = Server::start("allowed_origins = [\"https://ok.example\"]\n").await?;
+    let body = modern_body(1, "tools/list", json!({}));
+    let two = server
+        .modern(
+            TOKEN,
+            &body,
+            &[("Origin", "https://ok.example"), ("Origin", "https://evil.example")],
+        )
+        .await?;
+    assert_eq!(two.status(), StatusCode::FORBIDDEN);
+
+    // A connection that sends part of a request head and then nothing is closed after the
+    // header-read timeout (10 s).
+    let address = server.base.trim_start_matches("http://").to_string();
+    let mut socket = tokio::net::TcpStream::connect(&address).await?;
+    socket.write_all(b"POST /mcp/rpc HTTP/1.1\r\nHost: x\r\n").await?;
+    let mut rest = Vec::new();
+    let closed = tokio::time::timeout(Duration::from_secs(20), socket.read_to_end(&mut rest)).await;
+    assert!(closed.is_ok(), "the silent connection stayed open");
+    Ok(())
+}
+
+/// A backend failure names only what was being read: no internal address, no identifier.
+#[tokio::test]
+async fn a_backend_failure_does_not_leak_the_api_address_or_the_identifier() -> TestResult {
+    // The server's API address is a closed port, so every read fails in the transport.
+    let api = "http://127.0.0.1:1";
+    let bind = {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        listener.local_addr()?.to_string()
+    };
+    let config = write_config_with_extra_mcp_keys(
+        &McpSettings {
+            api_url: api,
+            bot_token: None,
+            workspace_id: None,
+            transport: Some("http"),
+            bind_addr: Some(&bind),
+        },
+        "",
+    )?;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_mcp-server"))
+        .args(["serve", "--config"])
+        .arg(config.path())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()?;
+    let http = reqwest::Client::new();
+    let mut ready = false;
+    for _ in 0..200 {
+        if http
+            .get(format!("http://{bind}/health"))
+            .send()
+            .await
+            .is_ok_and(|r| r.status().is_success())
+        {
+            ready = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(ready);
+    let body = modern_body(1, "resources/read", json!({"uri": "sylvode://issues/PRX-4242"}));
+    let response = http
+        .post(format!("http://{bind}/mcp/rpc"))
+        .bearer_auth(TOKEN)
+        .header("MCP-Protocol-Version", "2026-07-28")
+        .header("Mcp-Method", "resources/read")
+        .header("Mcp-Name", "sylvode://issues/PRX-4242")
+        .json(&body)
+        .send()
+        .await?;
+    let text = response.text().await?;
+    let answer: Value = serde_json::from_str(&text)?;
+    assert_eq!(answer["error"]["code"], -32603, "{text}");
+    assert!(!text.contains("127.0.0.1"), "{text}");
+    assert!(!text.contains("PRX-4242"), "{text}");
+    child.start_kill()?;
+    tokio::time::timeout(Duration::from_secs(10), child.wait()).await??;
     Ok(())
 }

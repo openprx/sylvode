@@ -64,6 +64,9 @@ impl Default for NetOptions {
     }
 }
 
+/// How long a client may take to send the head of a request before its connection is closed.
+const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Longest time `serve` keeps answering the requests in flight after SIGTERM/SIGINT.
 ///
 /// Below the 10 s a container runtime (Docker, Podman, compose) waits between SIGTERM and
@@ -335,23 +338,53 @@ async fn serve_until_shutdown(
     listen: ListenRegistry,
     shutdown: Shutdown,
 ) -> anyhow::Result<()> {
-    let drain = {
-        let shutdown = shutdown.clone();
-        async move {
-            shutdown.requested().await;
-            tracing::info!(
-                drain_bound_ms = u64::try_from(SHUTDOWN_DRAIN_BOUND.as_millis()).unwrap_or(u64::MAX),
-                "MCP server draining: accepting no new connections and finishing the requests in flight"
-            );
-            sessions.lock().await.clear();
-            // Every open listen stream ends with its final result, which lets its response finish.
-            listen.shutdown();
+    use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
+    use hyper_util::server::{conn::auto::Builder, graceful::GracefulShutdown};
+    use hyper_util::service::TowerToHyperService;
+
+    // A connection that does not finish its request head in time is closed, so a caller that
+    // opens sockets and sends nothing cannot hold file descriptors for ever.
+    let mut builder = Builder::new(TokioExecutor::new());
+    builder
+        .http1()
+        .timer(TokioTimer::new())
+        .header_read_timeout(HEADER_READ_TIMEOUT);
+    let graceful = GracefulShutdown::new();
+    let serving = async {
+        loop {
+            let accepted = tokio::select! {
+                accepted = listener.accept() => accepted,
+                () = shutdown.requested() => break,
+            };
+            let stream = match accepted {
+                Ok((stream, _)) => stream,
+                Err(error) => {
+                    tracing::warn!(error = %error, "Failed to accept a connection");
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    continue;
+                }
+            };
+            let connection = builder
+                .serve_connection_with_upgrades(TokioIo::new(stream), TowerToHyperService::new(app.clone()))
+                .into_owned();
+            let connection = graceful.watch(connection);
+            tokio::spawn(async move {
+                if let Err(error) = connection.await {
+                    tracing::debug!(error = %error, "A connection ended with an error");
+                }
+            });
         }
+        tracing::info!(
+            drain_bound_ms = u64::try_from(SHUTDOWN_DRAIN_BOUND.as_millis()).unwrap_or(u64::MAX),
+            "MCP server draining: accepting no new connections and finishing the requests in flight"
+        );
+        sessions.lock().await.clear();
+        // Every open listen stream ends with its final result, which lets its response finish.
+        listen.shutdown();
+        graceful.shutdown().await;
     };
-    let server = std::future::IntoFuture::into_future(axum::serve(listener, app).with_graceful_shutdown(drain));
     tokio::select! {
-        result = server => {
-            result?;
+        () = serving => {
             tracing::info!("MCP server stopped");
         }
         () = shutdown.drain_deadline() => {
@@ -491,6 +524,10 @@ fn open_http_listen(state: &SseState, caller: &Caller, era: &Era, req: &JsonRpcR
     let Some(id) = req.id.clone() else {
         return refusal_response(None, protocol::JsonRpcError::invalid_request("missing id"));
     };
+    if let Err(error) = mcp_server::listen::validate_envelope(req) {
+        let echo = Some(id).filter(|id| id.is_string() || id.is_number());
+        return http_modern::error_response(echo, error, true);
+    }
     let registry = &state.net.listen;
     if !registry.enabled() {
         return refusal_response(
@@ -1320,6 +1357,11 @@ async fn open_stdio_listen(
     frame: StdioFrame,
 ) {
     let Some(id) = request.id.clone() else { return };
+    if let Err(error) = mcp_server::listen::validate_envelope(&request) {
+        let echo = Some(id.clone()).filter(|id| id.is_string() || id.is_number());
+        send_stdio(out, &JsonRpcResponse::error(echo, error), frame).await;
+        return;
+    }
     let refuse = |error: protocol::JsonRpcError| JsonRpcResponse::error(Some(id.clone()), error);
     if !listen.enabled() {
         let error = protocol::JsonRpcError::method_not_found("Unknown method: subscriptions/listen");
@@ -1341,6 +1383,11 @@ async fn open_stdio_listen(
         }
     };
     open.lock().await.insert(key.clone(), handle.cancel_token());
+    // The acknowledgment goes out before the stream's task exists, so nothing the reader answers
+    // next (a duplicate id, for one) can overtake it.
+    if let Some(ack) = handle.next_message().await {
+        send_stdio(out, &ack, frame).await;
+    }
     tracing::info!(
         method = "subscriptions/listen",
         era = "modern",

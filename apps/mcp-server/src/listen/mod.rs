@@ -1,5 +1,11 @@
 //! `subscriptions/listen` of the modern era: the registry of open listen streams.
 //!
+//! In this release a listen request is answered with the empty acknowledgment immediately
+//! followed by the final result: nothing is delivered yet, and a stream that was held open would
+//! only let a caller whose token nobody has checked occupy a cap slot. A slot is therefore free
+//! again as soon as the final result is sent. Streams are held open only by the test-only hold
+//! below, which a release build does not contain.
+//!
 //! This is the transport-neutral part. A stream belongs to the credential that opened it and is
 //! counted against two caps: streams per caller key (a SHA-256 of the bearer token, never the
 //! token) and streams per process. In this skeleton the acknowledgment always carries the empty
@@ -8,7 +14,7 @@
 //! the keep-alive interval.
 
 use crate::era::META_SUBSCRIPTION_ID;
-use crate::protocol::JsonRpcError;
+use crate::protocol::{JsonRpcError, JsonRpcRequest};
 use parking_lot::Mutex;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -43,17 +49,48 @@ pub struct ListenConfig {
     /// Streams one credential holds.
     pub per_key_limit: usize,
     pub keepalive: Duration,
+    /// Keep a stream open after its acknowledgment instead of ending it with the final result.
+    /// Only the test-only hold (feature `test-hold-listen`) ever sets this outside unit tests.
+    pub hold: bool,
+}
+
+/// Whether the test-only hold is switched on. It needs the `test-hold-listen` feature, which only
+/// the crate's own tests enable, and the environment variable `SYLVODE_MCP_TEST_HOLD_LISTEN=1`.
+/// A release build contains neither the feature nor this check, and no configuration key exists.
+#[cfg(feature = "test-hold-listen")]
+fn hold_from_environment() -> bool {
+    std::env::var("SYLVODE_MCP_TEST_HOLD_LISTEN").is_ok_and(|value| value == "1")
+}
+
+#[cfg(not(feature = "test-hold-listen"))]
+const fn hold_from_environment() -> bool {
+    false
 }
 
 impl ListenConfig {
     /// The production configuration for a total of `max_streams`.
-    pub const fn new(enabled: bool, max_streams: usize) -> Self {
+    // Not const with the test feature, whose hold reads the environment.
+    #[allow(clippy::missing_const_for_fn)]
+    pub fn new(enabled: bool, max_streams: usize) -> Self {
         Self {
             enabled,
             max_streams,
             per_key_limit: MAX_STREAMS_PER_KEY,
             keepalive: KEEPALIVE_INTERVAL,
+            hold: hold_from_environment(),
         }
+    }
+}
+
+/// The envelope checks a listen request needs before a stream is opened: `jsonrpc` is `"2.0"` and
+/// the id is a string or a number.
+pub fn validate_envelope(req: &JsonRpcRequest) -> Result<(), JsonRpcError> {
+    if req.jsonrpc != "2.0" {
+        return Err(JsonRpcError::invalid_request("Invalid jsonrpc version"));
+    }
+    match req.id {
+        Some(Value::String(_) | Value::Number(_)) => Ok(()),
+        _ => Err(JsonRpcError::invalid_request("id must be a string or a number")),
     }
 }
 
@@ -147,6 +184,7 @@ impl ListenRegistry {
         Ok(ListenHandle {
             id: id.clone(),
             pending_ack: Some(ack),
+            hold: self.inner.config.hold,
             cancel: CancellationToken::new(),
             shutdown: self.inner.shutdown.clone(),
             finished: false,
@@ -201,6 +239,7 @@ impl Drop for StreamGuard {
 pub struct ListenHandle {
     id: Value,
     pending_ack: Option<Value>,
+    hold: bool,
     cancel: CancellationToken,
     shutdown: CancellationToken,
     finished: bool,
@@ -213,8 +252,8 @@ impl ListenHandle {
         self.cancel.clone()
     }
 
-    /// The next message for the client: the acknowledgment first, then, once the server stops,
-    /// the final result; `None` when the stream is over (after the final result or a cancel).
+    /// The next message for the client: the acknowledgment first, then the final result (at once,
+    /// or once the server stops when the stream is held); `None` when the stream is over (after the final result or a cancel).
     /// Waits otherwise; callers also watch their connection.
     pub async fn next_message(&mut self) -> Option<Value> {
         if let Some(ack) = self.pending_ack.take() {
@@ -222,6 +261,10 @@ impl ListenHandle {
         }
         if self.finished {
             return None;
+        }
+        if !self.hold {
+            self.finished = true;
+            return Some(final_result(&self.id));
         }
         tokio::select! {
             biased;
@@ -287,7 +330,57 @@ mod tests {
             max_streams,
             per_key_limit,
             keepalive: Duration::from_millis(50),
+            hold: true,
         })
+    }
+
+    #[tokio::test]
+    async fn without_the_hold_the_final_result_follows_the_acknowledgment_and_frees_the_slot() {
+        let registry = ListenRegistry::new(ListenConfig {
+            hold: false,
+            ..ListenConfig::new(true, 1)
+        });
+        for round in 0..5 {
+            let handle = registry.open(caller_key("a"), &json!(round), None);
+            assert!(handle.is_ok(), "round {round}");
+            let Ok(mut handle) = handle else { return };
+            let ack = handle.next_message().await.unwrap_or(Value::Null);
+            assert_eq!(ack["method"], "notifications/subscriptions/acknowledged");
+            let end = handle.next_message().await.unwrap_or(Value::Null);
+            assert_eq!(end["id"], round);
+            assert_eq!(end["result"]["resultType"], "complete");
+            assert_eq!(handle.next_message().await, None);
+            drop(handle);
+            assert_eq!(registry.open_streams(), 0);
+        }
+    }
+
+    #[test]
+    fn the_production_configuration_never_holds_without_the_test_feature() {
+        #[cfg(not(feature = "test-hold-listen"))]
+        assert!(!ListenConfig::default().hold);
+    }
+
+    #[test]
+    fn the_envelope_needs_version_two_and_a_string_or_number_id() {
+        let request = |jsonrpc: &str, id: Option<Value>| JsonRpcRequest {
+            jsonrpc: jsonrpc.to_string(),
+            id,
+            method: "subscriptions/listen".to_string(),
+            params: None,
+        };
+        assert!(validate_envelope(&request("2.0", Some(json!(1)))).is_ok());
+        assert!(validate_envelope(&request("2.0", Some(json!("a")))).is_ok());
+        for bad in [
+            request("1.0", Some(json!(1))),
+            request("2.0", Some(json!({"a": 1}))),
+            request("2.0", Some(json!([1]))),
+            request("2.0", Some(json!(null))),
+            request("2.0", Some(json!(true))),
+            request("2.0", None),
+        ] {
+            assert_eq!(validate_envelope(&bad).err().map(|error| error.code), Some(-32600));
+        }
     }
 
     #[tokio::test]

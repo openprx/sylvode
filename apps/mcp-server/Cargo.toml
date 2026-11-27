@@ -24,6 +24,11 @@ path = "src/bin/sylvode.rs"
 name = "sylvode-skillgen"
 path = "src/bin/skillgen.rs"
 
+[features]
+# Lets a listen stream stay open when the environment asks for it. Only the crate's own tests
+# turn it on (the self dev-dependency below); a release build never contains it.
+test-hold-listen = []
+
 [dependencies]
 anyhow.workspace = true
 api = { path = "../api" }
@@ -32,6 +37,8 @@ base64 = "0.22"
 clap.workspace = true
 parking_lot = "0.12"
 platform = { path = "../../crates/platform" }
+hyper = "1"
+hyper-util = { version = "0.1", features = ["http1", "http2", "server-auto", "server-graceful", "service", "tokio"] }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -46,6 +53,7 @@ uuid.workspace = true
 [dev-dependencies]
 collab-core = { path = "../../crates/collab-core" }
 hex = "0.4"
+mcp-server = { path = ".", features = ["test-hold-listen"] }
 sea-orm.workspace = true
 serde_jcs.workspace = true
 tracing-subscriber.workspace = true
