@@ -659,6 +659,7 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
         "0132_change_hints.sql",
         SchemaProbe::Trigger("users", "trg_sv_hint_bot_user_active"),
     ),
+    ("0133_capability_ids.sql", SchemaProbe::Relation("capability_ids")),
 ];
 
 /// One recorded migration outcome.

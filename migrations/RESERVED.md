@@ -6,7 +6,7 @@ until the owning batch adds the real migration. 0128 and 0129 are reserved by an
 
 | Number | Purpose |
 |---|---|
-| 0133 | catalogue and grants |
+| 0133 | catalogue ids and old-plugin containment (landed with L1.1; the grant tables are 0138) |
 | 0134 | packages (added: `0134_packages.sql`) |
 | 0135 | layouts (added: `0135_layouts.sql`) |
 | 0136 | form schema v2 |
