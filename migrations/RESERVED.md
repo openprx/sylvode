@@ -7,7 +7,7 @@ until the owning batch adds the real migration. 0128 and 0129 are reserved by an
 | Number | Purpose |
 |---|---|
 | 0133 | catalogue and grants |
-| 0134 | packages |
+| 0134 | packages (added: `0134_packages.sql`) |
 | 0135 | layouts (added: `0135_layouts.sql`) |
 | 0136 | form schema v2 |
 | 0137 | sites |
