@@ -22,7 +22,7 @@ CREATE TABLE layouts (
   CHECK (jsonb_typeof(spec) = 'object'),
   CHECK ((source = 'package') = (installation_id IS NOT NULL AND generation IS NOT NULL))
 );
-CREATE UNIQUE INDEX layouts_key ON layouts (scope_kind, scope_id, layout_key, COALESCE(generation, 0));
+CREATE UNIQUE INDEX layouts_key ON layouts (scope_kind, scope_id, layout_key, COALESCE(generation, 0)) WHERE status = 'active';
 CREATE INDEX layouts_workspace_scope ON layouts (workspace_id, scope_kind, scope_id);
 
 CREATE TABLE layout_placements (
