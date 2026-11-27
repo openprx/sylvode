@@ -11,6 +11,7 @@ import {
 	ACTIVITY_PAGE_SIZE,
 	COMMENTS_PAGE_SIZE,
 	appendPage,
+	nextPageToLoad,
 	refreshNewest,
 	remainingCount
 } from '../src/lib/project/issue-detail/paging';
@@ -49,6 +50,26 @@ suite.check('reading the newest page again keeps the older loaded entries below 
 	const fresh = [entry('e', 5), entry('d', 4), entry('c', 3)];
 	assertDeepEqual(ids(refreshNewest(loaded, fresh)), ['e', 'd', 'c', 'b', 'a'], 'refresh');
 	assertDeepEqual(ids(refreshNewest([], fresh)), ['e', 'd', 'c'], 'nothing loaded yet');
+});
+
+suite.check('load more never skips an entry after a delete or a post', () => {
+	assertEqual(nextPageToLoad(20, 20), 2, 'a full first page');
+	// One of 20 loaded comments was deleted: entry 19 of the server list is still unseen, and page 2
+	// (offsets 20..39) would skip it, so the page that starts at offset 0 is read instead.
+	assertEqual(nextPageToLoad(19, 20), 1, 'after a delete');
+	assertEqual(nextPageToLoad(21, 20), 2, 'after a post');
+	const server = ['n', 'm', 'l']; // the server list after a delete, page size 2
+	const loaded = ['n']; // 'o' was loaded and deleted: one entry loaded, two per page
+	const page = nextPageToLoad(loaded.length, 2);
+	const fetched = server.slice((page - 1) * 2, page * 2);
+	assertDeepEqual(
+		appendPage(
+			loaded.map((id) => ({ id, created_at: at(0) })),
+			fetched.map((id) => ({ id, created_at: at(0) }))
+		).map((item) => item.id),
+		['n', 'm'],
+		'the entry after the loaded one is read'
+	);
 });
 
 suite.check('the remaining count never goes below zero', () => {

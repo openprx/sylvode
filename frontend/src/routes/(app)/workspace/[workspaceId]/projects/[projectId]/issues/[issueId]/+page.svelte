@@ -53,6 +53,7 @@
 		ACTIVITY_PAGE_SIZE,
 		COMMENTS_PAGE_SIZE,
 		appendPage,
+		nextPageToLoad,
 		refreshNewest,
 		remainingCount
 	} from '#lib/project/issue-detail/paging.js';
@@ -106,10 +107,8 @@
 	let activities = $state<Activity[]>([]);
 	// Both lists are newest first; `*Total` is what the server holds, loaded or not.
 	let commentsTotal = $state(0);
-	let commentsNextPage = $state(2);
 	let commentsLoadingMore = $state(false);
 	let activitiesTotal = $state(0);
-	let activitiesNextPage = $state(2);
 	let activitiesLoadingMore = $state(false);
 	// The people the activity entries name, by user id (from the activity answer).
 	let activityPeople = $state<Record<string, Person>>({});
@@ -294,7 +293,6 @@
 		} else if (commentsResponse.data) {
 			comments = commentsResponse.data.items ?? [];
 			commentsTotal = commentsResponse.data.total;
-			commentsNextPage = 2;
 		}
 
 		if (activityResponse.code !== 0) {
@@ -302,7 +300,6 @@
 		} else if (activityResponse.data) {
 			activities = activityResponse.data.items ?? [];
 			activitiesTotal = activityResponse.data.total;
-			activitiesNextPage = 2;
 			activityPeople = activityResponse.data.people;
 		}
 
@@ -1043,7 +1040,11 @@
 
 	async function loadMoreActivities() {
 		activitiesLoadingMore = true;
-		const response = await activityApi.list(issueId, activitiesNextPage, ACTIVITY_PAGE_SIZE);
+		const response = await activityApi.list(
+			issueId,
+			nextPageToLoad(activities.length, ACTIVITY_PAGE_SIZE),
+			ACTIVITY_PAGE_SIZE
+		);
 		activitiesLoadingMore = false;
 		if (response.code !== 0 || !response.data) {
 			toast.error(describeResult(response));
@@ -1051,13 +1052,16 @@
 		}
 		activities = appendPage(activities, response.data.items ?? []);
 		activitiesTotal = response.data.total;
-		activitiesNextPage += 1;
 		activityPeople = { ...activityPeople, ...response.data.people };
 	}
 
 	async function loadMoreComments() {
 		commentsLoadingMore = true;
-		const response = await commentsApi.list(issueId, commentsNextPage, COMMENTS_PAGE_SIZE);
+		const response = await commentsApi.list(
+			issueId,
+			nextPageToLoad(comments.length, COMMENTS_PAGE_SIZE),
+			COMMENTS_PAGE_SIZE
+		);
 		commentsLoadingMore = false;
 		if (response.code !== 0 || !response.data) {
 			toast.error(describeResult(response));
@@ -1065,7 +1069,6 @@
 		}
 		comments = appendPage(comments, response.data.items ?? []);
 		commentsTotal = response.data.total;
-		commentsNextPage += 1;
 	}
 
 	function getActivityAuthor(activity: Activity): string {

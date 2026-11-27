@@ -13,6 +13,7 @@
 		"reason": "Failure reason",
 		"reply": "Reply",
 		"showMore": "Show more",
+		"loadMoreFailed": "Could not load more tasks. Try again.",
 		"loadMore": "Show more tasks ({count} left)",
 		"showLess": "Show less",
 		"events": "Event chain",

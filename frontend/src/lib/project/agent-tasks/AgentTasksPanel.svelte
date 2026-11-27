@@ -4,6 +4,12 @@
 	import { t } from 'svelte-i18n';
 	import { aiTasksApi, type AiTask } from '../../api/ai-tasks';
 	import Button from '../../ui/button/Button.svelte';
+	import {
+		appendPage,
+		nextPageToLoad,
+		refreshNewest,
+		remainingCount
+	} from '../issue-detail/paging';
 	import StateBlock from '../../ui/state-block/StateBlock.svelte';
 	import TaskRow from './TaskRow.svelte';
 
@@ -22,25 +28,30 @@
 
 	let tasks = $state<AiTask[]>([]);
 	let total = $state(0);
-	let nextPage = $state(2);
 	let loading = $state(true);
 	let loadingMore = $state(false);
 	let failed = $state(false);
+	let moreFailed = $state(false);
 	let requestId = 0;
+	let loadedFor = '';
 
-	const remaining = $derived(Math.max(0, total - tasks.length));
+	const remaining = $derived(remainingCount(total, tasks.length));
 
-	/** Loads the newest page again and drops what was loaded beyond it. */
+	/**
+	 * Reads the newest page again. Tasks loaded below it stay, so a refresh (after a comment, or
+	 * the button) does not collapse a list the reader expanded; another work item starts afresh.
+	 */
 	async function load(id: string) {
 		const mine = ++requestId;
 		loading = true;
 		const result = await aiTasksApi.listForIssue(id, 1, PAGE_SIZE);
 		if (mine !== requestId) return;
 		if (result.code === 0 && result.data) {
-			tasks = result.data.items;
+			tasks = loadedFor === id ? refreshNewest(tasks, result.data.items) : result.data.items;
+			loadedFor = id;
 			total = result.data.total;
-			nextPage = 2;
 			failed = false;
+			moreFailed = false;
 		} else {
 			failed = true;
 		}
@@ -50,16 +61,20 @@
 	async function loadMore() {
 		const mine = requestId;
 		loadingMore = true;
-		const result = await aiTasksApi.listForIssue(issueId, nextPage, PAGE_SIZE);
+		moreFailed = false;
+		const result = await aiTasksApi.listForIssue(
+			issueId,
+			nextPageToLoad(tasks.length, PAGE_SIZE),
+			PAGE_SIZE
+		);
 		loadingMore = false;
 		if (mine !== requestId) return;
 		if (result.code === 0 && result.data) {
-			const known = new Set(tasks.map((task) => task.id));
-			tasks = [...tasks, ...result.data.items.filter((task) => !known.has(task.id))];
+			tasks = appendPage(tasks, result.data.items);
 			total = result.data.total;
-			nextPage += 1;
 		} else {
-			failed = true;
+			// The tasks already shown stay; the reader can try again.
+			moreFailed = true;
 		}
 	}
 
@@ -91,6 +106,9 @@
 					<TaskRow {task} {names} />
 				{/each}
 			</div>
+			{#if moreFailed}
+				<p class="more-failed" role="alert">{$t('agentTasks.loadMoreFailed')}</p>
+			{/if}
 			{#if remaining > 0}
 				<Button size="sm" loading={loadingMore} onclick={loadMore}>
 					{$t('agentTasks.loadMore', { values: { count: remaining } })}
@@ -123,6 +141,11 @@
 		line-height: var(--rf-leading-subheading);
 		font-weight: var(--rf-weight-semibold);
 		color: var(--rf-text);
+	}
+	.more-failed {
+		margin: 0;
+		font-size: var(--rf-size-secondary);
+		color: var(--rf-danger);
 	}
 	.list {
 		display: flex;

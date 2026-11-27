@@ -40,6 +40,16 @@ export function refreshNewest<T extends Dated>(
 	return [...newestPage, ...older].sort(newestFirst);
 }
 
+/**
+ * The page that starts at or before the first entry not loaded yet, for a list of `pageSize`
+ * entries per page. Deleting or posting changes what sits at each offset, so the page is worked
+ * out from the number loaded, not counted up: it may repeat entries (`appendPage` drops them) but
+ * never skips one.
+ */
+export function nextPageToLoad(loadedCount: number, pageSize: number): number {
+	return Math.floor(loadedCount / pageSize) + 1;
+}
+
 /** Entries the server holds that the page has not loaded yet. */
 export function remainingCount(total: number, loaded: number): number {
 	return Math.max(0, total - loaded);

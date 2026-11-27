@@ -246,27 +246,6 @@ export const issuesApi = {
 		return apiClient.delete<null>(`/api/v1/issues/${id}`);
 	},
 
-	async getComments(issueId: string): Promise<ApiResult<PaginatedData<Comment>>> {
-		const result = await apiClient.get<PaginatedData<Record<string, unknown>>>(
-			`/api/v1/issues/${issueId}/comments`
-		);
-		if (result.code !== 0 || !result.data) {
-			return {
-				code: result.code,
-				message: result.message || get(t)('api.loadCommentFailed'),
-				data: null
-			};
-		}
-		return {
-			code: 0,
-			message: result.message,
-			data: {
-				...result.data,
-				items: Array.isArray(result.data.items) ? result.data.items.map(mapComment) : []
-			}
-		};
-	},
-
 	async createComment(issueId: string, content: string): Promise<ApiResult<Comment>> {
 		const result = await apiClient.post<Record<string, unknown>>(
 			`/api/v1/issues/${issueId}/comments`,
@@ -282,9 +261,5 @@ export const issuesApi = {
 			};
 		}
 		return { code: 0, message: result.message, data: mapComment(result.data) };
-	},
-
-	getActivities(issueId: string): Promise<ApiResult<PaginatedData<Activity>>> {
-		return apiClient.get<PaginatedData<Activity>>(`/api/v1/issues/${issueId}/activities`);
 	}
 };
