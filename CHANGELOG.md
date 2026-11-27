@@ -12,6 +12,10 @@ name.
 
 ### Added
 
+- **Intranet HTTPS toolkit.** `deploy/tls/sylvode-tls.sh` creates a private CA limited to the
+  server's own IP addresses and names, issues and renews the server certificate and prints the
+  Sylvode and proxy settings; `trust-client.sh` and `trust-client.ps1` install that CA on macOS,
+  Linux and Windows clients after a fingerprint check. See docs/install.md.
 - **Runner: one session per bot, across projects.** `[[runner.tmux.sessions]]` (`bot`, `cli`,
   `name`) makes the runner type the tasks of a bot for a CLI, from every project the bot is
   connected to, into one existing tmux session, for example an operator's lead session with several

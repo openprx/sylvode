@@ -110,7 +110,8 @@ Then restart the API: `docker compose restart api`.
 
 ### Serving the web UI over plain HTTP
 
-HTTPS is recommended for every deployment that is reached from another machine. If you serve the web
+HTTPS is recommended for every deployment that is reached from another machine. To serve HTTPS on a
+private network, see [HTTPS on a private network](#https-on-a-private-network). If you serve the web
 UI over plain `http://` on an address other than `localhost` (for example `http://sylvode.example.com:3000`
 on a trusted LAN), browsers treat the page as an insecure context and hide a few features that
 exist only on HTTPS and on `localhost`. What that means:
@@ -270,7 +271,8 @@ network:
 - It includes `/etc/nginx/conf.d/resolver.conf`, which the container writes at startup with a
   `resolver` line. Create that file with a `resolver` line for your host, or remove the `include`
   when the upstream is an IP address.
-- It listens on port 80 without TLS. Terminate TLS in front of it or add it to the server block.
+- It listens on port 80 without TLS. Terminate TLS in front of it or add it to the server block. On a private network, see
+  [HTTPS on a private network](#https-on-a-private-network).
 
 See [frontend/README.md](../frontend/README.md) and [operations.md](operations.md#reverse-proxy).
 
@@ -308,6 +310,267 @@ bun run build
 ```
 
 The result is in `frontend/build/`.
+
+## HTTPS on a private network
+
+### When to use this
+
+Use this when people and runners reach the server over WireGuard or a LAN, by IP address or a
+private DNS name, and there is no public DNS name for ACME. `deploy/tls/sylvode-tls.sh` creates a
+private certificate authority (CA) that can vouch only for the names of your server, issues the
+server certificate and renews it. Clients install that CA once. For a public domain use the
+automatic certificates of your proxy instead (`deploy/caddy/Caddyfile`).
+
+The proxy (nginx, Caddy, anything else) terminates TLS. The API keeps speaking plain HTTP behind it.
+
+### What you need
+
+- OpenSSL 3.0 or newer on the server. On macOS install Homebrew `openssl@3` and pass
+  `--openssl /opt/homebrew/opt/openssl@3/bin/openssl` (or set `OPENSSL`). The script refuses
+  LibreSSL (`/usr/bin/openssl` on macOS) for everything except `fingerprint` and `status`, because
+  LibreSSL 3.3 rejects valid certificates under an IP name constraint.
+- A reverse proxy and root on the server; administrator rights on each client.
+- The scripts. They are in `deploy/tls/` of the repository at the release tag you run; they are
+  not part of the release archives. Copy what you need, for example
+  `install -m 0755 deploy/tls/sylvode-tls.sh /usr/local/sbin/`. Each script prints its usage with
+  `--help` (`Get-Help .\trust-client.ps1` on Windows).
+
+### Create the CA
+
+```bash
+sylvode-tls.sh init-ca --ip 10.72.0.19                    # by IP address
+sylvode-tls.sh init-ca --ip 10.72.0.19 --dns sylvode.lan  # IP address and a private name
+```
+
+The CA certificate carries a critical name constraint: it can vouch for the listed names and
+nothing else. A DNS name also covers its subdomains (`sylvode.lan` also covers `a.sylvode.lan`), so
+choose a dedicated name. Without a DNS name the CA is limited to the reserved placeholder
+`invalid`; without an IP address, to `255.255.255.255`. Write IPv6 addresses in the compressed
+form of RFC 5952 every time. Repeating the command with the same names changes nothing; other
+names need [rotate-ca](#add-a-name-replace-or-retire-the-ca).
+
+Files, under `/var/lib/sylvode-tls` for root (`--dir` or `SYLVODE_TLS_DIR` change it):
+
+| Path | Mode | Content |
+|---|---|---|
+| `ca.crt` | 0644 | the CA certificate: this is what clients get |
+| `ca.names` | 0644 | the permitted names |
+| `ca/ca.key` | 0400, directory 0700 | the CA private key, unencrypted so that renewal can run unattended |
+| `server/` | 0755 | default output of `issue` |
+| `retired/` | 0755 | retired CA certificates (no keys) |
+
+Never copy `ca/ca.key`, and do not leave it in backups you cannot trust: whoever has it can mint
+certificates for the listed names. The script never prints it.
+
+### Issue the server certificate
+
+```bash
+sylvode-tls.sh issue
+```
+
+This writes `server/server.key` (0600), `server/server.crt`, `server/fullchain.pem` (certificate,
+then CA) and `server/issue.conf` (what `renew` needs). Names default to every name of the CA; the
+certificate is valid 397 days (`--days`, at most 825).
+
+- `--owner USER[:GROUP]` makes that user the owner of `server.key`, for a proxy that does not read
+  it as root. nginx reads the key in its master process as root and needs no owner. Caddy needs
+  `--owner caddy:caddy`. A rootless container needs the host account that maps to the container
+  user.
+- `--out` must be a root-controlled path. The script refuses any directory (and any parent) that
+  is not owned by root or the invoking user, or that is group- or world-writable, because root
+  writing into a directory another user controls can be redirected by symlink swaps. Do not put
+  the files under a service user's home. Mount or read them from the root-controlled path.
+
+### Configure the proxy
+
+```bash
+sylvode-tls.sh config-hint                      # Sylvode, nginx and Caddy
+sylvode-tls.sh config-hint --proxy nginx --upstream 127.0.0.1:3000 --port 443
+```
+
+The output is copy-paste text with no secret in it. The nginx part belongs inside the `http {}`
+context (for example `/etc/nginx/conf.d/sylvode-tls.conf`); it listens on 443, redirects port 80,
+passes WebSocket upgrades, does not buffer the event stream and removes `ticket` and `signature`
+from the access log. The Caddy part is a site block with the same properties.
+
+- Docker Compose: run the proxy on the host in front of `127.0.0.1:3000` (the web UI). Keep the
+  Compose stack as it is.
+- Release archives: the web UI's own `nginx.conf` listens on port 80. Either put a proxy in front
+  of it, or add a `listen 443 ssl` server with the certificate paths to it.
+- A proxy in a container sees other paths: set `--cert-path` and `--key-path` to the paths inside
+  the container and mount the `server/` directory read-only.
+- Ports below 1024 need privileges. Rootless containers need
+  `net.ipv4.ip_unprivileged_port_start=443` (which lets every local user bind ports 443 to 1023)
+  or a redirect from 443 to a higher port.
+
+### Configure Sylvode
+
+`config-hint` prints the Sylvode part first. In `sylvode.toml`:
+
+```toml
+[server]
+public_url = "https://10.72.0.19"
+
+[flow]
+collab_allowed_origins = ["https://10.72.0.19"]
+```
+
+Remove `allow_insecure_cookies = true` from `[auth]`: over HTTPS the authentication cookies must
+carry `Secure`. When the OAuth authorization server is enabled, set `[oauth] issuer` and
+`[mcp] oauth_issuer` to the same origin, and `oauth_resource` to the exact HTTPS URL that receives
+MCP JSON-RPC posts. Restart the API.
+
+### Renew automatically
+
+`renew` renews when fewer than 60 days remain (`--threshold-days`), when the certificate is not
+signed by the current CA, when its key does not match, or when a name is no longer permitted;
+otherwise it does nothing. `--exec CMD` runs after a new certificate was written and receives the
+file paths in `SYLVODE_TLS_OUT`, `SYLVODE_TLS_CERT`, `SYLVODE_TLS_KEY`, `SYLVODE_TLS_FULLCHAIN` and
+`SYLVODE_TLS_NOT_AFTER`. If the hook fails, `renew` exits 5 and runs it again on the next call, so
+a proxy that missed a reload picks the certificate up later. `renew --check` changes nothing and
+exits 10 when renewal is due, which suits monitoring.
+
+A systemd timer, `/etc/systemd/system/sylvode-tls-renew.service`:
+
+```ini
+[Unit]
+Description=Renew the Sylvode intranet TLS certificate when it is due
+After=network-online.target
+
+[Service]
+Type=oneshot
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ExecStart=/usr/local/sbin/sylvode-tls.sh renew --exec "systemctl reload nginx"
+```
+
+`/etc/systemd/system/sylvode-tls-renew.timer`:
+
+```ini
+[Unit]
+Description=Daily check of the Sylvode intranet TLS certificate
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Enable it with `systemctl daemon-reload && systemctl enable --now sylvode-tls-renew.timer`. Or use
+cron, `/etc/cron.d/sylvode-tls`:
+
+```
+17 3 * * * root /usr/local/sbin/sylvode-tls.sh --quiet renew --exec "systemctl reload nginx" >>/var/log/sylvode-tls.log 2>&1
+```
+
+Reload commands: nginx `systemctl reload nginx` or `nginx -s reload`; Caddy
+`caddy reload --config /etc/caddy/Caddyfile --force` (without `--force` Caddy keeps the old
+certificate); a container proxy `podman exec <name> nginx -s reload` or `docker exec <name> nginx -s reload`.
+
+Known limitation: the certificate's start time is the signing time, so a client whose clock runs
+behind rejects a freshly renewed certificate for the length of its clock skew.
+
+### Trust the CA on client machines
+
+Copy `ca.crt` (it is public) to the client. Read the fingerprint on the server and pass it to the
+trust script, or compare it over a second channel such as a phone call:
+
+```bash
+sylvode-tls.sh fingerprint
+```
+
+Never `sha256sum` the PEM file: the fingerprint is computed over the DER certificate.
+
+| Client | Command |
+|---|---|
+| macOS (Safari, Chrome, Edge, `curl`, runner, `mcp-server`, `sylvode` CLI) | `sudo trust-client.sh install ca.crt --fingerprint <hex>` |
+| Linux (`curl`, `wget`, git, Python, Sylvode binaries) | `sudo trust-client.sh install ca.crt --fingerprint <hex>` |
+| Linux, Chrome, Chromium, Firefox | additionally, as the desktop user: `trust-client.sh install ca.crt --fingerprint <hex> --target user` (needs `certutil`; close Firefox first) |
+| Windows (Edge, Chrome, Sylvode binaries, PowerShell) | elevated: `powershell -NoProfile -ExecutionPolicy Bypass -File .\trust-client.ps1 -Action Install -CertPath .\ca.crt -Fingerprint <hex>` |
+
+The scripts refuse a certificate that is not a CA or that has no critical name constraint; there
+is no override. They print the permitted names first. `--yes` (`-Yes`) skips the prompt and needs
+the fingerprint. `--dry-run` shows what would run. `remove` and `check` take the same file. The
+Windows script is unsigned: take it from the tagged repository. Only the Debian family is covered
+by the acceptance tests; other Linux families are best effort.
+
+Other clients:
+
+- Firefox on macOS and Windows reads the operating system store when
+  `security.enterprise_roots.enabled` is true (the default in current releases).
+- Node.js (MCP clients, editors): set `NODE_EXTRA_CA_CERTS=/path/to/ca.crt` in the environment of
+  the process (read at start-up). Recent releases also accept `NODE_USE_SYSTEM_CA=1`.
+- Python `requests` and `httpx` (bundled `certifi`): set `REQUESTS_CA_BUNDLE` or `SSL_CERT_FILE`
+  to the system bundle or to the CA file.
+- Java: `keytool -importcert -cacerts -alias sylvode-ca -file ca.crt`.
+- The Sylvode runner, `mcp-server` and `sylvode` CLI need nothing beyond the operating system
+  store. Change `api_url` (runner) and `--api-url` to the `https://` origin.
+
+### Check the result
+
+```bash
+curl --cacert /var/lib/sylvode-tls/ca.crt -I https://10.72.0.19/health
+curl -I https://10.72.0.19/health          # on a client that trusts the CA, without --cacert
+sylvode-tls.sh status
+```
+
+The sign-in response must carry `Set-Cookie` with `Secure; HttpOnly`, and the browser console must
+report `window.isSecureContext === true`.
+
+### Add a name, replace or retire the CA
+
+The names are fixed in the CA, so adding or removing a name, a CA that nears its expiry, or a
+suspected leak of the CA key means a new CA:
+
+```bash
+sylvode-tls.sh rotate-ca --ip 10.72.0.19 --dns sylvode.lan   # writes next.crt; current CA untouched
+# install next.crt on every client (trust-client.sh install next.crt --fingerprint ...)
+sylvode-tls.sh rotate-ca --promote                           # next becomes current; old key deleted
+sylvode-tls.sh renew --exec "systemctl reload nginx"         # or wait for the timer: reissues the leaf
+trust-client.sh remove /var/lib/sylvode-tls/retired/<file>   # on clients, when the old CA can go
+sylvode-tls.sh rotate-ca --abort                             # instead of --promote: discard
+```
+
+`issue` and `renew` warn when the CA expires within 400 days, and never issue a certificate that
+outlives the CA.
+
+### If a key may have leaked
+
+There is no revocation. Replace keys instead:
+
+- Server key: `sylvode-tls.sh issue --force --exec "systemctl reload nginx"` makes a new key. If an
+  attacker could be on the network path, treat it as a CA leak.
+- CA key: `rotate-ca`, then `rotate-ca --promote` at once, `renew --force --exec ...`, install the
+  new CA on clients and remove the old one (`trust-client.sh remove`, `trust-client.ps1 -Action
+  Remove`). Until the old CA is removed, it can vouch for the listed names only.
+- Lost CA key: `init-ca` refuses an inconsistent state. Move the directory away, run `init-ca`
+  again and redistribute the new CA.
+
+### Reference
+
+| Subcommand | Options (defaults) |
+|---|---|
+| `init-ca` | `--ip`, `--dns` (repeatable, at least one), `--ca-days` (3650; 30-7300), `--ca-name` |
+| `issue` | `--ip`, `--dns` (default all CA names), `--out` (`DIR/server`), `--owner`, `--days` (397; 1-825), `--force`, `--exec` |
+| `renew` | `--out`, `--threshold-days` (60; 1-400), `--days` (from `issue.conf`), `--owner`, `--force`, `--check`, `--exec` |
+| `rotate-ca` | names and `--ca-days`, `--ca-name` as `init-ca`; `--promote`; `--abort` |
+| `fingerprint` | `--cert` (`DIR/ca.crt`) |
+| `status` | `--out`, `--threshold-days` (60) |
+| `config-hint` | `--out`, `--name`, `--port` (443), `--http-port` (80; 0 = no redirect), `--upstream` (`127.0.0.1:3000`), `--proxy` (`all`), `--cert-path`, `--key-path` |
+
+Every subcommand also takes `--dir` (`SYLVODE_TLS_DIR`, else `/var/lib/sylvode-tls` for root, else
+`~/.local/share/sylvode-tls`), `--openssl` (`OPENSSL`) and `--quiet`.
+
+Exit codes: 0 success; 1 unexpected failure; 2 usage error or invalid name; 3 refused by policy
+(name outside the CA, different names, insecure path or permissions, state conflict, expired CA);
+4 prerequisite missing (OpenSSL, CA, nothing to renew, `--owner` as non-root); 5 certificate
+written but the `--exec` hook failed; 6 another instance holds the lock; 10 `renew --check`:
+renewal is due. `trust-client` uses 0, 1, 2, 3 (refused or not confirmed) and 4 (prerequisite
+missing).
 
 ## The first administrator account
 
