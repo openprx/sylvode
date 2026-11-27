@@ -3,7 +3,7 @@ import { t as translate } from 'svelte-i18n';
 import { formsApi } from '#lib/api/forms.js';
 import { confirmAction } from '#lib/ui/dialog/confirm.js';
 import { invokeMissing, layoutApi } from './api';
-import { loadSource, resolveFormId } from './data';
+import { formById, loadSource, resolveFormId } from './data';
 import { resolveDeep, resolveText, resolveValue } from './refs';
 import type {
 	ActionSpec,
@@ -196,21 +196,40 @@ export class LayoutRuntime {
 			: { status: 'error', error: result.error_code ?? 'request_failed' };
 	}
 
+	/**
+	 * The forms route a navigation target lives under: the page's project, or, on a page without
+	 * one (a workspace page), the project that owns the form the target names.
+	 */
+	async #formsBase(formId: string | null): Promise<string | null> {
+		const { workspaceId, context } = this.#options;
+		let projectId: string | null = context.project_id || null;
+		if (!projectId && formId) projectId = (await formById(formId))?.project_id ?? null;
+		return projectId ? `/workspace/${workspaceId}/projects/${projectId}/forms` : null;
+	}
+
 	async #navigate(to: NavigateTarget): Promise<ActionState> {
 		const scope = this.scope;
-		const { workspaceId, context } = this.#options;
-		const base = `/workspace/${workspaceId}/projects/${context.project_id}/forms`;
+		const { context } = this.#options;
 		if ('record' in to) {
 			const id = resolveValue(to.record.id, scope);
 			if (typeof id !== 'string' || !id) return { status: 'error', error: 'record_missing' };
+			let formId: string | null = null;
+			if (!context.project_id) {
+				const record = await formsApi.getRecord(id);
+				formId = record.code === 0 && record.data ? record.data.form_id : null;
+			}
+			const base = await this.#formsBase(formId);
+			if (!base) return { status: 'error', error: 'binding_missing' };
 			this.#options.navigate(`${base}/records/${encodeURIComponent(id)}`);
 		} else if ('form' in to) {
 			const formId = await resolveFormId(to.form, scope, context.project_id);
-			if (!formId) return { status: 'error', error: 'binding_missing' };
+			const base = formId ? await this.#formsBase(formId) : null;
+			if (!formId || !base) return { status: 'error', error: 'binding_missing' };
 			this.#options.navigate(`${base}?form=${encodeURIComponent(formId)}`);
 		} else if ('view' in to) {
 			const formId = await resolveFormId(to.view.form, scope, context.project_id);
-			if (!formId) return { status: 'error', error: 'binding_missing' };
+			const base = formId ? await this.#formsBase(formId) : null;
+			if (!formId || !base) return { status: 'error', error: 'binding_missing' };
 			this.#options.navigate(
 				`${base}?form=${encodeURIComponent(formId)}&view=${encodeURIComponent(to.view.view)}`
 			);

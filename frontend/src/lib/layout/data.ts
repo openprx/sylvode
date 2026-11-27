@@ -48,6 +48,8 @@ export async function resolveFormId(
 	if (typeof value !== 'string') return null;
 	if (value.startsWith('form:')) {
 		const key = value.slice(5);
+		// A page without a project (a workspace page) binds forms by id; a key is ambiguous there.
+		if (!projectId) return null;
 		const forms = await projectForms(projectId);
 		return forms.find((form) => form.key === key)?.id ?? null;
 	}
