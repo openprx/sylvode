@@ -3807,6 +3807,21 @@ pub(crate) async fn update_record_for_plugin(
         .map(|(record, _)| record)
 }
 
+/// A record update by an operator of a public site (contract C3 section 6.6): the native update
+/// path under the operator's own user and workspace role, with the site as `source`.
+pub(crate) async fn update_record_for_site(
+    state: &AppState,
+    form: &FormResponse,
+    record: RecordResponse,
+    actor_id: Uuid,
+    role: &str,
+    req: UpdateRecordRequest,
+) -> Result<RecordResponse, ApiError> {
+    update_record_for_form_internal(state, form, record, actor_id, role, false, req, None)
+        .await
+        .map(|(record, _)| record)
+}
+
 async fn update_record_for_form_internal(
     state: &AppState,
     form: &FormResponse,
@@ -3899,7 +3914,7 @@ async fn update_record_for_form_internal(
                 form,
                 Some(record_id),
                 caller(actor_id, role, is_bot),
-                Writer::Update,
+                crate::forms::validation::writer_for_source(&source, Writer::Update),
                 denied_read_fields,
             );
             let normalized =

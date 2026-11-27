@@ -237,42 +237,7 @@ pub async fn register(
 }
 
 pub async fn login(State(state): State<AppState>, Json(req): Json<LoginRequest>) -> Result<Response, ApiError> {
-    let normalized_email = req.email.trim().to_lowercase();
-
-    let row = state
-        .db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT id::text as id, email, password_hash, name, role, entity_type, is_active, session_version, avatar_url, created_at, updated_at FROM users WHERE email = $1"
-                .to_string(),
-            vec![normalized_email.into()],
-        ))
-        .await?
-        .ok_or_else(|| ApiError::Unauthorized("invalid email or password".to_string()))?;
-
-    let entity_type = row
-        .try_get::<String>("", "entity_type")
-        .map_err(|_| ApiError::Internal)?;
-    if entity_type == "bot" {
-        return Err(ApiError::Unauthorized(
-            "bot user cannot login with password".to_string(),
-        ));
-    }
-
-    let password_hash = row
-        .try_get::<String>("", "password_hash")
-        .map_err(|_| ApiError::Unauthorized("invalid email or password".to_string()))?;
-    if password_hash.is_empty() {
-        return Err(ApiError::Unauthorized("invalid email or password".to_string()));
-    }
-    let verified = verify_password(req.password, password_hash, "invalid email or password").await?;
-    if !verified {
-        return Err(ApiError::Unauthorized("invalid email or password".to_string()));
-    }
-    let is_active = row.try_get::<bool>("", "is_active").map_err(|_| ApiError::Internal)?;
-    if !is_active {
-        return Err(ApiError::Unauthorized("invalid email or password".to_string()));
-    }
+    let row = check_login_credentials(&state, &req.email, req.password).await?;
     let session_version = row
         .try_get::<i64>("", "session_version")
         .map_err(|_| ApiError::Internal)?;
@@ -550,6 +515,75 @@ pub async fn update_preferences(
         notification_prefs: req.notification_prefs,
         email_available: email_available(),
     }))
+}
+
+/// A bcrypt hash of a random password, verified against when an e-mail is unknown or has no
+/// password, so a failed login takes as long whether or not the account exists.
+static DUMMY_PASSWORD_HASH: std::sync::LazyLock<Option<String>> = std::sync::LazyLock::new(|| {
+    use rand::RngCore;
+    let mut secret = [0_u8; 24];
+    rand::rngs::OsRng.fill_bytes(&mut secret);
+    hash(hex::encode(secret), DEFAULT_COST).ok()
+});
+
+/// Spends one bcrypt verification on the dummy hash.
+async fn burn_password_check(password: String) {
+    let _ = tokio::task::spawn_blocking(move || {
+        DUMMY_PASSWORD_HASH
+            .as_deref()
+            .map(|dummy| verify(password, dummy).unwrap_or(false))
+    })
+    .await;
+}
+
+/// The console credential check (e-mail and password), shared with the site operator login
+/// (contract C3 section 6.3): no bot logs in with a password, an account without a password or an
+/// inactive account is refused, and an unknown e-mail costs the same bcrypt work as a known one.
+/// Returns the `users` row (`id`, `email`, `name`, `role`, `is_active`, `session_version`, ...).
+pub(crate) async fn check_login_credentials(
+    state: &AppState,
+    email: &str,
+    password: String,
+) -> Result<QueryResult, ApiError> {
+    let normalized_email = email.trim().to_lowercase();
+
+    let row = state
+        .db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT id::text as id, email, password_hash, name, role, entity_type, is_active, session_version, avatar_url, created_at, updated_at FROM users WHERE email = $1"
+                .to_string(),
+            vec![normalized_email.into()],
+        ))
+        .await?;
+    let Some(row) = row else {
+        burn_password_check(password).await;
+        return Err(ApiError::Unauthorized("invalid email or password".to_string()));
+    };
+
+    let entity_type = row
+        .try_get::<String>("", "entity_type")
+        .map_err(|_| ApiError::Internal)?;
+    if entity_type == "bot" {
+        return Err(ApiError::Unauthorized(
+            "bot user cannot login with password".to_string(),
+        ));
+    }
+
+    let password_hash = row.try_get::<String>("", "password_hash").unwrap_or_default();
+    if password_hash.is_empty() {
+        burn_password_check(password).await;
+        return Err(ApiError::Unauthorized("invalid email or password".to_string()));
+    }
+    let verified = verify_password(password, password_hash, "invalid email or password").await?;
+    if !verified {
+        return Err(ApiError::Unauthorized("invalid email or password".to_string()));
+    }
+    let is_active = row.try_get::<bool>("", "is_active").map_err(|_| ApiError::Internal)?;
+    if !is_active {
+        return Err(ApiError::Unauthorized("invalid email or password".to_string()));
+    }
+    Ok(row)
 }
 
 /// bcrypt is CPU-bound. Running it on the async worker would stall other requests for the

@@ -16,12 +16,15 @@ use crate::{
     forms::{
         permissions::{denied_read_field_keys, ensure_field_write_policy_allows},
         projections::refresh_record_projection,
-        rules::{SchemaScope, apply_defaults, ensure_read_only_untouched, external::Writer},
+        rules::{
+            SchemaScope, apply_defaults, ensure_read_only_untouched,
+            external::{RuleCaller, Writer},
+        },
         schema::{ensure_schema_field_ids, ensure_valid_schema, normalize_key},
         signature_media::{
             annotate_signature_audit_entries, append_signature_audit_source, materialize_signature_values_with_audit,
         },
-        validation::{caller, validate_create, write_context},
+        validation::{caller, validate_create, write_context, writer_for_source},
     },
     plugins::hooks::{run_event_handler_hooks, run_field_validator_hooks, run_formula_hooks},
     routes::form::{
@@ -122,6 +125,23 @@ pub struct NativeRecordCreation {
     pub was_created: bool,
 }
 
+/// Who a record create runs for.
+pub struct CreateActor<'a> {
+    /// The rule caller: CEL `user` and the principal plugin rules are told about.
+    pub caller: RuleCaller,
+    /// The workspace role whose form field policy applies (stage 1, read-denied keys); `None` when
+    /// the caller has already limited the fields to its own allow-list (a site visitor's
+    /// projection, contract C3 section 6.1).
+    pub policy_role: Option<&'a str>,
+    /// The role legacy plugin hooks run under.
+    pub hook_role: &'a str,
+    /// `form_records.created_by`; `None` for a bot or a site visitor.
+    pub created_by: Option<Uuid>,
+    /// The actor kind and id recorded in signature audit entries.
+    pub audit_kind: &'static str,
+    pub audit_id: Uuid,
+}
+
 /// Runs the complete native Forms record-create pipeline inside the caller's transaction.
 pub async fn create_record_in_transaction(
     state: &AppState,
@@ -130,6 +150,26 @@ pub async fn create_record_in_transaction(
     actor_id: Uuid,
     role: &str,
     is_bot: bool,
+    req: NativeRecordCreateRequest,
+) -> Result<NativeRecordCreation, ApiError> {
+    let actor = CreateActor {
+        caller: caller(actor_id, role, is_bot),
+        policy_role: Some(role),
+        hook_role: role,
+        created_by: (!is_bot).then_some(actor_id),
+        audit_kind: if is_bot { "bot" } else { "user" },
+        audit_id: actor_id,
+    };
+    create_record_as(state, tx, form, actor, req).await
+}
+
+/// [`create_record_in_transaction`] for an explicit actor (the public site's visitors and
+/// operators).
+pub async fn create_record_as(
+    state: &AppState,
+    tx: &DatabaseTransaction,
+    form: &FormResponse,
+    actor: CreateActor<'_>,
     req: NativeRecordCreateRequest,
 ) -> Result<NativeRecordCreation, ApiError> {
     if let Some(record) =
@@ -144,41 +184,40 @@ pub async fn create_record_in_transaction(
         });
     }
 
-    ensure_field_write_policy_allows(state, form.id, role, &req.values).await?;
+    if let Some(role) = actor.policy_role {
+        ensure_field_write_policy_allows(state, form.id, role, &req.values).await?;
+    }
     ensure_read_only_untouched(&form.schema, &req.values, None, &BTreeSet::new())?;
-    let writer = writer_of_source(&req.source);
-    let (with_defaults, defaulted) = apply_defaults(&form.schema, req.values, &caller(actor_id, role, is_bot))?;
+    let writer = writer_for_source(&req.source, Writer::Create);
+    let (with_defaults, defaulted) = apply_defaults(&form.schema, req.values, &actor.caller)?;
     let values_with_formula = run_formula_hooks(
         state,
         form.workspace_id,
         form.project_id,
         form.id,
         &form.key,
-        role,
+        actor.hook_role,
         with_defaults,
     )
     .await?;
     let record_id = req.record_id.unwrap_or_else(Uuid::new_v4);
-    let created_by = (!is_bot).then_some(actor_id);
+    let created_by = actor.created_by;
     let source = ensure_json_object(req.source, "source")?;
     let calculated = calculate_values(state, form, None, values_with_formula).await?;
     let with_autonumber = apply_autonumber_values(tx, form, None, calculated).await?;
-    let denied_read_fields = denied_read_field_keys(state, form.id, role).await?;
-    let ctx = write_context(
-        form,
-        Some(record_id),
-        caller(actor_id, role, is_bot),
-        writer,
-        denied_read_fields,
-    );
+    let denied_read_fields = match actor.policy_role {
+        Some(role) => denied_read_field_keys(state, form.id, role).await?,
+        None => BTreeSet::new(),
+    };
+    let ctx = write_context(form, Some(record_id), actor.caller, writer, denied_read_fields);
     let normalized = validate_create(&form.schema, &ctx, with_autonumber, &defaulted).await?;
     let signature_materialization = materialize_signature_values_with_audit(&form.schema, normalized).await?;
     let normalized = signature_materialization.values;
     ensure_record_objects_claimable(state, form.workspace_id, &normalized, None).await?;
     let signature_audit_entries = annotate_signature_audit_entries(
         signature_materialization.audit_entries,
-        if is_bot { "bot" } else { "user" },
-        actor_id,
+        actor.audit_kind,
+        actor.audit_id,
         "record.create",
         form.id,
         record_id,
@@ -240,17 +279,6 @@ pub async fn create_record_in_transaction(
         event_payload,
         was_created: true,
     })
-}
-
-/// The writer a create request names through its `source` (plugin rule calls are told who writes).
-fn writer_of_source(source: &Value) -> Writer {
-    if source.get("type").and_then(Value::as_str) == Some("flow_conversion") {
-        Writer::FlowConversion
-    } else if source.get("origin").and_then(Value::as_str) == Some("import") {
-        Writer::Import
-    } else {
-        Writer::Create
-    }
 }
 
 /// Runs native post-commit hooks only after the caller atomically commits its transaction.

@@ -47,6 +47,21 @@ pub fn caller(actor_id: Uuid, role: &str, is_bot: bool) -> RuleCaller {
     }
 }
 
+/// The writer a write's `source` names (plugin rule calls are told who writes): a public site
+/// (`kind: site`), a Flow conversion, an import, else `default`.
+#[must_use]
+pub fn writer_for_source(source: &Value, default: Writer) -> Writer {
+    if source.get("kind").and_then(Value::as_str) == Some("site") {
+        Writer::Site
+    } else if source.get("type").and_then(Value::as_str) == Some("flow_conversion") {
+        Writer::FlowConversion
+    } else if source.get("origin").and_then(Value::as_str) == Some("import") {
+        Writer::Import
+    } else {
+        default
+    }
+}
+
 /// Create (and every create-shaped writer): normalises and checks every field; refuses on any error.
 /// `defaulted` lists the keys filled from defaults.
 pub async fn validate_create(
