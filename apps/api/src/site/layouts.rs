@@ -176,6 +176,26 @@ mod tests {
         assert!(out["data"]["c"].get("form").is_none());
     }
 
+    /// The page layout of the RT3 runbook: a visitor form and the visitor's own requests.
+    #[test]
+    fn the_runbook_layout_validates_for_its_site() {
+        let spec = json!({
+            "schema": "sv.layout.v1", "key": "desk.new", "title": {"en": "New request"},
+            "data": {
+                "form": {"source": "form", "form": "$bind.requests", "fields": ["title", "description", "contact_phone"]},
+                "mine": {"source": "query", "form": "$bind.requests", "fields": ["title", "status", "created_at"],
+                         "sort": [{"field": "created_at", "dir": "desc"}], "page_size": 20}
+            },
+            "actions": {"send": {"kind": "submit", "data": "form", "mode": "create"}},
+            "root": {"type": "stack", "children": [
+                {"type": "form", "props": {"data": "form", "submit": "send"}},
+                {"type": "table", "props": {"rows": "$data.mine.items", "columns": [{"field": "title"}, {"field": "status"}]}}
+            ]}
+        });
+        assert!(validate_site_layout(&spec, BTreeSet::from(["requests".to_string()])).is_ok());
+        assert_eq!(with_binding_refs(&spec)["data"]["mine"]["form"], "binding:requests");
+    }
+
     #[test]
     fn site_layouts_refuse_invoke_and_foreign_sources() {
         let spec = json!({
