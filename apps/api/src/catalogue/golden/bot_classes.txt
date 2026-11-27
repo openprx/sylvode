@@ -296,6 +296,7 @@ POST /api/v1/form-records/{record_id}/comments Project Table("form_records","rec
 POST /api/v1/form-records/{record_id}/links Project Table("form_records","record_id") false
 POST /api/v1/form-records/{record_id}/recalculate Project Table("form_records","record_id") false
 POST /api/v1/form-records/{record_id}/restore Project Table("form_records","record_id") false
+POST /api/v1/forms/rules/validate Project Body false
 POST /api/v1/forms/schema/validate Project Body false
 POST /api/v1/forms/{form_id}/attachments Project Table("project_forms","form_id") false
 POST /api/v1/forms/{form_id}/attachments/package-jobs Project Table("project_forms","form_id") false

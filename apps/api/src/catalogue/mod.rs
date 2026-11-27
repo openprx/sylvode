@@ -68,7 +68,8 @@ pub fn by_op(op: &str) -> Option<&'static Entry> {
 /// `POST` routes that only read (contract C3-4, the explicit exception list): the validators take
 /// their input in a body and store nothing. A bot needs the `read` permission and `read` level for
 /// them, not `write`, so a read-only bot can check a schema or a layout.
-const READ_POSTS: [&str; 3] = [
+const READ_POSTS: [&str; 4] = [
+    "/api/v1/forms/rules/validate",
     "/api/v1/forms/schema/validate",
     "/api/v1/forms/{form_id}/validate",
     "/api/v1/layouts/validate",

@@ -216,6 +216,13 @@ pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
             )),
         )
         .route(
+            "/api/v1/forms/rules/validate",
+            post(api::forms::endpoints::validate_field_rules).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
             "/api/v1/forms/{form_id}/validate",
             post(api::forms::endpoints::validate_form_record).route_layer(axum_middleware::from_fn_with_state(
                 auth_state.clone(),

@@ -20,8 +20,8 @@ use super::{
     permissions::{denied_read_field_keys, ensure_field_write_policy_allows, ensure_record_scope_allows_created_by},
     reader_context::ReaderContext,
     rules::{
-        CarriedError, RulePolicy, SchemaIssue, SchemaIssues, SchemaScope, apply_defaults, external::Writer,
-        read_only_errors,
+        CarriedError, PipelineInput, RulePolicy, SchemaIssue, SchemaIssues, SchemaScope, WriteContext, apply_defaults,
+        external::Writer, read_only_errors, run,
     },
     schema::{ensure_schema_field_ids, ensure_valid_schema, validate_schema_report},
     types::descriptor_document,
@@ -194,4 +194,191 @@ pub async fn validate_form_schema(
         "errors": issues.errors,
         "warnings": issues.warnings,
     })))
+}
+
+/// The most samples one rules check runs.
+const MAX_RULE_SAMPLES: usize = 20;
+
+#[derive(Debug, Deserialize)]
+pub struct ValidateRulesRequest {
+    pub project_id: Uuid,
+    pub field_type: String,
+    #[serde(default)]
+    pub rules: Option<Value>,
+    /// The field's `default`, checked like a schema save does.
+    #[serde(default)]
+    pub default: Option<Value>,
+    /// Options of a choice type, which its definition needs.
+    #[serde(default)]
+    pub options: Option<Value>,
+    #[serde(default)]
+    pub samples: Vec<Value>,
+}
+
+/// The one-field schema a rule set is checked in: the key is fixed, the field is optional.
+fn rules_probe_schema(req: &ValidateRulesRequest) -> Value {
+    let mut field = serde_json::Map::new();
+    field.insert("field_id".to_string(), json!("fld_rules_probe"));
+    field.insert("key".to_string(), json!("probe"));
+    field.insert("type".to_string(), json!(req.field_type));
+    for (name, value) in [
+        ("rules", &req.rules),
+        ("default", &req.default),
+        ("options", &req.options),
+    ] {
+        if let Some(value) = value {
+            field.insert(name.to_string(), value.clone());
+        }
+    }
+    json!({ "version": super::rules::SCHEMA_VERSION, "fields": [Value::Object(field)] })
+}
+
+/// The probe schema without plugin entries: plugin rules are checked for installation only, never run.
+fn without_plugin_rules(mut schema: Value) -> Value {
+    if let Some(Value::Object(rules)) = schema.pointer_mut("/fields/0/rules") {
+        for stage in rules.values_mut() {
+            if let Value::Array(items) = stage {
+                items.retain(|item| item.get("plugin").is_none());
+            }
+        }
+    }
+    schema
+}
+
+/// `POST /api/v1/forms/rules/validate`: checks a rule set against a field type without a form, and
+/// optionally runs sample values through it (plugin rules are checked, not run). Stores nothing.
+pub async fn validate_field_rules(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Json(req): Json<ValidateRulesRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    crate::middleware::validate_limit::check(&claims.sub)?;
+    if req.samples.len() > MAX_RULE_SAMPLES {
+        return Err(ApiError::BadRequest(format!(
+            "at most {MAX_RULE_SAMPLES} samples per request"
+        )));
+    }
+    let (workspace_id, _) = ensure_project_actor(&state, &claims, bot.as_ref().map(|b| &b.0), req.project_id).await?;
+    let probe = rules_probe_schema(&req);
+    let issues = validate_schema_report(
+        &probe,
+        Some(SchemaScope {
+            workspace_id,
+            project_id: req.project_id,
+        }),
+    );
+    let errors: Vec<Value> = issues
+        .errors
+        .iter()
+        .map(|issue| {
+            let path = issue.path.strip_prefix("/fields/0").unwrap_or(&issue.path);
+            json!({ "path": path, "code": issue.code })
+        })
+        .collect();
+    let mut samples = Vec::new();
+    if issues.is_valid() {
+        let runnable = without_plugin_rules(probe);
+        let ctx = WriteContext {
+            writer: Writer::Create,
+            workspace_id,
+            project_id: req.project_id,
+            form_id: Uuid::nil(),
+            record_id: None,
+            caller: caller(claims.sub.parse().unwrap_or_default(), "", bot.is_some()),
+            now: WriteContext::now_seconds(),
+            denied_read_fields: BTreeSet::new(),
+        };
+        let none = BTreeSet::new();
+        for (index, sample) in req.samples.iter().enumerate() {
+            let outcome = run(
+                &runnable,
+                &ctx,
+                PipelineInput {
+                    values: json!({ "probe": sample }),
+                    existing: None,
+                    always_check: &none,
+                    defaulted: &none,
+                    policy: RulePolicy::Refuse,
+                    report_untouched: false,
+                },
+            )
+            .await?;
+            samples.push(match outcome {
+                Ok(output) => json!({
+                    "index": index,
+                    "valid": true,
+                    "normalized": output.values.get("probe").cloned().unwrap_or(Value::Null),
+                    "errors": [],
+                }),
+                Err(failures) => json!({
+                    "index": index,
+                    "valid": false,
+                    "normalized": Value::Null,
+                    "errors": failures
+                        .errors
+                        .iter()
+                        .map(|error| json!({ "code": error.code, "rule": error.rule }))
+                        .collect::<Vec<_>>(),
+                }),
+            });
+        }
+    }
+    Ok(ApiResponse::success(json!({
+        "valid": issues.is_valid(),
+        "errors": errors,
+        "samples": samples,
+    })))
+}
+
+#[cfg(test)]
+mod rules_probe_tests {
+    use super::*;
+    use crate::forms::rules::check_schema;
+
+    fn request(field_type: &str, rules: Value) -> ValidateRulesRequest {
+        ValidateRulesRequest {
+            project_id: Uuid::nil(),
+            field_type: field_type.to_string(),
+            rules: Some(rules),
+            default: None,
+            options: None,
+            samples: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_known_rule_set_passes_the_schema_check_of_the_probe() {
+        let req = request("text", json!({ "validate": [{ "rule": "max_length", "value": 5 }] }));
+        assert!(check_schema(&rules_probe_schema(&req), None).is_valid());
+    }
+
+    #[test]
+    fn an_unknown_rule_is_reported_by_the_probe() {
+        let req = request("text", json!({ "validate": [{ "rule": "no_such_rule" }] }));
+        let issues = check_schema(&rules_probe_schema(&req), None);
+        assert!(!issues.is_valid());
+        assert!(
+            issues
+                .errors
+                .iter()
+                .all(|issue| issue.path.starts_with("/fields/0/rules"))
+        );
+    }
+
+    #[test]
+    fn plugin_entries_are_left_out_of_the_runnable_probe() {
+        let req = request(
+            "text",
+            json!({ "validate": [
+                { "plugin": { "package": "acme/x", "rule": "r" } },
+                { "rule": "max_length", "value": 5 }
+            ] }),
+        );
+        let runnable = without_plugin_rules(rules_probe_schema(&req));
+        assert_eq!(
+            runnable.pointer("/fields/0/rules/validate"),
+            Some(&json!([{ "rule": "max_length", "value": 5 }]))
+        );
+    }
 }
