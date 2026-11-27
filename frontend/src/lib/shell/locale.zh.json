@@ -29,7 +29,8 @@
 			"users": "用户",
 			"system": "系统",
 			"projectPlugins": "插件",
-			"navigation": "导航"
+			"navigation": "导航",
+			"drafts": "待审草稿"
 		},
 		"pageTitle": {
 			"projectApps": "Sylvode - 应用"

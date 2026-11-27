@@ -29,7 +29,8 @@
 			"users": "Users",
 			"system": "System",
 			"projectPlugins": "Plugins",
-			"navigation": "Navigation"
+			"navigation": "Navigation",
+			"drafts": "Drafts"
 		},
 		"pageTitle": {
 			"projectApps": "Sylvode - Apps"

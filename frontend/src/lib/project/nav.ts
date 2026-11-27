@@ -52,7 +52,8 @@ export const PROJECT_NAV_KEYS = {
 	executionSection: 'execution.connection.title',
 	inboundSourcesSection: 'inbound.sources.title',
 	alertRulesSection: 'inbound.rules.title',
-	navigationSection: 'shell.sections.navigation'
+	navigationSection: 'shell.sections.navigation',
+	draftsSection: 'shell.sections.drafts'
 } as const;
 
 /** Type key of the form-centred project type: its overview is the forms page. */
@@ -143,6 +144,12 @@ export function settingsSections(
 			label: t(PROJECT_NAV_KEYS.navigationSection),
 			labelKey: PROJECT_NAV_KEYS.navigationSection,
 			href: `${base}/settings/navigation`
+		},
+		{
+			id: 'drafts',
+			label: t(PROJECT_NAV_KEYS.draftsSection),
+			labelKey: PROJECT_NAV_KEYS.draftsSection,
+			href: `${base}/settings/drafts`
 		}
 	];
 }

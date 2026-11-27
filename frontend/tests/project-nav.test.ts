@@ -120,7 +120,11 @@ suite.check('node ids are unique within a tree', () => {
 suite.check('settings sections and landing', () => {
 	assertDeepEqual(settingsSections('custom_form', false), [], 'members get none');
 	const sections = settingsSections('custom_form', true, { base: base('p2'), translate: t });
-	assertEqual(sections.length, 5, 'plugins, execution, inbound sources, alert rules, navigation');
+	assertEqual(
+		sections.length,
+		6,
+		'plugins, execution, inbound sources, alert rules, navigation, drafts'
+	);
 	assertEqual(sections[0].id, 'plugins', 'id');
 	assertEqual(sections[0].href, `${base('p2')}/settings/plugins`, 'href');
 	assertEqual(sections[0].label, 'T(shell.sections.projectPlugins)', 'label');
@@ -135,6 +139,8 @@ suite.check('settings sections and landing', () => {
 	assertEqual(sections[3].label, 'T(inbound.rules.title)', 'alert rules label');
 	assertEqual(sections[4].id, 'navigation', 'navigation follows alert rules');
 	assertEqual(sections[4].href, `${base('p2')}/settings/navigation`, 'navigation href');
+	assertEqual(sections[5].id, 'drafts', 'drafts follow navigation');
+	assertEqual(sections[5].href, `${base('p2')}/settings/drafts`, 'drafts href');
 	assertEqual(
 		settingsSections('custom_form', false, { base: base('p2') }).some(
 			(x) => x.id === 'alert-rules'

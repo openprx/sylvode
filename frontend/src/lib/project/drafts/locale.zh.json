@@ -1,0 +1,64 @@
+{
+	"drafts": {
+		"title": "待审草稿",
+		"lead": "智能体提交的布局和表单结构。在工作区所有者或管理员批准之前，这里的内容都不会生效。",
+		"filter": "按状态筛选草稿",
+		"thing": "草稿",
+		"invalid": "无效",
+		"status": {
+			"pending": "待审",
+			"approved": "已批准",
+			"rejected": "已驳回",
+			"superseded": "已被取代",
+			"failed": "失败"
+		},
+		"kind": {
+			"form_schema": "表单结构",
+			"layout": "布局",
+			"package_install": "安装包",
+			"site_page": "站点页面"
+		},
+		"col": {
+			"kind": "类型",
+			"target": "对象",
+			"author": "作者",
+			"state": "状态",
+			"created": "创建时间"
+		},
+		"review": {
+			"title": "审阅草稿",
+			"by": "作者：{name}",
+			"approve": "批准",
+			"approved": "草稿已批准并保存。",
+			"approveFailed": "无法批准该草稿。",
+			"reject": "驳回",
+			"confirmReject": "驳回草稿",
+			"rejected": "草稿已驳回。",
+			"rejectFailed": "无法驳回该草稿。",
+			"rejectReason": "驳回的原因？作者会看到这段话。",
+			"reasonNeeded": "请先写明原因。",
+			"cannotApprove": "只有有效且待审的草稿才能批准。",
+			"close": "关闭",
+			"working": "处理中...",
+			"problem": "出错了",
+			"staleTitle": "草稿已变化",
+			"staleBody": "自你打开以来，目标或校验报告发生了变化。下面显示的是当前状态，批准前请重新确认。",
+			"validation": "校验报告",
+			"valid": "内容有效。",
+			"invalid": "内容无效",
+			"invalidBody": "无效的草稿不能批准，需要作者提交修正后的版本。",
+			"warnings": "警告",
+			"capabilities": "它可以使用的能力",
+			"noCapabilities": "没有请求任何能力。",
+			"capability": "能力",
+			"selector": "作用于",
+			"risk": "风险",
+			"new": "新增",
+			"public": "访客会看到什么",
+			"noPublic": "已发布的站点上没有页面展示它。",
+			"publicWarning": "这会展示给已发布站点的访客",
+			"spec": "内容",
+			"comment": "审阅意见"
+		}
+	}
+}

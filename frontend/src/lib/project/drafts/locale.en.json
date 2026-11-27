@@ -1,0 +1,64 @@
+{
+	"drafts": {
+		"title": "Drafts",
+		"lead": "Layouts and form schemas that agents propose. Nothing here is live until a workspace owner or administrator approves it.",
+		"filter": "Show drafts by state",
+		"thing": "drafts",
+		"invalid": "Invalid",
+		"status": {
+			"pending": "Pending",
+			"approved": "Approved",
+			"rejected": "Rejected",
+			"superseded": "Superseded",
+			"failed": "Failed"
+		},
+		"kind": {
+			"form_schema": "Form schema",
+			"layout": "Layout",
+			"package_install": "Package install",
+			"site_page": "Site page"
+		},
+		"col": {
+			"kind": "Kind",
+			"target": "Target",
+			"author": "Author",
+			"state": "State",
+			"created": "Created"
+		},
+		"review": {
+			"title": "Review draft",
+			"by": "Written by {name}",
+			"approve": "Approve",
+			"approved": "Draft approved and saved.",
+			"approveFailed": "The draft could not be approved.",
+			"reject": "Reject",
+			"confirmReject": "Reject draft",
+			"rejected": "Draft rejected.",
+			"rejectFailed": "The draft could not be rejected.",
+			"rejectReason": "Why is it rejected? The author reads this.",
+			"reasonNeeded": "Say why first.",
+			"cannotApprove": "Only a valid, pending draft can be approved.",
+			"close": "Close",
+			"working": "Working...",
+			"problem": "Something went wrong",
+			"staleTitle": "The draft changed",
+			"staleBody": "The target or the report changed since you opened this draft. The review below shows the current state; check it again before you approve.",
+			"validation": "Validation report",
+			"valid": "The spec is valid.",
+			"invalid": "The spec is not valid",
+			"invalidBody": "An invalid draft cannot be approved. The author has to send a corrected one.",
+			"warnings": "Warnings",
+			"capabilities": "What it can use",
+			"noCapabilities": "It asks for no capabilities.",
+			"capability": "Capability",
+			"selector": "On",
+			"risk": "Risk",
+			"new": "New",
+			"public": "What visitors would see",
+			"noPublic": "Nothing on a published site shows it.",
+			"publicWarning": "This would be shown to visitors of a published site",
+			"spec": "Spec",
+			"comment": "Review comment"
+		}
+	}
+}
