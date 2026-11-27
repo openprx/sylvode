@@ -115,3 +115,55 @@ export interface RefScope {
 	viewer: Record<string, unknown>;
 	actions: Record<string, unknown>;
 }
+
+/** `GET /api/v1/slots` entry (`sv_layout::SlotDescriptor`). */
+export interface SlotDescriptor {
+	id: string;
+	kind: 'single' | 'list' | 'keyed';
+	context_schema: Record<string, string>;
+	params_from_context: Record<string, string>;
+	allowed_roots: string[];
+	stack_children?: string[];
+	allowed_actions: string[];
+	max_entries: number;
+	scope_kinds: string[];
+}
+
+export type ScopeKind = 'workspace' | 'project' | 'form';
+
+/** `LayoutSummary` of the layout routes. */
+export interface LayoutSummary {
+	id: string;
+	scope_kind: string;
+	scope_id: string;
+	layout_key: string;
+	version: number;
+	source: string;
+	status: string;
+	installation_id: string | null;
+	generation: number | null;
+	updated_at: string;
+}
+
+export interface LayoutRecord extends LayoutSummary {
+	spec: LayoutSpec;
+}
+
+export interface LayoutValidationError {
+	path: string;
+	code: string;
+	message?: string;
+}
+
+export interface LayoutVerdict {
+	valid: boolean;
+	errors: LayoutValidationError[];
+}
+
+export interface PlacementRecord {
+	id: string;
+	slot_id: string;
+	scope_kind: string;
+	scope_id: string;
+	layout_id: string;
+}

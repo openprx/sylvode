@@ -60,6 +60,40 @@
 		"submit": "提交",
 		"confirm": "确认",
 		"invokeConfirmTitle": "运行 {package} 的 {action}?",
-		"actionFailed": "操作未完成。"
+		"actionFailed": "操作未完成。",
+		"editor": {
+			"title": "在此创建",
+			"open": "在此创建",
+			"close": "关闭",
+			"noScope": "你无权向此插槽添加布局。",
+			"scopeLabel": "位置",
+			"scope": {
+				"workspace": "整个工作区",
+				"project": "当前项目",
+				"form": "当前表单"
+			},
+			"modeLabel": "来源",
+			"modeExisting": "使用已有布局",
+			"modeJson": "编写 JSON",
+			"modeMarket": "从市场选择",
+			"marketLater": "市场上线后可用。",
+			"loading": "加载中...",
+			"noLayouts": "这里还没有布局,请用 JSON 编写一个。",
+			"pickLabel": "布局",
+			"jsonLabel": "布局(JSON)",
+			"syntax": "不是有效的 JSON。",
+			"validating": "检查中...",
+			"valid": "校验通过。",
+			"preview": "预览",
+			"previewEmpty": "布局校验通过后显示预览。",
+			"conditionLabel": "仅在满足时显示(可选)",
+			"conditionHelp": "基于 params、data、slot、viewer 的表达式,仅影响显示。",
+			"place": "放置到此处",
+			"saveAndPlace": "保存并放置",
+			"remove": "移除",
+			"removeTitle": "从此插槽移除 {title}?",
+			"removeBody": "布局仍然保留,可以再次放置。",
+			"removeFailed": "无法移除该放置。"
+		}
 	}
 }

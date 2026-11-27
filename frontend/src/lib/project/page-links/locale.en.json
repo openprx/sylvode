@@ -60,6 +60,40 @@
 		"submit": "Submit",
 		"confirm": "Confirm",
 		"invokeConfirmTitle": "Run {action} from {package}?",
-		"actionFailed": "The action did not complete."
+		"actionFailed": "The action did not complete.",
+		"editor": {
+			"title": "Create here",
+			"open": "Create here",
+			"close": "Close",
+			"noScope": "You cannot add layouts to this slot.",
+			"scopeLabel": "Where",
+			"scope": {
+				"workspace": "Whole workspace",
+				"project": "This project",
+				"form": "This form"
+			},
+			"modeLabel": "Source",
+			"modeExisting": "Use a layout",
+			"modeJson": "Write JSON",
+			"modeMarket": "From market",
+			"marketLater": "Available when the market arrives.",
+			"loading": "Loading...",
+			"noLayouts": "No layouts here yet. Write one as JSON.",
+			"pickLabel": "Layout",
+			"jsonLabel": "Layout (JSON)",
+			"syntax": "Not valid JSON.",
+			"validating": "Checking...",
+			"valid": "Valid.",
+			"preview": "Preview",
+			"previewEmpty": "The preview appears when the layout is valid.",
+			"conditionLabel": "Show only when (optional)",
+			"conditionHelp": "An expression over params, data, slot and viewer. Display only.",
+			"place": "Place here",
+			"saveAndPlace": "Save and place",
+			"remove": "Remove",
+			"removeTitle": "Remove {title} from this slot?",
+			"removeBody": "The layout stays saved and can be placed again.",
+			"removeFailed": "The placement could not be removed."
+		}
 	}
 }
