@@ -307,7 +307,7 @@ impl World {
         }
         // One form with one record in each project; `salary` is the field the policy tests restrict.
         let [f1, f2, f3, r1, r2, r3] = std::array::from_fn(|_| Uuid::new_v4());
-        let schema = json!({"version": "openpr.form.schema.v1", "fields": [
+        let schema = json!({"version": "sv.form.schema.v2", "fields": [
             {"field_id": "fld_text", "key": "text", "type": "text"},
             {"field_id": "fld_salary", "key": "salary", "type": "text"}
         ]});

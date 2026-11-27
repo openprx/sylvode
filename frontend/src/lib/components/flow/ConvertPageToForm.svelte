@@ -117,7 +117,7 @@
 			target_project_id: projectId,
 			key: key.trim(),
 			name: name.trim(),
-			schema: { version: 'openpr.form.schema.v1', fields: schemaFields }
+			schema: { version: 'sv.form.schema.v2', fields: schemaFields }
 		};
 		const proposedFields = $state.snapshot(fields);
 		const project = projects.find((item) => item.id === projectId)?.label ?? projectId;

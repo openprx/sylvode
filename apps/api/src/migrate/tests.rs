@@ -141,6 +141,9 @@ fn the_adoption_cutoff_names_a_registered_migration() {
             "0131_drop_one_tmux_per_cli.sql",
             "0132_change_hints.sql",
             "0133_capability_ids.sql",
+            "0134_packages.sql",
+            "0135_layouts.sql",
+            "0136_form_schema_v2.sql",
         ],
         "everything past the cutoff re-runs on an adopted database and must be idempotent"
     );
@@ -289,6 +292,7 @@ fn only_rerunnable_probes_have_no_statement() {
             "0105_token_bot_entity_type.sql",
             "0125_oauth_client_scopes.sql",
             "0127_retire_legacy_objects.sql",
+            "0136_form_schema_v2.sql",
         ],
         "a migration may only skip its probe when re-executing it is a no-op"
     );

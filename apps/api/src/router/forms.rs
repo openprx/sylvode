@@ -202,6 +202,27 @@ pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
                 )),
         )
         .route(
+            "/api/v1/field-types",
+            get(api::forms::endpoints::list_field_types).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/forms/schema/validate",
+            post(api::forms::endpoints::validate_form_schema).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/forms/{form_id}/validate",
+            post(api::forms::endpoints::validate_form_record).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
             "/api/v1/forms/{form_id}/records",
             get(routes::form::list_form_records)
                 .post(routes::form::create_form_record)

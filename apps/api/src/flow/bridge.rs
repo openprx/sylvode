@@ -1826,7 +1826,7 @@ async fn finish_conversion(
                     .mapping
                     .get("schema")
                     .cloned()
-                    .unwrap_or_else(|| json!({"version":"openpr.form.schema.v1","fields":[]})),
+                    .unwrap_or_else(|| json!({"version":"sv.form.schema.v2","fields":[]})),
                 detail_layout: json!({}),
                 created_by: (!actor.is_bot).then_some(actor.id),
                 source: json!({

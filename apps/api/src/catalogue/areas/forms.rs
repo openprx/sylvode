@@ -19,6 +19,7 @@ pub static ENTRIES: &[Entry] = &[
     bot("forms.exports.export/jobs", Post, "/api/v1/forms/{form_id}/records/export-jobs", Project(Find::Table("project_forms","form_id")), Read),
     bot("forms.exports.read/job", Get, "/api/v1/form-export-jobs/{job_id}", Project(Find::Table("form_export_jobs","job_id")), Read),
     bot("forms.exports.read/jobs", Get, "/api/v1/forms/{form_id}/records/export-jobs", Project(Find::Table("project_forms","form_id")), Read),
+    bot("forms.field_types.read", Get, "/api/v1/field-types", Global, Read),
     bot("forms.forms.create", Post, "/api/v1/projects/{project_id}/forms", Project(Find::Project("project_id")), Write),
     bot("forms.forms.create/duplicate", Post, "/api/v1/forms/{form_id}/duplicate", Project(Find::Table("project_forms","form_id")), Write),
     bot("forms.forms.create/from_template", Post, "/api/v1/projects/{project_id}/forms/from-template", Project(Find::Project("project_id")), Write),
@@ -30,6 +31,7 @@ pub static ENTRIES: &[Entry] = &[
     bot("forms.forms.read/list", Get, "/api/v1/projects/{project_id}/forms", Project(Find::Project("project_id")), Read).oauth(),
     bot("forms.forms.read/relation_targets", Get, "/api/v1/forms/{form_id}/relation-targets", Project(Find::Table("project_forms","form_id")), Read),
     bot("forms.forms.read/schema_summary", Get, "/api/v1/forms/{form_id}/schema-summary", Project(Find::Table("project_forms","form_id")), Read).plugin(),
+    bot("forms.forms.read/schema_validate", Post, "/api/v1/forms/schema/validate", Project(Find::Body), Read),
     bot("forms.forms.read/schema_version", Get, "/api/v1/forms/{form_id}/schema-versions/{version}", Project(Find::Table("project_forms","form_id")), Read),
     bot("forms.forms.read/schema_versions", Get, "/api/v1/forms/{form_id}/schema-versions", Project(Find::Table("project_forms","form_id")), Read),
     bot("forms.forms.restore", Post, "/api/v1/forms/{form_id}/restore", Project(Find::Table("project_forms","form_id")), Write),
@@ -59,6 +61,7 @@ pub static ENTRIES: &[Entry] = &[
     bot("forms.records.read/list", Get, "/api/v1/forms/{form_id}/records", Project(Find::Table("project_forms","form_id")), Read).oauth().plugin(),
     bot("forms.records.read/recalculate_preview", Post, "/api/v1/forms/{form_id}/records/recalculate-preview", Project(Find::Table("project_forms","form_id")), Read),
     bot("forms.records.read/signature_audit", Get, "/api/v1/form-records/{record_id}/signatures/audit-verification", Project(Find::Table("form_records","record_id")), Read),
+    bot("forms.records.read/validate", Post, "/api/v1/forms/{form_id}/validate", Project(Find::Table("project_forms","form_id")), Read),
     bot("forms.records.recalculate", Post, "/api/v1/form-records/{record_id}/recalculate", Project(Find::Table("form_records","record_id")), Write),
     bot("forms.records.restore", Post, "/api/v1/form-records/{record_id}/restore", Project(Find::Table("form_records","record_id")), Write),
     bot("forms.records.restore/child", Post, "/api/v1/form-records/{record_id}/children/{child_record_id}/restore", Project(Find::Table("form_records","record_id")), Write),
@@ -83,7 +86,7 @@ mod tests {
     fn the_classes_of_the_area() {
         assert_eq!(
             bot_class_counts(ENTRIES),
-            BTreeMap::from([("project-resolved", 66)]),
+            BTreeMap::from([("no project", 1), ("project-resolved", 68)]),
             "the classes of the forms routes changed"
         );
     }

@@ -1200,7 +1200,7 @@ fn form_template(key: &str, name: &str, description: &str, title_template: &str,
         "name": name,
         "description": description,
         "title_template": title_template,
-        "schema": {"version": "openpr.form.schema.v1", "fields": fields},
+        "schema": {"version": "sv.form.schema.v2", "fields": fields},
         "detail_layout": {"sections": [{"key": "main", "title": name, "fields": columns}]},
         "views": [
             {"key": "grid", "name": format!("All {name}"), "view_type": "grid", "config": {"columns": columns}},

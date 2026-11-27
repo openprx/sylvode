@@ -105,7 +105,7 @@ const FORM_ROW: UniversalForm = {
 	description: '',
 	title_template: '',
 	schema: {
-		version: 'openpr.form.schema.v1',
+		version: 'sv.form.schema.v2',
 		fields: [
 			{ key: 'ticket', type: 'autonumber', required: true },
 			{ key: 'owner_note', label: 'Owner note', type: 'text', required: true },

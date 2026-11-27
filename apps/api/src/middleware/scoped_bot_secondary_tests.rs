@@ -94,7 +94,7 @@ async fn form_in(db: &DatabaseConnection, workspace: Uuid, project: Uuid, key: &
             workspace.into(),
             project.into(),
             key.to_string().into(),
-            json!({"version":"openpr.form.schema.v1","fields":[{"field_id":"fld_text_one","key":"t","type":"text","required":false}]})
+            json!({"version":"sv.form.schema.v2","fields":[{"field_id":"fld_text_one","key":"t","type":"text","required":false}]})
                 .to_string()
                 .into(),
         ],

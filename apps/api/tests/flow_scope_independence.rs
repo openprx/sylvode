@@ -3173,7 +3173,7 @@ async fn personal_forms_conversion_commits_native_target_with_scoped_job_and_rep
         source_object_id: source,
         source_frontier: frontier.clone(),
         target_type: "form".into(),
-        mapping: json!({"target_project_id":project,"key":"converted_scope","name":"Scoped form","schema":{"version":"openpr.form.schema.v1","fields":[{"field_id":"portable_subject","key":"subject","label":"Subject","type":"text","required":true}]}}),
+        mapping: json!({"target_project_id":project,"key":"converted_scope","name":"Scoped form","schema":{"version":"sv.form.schema.v2","fields":[{"field_id":"portable_subject","key":"subject","label":"Subject","type":"text","required":true}]}}),
         idempotency_key: "conversion-preview".into(),
         destination_workspace_id: workspace,
         destination_project_id: Some(project),
@@ -3394,7 +3394,7 @@ async fn personal_forms_conversion_commits_native_target_with_scoped_job_and_rep
     );
 
     // The v2 transport preserves an explicit real destination.
-    let route_preview=api::routes::flow::post_flow_v2_conversion_preview(State(state.clone()),test_claims(owner),None,Json(json!({"source_object_id":source,"source_frontier":frontier,"target_type":"form","mapping":{"key":"converted_route","name":"Route form","schema":{"version":"openpr.form.schema.v1","fields":[]}},"destination_workspace_id":workspace,"destination_project_id":project,"idempotency_key":"route-preview"}))).await.unwrap();
+    let route_preview=api::routes::flow::post_flow_v2_conversion_preview(State(state.clone()),test_claims(owner),None,Json(json!({"source_object_id":source,"source_frontier":frontier,"target_type":"form","mapping":{"key":"converted_route","name":"Route form","schema":{"version":"sv.form.schema.v2","fields":[]}},"destination_workspace_id":workspace,"destination_project_id":project,"idempotency_key":"route-preview"}))).await.unwrap();
     let route_preview: serde_json::Value = serde_json::from_slice(
         &axum::body::to_bytes(route_preview.into_body(), 1024 * 1024)
             .await
@@ -3537,7 +3537,7 @@ async fn workspace_page_converts_into_another_workspace_forms_when_the_switch_is
         source_object_id: source,
         source_frontier: frontier.clone(),
         target_type: "form".into(),
-        mapping: json!({"target_project_id":project,"key":"converted_workspace","name":"Workspace form","schema":{"version":"openpr.form.schema.v1","fields":[{"field_id":"portable_subject","key":"subject","label":"Subject","type":"text","required":true}]}}),
+        mapping: json!({"target_project_id":project,"key":"converted_workspace","name":"Workspace form","schema":{"version":"sv.form.schema.v2","fields":[{"field_id":"portable_subject","key":"subject","label":"Subject","type":"text","required":true}]}}),
         idempotency_key: key.into(),
         destination_workspace_id: destination,
         destination_project_id: Some(project),

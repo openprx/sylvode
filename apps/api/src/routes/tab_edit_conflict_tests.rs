@@ -63,7 +63,7 @@ async fn fixture() -> Fixture {
         vec![project.into(), workspace.into(), user.into()],
     )
     .await;
-    exec(db,"INSERT INTO project_forms(id,workspace_id,project_id,key,name,schema,created_by) VALUES($1,$2,$3,'tab_form','Tab form',$4,$5)",vec![form.into(),workspace.into(),project.into(),json!({"version":"openpr.form.schema.v1","fields":[{"field_id":"fld_text","key":"text","type":"text"}]}).into(),user.into()]).await;
+    exec(db,"INSERT INTO project_forms(id,workspace_id,project_id,key,name,schema,created_by) VALUES($1,$2,$3,'tab_form','Tab form',$4,$5)",vec![form.into(),workspace.into(),project.into(),json!({"version":"sv.form.schema.v2","fields":[{"field_id":"fld_text","key":"text","type":"text"}]}).into(),user.into()]).await;
     exec(db,"INSERT INTO form_records(id,workspace_id,project_id,form_id,title,values,schema_version,created_by) VALUES($1,$2,$3,$4,'Initial',$5,1,$6)",vec![record.into(),workspace.into(),project.into(),form.into(),json!({"text":"Initial"}).into(),user.into()]).await;
     exec(db,"INSERT INTO form_views(id,workspace_id,project_id,form_id,key,name,view_type,config,created_by) VALUES($1,$2,$3,$4,'tab_view','Initial','grid','{}',$5)",vec![view.into(),workspace.into(),project.into(),form.into(),user.into()]).await;
     exec(

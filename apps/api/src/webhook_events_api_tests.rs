@@ -194,7 +194,7 @@ async fn form_record_routes_write_the_dispatch_rows_and_the_changed_field_keys()
             form.into(),
             api.ws.into(),
             api.project.into(),
-            json!({"version": "openpr.form.schema.v1", "fields": [
+            json!({"version": "sv.form.schema.v2", "fields": [
                 {"field_id": "fld_text", "key": "text", "type": "text"},
                 {"field_id": "fld_salary", "key": "salary", "type": "text"}
             ]})
