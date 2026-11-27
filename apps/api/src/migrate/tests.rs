@@ -148,6 +148,7 @@ fn the_adoption_cutoff_names_a_registered_migration() {
             "0138_installations.sql",
             "0139_artefact_drafts.sql",
             "0140_nav.sql",
+            "0141_drop_scenario_templates.sql",
             "0142_cap_record_titles.sql",
         ],
         "everything past the cutoff re-runs on an adopted database and must be idempotent"
@@ -165,11 +166,12 @@ fn migration_checksums_are_content_addressed() {
 
 /// The post-cutoff files that intentionally drop relations. Everything else past the cutoff
 /// must stay replay-safe.
-const RETIREMENT_MIGRATIONS: [&str; 4] = [
+const RETIREMENT_MIGRATIONS: [&str; 5] = [
     "0052_drop_connectors_and_agent_invocations.sql",
     "0053_drop_event_outbox.sql",
     "0114_multi_bot_connections.sql",
     "0127_retire_legacy_objects.sql",
+    "0141_drop_scenario_templates.sql",
 ];
 
 /// Non-destructive post-cutoff migrations must remain safe to replay. The explicitly
@@ -418,6 +420,7 @@ fn only_retired_delivery_migrations_are_superseded() {
         vec![
             "0026_connectors_invocations.sql",
             "0028_invocation_tool_calls.sql",
+            "0029_scenario_templates.sql",
             "0032_print_device_connector_kinds.sql",
             "0048_delivery_lease_and_pickup_indexes.sql",
             "0049_agent_invocation_duplicate_tagging.sql"
