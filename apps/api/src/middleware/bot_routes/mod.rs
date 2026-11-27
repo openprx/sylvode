@@ -8,26 +8,38 @@ use super::scoped_bot::{Class, RunnerRoute};
 
 mod alerts;
 mod auth_workspace;
+mod catalogue;
+mod drafts;
+mod extensions;
 mod flow;
 mod forms;
 mod governance;
 mod integrations;
 mod issues;
+mod layouts;
+mod packages;
 mod planning;
 mod projects;
+mod site;
 mod uploads;
 
 /// Every area's table; a route belongs to the file named like its router area.
 pub static RUNNER_BOT_ROUTES: &[&[RunnerRoute]] = &[
     alerts::ROUTES,
     auth_workspace::ROUTES,
+    catalogue::ROUTES,
+    drafts::ROUTES,
+    extensions::ROUTES,
     flow::ROUTES,
     forms::ROUTES,
     governance::ROUTES,
     integrations::ROUTES,
     issues::ROUTES,
+    layouts::ROUTES,
+    packages::ROUTES,
     planning::ROUTES,
     projects::ROUTES,
+    site::ROUTES,
     uploads::ROUTES,
 ];
 

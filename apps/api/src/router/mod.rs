@@ -11,13 +11,19 @@ use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLay
 
 mod alerts;
 mod auth_workspace;
+mod catalogue;
+mod drafts;
+mod extensions;
 mod flow;
 mod forms;
 mod governance;
 mod integrations;
 mod issues;
+mod layouts;
+mod packages;
 mod planning;
 mod projects;
+mod site;
 mod uploads;
 
 const MAX_HTTP_REQUEST_BYTES: usize = 200 * 1024 * 1024;
@@ -29,13 +35,19 @@ pub const ROUTER_SOURCES: &[(&str, &str)] = &[
     ("mod.rs", include_str!("mod.rs")),
     ("alerts.rs", include_str!("alerts.rs")),
     ("auth_workspace.rs", include_str!("auth_workspace.rs")),
+    ("catalogue.rs", include_str!("catalogue.rs")),
+    ("drafts.rs", include_str!("drafts.rs")),
+    ("extensions.rs", include_str!("extensions.rs")),
     ("flow.rs", include_str!("flow.rs")),
     ("forms.rs", include_str!("forms.rs")),
     ("governance.rs", include_str!("governance.rs")),
     ("integrations.rs", include_str!("integrations.rs")),
     ("issues.rs", include_str!("issues.rs")),
+    ("layouts.rs", include_str!("layouts.rs")),
+    ("packages.rs", include_str!("packages.rs")),
     ("planning.rs", include_str!("planning.rs")),
     ("projects.rs", include_str!("projects.rs")),
+    ("site.rs", include_str!("site.rs")),
     ("uploads.rs", include_str!("uploads.rs")),
 ];
 
@@ -66,6 +78,12 @@ pub fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform
         .merge(alerts::routes(&auth_state))
         .merge(planning::routes(&auth_state))
         .merge(integrations::routes(&auth_state))
+        .merge(catalogue::routes(&auth_state))
+        .merge(drafts::routes(&auth_state))
+        .merge(extensions::routes(&auth_state))
+        .merge(layouts::routes(&auth_state))
+        .merge(packages::routes(&auth_state))
+        .merge(site::routes(&auth_state))
         .layer(DefaultBodyLimit::max(MAX_HTTP_REQUEST_BYTES))
         // The custom span preserves the tower-http fields but records only the URI path. Query
         // strings carry both secrets (collab tickets) and user content (search/filter terms), so
