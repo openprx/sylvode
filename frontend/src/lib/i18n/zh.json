@@ -222,6 +222,8 @@
 		"activity": "活动记录",
 		"noComments": "暂无评论",
 		"noActivity": "暂无活动",
+		"loadMoreComments": "加载更多评论（还有 {count} 条）",
+		"loadMoreActivity": "加载更多活动（还有 {count} 条）",
 		"addComment": "添加评论（Markdown）",
 		"submitComment": "提交评论",
 		"uploadImage": "上传图片/视频",
@@ -529,7 +531,13 @@
 		"sprintChanged": "关联到迭代 {name}",
 		"sprintRemoved": "移除了迭代关联",
 		"priorityChanged": "将优先级从 {from} 改为 {to}",
-		"commentDeletedWithPreview": "删除了评论：\"{preview}...\""
+		"commentDeletedWithPreview": "删除了评论：\"{preview}...\"",
+		"created": "创建了该工作项",
+		"titleChanged": "将标题从“{from}”改为“{to}”",
+		"descriptionChanged": "编辑了描述",
+		"dueDateChanged": "将截止日期从 {from} 改为 {to}",
+		"dueDateSet": "将截止日期设为 {to}",
+		"dueDateCleared": "移除了截止日期"
 	},
 	"toast": {
 		"uploadFail": "上传失败，请稍后重试",

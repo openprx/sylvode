@@ -1,7 +1,7 @@
 //! Work item changes shared by the issue handler and the task reply routing.
 
 use platform::timestamp::Timestamp;
-use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
+use sea_orm::{ConnectionTrait, DbBackend, DbErr, FromQueryResult, Statement};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -150,6 +150,12 @@ async fn notify_change<C: ConnectionTrait>(
 }
 
 /// Writes one row of the issue activity log.
+///
+/// This is the only writer of the log: every change of a work item records its row here, in the
+/// transaction that makes the change.
+///
+/// # Errors
+/// A database failure.
 pub async fn insert_activity<C: ConnectionTrait>(
     db: &C,
     issue: &IssueRef,
@@ -158,7 +164,23 @@ pub async fn insert_activity<C: ConnectionTrait>(
     detail: &Value,
     at: Timestamp,
 ) -> Result<(), ApiError> {
-    let detail_text = detail.to_string();
+    write_activity(db, issue.id, actor_id, action, detail, at).await?;
+    Ok(())
+}
+
+/// Writes one activity row of a work item known by its id only; the project and the workspace are
+/// read from the item in the same statement. Nothing is written for an id that is not a work item.
+///
+/// # Errors
+/// A database failure.
+pub async fn write_activity<C: ConnectionTrait>(
+    db: &C,
+    issue_id: Uuid,
+    actor_id: Uuid,
+    action: &str,
+    detail: &Value,
+    at: Timestamp,
+) -> Result<(), DbErr> {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
@@ -166,26 +188,58 @@ pub async fn insert_activity<C: ConnectionTrait>(
                 id, workspace_id, project_id, issue_id, user_id, action, detail, created_at,
                 resource_type, resource_id, event_type, actor_id, payload
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13::jsonb)
+            SELECT $1::uuid, p.workspace_id, wi.project_id, wi.id, $3::uuid, $4::text, $5::jsonb, $6::timestamptz,
+                   'issue', wi.id, $4::text, $3::uuid, $5::jsonb
+            FROM work_items wi
+            INNER JOIN projects p ON p.id = wi.project_id
+            WHERE wi.id = $2
         ",
         vec![
             Uuid::new_v4().into(),
-            issue.workspace_id.into(),
-            issue.project_id.into(),
-            issue.id.into(),
+            issue_id.into(),
             actor_id.into(),
             action.to_string().into(),
-            detail_text.clone().into(),
+            detail.to_string().into(),
             at.into(),
-            "issue".into(),
-            issue.id.into(),
-            action.to_string().into(),
-            actor_id.into(),
-            detail_text.into(),
         ],
     ))
     .await?;
     Ok(())
+}
+
+/// Records that a label was put on (`added`) or taken off a work item.
+///
+/// # Errors
+/// A database failure.
+pub async fn record_label_change<C: ConnectionTrait>(
+    db: &C,
+    issue_id: Uuid,
+    actor_id: Uuid,
+    label_id: Uuid,
+    added: bool,
+) -> Result<(), DbErr> {
+    #[derive(FromQueryResult)]
+    struct LabelName {
+        name: String,
+    }
+    let name = LabelName::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT name FROM labels WHERE id = $1",
+        vec![label_id.into()],
+    ))
+    .one(db)
+    .await?
+    .map(|row| row.name)
+    .unwrap_or_default();
+    write_activity(
+        db,
+        issue_id,
+        actor_id,
+        if added { "label_added" } else { "label_removed" },
+        &json!({ "label_id": label_id, "label_name": name }),
+        Timestamp::now(),
+    )
+    .await
 }
 
 /// Moves a work item to `state_key`, recording the activity. `None` when it is already there.

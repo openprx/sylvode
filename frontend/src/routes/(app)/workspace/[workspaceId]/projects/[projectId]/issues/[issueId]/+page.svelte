@@ -47,6 +47,16 @@
 	import Textarea from '#lib/components/Textarea.svelte';
 	import BotIcon from '#lib/components/BotIcon.svelte';
 	import AgentTasksPanel from '#lib/project/agent-tasks/AgentTasksPanel.svelte';
+	import ActivityPanel from '#lib/project/issue-detail/ActivityPanel.svelte';
+	import { itemFieldActivityText } from '#lib/project/issue-detail/activity-text.js';
+	import {
+		ACTIVITY_PAGE_SIZE,
+		COMMENTS_PAGE_SIZE,
+		appendPage,
+		nextPageToLoad,
+		refreshNewest,
+		remainingCount
+	} from '#lib/project/issue-detail/paging.js';
 	import AlertPanel from '#lib/project/alert-panel/AlertPanel.svelte';
 	import LinkedPages from '#lib/project/page-links/LinkedPages.svelte';
 	import { pageActivityText } from '#lib/project/page-links/rules.js';
@@ -95,6 +105,11 @@
 	let issue = $state<Issue | null>(null);
 	let comments = $state<Comment[]>([]);
 	let activities = $state<Activity[]>([]);
+	// Both lists are newest first; `*Total` is what the server holds, loaded or not.
+	let commentsTotal = $state(0);
+	let commentsLoadingMore = $state(false);
+	let activitiesTotal = $state(0);
+	let activitiesLoadingMore = $state(false);
 	// The people the activity entries name, by user id (from the activity answer).
 	let activityPeople = $state<Record<string, Person>>({});
 	let projectLabels = $state<Label[]>([]);
@@ -247,8 +262,8 @@
 			milestonesResponse
 		] = await Promise.all([
 			issuesApi.get(issueId),
-			commentsApi.list(issueId),
-			activityApi.list(issueId),
+			commentsApi.list(issueId, 1, COMMENTS_PAGE_SIZE),
+			activityApi.list(issueId, 1, ACTIVITY_PAGE_SIZE),
 			labelsApi.list(workspaceId),
 			labelsApi.listForIssue(issueId),
 			sprintsApi.list(projectId),
@@ -276,13 +291,15 @@
 		if (commentsResponse.code !== 0) {
 			toast.error(describeResult(commentsResponse));
 		} else if (commentsResponse.data) {
-			comments = [...(commentsResponse.data.items ?? [])].sort(sortByCreatedAsc);
+			comments = commentsResponse.data.items ?? [];
+			commentsTotal = commentsResponse.data.total;
 		}
 
 		if (activityResponse.code !== 0) {
 			toast.error(describeResult(activityResponse));
 		} else if (activityResponse.data) {
-			activities = [...(activityResponse.data.items ?? [])].sort(sortByCreatedDesc);
+			activities = activityResponse.data.items ?? [];
+			activitiesTotal = activityResponse.data.total;
 			activityPeople = activityResponse.data.people;
 		}
 
@@ -355,14 +372,6 @@
 		return [];
 	}
 
-	function sortByCreatedAsc(a: { created_at: string }, b: { created_at: string }): number {
-		return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-	}
-
-	function sortByCreatedDesc(a: { created_at: string }, b: { created_at: string }): number {
-		return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-	}
-
 	function formatDate(dateText: string): string {
 		return new Date(dateText).toLocaleString(get(locale) === 'en' ? 'en-US' : 'zh-CN', {
 			year: 'numeric',
@@ -412,6 +421,7 @@
 			dueValue = timestampToDueDate(response.data.due_at);
 		}
 
+		void reloadActivities();
 		return true;
 	}
 
@@ -629,6 +639,7 @@
 			issueLabels = [...(issueLabels || []), selectedLabel];
 		}
 		selectedLabelId = '';
+		void reloadActivities();
 		toast.success(get(t)('issue.labelAdded'));
 	}
 
@@ -647,6 +658,7 @@
 		}
 
 		issueLabels = (issueLabels || []).filter((item) => item.id !== labelId);
+		void reloadActivities();
 		toast.success(get(t)('issue.labelRemoved'));
 	}
 
@@ -876,8 +888,10 @@
 		}
 
 		if (response.data) {
-			comments = [...comments, response.data].sort(sortByCreatedAsc);
+			comments = appendPage([response.data], comments);
+			commentsTotal += 1;
 			agentTasksRefresh += 1;
+			void reloadActivities();
 			newComment = '';
 			pickedNew = [];
 			commentAttachments = [];
@@ -928,10 +942,9 @@
 		}
 
 		if (response.data) {
-			comments = comments
-				.map((item) => (item.id === response.data?.id ? response.data : item))
-				.sort(sortByCreatedAsc);
+			comments = comments.map((item) => (item.id === response.data?.id ? response.data : item));
 			cancelEditComment();
+			void reloadActivities();
 			toast.success(get(t)('issue.commentUpdated'));
 		}
 	}
@@ -961,6 +974,8 @@
 		}
 
 		comments = comments.filter((item) => item.id !== id);
+		commentsTotal = Math.max(0, commentsTotal - 1);
+		void reloadActivities();
 		if (editingCommentId === id) {
 			cancelEditComment();
 		}
@@ -1013,12 +1028,47 @@
 		return sprints.find((item) => item.id === sprintId)?.name || get(t)('people.unknownSprint');
 	}
 
+	/** Reads the newest activity again; the older entries already loaded stay below it. */
 	async function reloadActivities() {
-		const response = await activityApi.list(issueId);
+		const response = await activityApi.list(issueId, 1, ACTIVITY_PAGE_SIZE);
 		if (response.code === 0 && response.data) {
-			activities = [...(response.data.items ?? [])].sort(sortByCreatedDesc);
-			activityPeople = response.data.people;
+			activities = refreshNewest(activities, response.data.items ?? []);
+			activitiesTotal = response.data.total;
+			activityPeople = { ...activityPeople, ...response.data.people };
 		}
+	}
+
+	async function loadMoreActivities() {
+		activitiesLoadingMore = true;
+		const response = await activityApi.list(
+			issueId,
+			nextPageToLoad(activities.length, ACTIVITY_PAGE_SIZE),
+			ACTIVITY_PAGE_SIZE
+		);
+		activitiesLoadingMore = false;
+		if (response.code !== 0 || !response.data) {
+			toast.error(describeResult(response));
+			return;
+		}
+		activities = appendPage(activities, response.data.items ?? []);
+		activitiesTotal = response.data.total;
+		activityPeople = { ...activityPeople, ...response.data.people };
+	}
+
+	async function loadMoreComments() {
+		commentsLoadingMore = true;
+		const response = await commentsApi.list(
+			issueId,
+			nextPageToLoad(comments.length, COMMENTS_PAGE_SIZE),
+			COMMENTS_PAGE_SIZE
+		);
+		commentsLoadingMore = false;
+		if (response.code !== 0 || !response.data) {
+			toast.error(describeResult(response));
+			return;
+		}
+		comments = appendPage(comments, response.data.items ?? []);
+		commentsTotal = response.data.total;
 	}
 
 	function getActivityAuthor(activity: Activity): string {
@@ -1073,7 +1123,10 @@
 			case 'page_unlinked':
 				return pageActivityText(get(t), activity.action, detail) ?? '';
 			default:
-				return activity.action || get(t)('common.unknownAction');
+				return (
+					itemFieldActivityText(get(t), activity.action, detail) ??
+					(activity.action || get(t)('common.unknownAction'))
+				);
 		}
 	}
 </script>
@@ -1248,13 +1301,11 @@
 						refreshKey={agentTasksRefresh}
 					/>
 
-					<AgentTasksPanel {issueId} names={memberNameMap} refreshKey={agentTasksRefresh} />
-
 					<LinkedPages {issueId} {workspaceId} onchange={reloadActivities} />
 
 					<div class="rounded-card border border-line bg-raised p-5">
 						<h2 class="mb-4 text-lg font-semibold text-fg">
-							{$t('issue.comments')}（{comments.length}）
+							{$t('issue.comments')}（{commentsTotal}）
 						</h2>
 						<div class="space-y-4">
 							{#if comments.length === 0}
@@ -1342,6 +1393,13 @@
 										{/if}
 									</div>
 								{/each}
+								{#if remainingCount(commentsTotal, comments.length) > 0}
+									<Button size="sm" loading={commentsLoadingMore} onclick={loadMoreComments}>
+										{$t('issue.loadMoreComments', {
+											values: { count: remainingCount(commentsTotal, comments.length) }
+										})}
+									</Button>
+								{/if}
 							{/if}
 						</div>
 					</div>
@@ -1453,39 +1511,17 @@
 						</div>
 					</div>
 
-					<div class="rounded-card border border-line bg-raised p-5">
-						<h3 class="mb-3 text-sm font-semibold text-fg">
-							{$t('issue.activity')}
-						</h3>
-						<div class="space-y-3">
-							{#if activities.length === 0}
-								<p class="text-xs text-fg-muted">{$t('issue.noActivity')}</p>
-							{:else}
-								{#each activities as activity, index (activity.id)}
-									<div class="flex items-start gap-3 py-2">
-										<div class="flex min-h-10 flex-col items-center">
-											<div class="h-2 w-2 rounded-full bg-fg-muted"></div>
-											<div
-												class="w-0.5 flex-1 bg-line"
-												class:opacity-0={index === activities.length - 1}
-											></div>
-										</div>
-										<div>
-											<p class="text-sm text-fg">
-												<span class="font-medium">{getActivityAuthor(activity)}</span>
-												<!-- eslint-disable-next-line svelte/no-useless-mustaches -- keeps the space between the author and the activity text -->
-												{' '}
-												{formatActivity(activity)}
-											</p>
-											<p class="text-xs text-fg-muted">
-												{formatDate(activity.created_at)}
-											</p>
-										</div>
-									</div>
-								{/each}
-							{/if}
-						</div>
-					</div>
+					<AgentTasksPanel {issueId} names={memberNameMap} refreshKey={agentTasksRefresh} />
+
+					<ActivityPanel
+						{activities}
+						total={activitiesTotal}
+						loadingMore={activitiesLoadingMore}
+						onloadmore={loadMoreActivities}
+						text={formatActivity}
+						author={getActivityAuthor}
+						date={formatDate}
+					/>
 				</div>
 			</div>
 

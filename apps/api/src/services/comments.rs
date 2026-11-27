@@ -2,8 +2,10 @@
 
 use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
+use serde_json::json;
 use uuid::Uuid;
 
+use super::issues::write_activity;
 use super::mentions::{self, Mention};
 use crate::error::ApiError;
 
@@ -14,7 +16,7 @@ pub struct InsertedComment {
     pub created_at: Timestamp,
 }
 
-/// Inserts a comment row with the mentions the caller resolved.
+/// Inserts a comment row with the mentions the caller resolved, and records its `comment_added` activity.
 ///
 /// Pass none for a comment nobody mentions anyone in. It writes no notification and no task: what the caller does with the
 /// mentions, if anything, is the caller's business.
@@ -41,6 +43,15 @@ pub async fn insert_comment<C: ConnectionTrait>(
             mentions::to_json(mentions).into(),
         ],
     ))
+    .await?;
+    write_activity(
+        db,
+        issue_id,
+        author_id,
+        "comment_added",
+        &json!({ "comment_id": id }),
+        created_at,
+    )
     .await?;
     Ok(InsertedComment { id, created_at })
 }

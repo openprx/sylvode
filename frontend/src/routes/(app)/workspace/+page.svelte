@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { itemFieldActivityText } from '#lib/project/issue-detail/activity-text.js';
 	import { describeResult } from '#lib/i18n/describe.js';
 	import { resolve } from '$app/paths';
 	import { onMount } from 'svelte';
@@ -350,7 +351,10 @@
 					: get(t)('activity.commentDeleted');
 			}
 			default:
-				return activity.action || get(t)('common.unknownAction');
+				return (
+					itemFieldActivityText(get(t), activity.action, detail) ??
+					(activity.action || get(t)('common.unknownAction'))
+				);
 		}
 	}
 </script>

@@ -40,9 +40,10 @@ function mapComment(raw: Record<string, unknown>): Comment {
 }
 
 export const commentsApi = {
-	async list(issueId: string): Promise<ApiResult<PaginatedData<Comment>>> {
+	/** One page of the comments of a work item, newest first. */
+	async list(issueId: string, page = 1, perPage = 20): Promise<ApiResult<PaginatedData<Comment>>> {
 		const result = await apiClient.get<PaginatedData<Record<string, unknown>>>(
-			`/api/v1/issues/${issueId}/comments`
+			`/api/v1/issues/${issueId}/comments?page=${page}&per_page=${perPage}`
 		);
 		if (result.code !== 0 || !result.data) {
 			return {

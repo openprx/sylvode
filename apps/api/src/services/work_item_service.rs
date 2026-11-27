@@ -1,8 +1,11 @@
-//! Creation of a work item row, shared by `create_issue` and the alert chain.
+//! Creation of a work item row, shared by `create_issue`, the import and the alert chain.
 
 use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DbBackend, DbErr, Statement};
+use serde_json::json;
 use uuid::Uuid;
+
+use super::issues::write_activity;
 
 /// The columns a new work item is created with. Everything else takes the table's defaults, the
 /// per-project sequence number included.
@@ -20,7 +23,8 @@ pub struct NewWorkItem<'a> {
     pub now: Timestamp,
 }
 
-/// Inserts one work item. The caller has already validated every value against the project.
+/// Inserts one work item and records its `created` activity. The caller has already validated every
+/// value against the project.
 pub async fn insert_work_item<C: ConnectionTrait>(db: &C, item: &NewWorkItem<'_>) -> Result<(), DbErr> {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -43,5 +47,13 @@ pub async fn insert_work_item<C: ConnectionTrait>(db: &C, item: &NewWorkItem<'_>
         ],
     ))
     .await?;
-    Ok(())
+    write_activity(
+        db,
+        item.id,
+        item.created_by,
+        "created",
+        &json!({ "title": item.title }),
+        item.now,
+    )
+    .await
 }

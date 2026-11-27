@@ -102,20 +102,6 @@ export function attemptValues(task: AiTask): { attempt: number; max: number } | 
 	return { attempt: task.attempts, max: Math.max(task.max_attempts, task.attempts) };
 }
 
-/** Active tasks first, then newest first; the sort is stable for equal keys. */
-export function orderTasks(tasks: readonly AiTask[]): AiTask[] {
-	return tasks
-		.map((task, index) => ({ task, index }))
-		.sort((a, b) => {
-			const active = Number(isActive(b.task)) - Number(isActive(a.task));
-			if (active !== 0) return active;
-			const at = Date.parse(b.task.created_at) - Date.parse(a.task.created_at);
-			if (Number.isFinite(at) && at !== 0) return at;
-			return a.index - b.index;
-		})
-		.map((entry) => entry.task);
-}
-
 /** The bot's name from the members list, else the given neutral text (never its id). */
 export function botName(
 	names: Readonly<Record<string, string>>,

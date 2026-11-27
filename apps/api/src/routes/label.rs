@@ -17,7 +17,7 @@ use crate::{
     error::ApiError,
     request::nullable,
     response::{ApiResponse, PaginatedData},
-    services::issue_view::identifier,
+    services::{issue_view::identifier, issues::record_label_change},
     webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks},
 };
 
@@ -539,8 +539,9 @@ pub async fn add_label_to_issue(
     // Attaching twice is not an error: the second request changes nothing and sends no event.
     let now = platform::timestamp::Timestamp::now();
 
-    let inserted = state
-        .db
+    // The label and its activity row are one change: both commit or neither does.
+    let tx = state.db.begin().await?;
+    let inserted = tx
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "INSERT INTO work_item_labels (work_item_id, label_id, created_at) VALUES ($1, $2, $3) \
@@ -551,6 +552,8 @@ pub async fn add_label_to_issue(
     if inserted.is_none() {
         return Ok(ApiResponse::ok());
     }
+    record_label_change(&tx, issue_id, user_id, label_id, true).await?;
+    tx.commit().await?;
 
     trigger_webhooks(
         state.clone(),
@@ -684,8 +687,8 @@ pub async fn remove_label_from_issue(
     require_workspace_access(&state, &extensions, issue_context.workspace_id).await?;
 
     // Detaching a label that is not attached is not an error either, and sends no event.
-    let removed = state
-        .db
+    let tx = state.db.begin().await?;
+    let removed = tx
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "DELETE FROM work_item_labels WHERE work_item_id = $1 AND label_id = $2 RETURNING label_id",
@@ -695,6 +698,8 @@ pub async fn remove_label_from_issue(
     if removed.is_none() {
         return Ok(ApiResponse::ok());
     }
+    record_label_change(&tx, issue_id, user_id, label_id, false).await?;
+    tx.commit().await?;
 
     trigger_webhooks(
         state.clone(),

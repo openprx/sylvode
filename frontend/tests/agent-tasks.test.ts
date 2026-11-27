@@ -11,6 +11,7 @@ import { installSvelteSsr, renderToHtml } from './support/svelte-ssr';
 import {
 	narrowAiTask,
 	narrowAiTaskList,
+	narrowAiTaskPage,
 	type AiTask,
 	type AiTaskEvent
 } from '../src/lib/api/ai-tasks';
@@ -21,7 +22,6 @@ import {
 	clamp,
 	eventChain,
 	latestProgress,
-	orderTasks,
 	queuePosition,
 	replyLines,
 	statusView,
@@ -144,6 +144,28 @@ suite.check('malformed responses are rejected, not guessed', () => {
 	assertEqual(narrowAiTaskList([rawTask({ events: [{ event_type: 1 }] })]), null, 'event type');
 	assertEqual(narrowAiTaskList([rawTask(), 'x']), null, 'one bad entry');
 	assertDeepEqual(narrowAiTaskList([]), [], 'empty list is valid');
+});
+
+suite.check('a page answer carries its items and the paging fields', () => {
+	const page = narrowAiTaskPage({
+		items: [rawTask({ id: 'new' }), rawTask({ id: 'old' })],
+		total: 7,
+		page: 1,
+		per_page: 5,
+		total_pages: 2
+	});
+	assert(page !== null, 'narrowed');
+	assertEqual(page.items.length, 2, 'items');
+	assertEqual(page.items[0].id, 'new', 'the server order (newest first) is kept');
+	assertEqual(page.total, 7, 'total');
+	assertEqual(page.total_pages, 2, 'pages');
+	assertEqual(narrowAiTaskPage([rawTask()]), null, 'a bare array is no longer an answer');
+	assertEqual(narrowAiTaskPage({ items: [], total: 0 }), null, 'paging fields are required');
+	assertEqual(
+		narrowAiTaskPage({ items: [{}], total: 1, page: 1, per_page: 5, total_pages: 1 }),
+		null,
+		'a bad entry'
+	);
 });
 
 suite.check('an event payload that is not an object becomes an empty record', () => {
@@ -272,23 +294,6 @@ suite.check('attempt values', () => {
 });
 
 // Ordering, names, truncation
-
-suite.check('active tasks come first, then newest first, ties keep server order', () => {
-	const a = task({ id: 'a', status: 'completed', created_at: '2026-11-20T12:00:00Z' });
-	const b = task({ id: 'b', status: 'processing', created_at: '2026-11-20T08:00:00Z' });
-	const c = task({ id: 'c', status: 'failed', created_at: '2026-11-20T13:00:00Z' });
-	const d = task({ id: 'd', status: 'failed', created_at: '2026-11-20T13:00:00Z' });
-	assertDeepEqual(
-		orderTasks([a, b, c, d]).map((x) => x.id),
-		['b', 'c', 'd', 'a'],
-		'order'
-	);
-	assertDeepEqual(
-		orderTasks([]).map((x) => x.id),
-		[],
-		'empty'
-	);
-});
 
 suite.check('bot name falls back to the first 8 characters of the id', () => {
 	assertEqual(botName({ abc12345678: 'Builder' }, 'abc12345678', 'Someone'), 'Builder', 'known');
