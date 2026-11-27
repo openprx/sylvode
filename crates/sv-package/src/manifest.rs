@@ -265,7 +265,7 @@ fn route_ok(s: &str) -> bool {
 
 /// An i18n map: `en` present and non-empty, language keys of two to eight letters, bounded text.
 fn check_i18n(what: &str, map: &BTreeMap<String, String>) -> Result<()> {
-    if !map.get("en").is_some_and(|s| !s.trim().is_empty()) {
+    if map.get("en").is_none_or(|s| s.trim().is_empty()) {
         return Err(bad(format!("{what} needs a non-empty `en`")));
     }
     for (lang, text) in map {
@@ -317,7 +317,7 @@ impl Manifest {
     /// Whether the package carries custom code through its manifest: any action or rule. The
     /// server also counts a `custom-frame` layout node, which only the layout files show.
     #[must_use]
-    pub fn computed_custom_code(&self) -> bool {
+    pub const fn computed_custom_code(&self) -> bool {
         !self.actions.is_empty() || !self.rules.is_empty()
     }
 

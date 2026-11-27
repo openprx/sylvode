@@ -26,12 +26,14 @@ fn bad(msg: impl Into<String>) -> PackageError {
 
 fn u16_at(b: &[u8], at: usize) -> Result<u16> {
     let raw = b.get(at..at.saturating_add(2)).ok_or_else(|| bad("truncated record"))?;
-    Ok(u16::from_le_bytes([raw[0], raw[1]]))
+    let arr: [u8; 2] = raw.try_into().map_err(|_| bad("truncated record"))?;
+    Ok(u16::from_le_bytes(arr))
 }
 
 fn u32_at(b: &[u8], at: usize) -> Result<u32> {
     let raw = b.get(at..at.saturating_add(4)).ok_or_else(|| bad("truncated record"))?;
-    Ok(u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]))
+    let arr: [u8; 4] = raw.try_into().map_err(|_| bad("truncated record"))?;
+    Ok(u32::from_le_bytes(arr))
 }
 
 fn to_usize(v: u32) -> Result<usize> {

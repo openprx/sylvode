@@ -295,7 +295,7 @@ fn local_header_must_match_the_central_directory() {
     name[at] = b'x';
     assert_eq!(code(unpack(&name, &Limits::default())), ErrorCode::ZipInvalid);
     // A gap between entries: shift the central directory offset past extra bytes.
-    let mut gap = good.clone();
+    let mut gap = good;
     let eocd = find(&gap, &[0x50, 0x4b, 0x05, 0x06]);
     let cd = u32::from_le_bytes(gap[eocd + 16..eocd + 20].try_into().expect("4 bytes"));
     gap.splice(cd as usize..cd as usize, *b"xxxx");
@@ -312,7 +312,7 @@ fn eocd_comment_and_zip64_markers_are_refused() {
     comment[eocd + 20] = 3;
     comment.extend_from_slice(b"abc");
     assert_eq!(code(unpack(&comment, &Limits::default())), ErrorCode::ZipInvalid);
-    let mut z64 = good.clone();
+    let mut z64 = good;
     let eocd = find(&z64, &[0x50, 0x4b, 0x05, 0x06]);
     z64[eocd + 16..eocd + 20].copy_from_slice(&u32::MAX.to_le_bytes());
     assert_eq!(code(unpack(&z64, &Limits::default())), ErrorCode::ZipInvalid);

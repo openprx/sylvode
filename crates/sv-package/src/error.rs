@@ -35,7 +35,7 @@ pub enum ErrorCode {
 }
 
 impl ErrorCode {
-    /// The snake_case name.
+    /// The `snake_case` name.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {

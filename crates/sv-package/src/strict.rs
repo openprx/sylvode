@@ -1,5 +1,5 @@
 //! Strict JSON parsing for manifests: duplicate keys refused, numbers must be integers within
-//! +-2^53, no U+0000 in strings or keys (PostgreSQL `jsonb` cannot store it) (so every parser and the canonicaliser see the same document).
+//! +-2^53, no U+0000 in strings or keys (`PostgreSQL` `jsonb` cannot store it) (so every parser and the canonicaliser see the same document).
 
 use std::fmt;
 

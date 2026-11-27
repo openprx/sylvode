@@ -63,9 +63,11 @@ fn err(code: ErrorCode, msg: impl Into<String>) -> PackageError {
     PackageError::new(code, msg)
 }
 
-/// Checks an entry or `files` path: relative, no `..` or empty segments, characters limited to
-/// `[A-Za-z0-9._/-]` (which also excludes backslashes, drive letters, control characters and
-/// anything not in NFC), at most 200 bytes.
+/// Checks an entry or `files` path.
+///
+/// Relative, no `..` or empty segments, characters limited to `[A-Za-z0-9._/-]` (which also
+/// excludes backslashes, drive letters, control characters and anything not in NFC), at most
+/// 200 bytes.
 ///
 /// # Errors
 /// `path_invalid`.
@@ -324,10 +326,11 @@ fn scan_entries(archive: &mut ZipArchive<Cursor<&[u8]>>, limits: &Limits) -> Res
         if f.is_dir() || f.is_symlink() {
             return Err(err(ErrorCode::EntryType, format!("`{name}` is not a regular file")));
         }
-        if let Some(mode) = f.unix_mode() {
-            if mode & S_IFMT != S_IFREG && mode & S_IFMT != 0 {
-                return Err(err(ErrorCode::EntryType, format!("`{name}` is not a regular file")));
-            }
+        if let Some(mode) = f.unix_mode()
+            && mode & S_IFMT != S_IFREG
+            && mode & S_IFMT != 0
+        {
+            return Err(err(ErrorCode::EntryType, format!("`{name}` is not a regular file")));
         }
         if f.encrypted() {
             return Err(err(ErrorCode::EntryType, format!("`{name}` is encrypted")));
