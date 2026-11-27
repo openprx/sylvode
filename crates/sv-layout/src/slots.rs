@@ -83,6 +83,32 @@ pub fn slots() -> Vec<SlotDescriptor> {
             max_entries: 8,
             scope_kinds: vec!["workspace", "project"],
         },
+        // A full console page reached from a navigation entry. Never placed (`max_entries` 0): it
+        // exists so a layout can be validated for a page and so the page route knows its context.
+        SlotDescriptor {
+            id: "page",
+            kind: SlotKind::Single,
+            context_schema: map(&[("workspace_id", "string"), ("project_id", "string?")]),
+            params_from_context: map(&[("project_id", "project_id")]),
+            allowed_roots: vec![
+                "stack",
+                "grid",
+                "card",
+                "tabs",
+                "text",
+                "markdown",
+                "stat",
+                "badge",
+                "table",
+                "field-display",
+                "form",
+                "button",
+            ],
+            stack_children: vec![],
+            allowed_actions: vec!["invoke", "submit", "navigate"],
+            max_entries: 0,
+            scope_kinds: vec!["workspace", "project"],
+        },
     ]
 }
 

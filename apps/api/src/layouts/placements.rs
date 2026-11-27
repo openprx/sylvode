@@ -73,7 +73,10 @@ fn check_capacity(slot: &SlotDescriptor, other_enabled: i64) -> Result<(), ApiEr
 }
 
 fn known_slot(slot_id: &str) -> Result<SlotDescriptor, ApiError> {
-    sv_layout::slot(slot_id).ok_or_else(|| ApiError::bad_request_coded("slot_unknown", "no slot has this id"))
+    // A slot with no capacity (the `page` slot) is never placed into, so it reads as unknown here.
+    sv_layout::slot(slot_id)
+        .filter(|slot| slot.max_entries > 0)
+        .ok_or_else(|| ApiError::bad_request_coded("slot_unknown", "no slot has this id"))
 }
 
 #[derive(Debug, Deserialize)]
