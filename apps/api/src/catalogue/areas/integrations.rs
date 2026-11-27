@@ -5,7 +5,7 @@ use crate::catalogue::types::dsl::*;
 #[rustfmt::skip]
 pub static ENTRIES: &[Entry] = &[
     bot("integrations.bot_logs.read", Get, "/api/v1/workspaces/{workspace_id}/bot-operation-logs", WorkspaceAdmin, Admin),
-    bot("integrations.bots.create", Post, "/api/v1/workspaces/{workspace_id}/bots", WorkspaceAdmin, Admin),
+    bot("integrations.bots.create", Post, "/api/v1/workspaces/{workspace_id}/bots", WorkspaceAdmin, Secret),
     bot("integrations.bots.delete", Delete, "/api/v1/workspaces/{workspace_id}/bots/{bot_id}", WorkspaceAdmin, Admin),
     bot("integrations.bots.read/list", Get, "/api/v1/workspaces/{workspace_id}/bots", WorkspaceAdmin, Admin),
     bot("integrations.bots.read/project_access", Get, "/api/v1/workspaces/{workspace_id}/bots/{bot_id}/project-access", WorkspaceAdmin, Admin),
@@ -21,7 +21,7 @@ pub static ENTRIES: &[Entry] = &[
     bot("integrations.transfer.export", Get, "/api/v1/projects/{project_id}/export", Project(Find::Project("project_id")), Write),
     bot("integrations.transfer.import", Post, "/api/v1/workspaces/{workspace_id}/import/project", WorkspaceAdmin, Admin),
     bot("integrations.uploads.create", Post, "/api/v1/upload", Own, Write),
-    bot("integrations.webhooks.create", Post, "/api/v1/workspaces/{workspace_id}/webhooks", WorkspaceAdmin, Admin),
+    bot("integrations.webhooks.create", Post, "/api/v1/workspaces/{workspace_id}/webhooks", WorkspaceAdmin, Secret),
     bot("integrations.webhooks.delete", Delete, "/api/v1/workspaces/{workspace_id}/webhooks/{webhook_id}", WorkspaceAdmin, Admin),
     bot("integrations.webhooks.read", Get, "/api/v1/workspaces/{workspace_id}/webhooks/{webhook_id}", WorkspaceAdmin, Admin),
     bot("integrations.webhooks.read/deliveries", Get, "/api/v1/workspaces/{workspace_id}/webhooks/{webhook_id}/deliveries", WorkspaceAdmin, Admin),

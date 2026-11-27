@@ -9,7 +9,7 @@ pub static ENTRIES: &[Entry] = &[
     bot("account.me.update", Put, "/api/v1/auth/me/profile", Workspace, Write),
     bot("account.me.update/preferences", Put, "/api/v1/auth/me/preferences", Own, Write),
     bot("account.password.update", Put, "/api/v1/auth/me/password", Workspace, Secret),
-    console("account.registrations.create", Post, "/api/v1/auth/register", Public, Write),
+    console("account.registrations.create", Post, "/api/v1/auth/register", Public, Secret),
     console("account.sessions.create", Post, "/api/v1/auth/login", Public, Secret),
     bot("account.sessions.delete", Post, "/api/v1/auth/logout", Workspace, Destructive),
     console("account.sessions.refresh", Post, "/api/v1/auth/refresh", Public, Secret),

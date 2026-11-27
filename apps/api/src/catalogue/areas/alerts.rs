@@ -12,7 +12,7 @@ pub static ENTRIES: &[Entry] = &[
     bot("alerts.rules.test", Post, "/api/v1/projects/{project_id}/alert-rules/test", WorkspaceAdmin, Admin),
     bot("alerts.rules.update", Put, "/api/v1/alert-rules/{id}", WorkspaceAdmin, Admin),
     bot("alerts.rules.update/reorder", Post, "/api/v1/projects/{project_id}/alert-rules/reorder", WorkspaceAdmin, Admin),
-    bot("alerts.sources.create", Post, "/api/v1/projects/{project_id}/inbound-sources", WorkspaceAdmin, Admin),
+    bot("alerts.sources.create", Post, "/api/v1/projects/{project_id}/inbound-sources", WorkspaceAdmin, Secret),
     bot("alerts.sources.delete", Delete, "/api/v1/inbound-sources/{id}", WorkspaceAdmin, Admin),
     bot("alerts.sources.read", Get, "/api/v1/inbound-sources/{id}", WorkspaceAdmin, Admin),
     bot("alerts.sources.read/events", Get, "/api/v1/inbound-sources/{id}/events", WorkspaceAdmin, Admin),
