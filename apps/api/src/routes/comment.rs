@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use axum::{
     Extension, Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::HeaderMap,
     response::IntoResponse,
 };
@@ -19,11 +19,12 @@ use uuid::Uuid;
 use crate::{
     error::{ApiError, localize_error, request_lang},
     middleware::bot_auth::{BotAuthContext, require_workspace_access},
-    response::{ApiResponse, PaginatedData},
+    response::{ApiResponse, PageQuery, PaginatedData},
     services::{
         ai_task_service::{CreateAiTaskInput, DispatchOrigin, DispatchOutcome, dispatch_ai_task, runner_bot_block},
         comments::insert_comment,
         issue_view::identifier,
+        issues::write_activity,
         mentions::{self, Audience, Mention, MentionedPerson, Person},
         notifications::{self, NewNotification},
     },
@@ -337,15 +338,21 @@ pub async fn create_comment(
     }))
 }
 
-/// GET /`api/v1/issues/:issue_id/comments` - List comments for an issue
+/// Comments of a work item in one page of the list, and the most one request may ask for.
+const COMMENTS_PER_PAGE: i64 = 20;
+const MAX_COMMENTS_PER_PAGE: i64 = 100;
+
+/// GET /`api/v1/issues/:issue_id/comments` - List comments for an issue, newest first, paged
 pub async fn list_comments(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
     Path(issue_id): Path<Uuid>,
+    Query(page_query): Query<PageQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let _user_id = Uuid::parse_str(&claims.sub).map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))?;
     let extensions = build_auth_extensions(claims, bot);
+    let paging = page_query.resolve(COMMENTS_PER_PAGE, MAX_COMMENTS_PER_PAGE);
 
     #[derive(Debug, FromQueryResult)]
     struct IssueWorkspace {
@@ -392,7 +399,8 @@ pub async fn list_comments(
             LEFT JOIN users u ON c.author_id = u.id
             LEFT JOIN workspace_members m ON m.workspace_id = $3 AND m.user_id = c.author_id
             WHERE c.work_item_id = $1
-            ORDER BY c.created_at ASC
+            ORDER BY c.created_at DESC, c.id DESC
+            LIMIT $4 OFFSET $5
         ",
         // A connected application sees the name and email of an author only while the author is a
         // member of the connected workspace; a person who has left stays a bare id.
@@ -400,10 +408,25 @@ pub async fn list_comments(
             issue_id.into(),
             crate::oauth::delegated::current().is_some().into(),
             issue.workspace_id.into(),
+            paging.per_page.into(),
+            paging.offset().into(),
         ],
     ))
     .all(&state.db)
     .await?;
+
+    #[derive(Debug, FromQueryResult)]
+    struct CommentCount {
+        total: i64,
+    }
+    let total = CommentCount::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT COUNT(*)::bigint AS total FROM comments WHERE work_item_id = $1",
+        vec![issue_id.into()],
+    ))
+    .one(&state.db)
+    .await?
+    .map_or(0, |row| row.total);
 
     let stored: Vec<Vec<Mention>> = comments.iter().map(|c| mentions::from_json(&c.mentions)).collect();
     let stored_refs: Vec<&[Mention]> = stored.iter().map(Vec::as_slice).collect();
@@ -431,7 +454,7 @@ pub async fn list_comments(
         })
         .collect();
 
-    Ok(ApiResponse::success(PaginatedData::from_items(response)))
+    Ok(ApiResponse::success(PaginatedData::page(response, total, paging)))
 }
 
 /// One comment with the project it belongs to, for callers that resolve the owner of a comment id.
@@ -598,7 +621,6 @@ pub async fn update_comment(
     let detail = serde_json::json!({
         "comment_id": comment_id.to_string(),
     });
-    let detail_text = detail.to_string();
 
     let tx = state.db.begin().await?;
 
@@ -614,32 +636,7 @@ pub async fn update_comment(
     ))
     .await?;
 
-    tx.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        r"
-            INSERT INTO activities (
-                id, workspace_id, project_id, issue_id, user_id, action, detail, created_at,
-                resource_type, resource_id, event_type, actor_id, payload
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13::jsonb)
-        ",
-        vec![
-            Uuid::new_v4().into(),
-            comment.workspace_id.into(),
-            comment.project_id.into(),
-            comment.work_item_id.into(),
-            user_id.into(),
-            "comment_edited".into(),
-            detail_text.clone().into(),
-            now.into(),
-            "comment".into(),
-            comment_id.into(),
-            "comment_edited".into(),
-            user_id.into(),
-            "{}".into(),
-        ],
-    ))
-    .await?;
+    write_activity(&tx, comment.work_item_id, user_id, "comment_edited", &detail, now).await?;
 
     create_mention_notifications(
         &tx,
@@ -776,7 +773,6 @@ pub async fn delete_comment(
         "comment_id": comment_id.to_string(),
         "content_preview": preview,
     });
-    let detail_text = detail.to_string();
     let now = platform::timestamp::Timestamp::now();
 
     let tx = state.db.begin().await?;
@@ -788,32 +784,7 @@ pub async fn delete_comment(
     ))
     .await?;
 
-    tx.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        r"
-            INSERT INTO activities (
-                id, workspace_id, project_id, issue_id, user_id, action, detail, created_at,
-                resource_type, resource_id, event_type, actor_id, payload
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13::jsonb)
-        ",
-        vec![
-            Uuid::new_v4().into(),
-            comment_info.workspace_id.into(),
-            comment_info.project_id.into(),
-            comment_info.work_item_id.into(),
-            user_id.into(),
-            "comment_deleted".into(),
-            detail_text.clone().into(),
-            now.into(),
-            "comment".into(),
-            comment_id.into(),
-            "comment_deleted".into(),
-            user_id.into(),
-            "{}".into(),
-        ],
-    ))
-    .await?;
+    write_activity(&tx, comment_info.work_item_id, user_id, "comment_deleted", &detail, now).await?;
 
     tx.commit().await?;
 

@@ -17,7 +17,7 @@ use crate::{
     error::ApiError,
     request::nullable,
     response::{ApiResponse, PaginatedData},
-    services::issue_view::identifier,
+    services::{issue_view::identifier, issues::record_label_change},
     webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks},
 };
 
@@ -551,6 +551,7 @@ pub async fn add_label_to_issue(
     if inserted.is_none() {
         return Ok(ApiResponse::ok());
     }
+    record_label_change(&state.db, issue_id, user_id, label_id, true).await?;
 
     trigger_webhooks(
         state.clone(),
@@ -695,6 +696,7 @@ pub async fn remove_label_from_issue(
     if removed.is_none() {
         return Ok(ApiResponse::ok());
     }
+    record_label_change(&state.db, issue_id, user_id, label_id, false).await?;
 
     trigger_webhooks(
         state.clone(),

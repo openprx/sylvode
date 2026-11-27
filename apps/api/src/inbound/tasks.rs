@@ -16,7 +16,10 @@ use super::{
 };
 use crate::{
     error::ApiError,
-    services::ai_task_service::{CreateAiTaskInput, DispatchOrigin, create_ai_task},
+    services::{
+        ai_task_service::{CreateAiTaskInput, DispatchOrigin, create_ai_task},
+        issues::write_activity,
+    },
 };
 
 /// Statuses in which a task still occupies a slot. One list for every cap and every check, so the
@@ -237,6 +240,15 @@ pub async fn start_task<C: ConnectionTrait>(tx: &C, start: &TaskStart<'_>) -> Re
             "UPDATE work_items SET assignee_id = $2, updated_at = now() WHERE id = $1",
             vec![start.work_item_id.into(), start.bot.into()],
         ))
+        .await?;
+        write_activity(
+            tx,
+            start.work_item_id,
+            start.bot,
+            "assigned",
+            &json!({ "from": start.current_assignee.map(|id| id.to_string()), "to": start.bot.to_string() }),
+            platform::timestamp::Timestamp::now(),
+        )
         .await?;
     }
     audit::record(

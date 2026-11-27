@@ -23,7 +23,7 @@ use crate::{
         ai_task_view::SourceKind,
         comments::insert_comment,
         execution_settings::{self, ExecutionSettings},
-        issues::{IssueRef, set_state},
+        issues::{IssueRef, record_label_change, set_state},
         proposals::{VoteActor, cast_vote},
         workflow_service::resolve_effective_workflow_for_project,
     },
@@ -413,13 +413,17 @@ pub async fn route_failure<C: ConnectionTrait>(
             .await?
             .is_some();
         if in_workspace {
-            txn.execute(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "INSERT INTO work_item_labels (work_item_id, label_id) VALUES ($1, $2) \
-                 ON CONFLICT (work_item_id, label_id) DO NOTHING",
-                vec![issue.id.into(), label_id.into()],
-            ))
-            .await?;
+            let attached = txn
+                .execute(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "INSERT INTO work_item_labels (work_item_id, label_id) VALUES ($1, $2) \
+                     ON CONFLICT (work_item_id, label_id) DO NOTHING",
+                    vec![issue.id.into(), label_id.into()],
+                ))
+                .await?;
+            if attached.rows_affected() > 0 {
+                record_label_change(txn, issue.id, bot_id, label_id, true).await?;
+            }
             routed.report.label_added = Some(label_id);
         } else {
             routed.report.warnings.push("label not found".to_string());

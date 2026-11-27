@@ -19,7 +19,10 @@ use crate::{
     events::{BusinessEventInput, insert_business_event},
     middleware::bot_auth::{BotAuthContext, require_workspace_access},
     response::{ApiResponse, PaginatedData},
-    services::governance_audit_service::{GovernanceAuditLogInput, write_governance_audit_log},
+    services::{
+        governance_audit_service::{GovernanceAuditLogInput, write_governance_audit_log},
+        issues::write_activity,
+    },
 };
 
 #[derive(Debug, Deserialize)]
@@ -931,6 +934,17 @@ async fn apply_comment_create_effect<C: ConnectionTrait>(
         return Err(ApiError::BadRequest(
             "comments.create approved effect targets a work item outside the check-result project".to_string(),
         ));
+    }
+    if let Some(author_id) = row.created_by {
+        write_activity(
+            db,
+            work_item_id,
+            author_id,
+            "comment_added",
+            &json!({ "comment_id": comment_id }),
+            applied_at,
+        )
+        .await?;
     }
 
     Ok(json!({
