@@ -481,16 +481,18 @@ pub(crate) async fn exposed_bindings_of_site(
 }
 
 /// The bindings of a form on published sites, with those sites share-locked for the rest of the
-/// caller's transaction (a publish or unpublish waits for it).
+/// caller's transaction (a publish or unpublish waits for it). An archived form counts too: the
+/// site serves its bindings again once it is restored, so the bot gates on saving, restoring and
+/// archiving it all see them.
 pub(crate) async fn published_bindings_of_form_locked(
     db: &impl ConnectionTrait,
     form_id: Uuid,
 ) -> Result<Vec<ExposedBinding>, ApiError> {
     Ok(ExposedBinding::find_by_statement(statement(
-        &format!(
-            "{EXPOSED_BINDING_SQL} AND b.form_id = $1 AND s.status = 'published' \
-             ORDER BY b.site_id, b.binding_key FOR SHARE OF s"
-        ),
+        "SELECT b.site_id, b.binding_key, b.projection, f.schema, f.title_template \
+         FROM site_bindings b JOIN sites s ON s.id = b.site_id JOIN project_forms f ON f.id = b.form_id \
+         WHERE f.project_id = s.project_id AND b.form_id = $1 AND s.status = 'published' \
+         ORDER BY b.site_id, b.binding_key FOR SHARE OF s",
         vec![form_id.into()],
     ))
     .all(db)

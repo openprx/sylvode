@@ -118,6 +118,8 @@ pub(crate) struct SiteField {
     pub(crate) inputs: Option<BTreeSet<String>>,
     /// Masked on the site (`mask.outlets` lists `site`).
     pub(crate) masked: bool,
+    /// The mask rule applied on the site (`{keep_first, keep_last, char}`), when masked.
+    pub(crate) mask_rule: Option<Value>,
     /// The `rules.validate` entries the client mirror can evaluate (plugin references left out).
     pub(crate) rules_client: Vec<Value>,
 }
@@ -177,6 +179,13 @@ pub(crate) fn site_fields(schema: &Value) -> Result<Vec<SiteField>, ApiError> {
                 .mask
                 .as_ref()
                 .is_some_and(|mask| mask.outlets.contains(&Outlet::SiteRead)),
+            mask_rule: field_plan
+                .mask
+                .as_ref()
+                .filter(|mask| mask.outlets.contains(&Outlet::SiteRead))
+                .map(
+                    |mask| json!({"keep_first": mask.keep_first, "keep_last": mask.keep_last, "char": mask.mask_char}),
+                ),
             rules_client,
         });
     }
@@ -499,6 +508,7 @@ fn shown_differently(old: &SiteField, new: &SiteField) -> bool {
         || old.required != new.required
         || old.options != new.options
         || old.masked != new.masked
+        || old.mask_rule != new.mask_rule
 }
 
 /// What a schema change does to a saved projection: the listed fields that stop qualifying under
@@ -562,7 +572,8 @@ pub(crate) fn field_items(keys: &[String], fields: &[SiteField]) -> Vec<Value> {
 
 /// What an anonymous visitor gets of a binding from the site API, built with the functions the
 /// public routes use: the manifest's visitor block (read, submit, filter and sort fields), the
-/// `fields` answer in its order, the masked fields, and the title template when the title is shown.
+/// `fields` answer in its order, the masked fields with the mask rule each is shown under (the
+/// input of the read path's masking), and the title template when the title is shown.
 pub(crate) fn visitor_output(projection: &Projection, fields: &[SiteField], title_template: &str) -> Value {
     let none = BTreeSet::new();
     let read = projection
@@ -587,7 +598,11 @@ pub(crate) fn visitor_output(projection: &Projection, fields: &[SiteField], titl
         "submit_fields": submit,
         "filter_fields": read.filter,
         "sort_fields": read.sort,
-        "masked": read.masked,
+        "masked": read
+            .masked
+            .iter()
+            .map(|key| (key.clone(), find(fields, key).and_then(|field| field.mask_rule.clone()).unwrap_or(Value::Null)))
+            .collect::<serde_json::Map<String, Value>>(),
         "title": read.title.then_some(title_template),
     })
 }
@@ -808,6 +823,23 @@ mod tests {
         // An operator-only field changes nothing a visitor gets; a visitor field does.
         assert_eq!(visitor_output(&projection, &relabel("qty"), "{title}"), before);
         assert_ne!(visitor_output(&projection, &relabel("status"), "{title}"), before);
+        // So does the mask rule of a masked visitor field.
+        let projection_with_phone = Projection::stored(&json!({
+            "visitor": {"read": {"fields": ["title", "phone"], "scope": "own"}}
+        }));
+        let masked_before = visitor_output(&projection_with_phone, &base, "{title}");
+        assert_eq!(masked_before["masked"]["phone"]["keep_last"], 2);
+        let mut unmasked = schema();
+        for field in unmasked["fields"].as_array_mut().unwrap() {
+            if field["key"] == "phone" {
+                field["mask"]["keep_last"] = json!(1000);
+            }
+        }
+        let unmasked = site_fields(&unmasked).unwrap();
+        assert_ne!(
+            visitor_output(&projection_with_phone, &unmasked, "{title}"),
+            masked_before
+        );
         // So does the title template while the title is shown.
         assert_ne!(visitor_output(&projection, &base, "{title} {status}"), before);
     }

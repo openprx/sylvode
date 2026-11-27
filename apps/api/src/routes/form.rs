@@ -1148,6 +1148,14 @@ pub async fn restore_form(
     let (actor_id, _, is_bot) =
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "form.design").await?;
     let tx = state.db.begin().await?;
+    // LEAD BOT-SCHEMA: restoring puts the form back on its published sites; a person does that.
+    if is_bot && crate::site::form_on_published_site(&tx, form_id).await? {
+        return Err(ApiError::conflict_coded(
+            "form_on_published_site",
+            "a published site would serve this form again; a person restores it",
+            None,
+        ));
+    }
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "UPDATE project_forms SET archived_at = NULL, updated_at = now() WHERE id = $1",
