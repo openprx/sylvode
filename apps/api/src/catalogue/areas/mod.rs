@@ -11,6 +11,7 @@ mod governance;
 mod integrations;
 mod issues;
 mod layouts;
+mod nav;
 mod packages;
 mod planning;
 mod projects;
@@ -34,6 +35,7 @@ pub static TABLES: &[&[Entry]] = &[
     integrations::ENTRIES,
     issues::ENTRIES,
     layouts::ENTRIES,
+    nav::ENTRIES,
     packages::ENTRIES,
     planning::ENTRIES,
     projects::ENTRIES,

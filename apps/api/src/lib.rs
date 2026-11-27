@@ -10,6 +10,7 @@ pub mod forms;
 pub mod inbound;
 pub mod layouts;
 pub mod middleware;
+pub mod nav;
 pub mod oauth;
 pub mod outbound;
 pub mod packages;

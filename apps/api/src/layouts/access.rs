@@ -18,13 +18,13 @@ use crate::{
 };
 
 /// The authenticated caller of a request: a person, or a bot token with its person-shaped claims.
-pub(super) struct Principal {
+pub(crate) struct Principal {
     claims: JwtClaims,
     bot: Option<BotAuthContext>,
 }
 
 impl Principal {
-    pub(super) fn new(claims: JwtClaims, bot: Option<Extension<BotAuthContext>>) -> Self {
+    pub(crate) fn new(claims: JwtClaims, bot: Option<Extension<BotAuthContext>>) -> Self {
         Self {
             claims,
             bot: bot.map(|Extension(ctx)| ctx),
@@ -32,7 +32,7 @@ impl Principal {
     }
 
     /// The person behind the request; `None` for a bot, whose id is not a user id.
-    pub(super) fn user_id(&self) -> Result<Option<Uuid>, ApiError> {
+    pub(crate) fn user_id(&self) -> Result<Option<Uuid>, ApiError> {
         if self.bot.is_some() {
             return Ok(None);
         }
@@ -41,14 +41,24 @@ impl Principal {
             .map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))
     }
 
-    fn bot_id(&self) -> Option<Uuid> {
+    pub(crate) fn bot_id(&self) -> Option<Uuid> {
         self.bot.as_ref().map(|bot| bot.bot_id)
+    }
+
+    /// The request extensions the shared authorisation helpers read (claims and bot context).
+    pub(crate) fn extensions(&self) -> axum::http::Extensions {
+        let mut extensions = axum::http::Extensions::new();
+        extensions.insert(self.claims.clone());
+        if let Some(bot) = &self.bot {
+            extensions.insert(bot.clone());
+        }
+        extensions
     }
 }
 
 /// The three scope kinds a console caller may store layouts and placements in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ScopeKind {
+pub(crate) enum ScopeKind {
     Workspace,
     Project,
     Form,
@@ -82,12 +92,12 @@ impl ScopeKind {
 
 /// A scope resolved to the workspace and project that own it.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct Scope {
-    pub(super) kind: ScopeKind,
-    pub(super) id: Uuid,
-    pub(super) workspace_id: Uuid,
+pub(crate) struct Scope {
+    pub(crate) kind: ScopeKind,
+    pub(crate) id: Uuid,
+    pub(crate) workspace_id: Uuid,
     /// The project of a project or form scope.
-    pub(super) project_id: Option<Uuid>,
+    pub(crate) project_id: Option<Uuid>,
 }
 
 impl Scope {
@@ -111,7 +121,7 @@ fn scope_not_found() -> ApiError {
 }
 
 /// Resolves a scope by kind and id; a scope that does not exist is `not_found`.
-pub(super) async fn resolve_scope(db: &impl ConnectionTrait, kind: ScopeKind, id: Uuid) -> Result<Scope, ApiError> {
+pub(crate) async fn resolve_scope(db: &impl ConnectionTrait, kind: ScopeKind, id: Uuid) -> Result<Scope, ApiError> {
     #[derive(FromQueryResult)]
     struct Owner {
         workspace_id: Uuid,
@@ -139,7 +149,7 @@ pub(super) async fn resolve_scope(db: &impl ConnectionTrait, kind: ScopeKind, id
 }
 
 /// Resolves the scope stored on a row (`scope_kind` text and id).
-pub(super) async fn resolve_stored_scope(db: &impl ConnectionTrait, kind: &str, id: Uuid) -> Result<Scope, ApiError> {
+pub(crate) async fn resolve_stored_scope(db: &impl ConnectionTrait, kind: &str, id: Uuid) -> Result<Scope, ApiError> {
     let kind = match kind {
         "workspace" => ScopeKind::Workspace,
         "project" => ScopeKind::Project,
@@ -150,13 +160,13 @@ pub(super) async fn resolve_stored_scope(db: &impl ConnectionTrait, kind: &str, 
 }
 
 /// Resolves a project; used by the slot resolution, whose context names the project.
-pub(super) async fn resolve_project(db: &impl ConnectionTrait, project_id: Uuid) -> Result<Scope, ApiError> {
+pub(crate) async fn resolve_project(db: &impl ConnectionTrait, project_id: Uuid) -> Result<Scope, ApiError> {
     resolve_scope(db, ScopeKind::Project, project_id).await
 }
 
 /// The caller's membership in the scope's workspace. A person outside the workspace and a bot of
 /// another workspace both get `not_found`.
-async fn member(state: &AppState, who: &Principal, workspace_id: Uuid) -> Result<String, ApiError> {
+pub(crate) async fn member(state: &AppState, who: &Principal, workspace_id: Uuid) -> Result<String, ApiError> {
     if who.bot.as_ref().is_some_and(|bot| bot.workspace_id != workspace_id) {
         return Err(scope_not_found());
     }
@@ -173,7 +183,7 @@ fn reads_as_not_found(error: ApiError) -> ApiError {
 
 /// Read access to a scope: a member of its workspace; a bot limited to projects only in the
 /// scope's project, and never at workspace scope.
-pub(super) async fn require_read(state: &AppState, who: &Principal, scope: &Scope) -> Result<(), ApiError> {
+pub(crate) async fn require_read(state: &AppState, who: &Principal, scope: &Scope) -> Result<(), ApiError> {
     member(state, who, scope.workspace_id).await?;
     let Some(bot_id) = who.bot_id() else {
         return Ok(());
@@ -192,7 +202,7 @@ pub(super) async fn require_read(state: &AppState, who: &Principal, scope: &Scop
 /// Write access to a scope (contract C3 section 3): workspace scope for owners and admins;
 /// project scope for members; form scope for users with `form.design` on the form; a bot needs
 /// the `write` permission and `write` in the scope's project, and never writes workspace scope.
-pub(super) async fn require_write(state: &AppState, who: &Principal, scope: &Scope) -> Result<(), ApiError> {
+pub(crate) async fn require_write(state: &AppState, who: &Principal, scope: &Scope) -> Result<(), ApiError> {
     let role = member(state, who, scope.workspace_id).await?;
     if let Some(bot_id) = who.bot_id() {
         let Some(project_id) = scope.project_id else {

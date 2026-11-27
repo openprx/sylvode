@@ -20,6 +20,7 @@ mod governance;
 mod integrations;
 mod issues;
 mod layouts;
+mod nav;
 mod packages;
 mod planning;
 mod projects;
@@ -43,6 +44,7 @@ pub const ROUTER_SOURCES: &[(&str, &str)] = &[
     ("integrations.rs", include_str!("integrations.rs")),
     ("issues.rs", include_str!("issues.rs")),
     ("layouts.rs", include_str!("layouts.rs")),
+    ("nav.rs", include_str!("nav.rs")),
     ("packages.rs", include_str!("packages.rs")),
     ("planning.rs", include_str!("planning.rs")),
     ("projects.rs", include_str!("projects.rs")),
@@ -81,6 +83,7 @@ pub fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform
         .merge(drafts::routes(&auth_state))
         .merge(extensions::routes(&auth_state))
         .merge(layouts::routes(&auth_state))
+        .merge(nav::routes(&auth_state))
         .merge(packages::routes(&auth_state))
         .merge(site::routes(&auth_state))
         // Defence in depth for the catalogue: a matched route with no entry is refused.

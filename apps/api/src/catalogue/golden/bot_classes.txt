@@ -19,6 +19,7 @@ DELETE /api/v1/placements/{id} NoProject - false
 DELETE /api/v1/projects/{id} Admin - false
 DELETE /api/v1/projects/{project_id}/bot-connections/{bot_id} Admin - false
 DELETE /api/v1/projects/{project_id}/domains/{id} Project Project("project_id") false
+DELETE /api/v1/projects/{project_id}/nav/config Project Project("project_id") false
 DELETE /api/v1/projects/{project_id}/resources/{resource_id} Project Project("project_id") false
 DELETE /api/v1/proposal-comments/{id} Project ProposalComment("id") true
 DELETE /api/v1/proposal-templates/{id} Project Table("proposal_templates","id") false
@@ -36,6 +37,7 @@ DELETE /api/v1/workflows/{workflow_id} Admin - false
 DELETE /api/v1/workspaces/{id} Admin - false
 DELETE /api/v1/workspaces/{workspace_id}/bots/{bot_id} Admin - false
 DELETE /api/v1/workspaces/{workspace_id}/members/{user_id} Admin - false
+DELETE /api/v1/workspaces/{workspace_id}/nav/config NoProject - false
 DELETE /api/v1/workspaces/{workspace_id}/webhooks/{webhook_id} Admin - false
 DELETE /api/v2/flow/block-shares/{share_id}/placements/{placement_id} Project FlowVia("flow_block_shares","id","source_page_id","share_id") false
 DELETE /api/v2/flow/objects/{object_id}/body-assets/{asset_id} Project FlowObject("object_id") false
@@ -139,6 +141,8 @@ GET /api/v1/projects/{project_id}/governance-context Project Project("project_id
 GET /api/v1/projects/{project_id}/inbound-sources Admin - false
 GET /api/v1/projects/{project_id}/issues Project Project("project_id") false
 GET /api/v1/projects/{project_id}/labels Project Project("project_id") false
+GET /api/v1/projects/{project_id}/nav Project Project("project_id") false
+GET /api/v1/projects/{project_id}/nav/config Project Project("project_id") false
 GET /api/v1/projects/{project_id}/plugins Project Project("project_id") false
 GET /api/v1/projects/{project_id}/release-readiness Project Project("project_id") false
 GET /api/v1/projects/{project_id}/resources Project Project("project_id") false
@@ -182,6 +186,8 @@ GET /api/v1/workspaces/{workspace_id}/features/flow Admin - false
 GET /api/v1/workspaces/{workspace_id}/labels Refused - false
 GET /api/v1/workspaces/{workspace_id}/members Admin - false
 GET /api/v1/workspaces/{workspace_id}/milestones Refused - false
+GET /api/v1/workspaces/{workspace_id}/nav NoProject - false
+GET /api/v1/workspaces/{workspace_id}/nav/config NoProject - false
 GET /api/v1/workspaces/{workspace_id}/packages Refused - false
 GET /api/v1/workspaces/{workspace_id}/packages/{digest} Refused - false
 GET /api/v1/workspaces/{workspace_id}/project-types Admin - false
@@ -404,6 +410,7 @@ PUT /api/v1/notifications/read-all Own - false
 PUT /api/v1/notifications/{id}/read Own - false
 PUT /api/v1/placements/{id} NoProject - false
 PUT /api/v1/projects/{id} Project Project("id") false
+PUT /api/v1/projects/{project_id}/nav/config Project Project("project_id") false
 PUT /api/v1/projects/{project_id}/workflow Project Project("project_id") false
 PUT /api/v1/proposal-templates/{id} Project Table("proposal_templates","id") false
 PUT /api/v1/sprints/{id} Project Table("sprints","id") false
@@ -413,6 +420,7 @@ PUT /api/v1/workflows/{workflow_id}/states/reorder Admin - false
 PUT /api/v1/workspaces/{id} Admin - false
 PUT /api/v1/workspaces/{workspace_id}/bots/{bot_id}/project-access Admin - false
 PUT /api/v1/workspaces/{workspace_id}/features/flow Admin - false
+PUT /api/v1/workspaces/{workspace_id}/nav/config NoProject - false
 PUT /api/v2/flow/objects/{object_id}/appearance Project FlowObject("object_id") false
 PUT /api/v2/flow/objects/{object_id}/grants Project FlowObject("object_id") false
 PUT /api/v2/flow/objects/{object_id}/inheritance Project FlowObject("object_id") false

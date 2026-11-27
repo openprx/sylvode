@@ -45,6 +45,8 @@ tower-http.workspace = true
 tower = { workspace = true, features = ["util"] }
 tracing.workspace = true
 uuid.workspace = true
+# Parses the external links of a navigation entry; already in the lock file.
+url = "2"
 wasmtime.workspace = true
 unicode-casefold.workspace = true
 unicode-normalization.workspace = true
