@@ -166,10 +166,27 @@ fn queue_depth_has_the_designed_fields() {
 }
 
 #[test]
-fn an_overlong_task_id_is_cut() {
-    let long = "x".repeat(500);
-    let (_, fields) = capture(|| timing::task_left_session(&long, 1, "s", Duration::ZERO, "terminal"));
-    assert!(fields["task_id"].len() <= 66);
+fn ids_are_logged_only_as_canonical_uuids_else_invalid() {
+    let payload = json!({
+        "task_id": "11111111-1111-4111-8111-111111111111\nforged line",
+        "attempts": 1,
+        "ai_participant_id": "not-a-uuid",
+    });
+    let (_, fields) = capture(|| timing::delivery_answered(&payload, None, &DeliveryTimes::default()));
+    assert_eq!(fields["task_id"], "invalid");
+    assert_eq!(fields["bot"], "invalid");
+
+    let payload = json!({
+        "task_id": "11111111111141118111111111111111",
+        "attempts": 1,
+        "ai_participant_id": "00000000-0000-4000-8000-00000000000A",
+    });
+    let (_, fields) = capture(|| timing::delivery_answered(&payload, None, &DeliveryTimes::default()));
+    assert_eq!(fields["task_id"], "11111111-1111-4111-8111-111111111111");
+    assert_eq!(fields["bot"], "00000000-0000-4000-8000-00000000000a");
+
+    let (_, fields) = capture(|| timing::task_left_session(&"x".repeat(500), 1, "s", Duration::ZERO, "terminal"));
+    assert_eq!(fields["task_id"], "invalid");
 }
 
 fn capture_all(f: impl FnOnce()) -> Vec<(String, BTreeMap<String, String>)> {
@@ -185,8 +202,8 @@ fn the_current_task_clearing_logs_one_event_with_its_end() {
     let t1 = t0 + Duration::from_secs(5);
     let events = capture_all(|| {
         let mut watch = CurrentWatch::default();
-        watch.observe(Some(("t1".into(), 1, t0)), t0, "slot");
-        watch.observe(Some(("t1".into(), 1, t0)), t1, "slot");
+        watch.observe(Some(("11111111-1111-4111-8111-111111111111".into(), 1, t0)), t0, "slot");
+        watch.observe(Some(("11111111-1111-4111-8111-111111111111".into(), 1, t0)), t1, "slot");
         watch.hint("gone");
         watch.observe(None, t1, "slot");
         watch.observe(None, t1, "slot");
@@ -197,7 +214,7 @@ fn the_current_task_clearing_logs_one_event_with_its_end() {
     assert_eq!(events.len(), 2);
     assert_eq!(events[0].1["end"], "gone");
     assert_eq!(events[0].1["busy_ms"], "5000");
-    assert_eq!(events[0].1["task_id"], "t1");
+    assert_eq!(events[0].1["task_id"], "11111111-1111-4111-8111-111111111111");
     assert_eq!(events[1].1["end"], "terminal");
     assert_eq!(events[1].1["busy_ms"], "1000");
 }

@@ -6,8 +6,11 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-/// The longest id text logged (a task id is a UUID; anything longer is cut).
-const ID_MAX: usize = 64;
+/// An id as logged: its canonical hyphenated form when it is a UUID, else the word `invalid`, so
+/// nothing a sender chose (control characters, long text) reaches the log.
+fn id_word(raw: &str) -> String {
+    uuid::Uuid::parse_str(raw).map_or_else(|_| "invalid".to_string(), |id| id.hyphenated().to_string())
+}
 
 /// A duration as whole milliseconds.
 #[must_use]
@@ -16,7 +19,7 @@ pub fn millis(d: Duration) -> u64 {
 }
 
 fn clip(text: &str) -> String {
-    text.chars().take(ID_MAX).collect()
+    text.chars().take(64).collect()
 }
 
 /// What `delivery answered` is built from.
@@ -47,9 +50,9 @@ pub fn delivery_answered(payload: &Value, answer: Option<&Value>, times: &Delive
     );
     let attempt = payload.get("attempts").and_then(Value::as_i64).unwrap_or(0);
     tracing::info!(
-        task_id = %text(payload, "task_id"),
+        task_id = %id_word(&text(payload, "task_id")),
         attempt,
-        bot = %text(payload, "ai_participant_id"),
+        bot = %id_word(&text(payload, "ai_participant_id")),
         slot = %times.slot,
         channel = %channel,
         status = %status,
@@ -65,7 +68,7 @@ pub fn delivery_answered(payload: &Value, answer: Option<&Value>, times: &Delive
 /// `task pushed`: a task was typed into its session.
 pub fn task_pushed(task_id: &str, attempt: i64, slot: &str, queued: Duration, push: Duration, outcome: &str) {
     tracing::info!(
-        task_id = %clip(task_id),
+        task_id = %id_word(task_id),
         attempt,
         slot = %slot,
         queued_ms = millis(queued),
@@ -78,7 +81,7 @@ pub fn task_pushed(task_id: &str, attempt: i64, slot: &str, queued: Duration, pu
 /// `task left session`: the current task cleared; `end` is `terminal`, `superseded` or `gone`.
 pub fn task_left_session(task_id: &str, attempt: i64, slot: &str, busy: Duration, end: &str) {
     tracing::info!(
-        task_id = %clip(task_id),
+        task_id = %id_word(task_id),
         attempt,
         slot = %slot,
         busy_ms = millis(busy),
