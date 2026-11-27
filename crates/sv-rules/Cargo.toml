@@ -4,9 +4,18 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "Sylvode form rule engine: CEL subset checker and evaluator"
+description = "Sylvode form rule engine: built-in rules, CEL subset checker and evaluator, regex subset"
 
 [dependencies]
+# Default features stay off. `chrono` is flagged unmaintained and denied by the audit policy, so CEL
+# timestamps are Unix seconds (see the `expr` module docs). `regex` would register the crate's own
+# `matches`, which outranks context functions; the subset registers its own `matches` instead, so
+# the server applies the same regex subset translation as the `pattern` rule.
+cel = { version = "0.14", default-features = false }
+regex = "1"
+rust_decimal.workspace = true
+serde_json.workspace = true
+time.workspace = true
 
 [lints]
 workspace = true
