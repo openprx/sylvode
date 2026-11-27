@@ -12,6 +12,13 @@ name.
 
 ### Added
 
+- **API: change-hint stream for bot tokens.** `GET /api/v1/bot/change-hints` is a server-sent
+  events stream (`hello`, `task`, `inbox`, `issue`, `tools`, `access_changed`, then `revoked`,
+  `lagged` or `shutdown` when it ends) that tells a bot something it may read changed. It carries
+  ids only, shows a bot only the projects it can read, and ends at once when the token is revoked,
+  rotated, disabled or expired. Migration `0132` adds the notifying triggers (no table); `[api]
+  max_change_hint_streams` caps the open streams of a process (default 4096, 64 per bot).
+  `GET /api/v1/ai/tasks/{id}` without `attempt` answers the current attempt of a task in any status.
 - **Runner: timing log events.** Info-level `delivery answered` (check, enqueue and total time per
   delivery), `task pushed`, `task left session` and `queue depth` lines, with whole-millisecond
   timings, show where delivery time goes. They carry ids, counts and fixed words only: never a

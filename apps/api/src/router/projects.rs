@@ -10,6 +10,7 @@ use axum::{
 use platform::app::AppState;
 
 pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
+    let hint_hub = api::events::hints::HintHub::from_runtime();
     Router::new()
         // Project routes (protected)
         .route(
@@ -423,6 +424,15 @@ pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
                 auth_state.clone(),
                 middleware::bot_auth::bot_or_user_auth_middleware,
             )),
+        )
+        .route(
+            "/api/v1/bot/change-hints",
+            get(api::events::hints::change_hints)
+                .route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    middleware::bot_auth::bot_or_user_auth_middleware,
+                ))
+                .layer(axum::Extension(hint_hub)),
         )
         .route(
             "/api/v1/ai/tasks/active",

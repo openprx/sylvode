@@ -139,6 +139,7 @@ fn the_adoption_cutoff_names_a_registered_migration() {
             "0127_retire_legacy_objects.sql",
             "0130_tmux_cli_codex.sql",
             "0131_drop_one_tmux_per_cli.sql",
+            "0132_change_hints.sql",
         ],
         "everything past the cutoff re-runs on an adopted database and must be idempotent"
     );

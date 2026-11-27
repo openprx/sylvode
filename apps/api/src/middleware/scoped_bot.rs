@@ -1006,6 +1006,7 @@ mod tests {
             ("POST", "/api/v1/upload"),
             ("GET", "/api/v2/flow/home"),
             ("GET", "/api/v1/auth/me"),
+            ("GET", "/api/v1/bot/change-hints"),
         ] {
             assert_eq!(class(method, pattern), Own, "{method} {pattern}");
         }

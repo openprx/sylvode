@@ -154,6 +154,16 @@ operation_log_retention_days = 30
 
 
 # ---------------------------------------------------------------------------------------------
+# [api] — limits of the API process. Read by the api.
+# ---------------------------------------------------------------------------------------------
+[api]
+# Open GET /api/v1/bot/change-hints streams (push hints for bot tokens) in one api process; a
+# bot may also hold at most 64 of its own. Beyond the limit the answer is 429 with Retry-After.
+# Default: 4096. Accepted range: 1..=100000.
+max_change_hint_streams = 4096
+
+
+# ---------------------------------------------------------------------------------------------
 # [ai_tasks] — how long work handed to a bot may run. Read by the api and the worker.
 # ---------------------------------------------------------------------------------------------
 [ai_tasks]

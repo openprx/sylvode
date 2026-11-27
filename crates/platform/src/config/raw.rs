@@ -26,17 +26,18 @@ use super::{
     AI_TASK_DELIVERY_CONCURRENCY_RANGE, AI_TASK_LANE_BATCH_RANGE, AI_TASK_LEASE_EXTENSION_RANGE_SECS,
     AI_TASK_MAX_CHAIN_DEPTH_RANGE, AI_TASK_MAX_PROCESSING_CEILING_SECS, AI_TASK_PER_RUNNER_CONCURRENCY_RANGE,
     AI_TASK_POOL_IDLE_TIMEOUT_RANGE_SECS, AI_TASK_POOL_MAX_IDLE_PER_HOST_RANGE, AI_TASK_PROCESSING_TIMEOUT_RANGE_SECS,
-    AI_TASK_TCP_KEEPALIVE_CEILING_SECS, AiTasksConfig, AuditConfig, AuthConfig, ConfigError,
+    AI_TASK_TCP_KEEPALIVE_CEILING_SECS, AiTasksConfig, ApiConfig, AuditConfig, AuthConfig, ConfigError,
     DEFAULT_AI_TASK_DELIVERY_CONCURRENCY, DEFAULT_AI_TASK_DELIVERY_POOL, DEFAULT_AI_TASK_LANE_BATCH,
     DEFAULT_AI_TASK_LEASE_EXTENSION_SECS, DEFAULT_AI_TASK_MAX_CHAIN_DEPTH, DEFAULT_AI_TASK_MAX_PROCESSING_SECS,
     DEFAULT_AI_TASK_PER_RUNNER_CONCURRENCY, DEFAULT_AI_TASK_POOL_IDLE_TIMEOUT_SECS,
     DEFAULT_AI_TASK_POOL_MAX_IDLE_PER_HOST, DEFAULT_AI_TASK_PROCESSING_TIMEOUT_SECS,
     DEFAULT_AI_TASK_TCP_KEEPALIVE_SECS, DEFAULT_FLOW_BODY_ASSET_MAX_BYTES, DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS,
-    DEFAULT_FLOW_DISPATCH_MAX_ATTEMPTS, DEFAULT_FLOW_SETUP_CPU_BUDGET_MS, DEFAULT_OPERATION_LOG_RETENTION_DAYS,
-    DEFAULT_S3_REGION, DEFAULT_STORAGE_DIR, DatabaseConfig, FlowConfig, IpCidr, LogFormat, LogOutput, LoggingConfig,
-    MAX_FLOW_BODY_ASSET_BYTES, MAX_FLOW_CONVERSION_REAP_INTERVAL_SECS, MAX_FLOW_SETUP_CPU_BUDGET_MS,
-    MIN_FLOW_SETUP_CPU_BUDGET_MS, MIN_JWT_SECRET_LEN, McpConfig, McpToolMode, McpTransport, MigrationsConfig,
-    OAuthConfig, OpenPrConfig, OutboundConfig, S3Config, ServerConfig, StorageBackend, StorageConfig,
+    DEFAULT_FLOW_DISPATCH_MAX_ATTEMPTS, DEFAULT_FLOW_SETUP_CPU_BUDGET_MS, DEFAULT_MAX_CHANGE_HINT_STREAMS,
+    DEFAULT_OPERATION_LOG_RETENTION_DAYS, DEFAULT_S3_REGION, DEFAULT_STORAGE_DIR, DatabaseConfig, FlowConfig, IpCidr,
+    LogFormat, LogOutput, LoggingConfig, MAX_CHANGE_HINT_STREAMS_CEILING, MAX_FLOW_BODY_ASSET_BYTES,
+    MAX_FLOW_CONVERSION_REAP_INTERVAL_SECS, MAX_FLOW_SETUP_CPU_BUDGET_MS, MIN_FLOW_SETUP_CPU_BUDGET_MS,
+    MIN_JWT_SECRET_LEN, McpConfig, McpToolMode, McpTransport, MigrationsConfig, OAuthConfig, OpenPrConfig,
+    OutboundConfig, S3Config, ServerConfig, StorageBackend, StorageConfig,
 };
 
 const DEFAULT_MAX_CONNECTIONS: u32 = 20;
@@ -74,6 +75,8 @@ pub(super) struct RawConfig {
     storage: RawStorage,
     #[serde(default)]
     audit: RawAudit,
+    #[serde(default)]
+    api: RawApi,
     #[serde(default)]
     ai_tasks: RawAiTasks,
     #[serde(default)]
@@ -153,6 +156,12 @@ struct RawStorage {
 #[serde(deny_unknown_fields)]
 struct RawAudit {
     operation_log_retention_days: Option<u32>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct RawApi {
+    max_change_hint_streams: Option<u32>,
 }
 
 #[derive(Deserialize, Default)]
@@ -263,6 +272,7 @@ impl RawConfig {
         let logging = self.logging.validate(&mut issues);
         let storage = self.storage.validate(&mut issues);
         let audit = self.audit.validate(&mut issues);
+        let api = self.api.validate(&mut issues);
         let ai_tasks = self.ai_tasks.validate(&mut issues);
         let migrations = self.migrations.validate();
         let outbound = self.outbound.validate(&mut issues);
@@ -292,6 +302,7 @@ impl RawConfig {
             logging,
             storage,
             audit,
+            api,
             ai_tasks,
             migrations,
             outbound,
@@ -538,6 +549,24 @@ impl RawStorage {
         }
 
         Some(StorageConfig { backend, dir, s3 })
+    }
+}
+
+impl RawApi {
+    fn validate(self, issues: &mut Issues) -> ApiConfig {
+        let max_change_hint_streams = self
+            .max_change_hint_streams
+            .map_or(DEFAULT_MAX_CHANGE_HINT_STREAMS, |limit| {
+                if (1..=MAX_CHANGE_HINT_STREAMS_CEILING).contains(&limit) {
+                    limit
+                } else {
+                    issues.push("api.max_change_hint_streams must be between 1 and 100000");
+                    DEFAULT_MAX_CHANGE_HINT_STREAMS
+                }
+            });
+        ApiConfig {
+            max_change_hint_streams,
+        }
     }
 }
 

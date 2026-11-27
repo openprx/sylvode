@@ -8,6 +8,7 @@ use uuid::Uuid;
 use crate::error::ApiError;
 
 pub mod dispatcher;
+pub mod hints;
 
 pub struct BusinessEventInput {
     pub workspace_id: Uuid,

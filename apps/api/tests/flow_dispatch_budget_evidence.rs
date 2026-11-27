@@ -387,6 +387,7 @@ fn install_config(receiver_port: u16) -> Result<(), String> {
             s3: None,
         },
         audit: AuditConfig::default(),
+        api: platform::config::ApiConfig::default(),
         ai_tasks: AiTasksConfig::default(),
         migrations: MigrationsConfig::default(),
         outbound: OutboundConfig {

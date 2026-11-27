@@ -655,6 +655,10 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
         "0131_drop_one_tmux_per_cli.sql",
         SchemaProbe::RelationAbsent("pbc_one_tmux_per_cli"),
     ),
+    (
+        "0132_change_hints.sql",
+        SchemaProbe::Trigger("users", "trg_sv_hint_bot_user_active"),
+    ),
 ];
 
 /// One recorded migration outcome.

@@ -257,6 +257,7 @@ async fn drain_after(
     signal.await;
     // Streams first: nothing below can make one end.
     api::oauth::stream::begin_shutdown();
+    api::events::hints::begin_shutdown();
     // The receiver is gone only if the reaper already stopped; nothing is left to stop then.
     let _ = reaper_stop.send(true);
     let closed = begin_flow_drain();

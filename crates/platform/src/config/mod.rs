@@ -218,6 +218,7 @@ pub struct OpenPrConfig {
     pub logging: LoggingConfig,
     pub storage: StorageConfig,
     pub audit: AuditConfig,
+    pub api: ApiConfig,
     pub ai_tasks: AiTasksConfig,
     pub migrations: MigrationsConfig,
     pub outbound: OutboundConfig,
@@ -528,6 +529,29 @@ impl Default for AuditConfig {
     fn default() -> Self {
         Self {
             operation_log_retention_days: DEFAULT_OPERATION_LOG_RETENTION_DAYS,
+        }
+    }
+}
+
+/// Applies unless `[api] max_change_hint_streams` overrides it.
+pub const DEFAULT_MAX_CHANGE_HINT_STREAMS: u32 = 4_096;
+
+/// Accepted range of `api.max_change_hint_streams`.
+pub const MAX_CHANGE_HINT_STREAMS_CEILING: u32 = 100_000;
+
+/// `[api]` — limits of the API process itself.
+///
+/// `max_change_hint_streams` caps the open `GET /api/v1/bot/change-hints` streams of one process
+/// (each bot is also limited to 64 of its own).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ApiConfig {
+    pub max_change_hint_streams: u32,
+}
+
+impl Default for ApiConfig {
+    fn default() -> Self {
+        Self {
+            max_change_hint_streams: DEFAULT_MAX_CHANGE_HINT_STREAMS,
         }
     }
 }

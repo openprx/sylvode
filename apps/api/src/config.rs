@@ -18,8 +18,8 @@
 use std::sync::{Arc, OnceLock};
 
 use platform::config::{
-    AiTasksConfig, DEFAULT_STORAGE_DIR, EmailConfig, FlowConfig, InboundConfig, IpCidr, OAuthConfig, OpenPrConfig,
-    OutboundConfig, StorageBackend, StorageConfig,
+    AiTasksConfig, ApiConfig, DEFAULT_STORAGE_DIR, EmailConfig, FlowConfig, InboundConfig, IpCidr, OAuthConfig,
+    OpenPrConfig, OutboundConfig, StorageBackend, StorageConfig,
 };
 
 use crate::security::default_trusted_proxies;
@@ -32,6 +32,8 @@ pub struct RuntimeConfig {
     pub flow: FlowConfig,
     /// Lease and processing limits of AI tasks, shared with the worker's sweep.
     pub ai_tasks: AiTasksConfig,
+    /// `[api]`: limits of this process (open change-hint streams).
+    pub api: ApiConfig,
     /// Peers allowed to vouch for a client address through `X-Forwarded-For` / `X-Real-IP`.
     pub trusted_proxies: Vec<IpCidr>,
     /// The authorization server settings, `None` when `[oauth] issuer` is not configured.
@@ -52,6 +54,7 @@ impl RuntimeConfig {
             outbound: config.outbound.clone(),
             flow: config.flow.clone(),
             ai_tasks: config.ai_tasks,
+            api: config.api,
             trusted_proxies: config
                 .server
                 .trusted_proxies
@@ -85,6 +88,7 @@ impl RuntimeConfig {
             outbound: OutboundConfig::default(),
             flow: FlowConfig::default(),
             ai_tasks: AiTasksConfig::default(),
+            api: ApiConfig::default(),
             trusted_proxies: default_trusted_proxies(),
             oauth: None,
             inbound: InboundConfig::default(),

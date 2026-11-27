@@ -345,6 +345,43 @@ fn ai_task_delivery_keys_are_read_and_bounded() {
 }
 
 #[test]
+fn the_change_hint_stream_cap_defaults_is_read_and_bounded() {
+    assert_eq!(
+        parse("").expect("an empty file is valid").api.max_change_hint_streams,
+        4_096
+    );
+    let config = parse("[api]\nmax_change_hint_streams = 10\n").expect("a valid cap");
+    assert_eq!(config.api.max_change_hint_streams, 10);
+    for bad in [0_u64, 100_001] {
+        let reported = issues(&format!("[api]\nmax_change_hint_streams = {bad}\n"));
+        assert!(
+            reported
+                .iter()
+                .any(|issue| issue.contains("api.max_change_hint_streams")),
+            "{bad} was not rejected: {reported:?}"
+        );
+    }
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/sylvode.example.toml");
+    let text = std::fs::read_to_string(path).expect("example config");
+    let section = text
+        .split("\n[api]\n")
+        .nth(1)
+        .and_then(|rest| rest.split("\n[").next())
+        .expect("[api] section");
+    let uncommented = section
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let example = parse(&format!("[api]\n{uncommented}\n")).expect("the example section parses");
+    assert_eq!(
+        example.api,
+        super::ApiConfig::default(),
+        "the example shows the defaults"
+    );
+}
+
+#[test]
 fn the_example_configuration_delivery_keys_equal_the_defaults() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/sylvode.example.toml");
     let text = std::fs::read_to_string(path).expect("example config");

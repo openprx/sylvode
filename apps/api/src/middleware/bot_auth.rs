@@ -437,7 +437,7 @@ pub async fn require_workspace_access_from_auth(
     Ok((user_id, row.role, false))
 }
 
-fn sha256_hex(input: &str) -> String {
+pub(crate) fn sha256_hex(input: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(input.as_bytes());
     hex::encode(hasher.finalize())

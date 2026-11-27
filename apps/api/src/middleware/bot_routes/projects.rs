@@ -7,6 +7,7 @@ use crate::middleware::scoped_bot::{Class, Find};
 pub static ROUTES: &[RunnerRoute] = &[
     r("GET", "/api/v1/ai/protocol", Class::NoProject),
     r("PUT", "/api/v1/ai/runner/report", Class::NoProject),
+    r("GET", "/api/v1/bot/change-hints", Class::Own),
     r("GET", "/api/v1/ai/tasks/active", Class::NoProject),
     r("GET", "/api/v1/ai/tasks/{task_id}", Class::NoProject),
     r("POST", "/api/v1/ai/tasks/{task_id}/ack", Class::NoProject),
@@ -82,6 +83,7 @@ mod tests {
             BTreeMap::from([
                 ("admin", 13),
                 ("no project", 12),
+                ("own resource", 1),
                 ("filtered", 1),
                 ("project-resolved", 29),
                 ("refused", 6)
