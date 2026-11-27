@@ -47,6 +47,10 @@ async fn load<C: ConnectionTrait>(db: &C, job: Uuid) -> Result<ExportRow, ApiErr
     .await?
     .ok_or_else(|| ApiError::not_found("export not found"))
 }
+/// The object an export job exports; `None` for a job of a whole scope.
+pub async fn job_object<C: ConnectionTrait>(db: &C, job: Uuid) -> Result<Option<Uuid>, ApiError> {
+    Ok(load(db, job).await?.object_id)
+}
 /// Whether `job` is a workspace export, judged by the workspace handlers and not by scoped access.
 /// No principal is needed to tell; the handler that serves the job authorizes the caller.
 pub async fn is_workspace_job<C: ConnectionTrait>(db: &C, job: Uuid) -> Result<bool, ApiError> {

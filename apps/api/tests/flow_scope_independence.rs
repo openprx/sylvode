@@ -1,6 +1,6 @@
 //! Real `PostgreSQL` scope and migration gates. This target deliberately requires an explicitly
 //! disposable superuser maintenance URL; absence is a failure, never a passing skip.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 use api::flow::{collab::authz::PermissionLevel, scope, scope_collab};
 use collab_core::CollabEngine as _;
 // Required fixture fields fail explicitly; absence/null expectations use get() separately.
@@ -457,99 +457,6 @@ async fn legacy_restricted_parent_creation_is_fenced_and_leaves_no_residue() {
         )
     );
     drop(state);
-    scratch.close().await;
-}
-#[tokio::test]
-async fn a_workspace_bot_is_judged_as_a_bot_by_the_scope_authorization() {
-    let scratch = Scratch::new().await;
-    let db = &scratch.db;
-    let owner = user(db).await;
-    let human_admin = user(db).await;
-    let admin_bot = user(db).await;
-    let workspace = Uuid::new_v4();
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "INSERT INTO workspaces(id,slug,name,created_by) VALUES($1,$2,'Bot principal',$3)",
-        vec![workspace.into(), workspace.to_string().into(), owner.into()],
-    ))
-    .await
-    .unwrap();
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "UPDATE users SET entity_type='bot' WHERE id=$1",
-        vec![admin_bot.into()],
-    ))
-    .await
-    .unwrap();
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "INSERT INTO workspace_members(workspace_id,user_id,role) VALUES($1,$2,'owner'),($1,$3,'admin'),($1,$4,'admin')",
-        vec![workspace.into(), owner.into(), human_admin.into(), admin_bot.into()],
-    ))
-    .await
-    .unwrap();
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled) VALUES($1,true) ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = EXCLUDED.flow_enabled",
-        vec![workspace.into()],
-    ))
-    .await
-    .unwrap();
-    let scope = scope::legacy_scope(db, workspace).await.unwrap();
-    let root = scope::roots(db, scope.id)
-        .await
-        .unwrap()
-        .first()
-        .expect("fixture element")
-        .object_id;
-    // A page that cuts its parent's grants and carries none of its own: only the human
-    // administrator's rescue reaches it.
-    let page = Uuid::new_v4();
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "INSERT INTO flow_objects(id,workspace_id,object_type,parent_id,inherit_from_parent) VALUES($1,$2,'page',$3,false)",
-        vec![page.into(), workspace.into(), root.into()],
-    ))
-    .await
-    .unwrap();
-    let engine = collab_core::LoroCollabEngine::new_empty(1);
-    api::flow::repository::insert_collab_document(
-        db,
-        &api::flow::repository::NewCollabDocument {
-            id: Uuid::new_v4(),
-            object_id: page,
-            format_version: "loro-1".into(),
-            snapshot: engine.export_snapshot().unwrap(),
-            frontier: engine.frontier().as_bytes().to_vec(),
-        },
-    )
-    .await
-    .unwrap();
-    api::flow::repository::insert_projection(
-        db,
-        &api::flow::repository::NewProjection {
-            object_id: page,
-            document_seq: 0,
-            document_frontier: engine.frontier().as_bytes().to_vec(),
-            title: "Boundary page".into(),
-            state: serde_json::json!({"nodes":{}}),
-            plain_text: String::new(),
-        },
-    )
-    .await
-    .unwrap();
-    assert!(
-        scope::authorize(db, page, human_admin, PermissionLevel::View)
-            .await
-            .is_ok(),
-        "the administrator's rescue belongs to people"
-    );
-    assert!(
-        scope::authorize(db, page, admin_bot, PermissionLevel::View)
-            .await
-            .is_err(),
-        "an administrator bot does not get the human rescue behind an authorization boundary"
-    );
     scratch.close().await;
 }
 async fn wait_for_database_lock(db: &DatabaseConnection, pid: i32) {
@@ -4392,5 +4299,584 @@ async fn typed_names_in_personal_comments_become_mentions_with_people_to_show() 
             .await
             .unwrap();
     assert_eq!(edited.mentions.len(), 1);
+    scratch.close().await;
+}
+
+// ---- workspace bots on the scope-native routes ----
+
+struct BotWorld {
+    workspace: Uuid,
+    owner: Uuid,
+    project_a: Uuid,
+    project_b: Uuid,
+}
+
+async fn bot_world(db: &DatabaseConnection) -> BotWorld {
+    let owner = user(db).await;
+    let workspace = Uuid::new_v4();
+    let (project_a, project_b) = (Uuid::new_v4(), Uuid::new_v4());
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO workspaces(id,slug,name,created_by) VALUES($1,$2,'Bot world',$3)",
+        vec![workspace.into(), workspace.to_string().into(), owner.into()],
+    ))
+    .await
+    .unwrap();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO workspace_members(workspace_id,user_id,role) VALUES($1,$2,'owner')",
+        vec![workspace.into(), owner.into()],
+    ))
+    .await
+    .unwrap();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled) VALUES($1,true) ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = EXCLUDED.flow_enabled",
+        vec![workspace.into()],
+    ))
+    .await
+    .unwrap();
+    for (id, key) in [(project_a, "BWA"), (project_b, "BWB")] {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO projects(id,workspace_id,key,name) VALUES($1,$2,$3,'Bot world project')",
+            vec![id.into(), workspace.into(), key.into()],
+        ))
+        .await
+        .unwrap();
+    }
+    BotWorld {
+        workspace,
+        owner,
+        project_a,
+        project_b,
+    }
+}
+
+/// A bot as `bots::create` makes it: a bot user, its seat and its token row.
+async fn seed_bot(
+    db: &DatabaseConnection,
+    world: &BotWorld,
+    seat_role: &str,
+    permissions: &[&str],
+    project_scope: &str,
+    grants: &[(Uuid, &str)],
+) -> Uuid {
+    let bot = user(db).await;
+    for (sql, values) in [
+        ("UPDATE users SET entity_type='bot' WHERE id=$1", vec![bot.into()]),
+        (
+            "INSERT INTO workspace_members(workspace_id,user_id,role) VALUES($1,$2,$3)",
+            vec![world.workspace.into(), bot.into(), seat_role.into()],
+        ),
+        (
+            "INSERT INTO workspace_bots(id,workspace_id,name,token_hash,token_prefix,permissions,transport_surface,created_by,is_active,project_scope,default_project_level) \
+             VALUES($1,$2,'flow bot',$3,'svb_test',$4::jsonb,'rest',$5,true,$6,'none')",
+            vec![
+                bot.into(),
+                world.workspace.into(),
+                format!("hash-{bot}").into(),
+                serde_json::json!(permissions).to_string().into(),
+                world.owner.into(),
+                project_scope.into(),
+            ],
+        ),
+    ] {
+        db.execute(Statement::from_sql_and_values(DbBackend::Postgres, sql, values))
+            .await
+            .unwrap();
+    }
+    for (project, level) in grants {
+        db.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO bot_project_grants(bot_id,project_id,level,granted_by) VALUES($1,$2,$3,$4)",
+            vec![bot.into(), (*project).into(), (*level).into(), world.owner.into()],
+        ))
+        .await
+        .unwrap();
+    }
+    bot
+}
+
+async fn seed_page(db: &DatabaseConnection, world: &BotWorld, project: Option<Uuid>) -> Uuid {
+    use api::flow::repository as repo;
+    let root = repo::ensure_navigator_root(db, world.workspace, project).await.unwrap();
+    let object = Uuid::new_v4();
+    let engine = collab_core::LoroCollabEngine::new_empty(1);
+    repo::insert_flow_object(
+        db,
+        &repo::NewFlowObject {
+            id: object,
+            workspace_id: world.workspace,
+            project_id: project,
+            object_type: "page".into(),
+            parent_id: Some(root),
+            created_by: Some(world.owner),
+            governance_metadata: serde_json::json!({}),
+        },
+    )
+    .await
+    .unwrap();
+    repo::insert_collab_document(
+        db,
+        &repo::NewCollabDocument {
+            id: Uuid::new_v4(),
+            object_id: object,
+            format_version: "loro-1".into(),
+            snapshot: engine.export_snapshot().unwrap(),
+            frontier: engine.frontier().as_bytes().to_vec(),
+        },
+    )
+    .await
+    .unwrap();
+    repo::insert_projection(
+        db,
+        &repo::NewProjection {
+            object_id: object,
+            document_seq: 0,
+            document_frontier: engine.frontier().as_bytes().to_vec(),
+            title: "Bot page".into(),
+            state: serde_json::json!({"nodes":{}}),
+            plain_text: String::new(),
+        },
+    )
+    .await
+    .unwrap();
+    object
+}
+
+fn bot_context(bot: Uuid, workspace: Uuid, permissions: &[&str]) -> api::middleware::bot_auth::BotAuthContext {
+    api::middleware::bot_auth::BotAuthContext {
+        bot_id: bot,
+        workspace_id: workspace,
+        permissions: permissions.iter().map(|p| (*p).to_string()).collect(),
+        surface: api::flow::event_origin::EventSurface::Rest,
+        tool_name: None,
+        request_id: Uuid::new_v4(),
+    }
+}
+
+async fn body_of(response: axum::response::Response) -> (axum::http::StatusCode, serde_json::Value) {
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null),
+    )
+}
+
+#[tokio::test]
+async fn a_workspace_bot_is_judged_as_a_bot_with_the_role_of_its_token() {
+    let scratch = Scratch::new().await;
+    let db = &scratch.db;
+    let world = bot_world(db).await;
+    let page = seed_page(db, &world, None).await;
+    let human_admin = user(db).await;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO workspace_members(workspace_id,user_id,role) VALUES($1,$2,'admin')",
+        vec![world.workspace.into(), human_admin.into()],
+    ))
+    .await
+    .unwrap();
+    // A page that cuts its parent's grants and carries none of its own: only the human
+    // administrator's rescue reaches it.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE flow_objects SET inherit_from_parent=false WHERE id=$1",
+        vec![page.into()],
+    ))
+    .await
+    .unwrap();
+    let admin_bot = seed_bot(db, &world, "admin", &["admin"], "workspace", &[]).await;
+    assert!(
+        scope::authorize(db, page, human_admin, PermissionLevel::View)
+            .await
+            .is_ok(),
+        "the administrator's rescue belongs to people"
+    );
+    assert!(
+        scope::authorize(db, page, admin_bot, PermissionLevel::View)
+            .await
+            .is_err(),
+        "an administrator bot does not get the human rescue behind an authorization boundary"
+    );
+    scratch.close().await;
+}
+
+/// Case (a): a bot made with `admin`, then limited to projects, is a plain member in the scope-native
+/// authorization too, whatever its seat still says: it cannot publish a page.
+#[tokio::test]
+async fn a_bot_switched_to_project_scope_cannot_publish_a_page_even_with_a_stale_admin_seat() {
+    let scratch = Scratch::new().await;
+    let db = &scratch.db;
+    let world = bot_world(db).await;
+    let page = seed_page(db, &world, Some(world.project_a)).await;
+    let limited = seed_bot(
+        db,
+        &world,
+        "admin",
+        &["admin"],
+        "projects",
+        &[(world.project_a, "write")],
+    )
+    .await;
+    let whole = seed_bot(db, &world, "admin", &["admin"], "workspace", &[]).await;
+
+    assert!(scope::authorize(db, page, limited, PermissionLevel::Edit).await.is_ok());
+    assert!(
+        scope::authorize(db, page, limited, PermissionLevel::FullAccess)
+            .await
+            .is_err(),
+        "a project-scoped bot is never an administrator"
+    );
+    let refused = api::flow::scope_shares::create(db, page, limited, None).await;
+    assert!(refused.is_err(), "a project-scoped bot published a page: {refused:?}");
+    let count: i64 = db
+        .query_one(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT count(*) AS n FROM flow_share_links".to_string(),
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "n")
+        .unwrap();
+    assert_eq!(count, 0);
+
+    // The control: the same token without the project scope is the administrator it says it is.
+    assert!(
+        scope::authorize(db, page, whole, PermissionLevel::FullAccess)
+            .await
+            .is_ok()
+    );
+    assert!(api::flow::scope_shares::create(db, page, whole, None).await.is_ok());
+    scratch.close().await;
+}
+
+/// Case (b): the seat of a bot never decides its role, and an owner cannot edit it.
+#[tokio::test]
+async fn a_membership_row_never_decides_a_bots_role_and_an_owner_cannot_edit_it() {
+    let scratch = Scratch::new().await;
+    let db = &scratch.db;
+    let world = bot_world(db).await;
+    let page = seed_page(db, &world, None).await;
+    let bot = seed_bot(db, &world, "member", &["write"], "workspace", &[]).await;
+
+    let promoted = api::routes::member::update_member_role(
+        axum::extract::State(test_state(db.clone())),
+        test_claims(world.owner),
+        axum::extract::Path((world.workspace, bot)),
+        axum::Json(api::routes::member::UpdateMemberRoleRequest {
+            role: "admin".to_string(),
+        }),
+    )
+    .await;
+    let Err(error) = promoted else {
+        panic!("an owner promoted a bot through the member route")
+    };
+    assert_eq!(error.kind(), api::error::ApiErrorKind::Forbidden, "{error:?}");
+    let seat: String = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT role FROM workspace_members WHERE workspace_id=$1 AND user_id=$2",
+            vec![world.workspace.into(), bot.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "role")
+        .unwrap();
+    assert_eq!(seat, "member");
+
+    // Even a seat that says admin leaves the role to the token.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE workspace_members SET role='admin' WHERE workspace_id=$1 AND user_id=$2",
+        vec![world.workspace.into(), bot.into()],
+    ))
+    .await
+    .unwrap();
+    assert!(scope::authorize(db, page, bot, PermissionLevel::Edit).await.is_ok());
+    assert!(
+        scope::authorize(db, page, bot, PermissionLevel::FullAccess)
+            .await
+            .is_err(),
+        "the Flow role of a bot follows its token, not its seat"
+    );
+    scratch.close().await;
+}
+
+/// Switching a bot to project scope also brings its seat down, so no reader of the seat sees a stale
+/// administrator.
+#[tokio::test]
+async fn switching_a_bot_to_project_scope_brings_its_seat_down() {
+    let scratch = Scratch::new().await;
+    let db = &scratch.db;
+    let world = bot_world(db).await;
+    let bot = seed_bot(db, &world, "admin", &["admin"], "workspace", &[]).await;
+    let request: api::routes::bot::ProjectAccess = serde_json::from_value(serde_json::json!({
+        "project_scope": "projects", "default_level": "none", "grants": [{"project_id": world.project_a, "level": "write"}]
+    }))
+    .unwrap();
+    api::routes::bot::put_project_access(
+        axum::extract::State(test_state(db.clone())),
+        test_claims(world.owner),
+        None,
+        axum::extract::Path((world.workspace, bot)),
+        axum::Json(request),
+    )
+    .await
+    .map_err(|e| format!("{e:?}"))
+    .unwrap();
+    let seat: String = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT role FROM workspace_members WHERE workspace_id=$1 AND user_id=$2",
+            vec![world.workspace.into(), bot.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "role")
+        .unwrap();
+    assert_eq!(seat, "member");
+    scratch.close().await;
+}
+
+/// F1: a bot limited to projects learns the navigator roots of its readable projects only.
+#[tokio::test]
+async fn the_workspace_scope_lists_only_the_roots_a_limited_bot_can_read() {
+    use axum::response::IntoResponse as _;
+    let scratch = Scratch::new().await;
+    let db = &scratch.db;
+    let world = bot_world(db).await;
+    for project in [Some(world.project_a), Some(world.project_b), None] {
+        api::flow::repository::ensure_navigator_root(db, world.workspace, project)
+            .await
+            .unwrap();
+    }
+    let limited = seed_bot(
+        db,
+        &world,
+        "member",
+        &["write"],
+        "projects",
+        &[(world.project_a, "read")],
+    )
+    .await;
+    let whole = seed_bot(db, &world, "member", &["write"], "workspace", &[]).await;
+    let roots = |bot: Uuid, permissions: &'static [&'static str]| {
+        let state = test_state(db.clone());
+        let workspace = world.workspace;
+        async move {
+            let response = api::routes::flow::get_flow_v2_workspace_scope(
+                axum::extract::State(state),
+                test_claims(bot),
+                Some(axum::Extension(bot_context(bot, workspace, permissions))),
+                axum::extract::Path(workspace),
+            )
+            .await
+            .unwrap()
+            .into_response();
+            let (_, body) = body_of(response).await;
+            body["data"]["roots"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|root| root["project_id"].as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        }
+    };
+    assert_eq!(
+        roots(limited, &["write"]).await,
+        vec![Some(world.project_a.to_string())]
+    );
+    assert_eq!(roots(whole, &["write"]).await.len(), 3);
+    scratch.close().await;
+}
+
+/// F2: for a bot, a personal object and a missing one answer alike, and so do the scope of another
+/// workspace and a missing scope.
+#[tokio::test]
+async fn a_bot_cannot_tell_a_personal_or_foreign_target_from_a_missing_one() {
+    use axum::response::IntoResponse as _;
+    let scratch = Scratch::new().await;
+    let db = &scratch.db;
+    let world = bot_world(db).await;
+    let other = bot_world(db).await;
+    let bot = seed_bot(db, &world, "member", &["write"], "workspace", &[]).await;
+    let personal_owner = user(db).await;
+    let (home, _) = scope::personal_home(db, personal_owner).await.unwrap();
+    let personal = scope::create_personal(db, personal_owner, create(home.id, None, "oracle-page"))
+        .await
+        .unwrap();
+    let personal_object = Uuid::parse_str(personal.field("object").field("id").as_str().unwrap()).unwrap();
+    let foreign_scope = scope::legacy_scope(db, other.workspace).await.unwrap().id;
+    let context = || Some(axum::Extension(bot_context(bot, world.workspace, &["write"])));
+    let object_answer = |object: Uuid| {
+        let state = test_state(db.clone());
+        async move {
+            let result = api::routes::flow::get_flow_v2_object(
+                axum::extract::State(state),
+                test_claims(bot),
+                context(),
+                axum::extract::Path(object),
+                axum::extract::Query(api::routes::flow::GetFlowObjectQuery {
+                    at_seq: None,
+                    render: None,
+                }),
+            )
+            .await;
+            body_of(match result {
+                Ok(ok) => ok.into_response(),
+                Err(err) => err.into_response(),
+            })
+            .await
+        }
+    };
+    let personal_answer = object_answer(personal_object).await;
+    let missing_answer = object_answer(Uuid::new_v4()).await;
+    assert_eq!(personal_answer, missing_answer, "a personal object is distinguishable");
+    assert_eq!(personal_answer.1["error_code"], "not_found", "{personal_answer:?}");
+
+    let scope_answer = |scope_id: Uuid| {
+        let state = test_state(db.clone());
+        async move {
+            let result = api::routes::flow::get_flow_v2_objects(
+                axum::extract::State(state),
+                test_claims(bot),
+                context(),
+                axum::extract::Path(scope_id),
+                axum::extract::Query(api::routes::flow::ScopeListQuery::default()),
+            )
+            .await;
+            body_of(match result {
+                Ok(ok) => ok.into_response(),
+                Err(err) => err.into_response(),
+            })
+            .await
+        }
+    };
+    let foreign_answer = scope_answer(foreign_scope).await;
+    let absent_answer = scope_answer(Uuid::new_v4()).await;
+    assert_eq!(
+        foreign_answer, absent_answer,
+        "another workspace's scope is distinguishable"
+    );
+    assert_eq!(foreign_answer.1["error_code"], "not_found", "{foreign_answer:?}");
+    scratch.close().await;
+}
+
+/// F4: the bot that made a scope-native export reads its status, and only that bot (or its owner).
+#[tokio::test]
+async fn the_bot_that_made_an_export_reads_its_status_and_nobody_else_does() {
+    use axum::response::IntoResponse as _;
+    let scratch = Scratch::new().await;
+    let db = &scratch.db;
+    let world = bot_world(db).await;
+    let page = seed_page(db, &world, Some(world.project_a)).await;
+    let maker = seed_bot(db, &world, "member", &["write"], "workspace", &[]).await;
+    let other = seed_bot(db, &world, "member", &["write"], "workspace", &[]).await;
+    let scope = scope::legacy_scope(db, world.workspace).await.unwrap();
+    let revision = scope::revision(db, scope.id).await.unwrap();
+    let job = Uuid::new_v4();
+    // A record export is the scope-native kind of a workspace job: it carries the record fingerprint.
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO flow_export_jobs(id,workspace_id,scope_id,object_id,scope_kind,format,include_history,actor_kind,actor_id,idempotency_key,request_hash,status,source_authz_revision,artifact_schema_revisions) \
+         VALUES($1,$2,$3,$4,'object','json',false,'user',$5,'bot-export-key','hash','running',$6,$7::jsonb)",
+        vec![
+            job.into(),
+            world.workspace.into(),
+            scope.id.into(),
+            page.into(),
+            maker.into(),
+            revision.into(),
+            serde_json::json!([{"record_context_version": 1, "record_id": page, "schema_fingerprint": "fixture"}])
+                .to_string()
+                .into(),
+        ],
+    ))
+    .await
+    .unwrap();
+    let status = |bot: Uuid| {
+        let state = test_state(db.clone());
+        let workspace = world.workspace;
+        async move {
+            let result = api::routes::flow::get_flow_v2_export(
+                axum::extract::State(state),
+                test_claims(bot),
+                Some(axum::Extension(bot_context(bot, workspace, &["write"]))),
+                axum::extract::Path(job),
+            )
+            .await;
+            body_of(match result {
+                Ok(ok) => ok.into_response(),
+                Err(err) => err.into_response(),
+            })
+            .await
+        }
+    };
+    // The maker is judged by the job itself (here its fixture record policy), not refused as a bot.
+    let made = status(maker).await;
+    assert_ne!(
+        made.1["error_code"], "unsupported_protocol",
+        "a bot was refused the status of its own export: {made:?}"
+    );
+    assert_ne!(
+        made.1["error_code"], "not_found",
+        "the maker did not find its export: {made:?}"
+    );
+    let stranger = status(other).await;
+    assert_eq!(
+        stranger.1["error_code"], "not_found",
+        "another bot read the export: {stranger:?}"
+    );
+    scratch.close().await;
+}
+
+/// F3: the receipt of a workspace export points at the route that exists.
+#[tokio::test]
+async fn a_workspace_export_receipt_names_the_v2_artifact_route() {
+    use axum::response::IntoResponse as _;
+    let scratch = Scratch::new().await;
+    let db = &scratch.db;
+    let world = bot_world(db).await;
+    seed_page(db, &world, None).await;
+    let created = api::routes::flow::post_flow_workspace_export(
+        axum::extract::State(test_state(db.clone())),
+        test_claims(world.owner),
+        None,
+        axum::extract::Path(world.workspace),
+        axum::Json(
+            serde_json::from_value(serde_json::json!({
+                "format": "package", "include_history": false, "idempotency_key": "receipt-key"
+            }))
+            .unwrap(),
+        ),
+    )
+    .await
+    .map_err(|e| format!("{e:?}"))
+    .unwrap()
+    .into_response();
+    let (_, created) = body_of(created).await;
+    let job = Uuid::parse_str(created["data"]["job_id"].as_str().expect("job id")).unwrap();
+    let read = api::routes::flow::get_flow_v2_export(
+        axum::extract::State(test_state(db.clone())),
+        test_claims(world.owner),
+        None,
+        axum::extract::Path(job),
+    )
+    .await
+    .map_err(|e| format!("{e:?}"))
+    .unwrap()
+    .into_response();
+    let (_, read) = body_of(read).await;
+    assert_eq!(
+        read["data"]["download_url"],
+        format!("/api/v2/flow/exports/{job}/artifact"),
+        "{read}"
+    );
     scratch.close().await;
 }

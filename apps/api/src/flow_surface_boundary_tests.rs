@@ -612,12 +612,27 @@ async fn bot_credential_database_failures_are_typed_on_flow_routes_and_unchanged
     let state = state_for(db.clone());
     let (workspace_id, owner_id) = seed_flow_workspace(&db).await;
     let token = format!("opr_{}", Uuid::new_v4().simple());
+    // The bot as `bots::create` makes it: a bot user, its seat and its token row.
+    let bot_id = Uuid::new_v4();
+    exec(
+        &db,
+        "INSERT INTO users (id, email, password_hash, name, role, is_active, entity_type) \
+         VALUES ($1, $2, '!', 'boundary-bot', 'user', true, 'bot')",
+        vec![bot_id.into(), format!("{bot_id}@bot.boundary.test").into()],
+    )
+    .await;
+    exec(
+        &db,
+        "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'admin')",
+        vec![workspace_id.into(), bot_id.into()],
+    )
+    .await;
     exec(
         &db,
         "INSERT INTO workspace_bots (id, workspace_id, name, token_hash, token_prefix, permissions, created_by) \
          VALUES ($1, $2, 'boundary-bot', $3, 'opr_boun', '[\"read\",\"write\",\"admin\"]'::jsonb, $4)",
         vec![
-            Uuid::new_v4().into(),
+            bot_id.into(),
             workspace_id.into(),
             hex::encode(Sha256::digest(token.as_bytes())).into(),
             owner_id.into(),
@@ -733,9 +748,9 @@ async fn an_unrouted_path_answers_outside_the_boundary() {
     let mut probes = Vec::new();
     for uri in [
         "/api/v1/no-such-route".to_string(),
-        "/api/v1/flow/no-such-route".to_string(),
-        "/api/v1/collab/no-such-route".to_string(),
-        format!("/api/v1/workspaces/{workspace_id}/flow/no-such-route"),
+        "/api/v2/flow/no-such-route".to_string(),
+        "/api/v2/flow/collab/no-such-route".to_string(),
+        format!("/api/v2/flow/workspaces/{workspace_id}/no-such-route"),
     ] {
         for method in [Method::GET, Method::POST, Method::DELETE] {
             probes.push((method.clone(), uri.clone(), None));

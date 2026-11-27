@@ -278,8 +278,6 @@ pub async fn authorize<C: ConnectionTrait>(
             role: Option<String>,
             is_bot: bool,
         }
-        // A workspace bot is evaluated as a bot, exactly as the workspace handlers always did: the
-        // human-only admin fallback never applies to it and its grants are `bot` grants.
         let principal = Principal::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "SELECT (SELECT role FROM workspace_members WHERE workspace_id=$1 AND user_id=$2) AS role, \
@@ -292,15 +290,20 @@ pub async fn authorize<C: ConnectionTrait>(
         ))
         .one(db)
         .await?;
-        let (role, kind) = principal.map_or_else(
-            || ("__flow_guest".to_string(), "user"),
-            |p| {
-                (
-                    p.role.unwrap_or_else(|| "__flow_guest".to_string()),
-                    if p.is_bot { "bot" } else { "user" },
-                )
-            },
-        );
+        let guest = || "__flow_guest".to_string();
+        let (role, kind) = match principal {
+            // A workspace bot is evaluated as a bot, with the role its token carries (never the one of
+            // its membership row): the human-only admin fallback does not apply to it, its grants are
+            // `bot` grants, and a project-scoped bot is never an administrator.
+            Some(Principal { is_bot: true, .. }) => (
+                crate::middleware::bot_auth::bot_token_role(db, user, workspace)
+                    .await?
+                    .unwrap_or_else(guest),
+                "bot",
+            ),
+            Some(Principal { role, .. }) => (role.unwrap_or_else(guest), "user"),
+            None => (guest(), "user"),
+        };
         super::policy::require_flow_enabled_on(db, workspace).await?;
         let level = authz::effective_permission(db, workspace, object, kind, user, &role).await?;
         if level < minimum {

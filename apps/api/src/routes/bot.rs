@@ -448,6 +448,19 @@ pub async fn put_project_access(
         ],
     ))
     .await?;
+    // The seat follows the token: a bot with a level per project is a plain member, a workspace bot is
+    // an administrator only with the `admin` permission. Nothing reads the seat for a decision, so this
+    // keeps the member list truthful.
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE workspace_members m SET role = CASE \
+             WHEN $1 = 'projects' THEN 'member' \
+             WHEN jsonb_exists(b.permissions, 'admin') THEN 'admin' \
+             ELSE 'member' END \
+         FROM workspace_bots b WHERE b.id = $2 AND m.user_id = b.id AND m.workspace_id = b.workspace_id",
+        vec![request.project_scope.clone().into(), bot_id.into()],
+    ))
+    .await?;
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "DELETE FROM bot_project_grants WHERE bot_id = $1",

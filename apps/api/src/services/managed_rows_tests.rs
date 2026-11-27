@@ -541,7 +541,7 @@ async fn a_managed_bot_cannot_be_given_an_admin_seat() {
     assert!(direct.is_err(), "a managed bot's seat cannot be admin or owner");
     assert_eq!(seat().await, 1);
 
-    // An ordinary bot can still be promoted by an owner.
+    // An ordinary bot seat is not editable either: its role is its token's.
     member::update_member_role(
         State(state),
         Extension(claims_for(w.tenant.member_id)),
@@ -551,6 +551,7 @@ async fn a_managed_bot_cannot_be_given_an_admin_seat() {
         }),
     )
     .await
-    .expect("an ordinary bot seat can change");
+    .err()
+    .expect("a bot's role follows its token permissions, so its seat is not editable either");
     scratch.drop_self().await;
 }

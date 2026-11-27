@@ -154,14 +154,24 @@ pub async fn consume(
     let normalized = collab::origin::normalize(origin).ok_or_else(|| ApiError::unauthenticated("invalid ticket"))?;
     let tx = db.begin().await?;
     let row=Document::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,"UPDATE collab_tickets t SET consumed_at=now() FROM collab_documents d WHERE t.ticket_hash=$1 AND t.client_id=$2 AND t.origin=$3 AND t.consumed_at IS NULL AND t.expires_at>now() AND t.document_id=d.id AND t.authz_revision IS NOT NULL RETURNING d.id,d.object_id,t.scope_id,t.workspace_id,t.authz_revision,t.user_id,t.client_id,t.authorization_notifications",vec![digest(ticket).into(),client.into(),normalized.into()])).one(&tx).await?.ok_or_else(||ApiError::unauthenticated("invalid ticket"))?;
-    let proof = scope::authorize(&tx, row.object_id, row.user_id, PermissionLevel::View).await?;
-    let scope_changed = proof.scope_id != row.scope_id;
-    let revision_changed = proof.revision != row.authz_revision;
-    if scope_changed || revision_changed {
-        return Err(ApiError::policy_rejected("ticket authorization changed"));
+    // The ticket is spent by the upgrade attempt whatever the outcome (`ADR-0007`): a refusal below commits
+    // the consumption, so a refused handshake cannot be replayed if the refusal is later lifted.
+    let admitted = async {
+        let proof = scope::authorize(&tx, row.object_id, row.user_id, PermissionLevel::View).await?;
+        let scope_changed = proof.scope_id != row.scope_id;
+        let revision_changed = proof.revision != row.authz_revision;
+        if scope_changed || revision_changed {
+            return Err(ApiError::policy_rejected("ticket authorization changed"));
+        }
+        scope::fence(&tx, &proof).await?;
+        super::scope_editor::require_admitted(db, row.object_id).await
     }
-    scope::fence(&tx, &proof).await?;
-    super::scope_editor::require_admitted(db, row.object_id).await?;
+    .await;
+    if let Err(refusal) = admitted {
+        // A transaction a failed statement aborted cannot commit; the refusal is the answer either way.
+        let _ = tx.commit().await;
+        return Err(refusal);
+    }
     tx.commit().await?;
     Ok(TicketContext {
         user_id: row.user_id,

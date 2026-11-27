@@ -33,6 +33,16 @@ pub(super) fn user(claims: &JwtClaims, bot: Option<&Extension<BotAuthContext>>) 
     Uuid::parse_str(&claims.sub).map_err(|_| ApiError::unauthenticated("invalid user identity"))
 }
 
+/// The human principal on the fallback path after a workspace branch: a bot that gets here named
+/// something that is not workspace content, and is told only that it is absent, so a personal object
+/// and a missing one answer alike.
+pub(super) fn user_or_absent(claims: &JwtClaims, bot: Option<&Extension<BotAuthContext>>) -> Result<Uuid, ApiError> {
+    if bot.is_some() {
+        return Err(ApiError::not_found("flow resource not found"));
+    }
+    user(claims, None)
+}
+
 /// What a request names, to find the workspace a bot is judged against.
 #[derive(Clone, Copy)]
 pub(super) enum Subject {
@@ -60,19 +70,25 @@ pub(super) async fn principal(
         Subject::Object(object) => scope::identity(&state.db, object).await?.workspace_id,
         Subject::Scope(scope_id) => scope::legacy_workspace(&state.db, scope_id).await?,
     };
+    // A personal target and a missing one answer alike, and so does a target of another workspace.
     let Some(workspace) = workspace else {
-        return Err(ApiError::unsupported_protocol(
-            "workspace bot credentials do not reach personal Flow scopes",
-        ));
+        return Err(ApiError::not_found("flow resource not found"));
     };
     let mut extensions = axum::http::Extensions::new();
     extensions.insert(claims.clone());
     extensions.insert(context.clone());
     let access = crate::flow::policy::require_flow_workspace_access(state, &extensions, workspace).await;
-    match (subject, access) {
-        (Subject::Object(_), Err(err)) => Err(crate::flow::policy::collapse_object_denial(err)),
-        (_, Err(err)) => Err(err),
-        (_, Ok((actor, _, _))) => Ok(actor),
+    match access {
+        Err(err)
+            if matches!(
+                err.kind(),
+                crate::error::ApiErrorKind::Forbidden | crate::error::ApiErrorKind::NotFound
+            ) =>
+        {
+            Err(ApiError::not_found("flow resource not found"))
+        }
+        Err(err) => Err(err),
+        Ok((actor, _, _)) => Ok(actor),
     }
 }
 pub async fn get_flow_v2_capabilities(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
@@ -95,10 +111,18 @@ pub async fn get_flow_v2_workspace_scope(
     bot: Option<Extension<BotAuthContext>>,
     Path(workspace): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
+    let bot_id = bot.as_ref().map(|Extension(context)| context.bot_id);
     let extensions = super::build_auth_extensions(claims, bot);
     crate::flow::policy::require_flow_workspace_access(&state, &extensions, workspace).await?;
     let scope = scope::legacy_scope(&state.db, workspace).await?;
-    let roots = scope::roots(&state.db, scope.id).await?;
+    let mut roots = scope::roots(&state.db, scope.id).await?;
+    // A bot limited to some projects learns the roots of those projects only.
+    if let Some(bot_id) = bot_id {
+        let readable = crate::middleware::scoped_bot::readable_projects(&state.db, bot_id).await?;
+        if readable.ids().is_some() {
+            roots.retain(|root| root.project_id.is_some_and(|project| readable.allows(project)));
+        }
+    }
     Ok(ApiResponse::success(json!({"scope":scope,"roots":roots})))
 }
 pub async fn get_flow_v2_object(
@@ -729,7 +753,7 @@ pub async fn post_flow_v2_purge(
                 .into_response(),
         );
     }
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = user_or_absent(&claims, bot.as_ref())?;
     let default_key = format!("purge:{object}");
     let key = optional_intent(&headers)?.unwrap_or(&default_key);
     Ok(ApiResponse::success(crate::flow::scope_purge::purge(&state, object, actor, key).await?).into_response())
@@ -749,7 +773,7 @@ pub async fn post_flow_v2_restore_version(
                 .into_response(),
         );
     }
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = user_or_absent(&claims, bot.as_ref())?;
     Ok(ApiResponse::success(
         crate::flow::scope_history::restore_page(&state, object, actor, body.seq, &body.idempotency_key, body.message)
             .await?,
@@ -883,7 +907,7 @@ pub async fn put_flow_v2_grants(
                 .into_response(),
         );
     }
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = user_or_absent(&claims, bot.as_ref())?;
     Ok(ApiResponse::success(
         crate::flow::scope_acl::mutate(
             &state.db,
@@ -915,7 +939,7 @@ pub async fn put_flow_v2_inheritance(
                 .into_response(),
         );
     }
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = user_or_absent(&claims, bot.as_ref())?;
     Ok(ApiResponse::success(
         crate::flow::scope_acl::mutate(
             &state.db,
@@ -1220,6 +1244,22 @@ pub async fn post_flow_v2_export(
     )
     .into_response())
 }
+/// The principal that reads a scope-native export job: a person, or the bot that made the job, judged
+/// against the object the job exports. A job of no object, or one a bot cannot see, is absent.
+async fn export_actor(
+    state: &AppState,
+    claims: &JwtClaims,
+    bot: Option<&Extension<BotAuthContext>>,
+    job: Uuid,
+) -> Result<Uuid, ApiError> {
+    if bot.is_none() {
+        return user(claims, None);
+    }
+    let object = crate::flow::scope_export::job_object(&state.db, job)
+        .await?
+        .ok_or_else(|| ApiError::not_found("export not found"))?;
+    principal(state, claims, bot, Subject::Object(object)).await
+}
 pub async fn get_flow_v2_export(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
@@ -1231,7 +1271,7 @@ pub async fn get_flow_v2_export(
             .await?
             .into_response());
     }
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = export_actor(&state, &claims, bot.as_ref(), job).await?;
     let row = crate::flow::scope_export::get(&state.db, job, actor).await?;
     Ok(ApiResponse::success(crate::flow::scope_export::receipt(&row)).into_response())
 }
@@ -1248,7 +1288,7 @@ pub async fn get_flow_v2_export_artifact(
                 .into_response(),
         );
     }
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = export_actor(&state, &claims, bot.as_ref(), job).await?;
     crate::flow::scope_export::get(&state.db, job, actor).await?;
     let (bytes, hash, format) = crate::flow::scope_export::download(&state.db, job, actor).await?;
     let mut headers = axum::http::HeaderMap::new();
@@ -1294,7 +1334,8 @@ pub async fn post_flow_v2_reference(
         );
     }
     Ok(ApiResponse::success(
-        crate::flow::bridge::create_scope_reference(&state, user(&claims, bot.as_ref())?, object, input).await?,
+        crate::flow::bridge::create_scope_reference(&state, user_or_absent(&claims, bot.as_ref())?, object, input)
+            .await?,
     )
     .into_response())
 }
@@ -1318,8 +1359,14 @@ pub async fn delete_flow_v2_reference(
     }
     let key = optional_intent(&headers)?.ok_or_else(|| ApiError::invalid_update("Idempotency-Key is required"))?;
     Ok(ApiResponse::success(
-        crate::flow::bridge::remove_scope_reference(&state, user(&claims, bot.as_ref())?, object, reference, key)
-            .await?,
+        crate::flow::bridge::remove_scope_reference(
+            &state,
+            user_or_absent(&claims, bot.as_ref())?,
+            object,
+            reference,
+            key,
+        )
+        .await?,
     )
     .into_response())
 }
@@ -1785,7 +1832,7 @@ pub async fn post_flow_v2_import_artifact(
                 .into_response(),
         );
     }
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = user_or_absent(&claims, bot.as_ref())?;
     crate::flow::scope_import::require_destination(&state.db, scope_id, actor).await?;
     let multipart_key = optional_intent(request.headers())?.unwrap_or_default().to_string();
     let multipart = request
@@ -1915,7 +1962,7 @@ pub async fn post_flow_v2_import_preview(
         idempotency_key: input.idempotency_key,
     };
     Ok(ApiResponse::success(
-        crate::flow::scope_import::preview(&state.db, scope_id, user(&claims, bot.as_ref())?, input).await?,
+        crate::flow::scope_import::preview(&state.db, scope_id, user_or_absent(&claims, bot.as_ref())?, input).await?,
     )
     .into_response())
 }
@@ -1945,7 +1992,14 @@ pub async fn post_flow_v2_import_commit(
         idempotency_key: input.idempotency_key,
     };
     Ok(ApiResponse::success(
-        crate::flow::scope_import::commit(&state.db, scope_id, user(&claims, bot.as_ref())?, preview, input).await?,
+        crate::flow::scope_import::commit(
+            &state.db,
+            scope_id,
+            user_or_absent(&claims, bot.as_ref())?,
+            preview,
+            input,
+        )
+        .await?,
     )
     .into_response())
 }
@@ -1963,7 +2017,7 @@ pub async fn get_flow_v2_import(
         return Ok(ApiResponse::success(report).into_response());
     }
     Ok(ApiResponse::success(
-        crate::flow::scope_import::get(&state.db, scope_id, user(&claims, bot.as_ref())?, job).await?,
+        crate::flow::scope_import::get(&state.db, scope_id, user_or_absent(&claims, bot.as_ref())?, job).await?,
     )
     .into_response())
 }
@@ -1995,7 +2049,7 @@ pub async fn post_flow_v2_scope_export(
         crate::flow::scope_export::create_scope(
             &state.db,
             scope_id,
-            user(&claims, bot.as_ref())?,
+            user_or_absent(&claims, bot.as_ref())?,
             input.include_history,
             &input.idempotency_key,
             input.object_types,
@@ -2045,7 +2099,7 @@ pub async fn post_flow_v2_conversion_preview(
         .or(identity.workspace_id)
         .ok_or_else(|| ApiError::invalid_update("explicit destination_workspace_id required"))?;
     if identity.workspace_id != Some(destination) {
-        let actor = user(&claims, bot.as_ref())?;
+        let actor = user_or_absent(&claims, bot.as_ref())?;
         *input.field_mut("destination_workspace_id")? = json!(destination);
         let request =
             serde_json::from_value(input).map_err(|_| ApiError::invalid_update("invalid scoped conversion preview"))?;
@@ -2107,7 +2161,7 @@ pub async fn post_flow_v2_conversion(
 ) -> Result<Response, ApiError> {
     let (_, scoped) = scope_conversion_identity(&state, input.preview_id, false).await?;
     let actor = if scoped {
-        Some(user(&claims, bot.as_ref())?)
+        Some(user_or_absent(&claims, bot.as_ref())?)
     } else {
         None
     };
@@ -2128,7 +2182,7 @@ pub async fn get_flow_v2_conversion(
 ) -> Result<Response, ApiError> {
     let (_, scoped) = scope_conversion_identity(&state, job, true).await?;
     let actor = if scoped {
-        Some(user(&claims, bot.as_ref())?)
+        Some(user_or_absent(&claims, bot.as_ref())?)
     } else {
         None
     };
@@ -2149,7 +2203,7 @@ pub async fn post_flow_v2_conversion_retry(
 ) -> Result<Response, ApiError> {
     let (_, scoped) = scope_conversion_identity(&state, job, true).await?;
     let actor = if scoped {
-        Some(user(&claims, bot.as_ref())?)
+        Some(user_or_absent(&claims, bot.as_ref())?)
     } else {
         None
     };
@@ -2172,7 +2226,7 @@ pub async fn get_flow_v2_conversion_owner(
     let object = row.try_get("", "source_object_id")?;
     let identity = scope::identity(&state.db, object).await?;
     if identity.workspace_id != Some(row.try_get("", "workspace_id")?) {
-        let actor = user(&claims, bot.as_ref())?;
+        let actor = user_or_absent(&claims, bot.as_ref())?;
         scope::authorize(&state.db, object, actor, PermissionLevel::View).await?;
         if actor != row.try_get::<Uuid>("", "actor_id")? {
             return Err(ApiError::not_found("conversion not found"));
