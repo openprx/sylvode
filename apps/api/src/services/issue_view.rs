@@ -11,6 +11,7 @@ use uuid::Uuid;
 use crate::error::{ApiError, ApiErrorKind};
 use crate::flow::collab::authz::{self, PermissionLevel};
 use crate::flow::{repository as flow_repository, scope as flow_scope};
+use crate::middleware::scoped_bot::{Level, Secondary, ensure_bot_level};
 
 #[derive(Debug, Serialize)]
 pub struct IssueResponse {
@@ -306,7 +307,20 @@ pub async fn viewable_pages(
             }
         }
     }
-    if !caller.is_bot {
+    if caller.is_bot {
+        // A scoped bot also needs `read` in the page's project, as `work_items_of_page` requires for
+        // the other direction: the Flow role above treats it as an ordinary member.
+        let mut readable = HashSet::new();
+        for id in &visible {
+            if ensure_bot_level(db, Some(caller.actor_id), Secondary::FlowObject(*id), Level::Read)
+                .await
+                .is_ok()
+            {
+                readable.insert(*id);
+            }
+        }
+        visible = readable;
+    } else {
         for id in personal {
             match flow_scope::authorize(db, id, caller.actor_id, PermissionLevel::View).await {
                 Ok(_) => {

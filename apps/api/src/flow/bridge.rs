@@ -26,6 +26,7 @@ use crate::error::{ApiError, ApiErrorKind, ServerDrainingReason};
 use crate::events::{BusinessEventInput, FlowDispatchSpec, insert_flow_event};
 use crate::flow::IN_FLIGHT_RETRY_AFTER_MS;
 use crate::forms::permissions::{permission_policy_field_allows, permission_policy_record_scope};
+use crate::middleware::scoped_bot::{Level as BotLevel, Secondary, ensure_bot_level};
 
 pub const BRIDGE_ACTIONS: [&str; 6] = [
     "form.view",
@@ -379,6 +380,40 @@ pub(crate) async fn bridge_enabled<C: ConnectionTrait>(conn: &C, workspace_id: U
     .is_some_and(|row| row.bridge_enabled))
 }
 
+/// A scoped bot may touch an object beyond the route's target only where its project level reaches
+/// `needed`; see [`ensure_bot_level`]. A person is unaffected.
+async fn ensure_actor_level(
+    state: &AppState,
+    actor: &BridgeActor,
+    target: Secondary,
+    needed: BotLevel,
+) -> Result<(), ApiError> {
+    ensure_bot_level(&state.db, actor.is_bot.then_some(actor.id), target, needed).await
+}
+
+/// The form or record a reference points at; `None` for a type that is not a bridge target.
+fn reference_target(target_type: &str, target_id: Uuid) -> Option<Secondary> {
+    match target_type {
+        "form" => Some(Secondary::Form(target_id)),
+        "form_record" => Some(Secondary::FormRecord(target_id)),
+        _ => None,
+    }
+}
+
+/// The conversion's target project and form, which the bot must be able to write to.
+async fn ensure_conversion_target(
+    state: &AppState,
+    actor: &BridgeActor,
+    project_id: Uuid,
+    form_id: Option<Uuid>,
+) -> Result<(), ApiError> {
+    ensure_actor_level(state, actor, Secondary::Project(project_id), BotLevel::Write).await?;
+    if let Some(form_id) = form_id {
+        ensure_actor_level(state, actor, Secondary::Form(form_id), BotLevel::Write).await?;
+    }
+    Ok(())
+}
+
 async fn source_actor(
     state: &AppState,
     extensions: &Extensions,
@@ -405,15 +440,19 @@ async fn source_actor(
     if flow_level < minimum {
         return Err(ApiError::not_found("flow object not found".to_string()));
     }
-    Ok((
-        source,
-        BridgeActor {
-            id: actor_id,
-            role,
-            is_bot,
-            flow_level,
-        },
-    ))
+    let actor = BridgeActor {
+        id: actor_id,
+        role,
+        is_bot,
+        flow_level,
+    };
+    let needed = if minimum >= PermissionLevel::Edit {
+        BotLevel::Write
+    } else {
+        BotLevel::Read
+    };
+    ensure_actor_level(state, &actor, Secondary::FlowObject(source.id), needed).await?;
+    Ok((source, actor))
 }
 
 async fn target_view<C: ConnectionTrait>(
@@ -627,6 +666,9 @@ pub async fn create_reference(
         return Err(ApiError::invalid_update("display must be an object".to_string()));
     }
     let (source, mut actor) = source_actor(state, extensions, source_object_id, PermissionLevel::Edit).await?;
+    if let Some(target) = reference_target(&input.target_type, input.target_id) {
+        ensure_actor_level(state, &actor, target, BotLevel::Read).await?;
+    }
     if !bridge_enabled(&state.db, source.workspace_id).await? {
         return Err(ApiError::policy_rejected("forms bridge is disabled"));
     }
@@ -742,6 +784,12 @@ pub async fn list_references(
     .await?;
     let mut items = Vec::with_capacity(rows.len());
     for row in rows {
+        if let Some(target) = reference_target(&row.target_type, row.target_id)
+            && ensure_actor_level(state, &actor, target, BotLevel::Read).await.is_err()
+        {
+            items.push(BridgeReferenceView::Unavailable);
+            continue;
+        }
         let Some(target) = target_view(&state.db, row.workspace_id, &row.target_type, row.target_id).await? else {
             items.push(BridgeReferenceView::Unavailable);
             continue;
@@ -845,6 +893,7 @@ pub async fn remove_reference(
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ConversionPreviewInput {
     pub source_object_id: Uuid,
     pub source_frontier: String,
@@ -866,6 +915,7 @@ pub struct ConversionPreviewResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ConversionCommitInput {
     pub preview_id: Uuid,
     pub source_frontier: String,
@@ -875,6 +925,7 @@ pub struct ConversionCommitInput {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ConversionRetryInput {
     pub idempotency_key: String,
     pub confirm: bool,
@@ -1060,6 +1111,7 @@ pub async fn preview_conversion(
         match input.target_type.as_str() {
             "form" => {
                 let project_id = mapping_uuid(&input.mapping, "target_project_id")?;
+                ensure_conversion_target(state, &actor, project_id, None).await?;
                 if !matches!(actor.role.as_str(), "owner" | "admin")
                     || !project_exists(&state.db, source.workspace_id, project_id).await?
                 {
@@ -1083,6 +1135,7 @@ pub async fn preview_conversion(
             }
             "form_record" => {
                 let form_id = mapping_uuid(&input.mapping, "target_form_id")?;
+                ensure_actor_level(state, &actor, Secondary::Form(form_id), BotLevel::Write).await?;
                 let target = target_view(&state.db, source.workspace_id, "form", form_id)
                     .await?
                     .ok_or_else(|| ApiError::not_found("bridge target not found".to_string()))?;
@@ -1990,6 +2043,7 @@ pub async fn commit_conversion(
     }
     let preview = load_preview(&state.db, input.preview_id).await?;
     let (source, actor) = conversion_caller(state, extensions, &preview).await?;
+    ensure_conversion_target(state, &actor, preview.target_project_id, preview.target_form_id).await?;
     if !super::frontier::client_matches_base64(&input.source_frontier, &preview.source_frontier)? {
         return Err(ApiError::stale_frontier(
             "source frontier differs from preview",
@@ -2131,6 +2185,7 @@ pub async fn retry_conversion(
     .ok_or_else(|| ApiError::not_found("conversion job not found".to_string()))?;
     let preview = load_preview(&state.db, job.preview_id).await?;
     let (source, actor) = conversion_caller(state, extensions, &preview).await?;
+    ensure_conversion_target(state, &actor, preview.target_project_id, preview.target_form_id).await?;
     if job.status == "completed" || job.idempotency_key == input.idempotency_key {
         return load_job(&state.db, job_id).await;
     }

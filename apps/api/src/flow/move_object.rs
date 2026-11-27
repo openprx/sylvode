@@ -68,6 +68,7 @@ use uuid::Uuid;
 
 use crate::error::ApiError;
 use crate::events::{BusinessEventInput, FlowDispatchSpec, insert_flow_event_with_id};
+use crate::middleware::scoped_bot::{Level as BotLevel, Secondary, ensure_bot_level};
 
 use super::collab::coordinator::ascending_document_lock_order;
 use super::collab::limits::MAX_REBASE_ATTEMPTS;
@@ -1642,6 +1643,16 @@ pub async fn execute_on(
     if target.lifecycle_status != "active" {
         return Err(ApiError::invalid_update("target_object_id is archived"));
     }
+    // The destination is a second object of this request, beyond the one the route's bot check
+    // resolved: a scoped bot needs `write` in the destination's project too (it may keep a page in
+    // its own personal space).
+    ensure_bot_level(
+        &state.db,
+        (principal_kind_of(input) == "bot").then_some(input.actor_id),
+        Secondary::FlowObject(payload.target_object_id),
+        BotLevel::Write,
+    )
+    .await?;
 
     // ADR-0018 NR-1: both scope roots exist before the multi-document set is derived. The
     // database function is the same producer migration 0059 uses, so a project first touched by a

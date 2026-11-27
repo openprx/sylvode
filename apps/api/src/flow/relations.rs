@@ -52,6 +52,7 @@ use uuid::Uuid;
 
 use crate::error::{ApiError, ApiErrorKind};
 use crate::events::{BusinessEventInput, FlowDispatchSpec, FlowEventOutcome, insert_flow_event};
+use crate::middleware::scoped_bot::{Level as BotLevel, Secondary, ensure_bot_level};
 
 use super::collab::{authz, limits};
 use super::command::{ExecuteCommandInput, accepted_change_from_row, actor_user_id};
@@ -283,6 +284,18 @@ async fn lock_participants<C: ConnectionTrait>(
     Ok(())
 }
 
+/// The far end of a relation is a second object of the request: a scoped bot needs `write` in its
+/// project as it does in the project of the object the route names.
+async fn ensure_relation_end(state: &AppState, input: &ExecuteCommandInput, target: Uuid) -> Result<(), ApiError> {
+    ensure_bot_level(
+        &state.db,
+        (principal_kind(input) == "bot").then_some(input.actor_id),
+        Secondary::FlowObject(target),
+        BotLevel::Write,
+    )
+    .await
+}
+
 /// Executes the `link` and `unlink` governance variants.
 pub async fn execute_command(
     state: &AppState,
@@ -335,6 +348,7 @@ async fn execute_link(
         .await?
         .filter(|target_workspace| *target_workspace == workspace_id)
         .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
+    ensure_relation_end(state, input, payload.target_object_id).await?;
     authorize_both(&state.db, input, workspace_id, payload.target_object_id).await?;
 
     let tx = state.db.begin().await?;
@@ -455,6 +469,7 @@ async fn execute_unlink(
         .await?
         .filter(|row| row.workspace_id == workspace_id && row.source_object_id == input.object_id)
         .ok_or_else(|| ApiError::not_found("flow relation not found".to_string()))?;
+    ensure_relation_end(state, input, relation.target_object_id).await?;
     authorize_both(&state.db, input, workspace_id, relation.target_object_id).await?;
 
     let tx = state.db.begin().await?;

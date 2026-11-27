@@ -30,6 +30,12 @@
 //!   workspace-scoped Flow, trust scores, ...): refused, except that a project-scoped bot whose
 //!   default level is at least `read` may make safe requests to them.
 //!
+//! The middleware resolves one target per route. A handler that touches another object, project or
+//! form (a move destination, a copy source, a reference target, a conversion target, the far end of a
+//! relation) calls [`ensure_bot_level`] for it, which holds a scoped bot to its level in that
+//! object's project as well; the test `every_id_of_a_bot_reachable_body_is_accounted_for` fails
+//! until each id of a request body is the resolved target, checked, or exempt with a reason.
+//!
 //! A route that is not in the table is refused, so a new route is closed to a scoped bot until it
 //! is classified on purpose; the test `every_router_route_is_classified` fails until then. All
 //! refusals answer one 403 that does not say which part failed. A bot that is neither a runner bot
@@ -39,7 +45,7 @@ use axum::{
     extract::{FromRequestParts, MatchedPath, RawPathParams},
     http::request::Parts,
 };
-use sea_orm::{DatabaseConnection, DbBackend, FromQueryResult, Statement};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement};
 use uuid::Uuid;
 
 use crate::error::ApiError;
@@ -71,9 +77,12 @@ pub enum Find {
     FlowScope(&'static str),
     /// A row of `table` (key column `id_col`) that names a Flow object in `object_col`.
     FlowVia(&'static str, &'static str, &'static str, &'static str),
-    /// The project is named in the JSON body: `project_id`, else the parent object, the conversion's
-    /// source object or its preview, else the scope.
+    /// The project is named in the JSON body: `project_id`, else the parent object, else the scope.
     Body,
+    /// A Flow conversion: the project of the source object (preview) or of the stored preview's source
+    /// object (commit), and nothing else. A body that names both, or neither, resolves to nothing; a
+    /// `project_id` in the body is not looked at, so it cannot choose the project the bot is judged by.
+    Conversion,
     /// The project is the `project_id` query parameter; a request without it is refused.
     Query(&'static str),
 }
@@ -193,7 +202,7 @@ const fn required_level(safe: bool, entry: &RunnerRoute) -> Level {
 
 /// The bot's level in `project_id`.
 async fn level_in_project(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     access: BotAccess,
     bot_id: Uuid,
     project_id: Uuid,
@@ -247,6 +256,99 @@ pub async fn bot_level_in_project(db: &DatabaseConnection, bot_id: Uuid, project
             level_in_project(db, access, bot_id, project_id).await
         }
         None => Ok(Level::None),
+    }
+}
+
+/// An object, project or form a handler touches beyond the one target the middleware resolved for
+/// the route (a move destination, a copy source, a reference target, a conversion target).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Secondary {
+    Project(Uuid),
+    Form(Uuid),
+    FormRecord(Uuid),
+    FlowObject(Uuid),
+}
+
+/// Refuses the caller unless it holds `needed` in the project that owns `target`.
+///
+/// For every additional object a handler touches beyond the middleware's single resolved target.
+/// `bot_id` is `Some` when the caller is a bot (`None` for a person: no effect). A bot that is
+/// neither a runner bot nor project-scoped is not limited. For any other bot the owning project
+/// must be in the bot's workspace and the bot's level there must reach `needed`; a Flow object
+/// outside any project passes only when it is in the bot's own personal space; a target that does
+/// not exist is refused. The refusal is the same 403 the middleware answers.
+///
+/// # Errors
+/// `Forbidden` with [`REFUSAL`], or a database failure.
+pub async fn ensure_bot_level(
+    db: &impl ConnectionTrait,
+    bot_id: Option<Uuid>,
+    target: Secondary,
+    needed: Level,
+) -> Result<(), ApiError> {
+    #[derive(FromQueryResult)]
+    struct AccessRow {
+        workspace_id: Uuid,
+        runner: bool,
+        project_scope: String,
+        default_project_level: String,
+    }
+    let Some(bot_id) = bot_id else {
+        return Ok(());
+    };
+    let row: Option<AccessRow> = one(
+        db,
+        "SELECT workspace_id, project_scope, default_project_level, \
+                EXISTS (SELECT 1 FROM bot_runners r WHERE r.bot_id = workspace_bots.id) AS runner \
+         FROM workspace_bots WHERE id = $1",
+        vec![bot_id.into()],
+    )
+    .await?;
+    let refuse = || ApiError::Forbidden(REFUSAL.to_string());
+    let Some(row) = row else {
+        return Err(refuse());
+    };
+    let access = BotAccess::from_row(row.runner, &row.project_scope, &row.default_project_level);
+    if access == BotAccess::Workspace {
+        return Ok(());
+    }
+    let resolved = match target {
+        Secondary::Project(id) => project_target(
+            one(
+                db,
+                "SELECT workspace_id, id AS project_id FROM projects WHERE id = $1",
+                vec![id.into()],
+            )
+            .await?,
+        ),
+        Secondary::Form(id) => project_target(
+            one(
+                db,
+                "SELECT workspace_id, project_id FROM project_forms WHERE id = $1",
+                vec![id.into()],
+            )
+            .await?,
+        ),
+        Secondary::FormRecord(id) => project_target(
+            one(
+                db,
+                "SELECT f.workspace_id, f.project_id FROM form_records r JOIN project_forms f ON f.id = r.form_id \
+                 WHERE r.id = $1",
+                vec![id.into()],
+            )
+            .await?,
+        ),
+        Secondary::FlowObject(id) => flow_object(db, &id.to_string(), bot_id).await?,
+    };
+    match resolved {
+        Target::Own => Ok(()),
+        Target::Project {
+            workspace_id,
+            project_id,
+        } if workspace_id == row.workspace_id && level_in_project(db, access, bot_id, project_id).await? >= needed => {
+            Ok(())
+        }
+        _ => Err(refuse()),
     }
 }
 
@@ -389,7 +491,7 @@ fn project_target(row: Option<ProjectRow>) -> Target {
 }
 
 async fn one<T: FromQueryResult>(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     sql: &str,
     values: Vec<sea_orm::Value>,
 ) -> Result<Option<T>, ApiError> {
@@ -399,7 +501,7 @@ async fn one<T: FromQueryResult>(
         .map_err(ApiError::internal_database_failure)
 }
 
-async fn flow_object(db: &DatabaseConnection, object_id: &str, bot_id: Uuid) -> Result<Target, ApiError> {
+async fn flow_object(db: &impl ConnectionTrait, object_id: &str, bot_id: Uuid) -> Result<Target, ApiError> {
     let row: Option<FlowObjectRow> = one(
         db,
         "SELECT o.workspace_id, o.project_id, s.owner_user_id \
@@ -504,7 +606,7 @@ pub async fn resolve(
         | Find::FlowScope(name)
         | Find::FlowVia(_, _, _, name) => param(params, name).map(str::to_owned),
         Find::Query(name) => query_value(query, name),
-        Find::Body => Some(String::new()),
+        Find::Body | Find::Conversion => Some(String::new()),
     }) else {
         return Ok(Target::None);
     };
@@ -637,25 +739,29 @@ pub async fn resolve(
             if let Some(parent) = field("parent_object_id") {
                 return flow_object(db, parent, bot_id).await;
             }
-            if let Some(source) = field("source_object_id") {
-                return flow_object(db, source, bot_id).await;
-            }
-            if let Some(preview) = field("preview_id") {
-                return Box::pin(resolve(
-                    db,
-                    Find::FlowVia("flow_conversion_previews", "id", "source_object_id", "preview_id"),
-                    &[("preview_id".to_string(), preview.to_string())],
-                    None,
-                    None,
-                    bot_id,
-                    workspace_id,
-                ))
-                .await;
-            }
             if let Some(scope) = field("scope_id") {
                 return flow_scope(db, scope, bot_id).await;
             }
             Ok(Target::None)
+        }
+        Find::Conversion => {
+            let field = |name: &str| body.and_then(|body| body.get(name)).and_then(serde_json::Value::as_str);
+            match (field("source_object_id"), field("preview_id")) {
+                (Some(source), None) => flow_object(db, source, bot_id).await,
+                (None, Some(preview)) => {
+                    Box::pin(resolve(
+                        db,
+                        Find::FlowVia("flow_conversion_previews", "id", "source_object_id", "preview_id"),
+                        &[("preview_id".to_string(), preview.to_string())],
+                        None,
+                        None,
+                        bot_id,
+                        workspace_id,
+                    ))
+                    .await
+                }
+                _ => Ok(Target::None),
+            }
         }
     }
 }
@@ -703,7 +809,7 @@ pub async fn authorize(
         }
         Class::Project(find) => find,
     };
-    let (body, json) = if find == Find::Body {
+    let (body, json) = if matches!(find, Find::Body | Find::Conversion) {
         let bytes = axum::body::to_bytes(body, MAX_BODY_FOR_TARGET)
             .await
             .map_err(|_| refuse())?;

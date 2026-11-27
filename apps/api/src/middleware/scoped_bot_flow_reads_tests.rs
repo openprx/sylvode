@@ -53,7 +53,7 @@ struct Seed {
 
 /// One page of `workspace`'s Flow in `project` (or in no project), seeded straight into the tables:
 /// the object, its collaborative document row at `seq`, its projection and its search index row.
-async fn seed_object(
+pub(super) async fn seed_object(
     db: &DatabaseConnection,
     workspace: Uuid,
     project: Option<Uuid>,
