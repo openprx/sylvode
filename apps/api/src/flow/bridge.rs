@@ -2555,6 +2555,7 @@ pub async fn list_scope_references(
         .await?;
     }
     let mut items = Vec::new();
+    let mut reader_contexts: BTreeMap<String, crate::forms::reader_context::ReaderContext> = BTreeMap::new();
     for row in rows {
         #[derive(FromQueryResult)]
         struct Role {
@@ -2584,12 +2585,18 @@ pub async fn list_scope_references(
             continue;
         };
         let (title, summary) = if row.target_type == "form_record" {
-            // The stored title is rendered from every field; a reader with denied fields gets one
-            // rendered from the readable fields only.
-            let form = crate::routes::form::find_form(state, target.form_id).await?;
-            let base = crate::forms::reader_context::ReaderContext::new(&actor.role)
-                .policy(&state.db, (&form).into())
-                .await?;
+            // The stored title and relation snapshots are rendered from every field. The reader's
+            // policy is read on this fenced transaction, cached per role and form for the call; a
+            // form deleted since `target_view` answers like a vanished target.
+            let context = reader_contexts
+                .entry(actor.role.clone())
+                .or_insert_with(|| crate::forms::reader_context::ReaderContext::new(&actor.role));
+            let Some(base) = context.policy_by_id(&tx, target.form_id).await? else {
+                items.push(BridgeReferenceView::Unavailable);
+                continue;
+            };
+            // The bridge keeps its own denied set (BR semantics); relation restriction comes from
+            // the reader context.
             let policy = crate::forms::read_policy::RecordReadPolicy::new(
                 target.title_template.clone(),
                 permission.denied_read_fields.clone(),
