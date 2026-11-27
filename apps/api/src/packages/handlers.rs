@@ -11,7 +11,6 @@ use sea_orm::TransactionTrait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sv_package::{Kind, Limits, Manifest};
-use tokio::task::spawn_blocking;
 use uuid::Uuid;
 
 use super::{
@@ -110,6 +109,7 @@ pub async fn upload_package(
             ));
         }
         store::put_blob(&tx, &package.blob_digest, bytes).await?;
+        let files = verified.files_json();
         let new = NewPackage {
             workspace_id: Some(workspace_id),
             digest: &package.digest,
@@ -119,11 +119,23 @@ pub async fn upload_package(
             kind: kind_name(package.manifest.kind),
             publisher_key_id: verified.key_row,
             manifest: &package.manifest_value,
+            files: &files,
             custom_code: verified.custom_code,
             tier: "private",
             created_by: Some(caller.user_id),
         };
-        match store::insert_package(&tx, &new).await? {
+        let inserted = store::insert_package(&tx, &new).await.map_err(|e| {
+            if e.database_sqlstate().as_deref() == Some("23505") {
+                ApiError::conflict_coded(
+                    "package_version_exists",
+                    "this workspace already has a different package with this id and version",
+                    None,
+                )
+            } else {
+                e
+            }
+        })?;
+        match inserted {
             Some(row) => row,
             None => store::find_owned(&tx, Some(workspace_id), &package.digest)
                 .await?
@@ -214,7 +226,8 @@ fn analysis(manifest: &Manifest) -> Value {
 }
 
 /// `GET /api/v1/workspaces/{w}/packages/{digest}`: the summary, the manifest, the file list and
-/// the analysis. The file list comes from the stored blob, checked against its digest.
+/// the analysis, all from the stored row: a read never opens the blob (the manifest column is
+/// display-only; install re-derives everything from the blob).
 pub async fn get_package(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
@@ -228,30 +241,16 @@ pub async fn get_package(
     let row = store::find_visible(&state.db, workspace_id, &digest)
         .await?
         .ok_or_else(package_not_found)?;
-    let bytes = store::blob_bytes(&state.db, &row.blob_digest)
-        .await?
-        .ok_or_else(ApiError::internal)?;
-    if sv_package::sha256_digest(&bytes) != row.blob_digest {
-        tracing::error!(package_id = %row.id, "stored package blob does not match its digest");
-        return Err(ApiError::internal());
-    }
-    let unpacked = spawn_blocking(move || sv_package::unpack(&bytes, &Limits::default()))
-        .await
-        .map_err(|_| ApiError::internal())?
-        .map_err(|e| {
-            tracing::error!(package_id = %row.id, error = %e, "stored package no longer unpacks");
-            ApiError::internal()
-        })?;
-    let files = unpacked
-        .files
-        .iter()
-        .map(|(path, data)| json!({"path": path, "size": data.len()}))
-        .collect();
+    let manifest: Manifest = serde_json::from_value(row.manifest.clone()).map_err(|_| {
+        tracing::error!(package_id = %row.id, "stored manifest no longer parses");
+        ApiError::internal()
+    })?;
+    let files = row.files.as_array().cloned().unwrap_or_default();
     Ok(ApiResponse::success(PackageDetail {
         summary: PackageSummary::from(&row),
         manifest: row.manifest.clone(),
         files,
-        analysis: analysis(&unpacked.manifest),
+        analysis: analysis(&manifest),
     }))
 }
 

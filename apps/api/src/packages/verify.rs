@@ -1,4 +1,8 @@
 //! Verification of package bytes: structure, signature against the registry, layout content.
+//!
+//! Content validation at upload covers layouts only. The C2 form validation of `create_from`
+//! files and the C1 section 6 checks of components (WIT package, worlds, imports) run at
+//! install time from the stored blob (L2.P2m); nothing installs or runs package content before.
 
 use std::collections::BTreeSet;
 
@@ -61,6 +65,19 @@ impl Refusal {
 
     pub(super) fn too_large() -> Self {
         Self::new("too_large", "the upload is larger than the package limit")
+    }
+}
+
+impl Verified {
+    /// `[{path, size}]` of the content files, stored with the row so reads never open the blob.
+    pub(super) fn files_json(&self) -> Value {
+        Value::Array(
+            self.package
+                .files
+                .iter()
+                .map(|(path, data)| json!({"path": path, "size": data.len()}))
+                .collect(),
+        )
     }
 }
 

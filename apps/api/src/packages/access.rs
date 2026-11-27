@@ -10,11 +10,14 @@ use uuid::Uuid;
 
 use crate::{
     error::ApiError,
-    middleware::bot_auth::{BotAuthContext, require_workspace_access_from_auth},
+    middleware::{
+        bot_auth::{BotAuthContext, require_workspace_access_from_auth},
+        scoped_bot::{ProjectFilter, readable_projects},
+    },
 };
 
-/// The caller of a package route, known to be a member of the path's workspace (a bot of that
-/// workspace for reads). A non-member gets `not_found`.
+/// The caller of a package route, known to be a member of the path's workspace (a bot of the
+/// whole workspace for reads; a project-scoped bot is refused). A non-member gets `not_found`.
 pub(super) struct Caller {
     pub(super) user_id: Uuid,
     role: String,
@@ -31,6 +34,15 @@ impl Caller {
         let bot = bot.map(|Extension(ctx)| ctx);
         let (user_id, role, is_bot) =
             require_workspace_access_from_auth(state, claims, bot.as_ref(), workspace_id).await?;
+        if is_bot {
+            // Packages are workspace-level: a bot limited to projects or to a project connection
+            // is refused, a bot of the whole workspace may read.
+            if !matches!(readable_projects(&state.db, user_id).await?, ProjectFilter::All) {
+                return Err(ApiError::forbidden(
+                    "packages are not available to a project-scoped bot",
+                ));
+            }
+        }
         Ok(Self { user_id, role, is_bot })
     }
 

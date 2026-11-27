@@ -2,8 +2,9 @@
 //!
 //! [`sync_builtin`] makes the set of active `sv` keys equal to the pinned or configured key,
 //! revokes every other `sv` key, then verifies and stores every `*.svpkg` of the configured
-//! directory as tier `builtin` and re-verifies the stored built-in packages from their blobs. Any
-//! failure is returned, and the caller stops the start.
+//! directory as tier `builtin`, then re-verifies every stored built-in package of an active key
+//! from its blob (parse, digest, signature, file digests, layouts). Any failure is returned, and
+//! the caller stops the start.
 
 use std::path::Path;
 
@@ -53,6 +54,33 @@ pub async fn sync_builtin(db: &DatabaseConnection, cfg: &PackagesConfig) -> anyh
     if let Some(dir) = &cfg.builtin_dir {
         store_directory(db, dir).await?;
     }
+    reverify_stored(db).await
+}
+
+/// Re-reads every built-in package of an active key from `package_blobs` and repeats the whole
+/// verification; the digest of the result must equal the row's.
+async fn reverify_stored(db: &DatabaseConnection) -> anyhow::Result<()> {
+    for row in store::list_builtin(db).await.map_err(api_err)? {
+        let bytes = store::blob_bytes(db, &row.blob_digest)
+            .await
+            .map_err(api_err)?
+            .ok_or_else(|| anyhow!("blob of built-in package {} is missing", row.package_key))?;
+        if sv_package::sha256_digest(&bytes) != row.blob_digest {
+            return Err(anyhow!(
+                "blob of built-in package {} does not match its digest",
+                row.package_key
+            ));
+        }
+        let verified = verify_blob(db, bytes, KeyScope::Builtin)
+            .await
+            .map_err(|e| anyhow!("stored built-in package {} no longer verifies: {e:?}", row.package_key))?;
+        if verified.package.digest != row.digest {
+            return Err(anyhow!(
+                "stored built-in package {} has a different digest",
+                row.package_key
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -98,6 +126,7 @@ async fn store_directory(db: &DatabaseConnection, dir: &Path) -> anyhow::Result<
             .await
             .map_err(api_err)?;
         let kind = serde_json::to_value(package.manifest.kind)?;
+        let files = verified.files_json();
         let new = NewPackage {
             workspace_id: None,
             digest: &package.digest,
@@ -107,6 +136,7 @@ async fn store_directory(db: &DatabaseConnection, dir: &Path) -> anyhow::Result<
             kind: kind.as_str().ok_or_else(|| anyhow!("package kind is not a string"))?,
             publisher_key_id: verified.key_row,
             manifest: &package.manifest_value,
+            files: &files,
             custom_code: verified.custom_code,
             tier: "builtin",
             created_by: None,

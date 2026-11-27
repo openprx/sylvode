@@ -12,7 +12,7 @@ use uuid::Uuid;
 use crate::error::ApiError;
 
 const PACKAGE_COLUMNS: &str =
-    "id, digest, blob_digest, package_key, version, kind, manifest, custom_code, tier, created_at";
+    "id, digest, blob_digest, package_key, version, kind, manifest, files, custom_code, tier, created_at";
 
 #[derive(Debug, Clone, FromQueryResult)]
 pub(super) struct PackageRow {
@@ -23,6 +23,7 @@ pub(super) struct PackageRow {
     pub(super) version: String,
     pub(super) kind: String,
     pub(super) manifest: Value,
+    pub(super) files: Value,
     pub(super) custom_code: bool,
     pub(super) tier: String,
     pub(super) created_at: Timestamp,
@@ -70,6 +71,7 @@ pub(super) struct NewPackage<'a> {
     pub(super) kind: &'a str,
     pub(super) publisher_key_id: Uuid,
     pub(super) manifest: &'a Value,
+    pub(super) files: &'a Value,
     pub(super) custom_code: bool,
     pub(super) tier: &'a str,
     pub(super) created_by: Option<Uuid>,
@@ -102,6 +104,20 @@ pub(super) async fn blob_bytes(db: &impl ConnectionTrait, digest: &str) -> Resul
     .one(db)
     .await?
     .map(|b| b.bytes))
+}
+
+/// The built-in package rows signed by an active key, for the boot re-verification (a row of a
+/// revoked key is not installable and is left alone).
+pub(super) async fn list_builtin(db: &impl ConnectionTrait) -> Result<Vec<PackageRow>, ApiError> {
+    Ok(PackageRow::find_by_statement(stmt(
+        &format!(
+            "SELECT {PACKAGE_COLUMNS} FROM packages WHERE tier = 'builtin' AND publisher_key_id IN \
+             (SELECT id FROM publisher_keys WHERE status = 'active') ORDER BY created_at, id"
+        ),
+        vec![],
+    ))
+    .all(db)
+    .await?)
 }
 
 /// A package by digest, visible to `workspace_id`: built-in, or private to that workspace.
@@ -159,8 +175,8 @@ pub(super) async fn insert_package(
     Ok(PackageRow::find_by_statement(stmt(
         &format!(
             "INSERT INTO packages (workspace_id, digest, blob_digest, package_key, version, kind, publisher_key_id, \
-             manifest, custom_code, tier, created_by) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
+             manifest, files, custom_code, tier, created_by) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
              ON CONFLICT (digest, workspace_id) DO NOTHING RETURNING {PACKAGE_COLUMNS}"
         ),
         vec![
@@ -172,6 +188,7 @@ pub(super) async fn insert_package(
             new.kind.into(),
             new.publisher_key_id.into(),
             new.manifest.clone().into(),
+            new.files.clone().into(),
             new.custom_code.into(),
             new.tier.into(),
             new.created_by.into(),

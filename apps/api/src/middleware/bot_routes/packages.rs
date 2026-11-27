@@ -1,8 +1,9 @@
 //! Runner bot route classes of the `packages` router area (`router/packages.rs`).
 //!
-//! Only the two read routes are behind the bot authentication. A project-scoped bot belongs to
-//! projects, not to the workspace-wide package store, so both are `Refused` for it; a bot of the
-//! whole workspace passes and the handler checks its workspace and `read` permission. Upload and
+//! Only the two read routes are behind the bot authentication. The class `Refused` still admits a
+//! project-scoped bot with a default level of `read` or more, so the handlers refuse every bot that
+//! is not a bot of the whole workspace (`packages::access`, packages are workspace-level); a bot of
+//! the whole workspace passes and the handler checks its workspace and `read` permission. Upload and
 //! the publisher-key routes are behind the JWT middleware, which no bot token passes, so they need
 //! no class.
 
