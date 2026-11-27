@@ -139,6 +139,7 @@ async fn form_with_policies(api: &Fixture, policies: &[(&str, Value)]) -> Target
     TargetView {
         form_id: form,
         title: "Bridge form".to_string(),
+        title_template: String::new(),
         status: "active".to_string(),
         summary: json!({}),
         created_by: None,

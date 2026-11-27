@@ -76,6 +76,7 @@ pub fn form_job_requester(input: &Value, created_by: Option<Uuid>) -> Option<Uui
 #[cfg(test)]
 mod tests {
     use super::{add_form_job_worker_context, form_job_requester, form_job_worker_context};
+    use serde_json::json;
     use uuid::Uuid;
 
     #[test]
@@ -90,8 +91,6 @@ mod tests {
         assert_eq!(form_job_requester(&user_input, None), None);
         assert_eq!(form_job_requester(&json!({}), None), None);
     }
-    use serde_json::json;
-    use uuid::Uuid;
 
     #[test]
     fn persists_form_job_worker_context() {
