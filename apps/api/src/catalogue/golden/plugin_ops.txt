@@ -1,0 +1,16 @@
+forms.forms.read
+forms.forms.read/schema_summary
+forms.record_comments.create
+forms.record_comments.read
+forms.records.create
+forms.records.read
+forms.records.read/list
+forms.records.update
+projects.projects.read
+work_items.comments.create
+work_items.comments.read
+work_items.comments.read/list
+work_items.items.create
+work_items.items.read
+work_items.items.read/list
+work_items.items.update

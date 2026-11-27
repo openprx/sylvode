@@ -5,7 +5,7 @@
 //! `routes::flow_surface::seal` and through nothing else.
 
 use api::routes;
-use axum::{Router, extract::DefaultBodyLimit, routing::get};
+use axum::{Router, extract::DefaultBodyLimit, middleware as axum_middleware, routing::get};
 use platform::app::AppState;
 use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
 
@@ -28,9 +28,8 @@ mod uploads;
 
 const MAX_HTTP_REQUEST_BYTES: usize = 200 * 1024 * 1024;
 
-/// The source text of every router file, for the tests that check the route registrations
-/// (authentication layers, Flow boundary, bot route classes) against what the router declares.
-#[cfg(test)]
+/// The source text of every router file: the boot check of the catalogue scans it for the route
+/// registrations, and tests check the Flow boundary against it.
 pub const ROUTER_SOURCES: &[(&str, &str)] = &[
     ("mod.rs", include_str!("mod.rs")),
     ("alerts.rs", include_str!("alerts.rs")),
@@ -84,6 +83,8 @@ pub fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform
         .merge(layouts::routes(&auth_state))
         .merge(packages::routes(&auth_state))
         .merge(site::routes(&auth_state))
+        // Defence in depth for the catalogue: a matched route with no entry is refused.
+        .layer(axum_middleware::from_fn(api::catalogue::guard::guard))
         .layer(DefaultBodyLimit::max(MAX_HTTP_REQUEST_BYTES))
         // The custom span preserves the tower-http fields but records only the URI path. Query
         // strings carry both secrets (collab tickets) and user content (search/filter terms), so

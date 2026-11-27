@@ -5,7 +5,7 @@
 //! may write in the projects where it has an enabled connection and reach nothing else. A
 //! project-scoped bot (`workspace_bots.project_scope = 'projects'`) holds a level per project, from
 //! `bot_project_grants`, and a default level for every other project. Every route is classified in
-//! [`RUNNER_BOT_ROUTES`](super::bot_routes::RUNNER_BOT_ROUTES), and a request is allowed only by its
+//! the catalogue ([`bot_class`](crate::catalogue::bot_class), derived from the entry of the route), and a request is allowed only by its
 //! class and the bot's level in the project it targets.
 //!
 //! * `NoProject`: the route names no project and its handler limits the bot to what it owns (the
@@ -37,7 +37,7 @@
 //! until each id of a request body is the resolved target, checked, or exempt with a reason.
 //!
 //! A route that is not in the table is refused, so a new route is closed to a scoped bot until it
-//! is classified on purpose; the test `every_router_route_is_classified` fails until then. All
+//! is classified on purpose; the boot check of the catalogue refuses to start the API until then. All
 //! refusals answer one 403 that does not say which part failed. A bot that is neither a runner bot
 //! nor project-scoped is not touched.
 use axum::{
@@ -48,44 +48,10 @@ use axum::{
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement};
 use uuid::Uuid;
 
+use crate::catalogue::{Find, bot_class};
 use crate::error::ApiError;
 use crate::oauth::delegated::parse_identifier;
 use crate::services::ai_task_service::runner_bot_block;
-
-pub use super::bot_routes::RUNNER_BOT_ROUTES;
-
-/// How the project of a request's target is found.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Find {
-    /// The path parameter is the project id.
-    Project(&'static str),
-    Issue(&'static str),
-    /// `PREFIX-N` within the bot's workspace.
-    IssueIdentifier(&'static str),
-    Comment(&'static str),
-    /// A table with `id` and `project_id` columns; the path parameter is the row's id.
-    Table(&'static str, &'static str),
-    /// A governance proposal: the one project its linked issues belong to, or, when it is linked to
-    /// none, itself when the bot authored it.
-    Proposal(&'static str),
-    ProposalComment(&'static str),
-    Decision(&'static str),
-    /// A Flow object: its project, or, outside any project, itself when it is in the bot's own
-    /// personal space.
-    FlowObject(&'static str),
-    /// A Flow scope: allowed only when it is the bot's own personal scope.
-    FlowScope(&'static str),
-    /// A row of `table` (key column `id_col`) that names a Flow object in `object_col`.
-    FlowVia(&'static str, &'static str, &'static str, &'static str),
-    /// The project is named in the JSON body: `project_id`, else the parent object, else the scope.
-    Body,
-    /// A Flow conversion: the project of the source object (preview) or of the stored preview's source
-    /// object (commit), and nothing else. A body that names both, or neither, resolves to nothing; a
-    /// `project_id` in the body is not looked at, so it cannot choose the project the bot is judged by.
-    Conversion,
-    /// The project is the `project_id` query parameter; a request without it is refused.
-    Query(&'static str),
-}
 
 /// What a route is to a scoped bot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -114,6 +80,7 @@ impl Class {
     }
 }
 
+/// One route a bot can reach, as the catalogue derives it from the entry (`catalogue::bot_routes`).
 #[derive(Clone, Copy, Debug)]
 pub struct RunnerRoute {
     pub method: &'static str,
@@ -123,17 +90,6 @@ pub struct RunnerRoute {
     /// The route comments (creates, edits, deletes or resolves a comment): a scoped bot needs the
     /// `comment` level in the project instead of `write`. Only meaningful for unsafe methods.
     pub comment: bool,
-}
-
-/// Every classified route of every area.
-pub fn all_routes() -> impl Iterator<Item = &'static RunnerRoute> {
-    RUNNER_BOT_ROUTES.iter().flat_map(|area| area.iter())
-}
-
-/// The entry for a method and the router's matched path pattern.
-#[must_use]
-pub fn lookup(method: &str, pattern: &str) -> Option<&'static RunnerRoute> {
-    all_routes().find(|entry| entry.method == method && entry.pattern == pattern)
 }
 
 /// What every refusal says, whether the route is closed, or the bot's level in the project is too low
@@ -190,10 +146,10 @@ impl BotAccess {
 }
 
 /// The level a request needs: `read` for a safe method, `comment` for a comment route, else `write`.
-const fn required_level(safe: bool, entry: &RunnerRoute) -> Level {
+const fn required_level(safe: bool, comment: bool) -> Level {
     if safe {
         Level::Read
-    } else if entry.comment {
+    } else if comment {
         Level::Comment
     } else {
         Level::Write
@@ -794,10 +750,10 @@ pub async fn authorize(
         .extensions
         .get::<MatchedPath>()
         .map(|path| path.as_str().to_owned());
-    let Some(entry) = matched.as_deref().and_then(|pattern| lookup(method, pattern)) else {
+    let Some((class, comment)) = matched.as_deref().and_then(|pattern| bot_class(method, pattern)) else {
         return Err(refuse());
     };
-    let find = match entry.class {
+    let find = match class {
         Class::NoProject | Class::Own => return Ok(body),
         Class::Admin => return Err(refuse()),
         Class::Filtered => return if safe { Ok(body) } else { Err(refuse()) },
@@ -833,7 +789,7 @@ pub async fn authorize(
             workspace_id: target_workspace,
             project_id,
         } if target_workspace == workspace_id
-            && level_in_project(db, access, bot_id, project_id).await? >= required_level(safe, entry) =>
+            && level_in_project(db, access, bot_id, project_id).await? >= required_level(safe, comment) =>
         {
             Ok(body)
         }
@@ -844,7 +800,8 @@ pub async fn authorize(
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 mod tests {
-    use super::{BotAccess, Class, Find, Level, all_routes, lookup};
+    use super::{BotAccess, Class, Level};
+    use crate::catalogue::{Find, bot_class, bot_routes};
     use std::collections::{BTreeMap, BTreeSet};
 
     /// The stored columns decide the kind of bot; a runner row wins; an unknown level is no access.
@@ -869,7 +826,7 @@ mod tests {
     /// The comment routes are exactly the unsafe routes on a comment resource, and none is a read.
     #[test]
     fn the_comment_routes_are_the_unsafe_comment_routes() {
-        let flagged: BTreeSet<(&str, &str)> = all_routes()
+        let flagged: BTreeSet<(&str, &str)> = bot_routes()
             .filter(|entry| entry.comment)
             .map(|entry| (entry.method, entry.pattern))
             .collect();
@@ -884,7 +841,7 @@ mod tests {
         ] {
             assert!(flagged.contains(&(method, pattern)), "{method} {pattern}");
         }
-        for entry in all_routes() {
+        for entry in bot_routes() {
             let comment_resource = entry.pattern.contains("comments") || entry.pattern.contains("proposal-comments");
             assert_eq!(
                 entry.comment,
@@ -905,90 +862,15 @@ mod tests {
         assert_eq!(flagged.len(), 11);
     }
 
-    /// Every `(method, pattern)` that the router files register behind `bot_or_user_auth_middleware`.
-    fn routes_of_router() -> BTreeSet<(String, String)> {
-        let source = crate::router_source::text();
-        let bytes = source.as_bytes();
-        let mut found = BTreeSet::new();
-        let mut from = 0;
-        while let Some(at) = source[from..].find(".route(") {
-            let open = from + at + ".route(".len();
-            from = open;
-            let rest = source[open..].trim_start();
-            let Some(literal) = rest.strip_prefix('"') else {
-                continue;
-            };
-            let Some(end) = literal.find('"') else {
-                continue;
-            };
-            let pattern = &literal[..end];
-            // The body of this `.route(...)` call: up to its matching parenthesis.
-            let mut depth = 1_i32;
-            let mut index = open;
-            while depth > 0 && index < bytes.len() {
-                match bytes[index] {
-                    b'(' => depth += 1,
-                    b')' => depth -= 1,
-                    _ => {}
-                }
-                index += 1;
-            }
-            let body = &source[open..index];
-            if !body.contains("bot_or_user_auth_middleware") {
-                continue;
-            }
-            for method in ["get", "post", "put", "patch", "delete"] {
-                let needle = format!("{method}(");
-                let mut search = 0;
-                while let Some(position) = body[search..].find(&needle) {
-                    let absolute = search + position;
-                    let before = body[..absolute].chars().next_back();
-                    search = absolute + needle.len();
-                    if before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') {
-                        continue;
-                    }
-                    found.insert((method.to_ascii_uppercase(), pattern.to_string()));
-                }
-            }
-        }
-        found
-    }
-
-    /// A route cannot be added to a router file without being classified here, and nothing in the
-    /// table is a route that no longer exists.
-    #[test]
-    fn every_router_route_is_classified() {
-        let main = routes_of_router();
-        assert!(main.len() > 400, "the route scan found only {} routes", main.len());
-        let table: BTreeSet<(String, String)> = all_routes()
-            .map(|entry| (entry.method.to_string(), entry.pattern.to_string()))
-            .collect();
-        assert_eq!(
-            table.len(),
-            all_routes().count(),
-            "a method and pattern is listed twice"
-        );
-        let unclassified: Vec<_> = main.difference(&table).collect();
-        assert!(
-            unclassified.is_empty(),
-            "routes without a runner bot class: {unclassified:#?}"
-        );
-        let stale: Vec<_> = table.difference(&main).collect();
-        assert!(
-            stale.is_empty(),
-            "classified routes that no router file registers: {stale:#?}"
-        );
-    }
-
     /// The class of the routes that decide the shape of the rule, asserted one by one, and the
     /// count per class (printed with `--nocapture`).
     #[test]
     fn the_classes_of_the_routes_that_matter() {
         use Class::{Admin, Filtered, NoProject, Own, Refused};
         let class = |method: &str, pattern: &str| {
-            lookup(method, pattern)
+            bot_class(method, pattern)
                 .unwrap_or_else(|| panic!("{method} {pattern} is not classified"))
-                .class
+                .0
         };
         let project = |class: Class| matches!(class, Class::Project(_));
         // No project: the task protocol and catalogues.
@@ -1056,7 +938,7 @@ mod tests {
             assert_eq!(class(method, pattern), Filtered, "{method} {pattern}");
         }
         // Filtered routes are reads: a Filtered route with an unsafe method would be refused.
-        for entry in all_routes().filter(|entry| entry.class == Filtered) {
+        for entry in bot_routes().filter(|entry| entry.class == Filtered) {
             assert_eq!(entry.method, "GET", "{} {}", entry.method, entry.pattern);
         }
         // Project-resolved: every route whose target is a project's resource.
@@ -1076,10 +958,10 @@ mod tests {
             assert!(project(class(method, pattern)), "{method} {pattern}");
         }
         let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
-        for entry in all_routes() {
+        for entry in bot_routes() {
             *counts.entry(entry.class.name()).or_default() += 1;
         }
-        // The count per class of each area is asserted next to its table (`bot_routes/<area>.rs`).
+        // The count per class of each area is asserted next to its table (`catalogue/areas/<area>.rs`).
         for name in [
             "no project",
             "project-resolved",
@@ -1104,7 +986,7 @@ mod tests {
         }
         // Every resolver the table uses is exercised by the database test; list them here so a new one
         // is noticed.
-        let finds: BTreeSet<String> = all_routes()
+        let finds: BTreeSet<String> = bot_routes()
             .filter_map(|entry| match entry.class {
                 Class::Project(find) => Some(match find {
                     Find::Table(table, _) => format!("table {table}"),

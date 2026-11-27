@@ -1,6 +1,5 @@
 pub mod admin;
 pub mod bot_auth;
-pub mod bot_routes;
 pub mod scoped_bot;
 #[cfg(test)]
 mod scoped_bot_body_ids_tests;

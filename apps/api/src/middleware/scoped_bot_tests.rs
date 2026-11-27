@@ -28,7 +28,8 @@ use serde_json::Value;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use super::scoped_bot::{Class, REFUSAL, all_routes};
+use super::scoped_bot::{Class, REFUSAL};
+use crate::catalogue::bot_routes;
 use crate::middleware::bot_auth::bot_or_user_auth_middleware;
 use crate::routes::context::tenant_fixture::{exec, seed_bot_user, state_for};
 use crate::scratch_or_skip;
@@ -42,7 +43,7 @@ use crate::services::bots::{self, NewBot};
 pub(super) fn router(db: &DatabaseConnection, extra: &[(&'static str, Method)]) -> Router {
     let state = state_for(db.clone());
     let mut by_pattern: BTreeMap<&'static str, MethodRouter<platform::app::AppState>> = BTreeMap::new();
-    let all = all_routes()
+    let all = bot_routes()
         .map(|entry| {
             (
                 entry.pattern,
@@ -176,7 +177,7 @@ async fn every_route_is_handled_by_its_class() {
     let c = cast(db, "t1").await;
     let app = router(db, &[]);
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
-    for entry in all_routes() {
+    for entry in bot_routes() {
         let what = format!("{} {} ({})", entry.method, entry.pattern, entry.class.name());
         let path = path_of(entry.pattern, &BTreeMap::new());
         let runner = call(
@@ -202,7 +203,7 @@ async fn every_route_is_handled_by_its_class() {
         assert!(allowed(&plain), "{what}: an ordinary bot is unchanged: {plain:?}");
         *counts.entry(entry.class.name()).or_default() += 1;
     }
-    assert_eq!(counts.values().sum::<usize>(), all_routes().count());
+    assert_eq!(counts.values().sum::<usize>(), bot_routes().count());
     scratch.drop_self().await;
 }
 

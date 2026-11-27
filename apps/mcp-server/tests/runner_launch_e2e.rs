@@ -465,14 +465,14 @@ async fn chain(cli: &'static str, extra_config: &str, allow_write: bool, full: b
             assert_eq!(call.surface.as_deref(), Some("mcp_stdio"), "{call:?}");
             // Whatever the server calls must be open to a runner bot: the task routes name no
             // project, and the project's agent policy is resolved to the task's own project.
-            let route = api::middleware::scoped_bot::lookup(&call.method, &call.pattern)
+            let (class, _) = api::catalogue::bot_class(&call.method, &call.pattern)
                 .ok_or_else(|| format!("{} {} is not classified for runner bots", call.method, call.pattern))?;
             let expected = if call.pattern.ends_with("/agent-policy") {
                 "project-resolved"
             } else {
                 "no project"
             };
-            assert_eq!(route.class.name(), expected, "{call:?}");
+            assert_eq!(class.name(), expected, "{call:?}");
         }
         for pattern in ["/api/v1/ai/tasks/{task_id}/ack", "/api/v1/ai/tasks/{task_id}/complete"] {
             assert!(

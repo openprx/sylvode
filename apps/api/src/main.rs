@@ -79,6 +79,18 @@ async fn main() -> anyhow::Result<()> {
     let db = connect_db(&config.database_runtime()?).await?;
     migrate::run_migrations(&db, config.migrations).await?;
     migrate::verify_governance_schema(&db).await?;
+    // Every router route has exactly one catalogue entry, or the API does not start.
+    match api::catalogue::boot::check(router::ROUTER_SOURCES, &db).await {
+        Ok(report) => tracing::info!(
+            entries = report.entries,
+            capabilities = report.capabilities,
+            "operation catalogue checked"
+        ),
+        Err(error) => {
+            tracing::error!(%error, "operation catalogue check failed");
+            return Err(error.into());
+        }
+    }
     api::packages::boot::sync_builtin(&db, &config.packages).await?;
     let state = AppState {
         cfg: cfg.clone(),

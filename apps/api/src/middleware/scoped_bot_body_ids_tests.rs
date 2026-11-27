@@ -16,7 +16,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use super::scoped_bot::{Class, Find, all_routes};
+use super::scoped_bot::Class;
+use crate::catalogue::{Find, bot_routes};
 
 /// How an id field is accounted for.
 enum Account {
@@ -474,7 +475,7 @@ fn every_id_of_a_bot_reachable_body_is_accounted_for() {
     let sources = sources();
     let handlers = handlers();
     let mut unaccounted = BTreeSet::new();
-    for entry in all_routes() {
+    for entry in bot_routes() {
         if matches!(entry.method, "GET" | "DELETE")
             || !matches!(entry.class, Class::Project(_) | Class::Own | Class::NoProject)
         {

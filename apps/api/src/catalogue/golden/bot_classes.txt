@@ -12,8 +12,10 @@ DELETE /api/v1/issues/{id} Project Issue("id") false
 DELETE /api/v1/issues/{issue_id}/labels/{label_id} Project Issue("issue_id") false
 DELETE /api/v1/issues/{issue_id}/pages/{object_id} Project Issue("issue_id") false
 DELETE /api/v1/labels/{id} Admin - false
+DELETE /api/v1/layouts/{id} NoProject - false
 DELETE /api/v1/milestones/{id} Refused - false
 DELETE /api/v1/notifications/{id} Own - false
+DELETE /api/v1/placements/{id} NoProject - false
 DELETE /api/v1/projects/{id} Admin - false
 DELETE /api/v1/projects/{project_id}/bot-connections/{bot_id} Admin - false
 DELETE /api/v1/projects/{project_id}/domains/{id} Project Project("project_id") false
@@ -103,6 +105,9 @@ GET /api/v1/issues/{issue_id}/ai-tasks Project Issue("issue_id") false
 GET /api/v1/issues/{issue_id}/comments Project Issue("issue_id") false
 GET /api/v1/issues/{issue_id}/labels Project Issue("issue_id") false
 GET /api/v1/issues/{issue_id}/pages Project Issue("issue_id") false
+GET /api/v1/layouts Filtered - false
+GET /api/v1/layouts/components NoProject - false
+GET /api/v1/layouts/{id} NoProject - false
 GET /api/v1/milestones/{id} Refused - false
 GET /api/v1/my/activities Filtered - false
 GET /api/v1/my/issues Filtered - false
@@ -154,6 +159,8 @@ GET /api/v1/proposals/{id}/votes Project Proposal("id") false
 GET /api/v1/scenario-templates NoProject - false
 GET /api/v1/scenario-templates/{key} NoProject - false
 GET /api/v1/search Filtered - false
+GET /api/v1/slots NoProject - false
+GET /api/v1/slots/{slot_id}/placements Project Query("project_id") false
 GET /api/v1/sprints/{id} Project Table("sprints","id") false
 GET /api/v1/trust-scores Refused - false
 GET /api/v1/trust-scores/appeals Admin - false
@@ -175,6 +182,8 @@ GET /api/v1/workspaces/{workspace_id}/features/flow Admin - false
 GET /api/v1/workspaces/{workspace_id}/labels Refused - false
 GET /api/v1/workspaces/{workspace_id}/members Admin - false
 GET /api/v1/workspaces/{workspace_id}/milestones Refused - false
+GET /api/v1/workspaces/{workspace_id}/packages Refused - false
+GET /api/v1/workspaces/{workspace_id}/packages/{digest} Refused - false
 GET /api/v1/workspaces/{workspace_id}/project-types Admin - false
 GET /api/v1/workspaces/{workspace_id}/projects Filtered - false
 GET /api/v1/workspaces/{workspace_id}/users Admin - false
@@ -235,6 +244,7 @@ PATCH /api/v1/forms/{form_id} Project Table("project_forms","form_id") false
 PATCH /api/v1/forms/{form_id}/permissions Project Table("project_forms","form_id") false
 PATCH /api/v1/impact-reviews/{id}/participants/{user_id} Project Table("impact_reviews","id") false
 PATCH /api/v1/inbound-sources/{id} Admin - false
+PATCH /api/v1/layouts/{id} NoProject - false
 PATCH /api/v1/notifications/read-all Own - false
 PATCH /api/v1/notifications/{id}/read Own - false
 PATCH /api/v1/plugins/{plugin_id} Project Table("plugins","plugin_id") false
@@ -288,6 +298,9 @@ POST /api/v1/issues/{issue_id}/comments Project Issue("issue_id") true
 POST /api/v1/issues/{issue_id}/labels/batch Project Issue("issue_id") false
 POST /api/v1/issues/{issue_id}/labels/{label_id} Project Issue("issue_id") false
 POST /api/v1/issues/{issue_id}/pages Project Issue("issue_id") false
+POST /api/v1/layouts NoProject - false
+POST /api/v1/layouts/validate NoProject - false
+POST /api/v1/placements NoProject - false
 POST /api/v1/plugins/{plugin_id}/invoke Project Table("plugins","plugin_id") false
 POST /api/v1/projects/{pid}/audit-reports Project Project("pid") false
 POST /api/v1/projects/{project_id}/ai/tasks Project Project("project_id") false
@@ -385,9 +398,11 @@ PUT /api/v1/auth/me/profile Refused - false
 PUT /api/v1/comments/{id} Project Comment("id") true
 PUT /api/v1/issues/{id} Project Issue("id") false
 PUT /api/v1/labels/{id} Admin - false
+PUT /api/v1/me/placements/{id}/prefs Refused - false
 PUT /api/v1/milestones/{id} Refused - false
 PUT /api/v1/notifications/read-all Own - false
 PUT /api/v1/notifications/{id}/read Own - false
+PUT /api/v1/placements/{id} NoProject - false
 PUT /api/v1/projects/{id} Project Project("id") false
 PUT /api/v1/projects/{project_id}/workflow Project Project("project_id") false
 PUT /api/v1/proposal-templates/{id} Project Table("proposal_templates","id") false

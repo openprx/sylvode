@@ -1763,7 +1763,7 @@ mod tests {
     /// The class of the most specific route that a request matches (a literal segment beats a
     /// parameter, and the catch-all comes last), `None` when no route matches.
     fn class_of(method: &str, path: &str) -> Option<api::middleware::scoped_bot::Class> {
-        api::middleware::scoped_bot::all_routes()
+        api::catalogue::bot_routes()
             .filter(|route| route.method == method && pattern_matches(route.pattern, path))
             .max_by_key(|route| {
                 (
@@ -1828,7 +1828,8 @@ mod tests {
     /// and it must carry the very project of the call.
     #[tokio::test]
     async fn the_project_form_of_the_flow_reads_reaches_an_allowed_route() -> Result<(), Box<dyn std::error::Error>> {
-        use api::middleware::scoped_bot::{Class, Find};
+        use api::catalogue::Find;
+        use api::middleware::scoped_bot::Class;
         const PROJECT: &str = "7d1c2f0e-4b6a-4c55-9a3e-0f2d8b1a6c11";
         const WORKSPACE: &str = "3a9f5c42-81de-4e07-b6a1-5c2e90d47f38";
         let api = Api::spawn(Policy::Permissive).await?;
