@@ -16,6 +16,8 @@ use clap::{CommandFactory, Parser};
 use mcp_server::cli::{self, Cli, Commands};
 use mcp_server::client::OpenPrClient;
 use mcp_server::era::{self, Era};
+use mcp_server::http_modern;
+use mcp_server::listen::{ListenConfig, ListenHandle, ListenRegistry, caller_key};
 use mcp_server::oauth::{self, Caller, InboundAuth};
 use mcp_server::protocol::{self, JsonRpcRequest, JsonRpcResponse};
 use mcp_server::server::{McpServer, ToolSurface, requested_tool_mode};
@@ -25,8 +27,42 @@ use serde_json::json;
 use std::{collections::HashMap, convert::Infallible, sync::Arc, time::Duration};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{Mutex, mpsc, watch};
-use tokio_stream::{StreamExt, wrappers::UnboundedReceiverStream};
+use tokio_stream::{
+    StreamExt,
+    wrappers::{ReceiverStream, UnboundedReceiverStream},
+};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+
+/// What the networked transports add to the JSON-RPC endpoint: the `Origin` allow list and the
+/// registry of listen streams.
+#[derive(Clone)]
+struct NetOptions {
+    allowed_origins: Arc<Vec<String>>,
+    listen: ListenRegistry,
+}
+
+impl NetOptions {
+    fn from_runtime(mcp: &McpRuntime) -> Self {
+        Self {
+            allowed_origins: Arc::new(mcp.allowed_origins.clone()),
+            listen: ListenRegistry::new(ListenConfig::new(
+                mcp.listen,
+                usize::try_from(mcp.max_listen_streams).unwrap_or(usize::MAX),
+            )),
+        }
+    }
+}
+
+impl Default for NetOptions {
+    /// No allowed origins, listen on, the default process cap: what Flow-only serves with.
+    fn default() -> Self {
+        Self {
+            allowed_origins: Arc::new(Vec::new()),
+            listen: ListenRegistry::new(ListenConfig::default()),
+        }
+    }
+}
 
 /// Longest time `serve` keeps answering the requests in flight after SIGTERM/SIGINT.
 ///
@@ -107,7 +143,9 @@ async fn run() -> anyhow::Result<()> {
             // Flow-only lists its own definitions; the surface below is never consulted.
             let surface = ToolSurface::new(McpToolMode::default(), true);
             match settings.transport {
-                McpTransport::Stdio => run_stdio(client, surface, shutdown).await,
+                McpTransport::Stdio => {
+                    run_stdio(client, surface, ListenRegistry::new(ListenConfig::default()), shutdown).await
+                }
                 // Flow is not delegated in this release: `sva_` tokens are refused with 401.
                 McpTransport::Http => {
                     run_http(
@@ -115,6 +153,7 @@ async fn run() -> anyhow::Result<()> {
                         client,
                         Arc::new(InboundAuth::legacy_only()),
                         surface,
+                        NetOptions::default(),
                         shutdown,
                     )
                     .await
@@ -125,6 +164,7 @@ async fn run() -> anyhow::Result<()> {
                         client,
                         Arc::new(InboundAuth::legacy_only()),
                         surface,
+                        NetOptions::default(),
                         shutdown,
                     )
                     .await
@@ -176,6 +216,8 @@ async fn serve(mcp: &McpRuntime) -> anyhow::Result<()> {
             run_stdio(
                 cli::build_client(mcp, Some(cli::configured_bot_token(mcp)?))?,
                 surface,
+                // The stdio pipe holds up to one credential's worth of streams.
+                ListenRegistry::new(ListenConfig::new(mcp.listen, ListenConfig::default().per_key_limit)),
                 shutdown,
             )
             .await
@@ -191,6 +233,7 @@ async fn serve(mcp: &McpRuntime) -> anyhow::Result<()> {
                 cli::build_client(mcp, None)?,
                 Arc::new(inbound),
                 surface,
+                NetOptions::from_runtime(mcp),
                 shutdown,
             )
             .await
@@ -207,6 +250,7 @@ async fn serve(mcp: &McpRuntime) -> anyhow::Result<()> {
                 cli::build_client(mcp, None)?,
                 Arc::new(InboundAuth::legacy_only()),
                 surface,
+                NetOptions::from_runtime(mcp),
                 shutdown,
             )
             .await
@@ -288,6 +332,7 @@ async fn serve_until_shutdown(
     listener: tokio::net::TcpListener,
     app: Router,
     sessions: SseSessions,
+    listen: ListenRegistry,
     shutdown: Shutdown,
 ) -> anyhow::Result<()> {
     let drain = {
@@ -299,6 +344,8 @@ async fn serve_until_shutdown(
                 "MCP server draining: accepting no new connections and finishing the requests in flight"
             );
             sessions.lock().await.clear();
+            // Every open listen stream ends with its final result, which lets its response finish.
+            listen.shutdown();
         }
     };
     let server = std::future::IntoFuture::into_future(axum::serve(listener, app).with_graceful_shutdown(drain));
@@ -325,10 +372,18 @@ async fn serve_until_shutdown(
 /// orchestrator probes have no bot account to authenticate as. The protected resource metadata
 /// document is public by definition (RFC 9728): a client reads it before it holds a token.
 fn serve_router(state: SseState, protected: Router<SseState>) -> Router {
-    let mut router = Router::new().merge(protected.route_layer(middleware::from_fn_with_state(
-        Arc::clone(&state.inbound),
-        oauth::inbound_auth,
-    )));
+    // The `Origin` check is the outer layer: it runs before authentication, so a browser page
+    // that is not allowed learns nothing, not even whether its token is valid.
+    let protected = protected
+        .route_layer(middleware::from_fn_with_state(
+            Arc::clone(&state.inbound),
+            oauth::inbound_auth,
+        ))
+        .route_layer(middleware::from_fn_with_state(
+            Arc::clone(&state.net.allowed_origins),
+            http_modern::origin_layer,
+        ));
+    let mut router = Router::new().merge(protected);
     if let Some(settings) = state.inbound.settings() {
         router = router.merge(oauth::well_known_routes(settings));
     }
@@ -340,14 +395,17 @@ async fn run_http(
     client: OpenPrClient,
     inbound: Arc<InboundAuth>,
     surface: ToolSurface,
+    net: NetOptions,
     shutdown: Shutdown,
 ) -> anyhow::Result<()> {
     let sessions: SseSessions = Arc::new(Mutex::new(HashMap::new()));
+    let listen = net.listen.clone();
     let state = SseState {
         client,
         sessions: Arc::clone(&sessions),
         inbound,
         surface,
+        net,
     };
 
     let protected = Router::new()
@@ -362,7 +420,7 @@ async fn run_http(
         inbound_auth = INBOUND_AUTH_DESCRIPTION,
         "MCP HTTP transport started (JSON-RPC + SSE)"
     );
-    serve_until_shutdown(listener, app, sessions, shutdown).await
+    serve_until_shutdown(listener, app, sessions, listen, shutdown).await
 }
 
 /// How the networked transports report their inbound authentication in the startup log.
@@ -388,21 +446,18 @@ async fn handle_jsonrpc(
         Ok(mode) => mode,
         Err(message) => return bad_tool_mode(&message),
     };
+    // Authentication already ran (route layer). Next: the era, then, for the modern era, the
+    // headers, so an unauthenticated caller learns nothing from a header error.
     let era = match era::classify(&req) {
         Ok(era) => era,
-        Err(error) => {
-            return req.id.map_or_else(
-                || (StatusCode::ACCEPTED, Json(json!({"status": "accepted"}))).into_response(),
-                |id| {
-                    (
-                        StatusCode::OK,
-                        Json(json!(JsonRpcResponse::error(Some(id), error.into_rpc_error()))),
-                    )
-                        .into_response()
-                },
-            );
-        }
+        Err(error) => return refusal_response(req.id, error.into_rpc_error()),
     };
+    if let Err(error) = http_modern::validate_headers(&headers, &req, &era) {
+        return refusal_response(req.id, error);
+    }
+    if era.is_modern() && req.method == "subscriptions/listen" && req.id.is_some() {
+        return open_http_listen(&state, &caller, &era, &req);
+    }
     oauth::handle_rpc(
         &state.client,
         &state.inbound,
@@ -412,6 +467,72 @@ async fn handle_jsonrpc(
         req,
     )
     .await
+}
+
+/// A modern request that cannot be served, as the HTTP answer of the era: the error with its
+/// status, or `202` for a notification, which never gets an answer.
+fn refusal_response(id: Option<serde_json::Value>, error: protocol::JsonRpcError) -> Response {
+    id.map_or_else(
+        || (StatusCode::ACCEPTED, Json(json!({"status": "accepted"}))).into_response(),
+        |id| http_modern::error_response(Some(id), error, true),
+    )
+}
+
+/// The key under which a caller's listen streams are counted: a digest of its credential.
+fn credential_key(caller: &Caller) -> mcp_server::listen::CallerKey {
+    match caller {
+        Caller::Legacy(token) => caller_key(token.expose()),
+        Caller::Delegated(delegated) => caller_key(delegated.token.expose()),
+    }
+}
+
+/// Opens a listen stream on the Server-Sent Events response of a modern `subscriptions/listen`.
+fn open_http_listen(state: &SseState, caller: &Caller, era: &Era, req: &JsonRpcRequest) -> Response {
+    let Some(id) = req.id.clone() else {
+        return refusal_response(None, protocol::JsonRpcError::invalid_request("missing id"));
+    };
+    let registry = &state.net.listen;
+    if !registry.enabled() {
+        return refusal_response(
+            Some(id),
+            protocol::JsonRpcError::method_not_found("Unknown method: subscriptions/listen"),
+        );
+    }
+    let handle = match registry.open(credential_key(caller), &id, req.params.as_ref()) {
+        Ok(handle) => handle,
+        Err(error) => {
+            tracing::info!(
+                method = "subscriptions/listen",
+                era = era.label(),
+                "Refused a listen stream: {error:?}"
+            );
+            return refusal_response(Some(id), error.into_rpc_error());
+        }
+    };
+    tracing::info!(
+        method = "subscriptions/listen",
+        era = era.label(),
+        id_kind = mcp_server::server::id_kind(Some(&id)),
+        open_streams = registry.open_streams(),
+        "Opened a listen stream"
+    );
+    let (tx, rx) = mpsc::channel::<String>(64);
+    tokio::spawn(pump_listen(handle, tx));
+    http_modern::listen_sse_response(ReceiverStream::new(rx), registry.keepalive())
+}
+
+/// Moves the messages of a listen stream onto its response until either side ends.
+async fn pump_listen(mut handle: ListenHandle, tx: mpsc::Sender<String>) {
+    loop {
+        let message = tokio::select! {
+            message = handle.next_message() => message,
+            () = tx.closed() => return,
+        };
+        let Some(message) = message else { return };
+        if tx.send(message.to_string()).await.is_err() {
+            return;
+        }
+    }
 }
 
 /// One open SSE stream: the sender that feeds it, and the tool mode its connection asked for.
@@ -430,6 +551,7 @@ struct SseState {
     inbound: Arc<InboundAuth>,
     /// The server's own tool mode and write switch; a connection may choose another mode.
     surface: ToolSurface,
+    net: NetOptions,
 }
 
 #[derive(Debug)]
@@ -463,14 +585,17 @@ async fn run_sse(
     client: OpenPrClient,
     inbound: Arc<InboundAuth>,
     surface: ToolSurface,
+    net: NetOptions,
     shutdown: Shutdown,
 ) -> anyhow::Result<()> {
     let sessions: SseSessions = Arc::new(Mutex::new(HashMap::new()));
+    let listen = net.listen.clone();
     let state = SseState {
         client,
         sessions: Arc::clone(&sessions),
         inbound,
         surface,
+        net,
     };
 
     let protected = Router::new()
@@ -484,7 +609,7 @@ async fn run_sse(
         inbound_auth = INBOUND_AUTH_DESCRIPTION,
         "MCP SSE transport started"
     );
-    serve_until_shutdown(listener, app, sessions, shutdown).await
+    serve_until_shutdown(listener, app, sessions, listen, shutdown).await
 }
 
 async fn handle_sse_connect(State(state): State<SseState>, RawQuery(query): RawQuery, headers: HeaderMap) -> Response {
@@ -667,6 +792,7 @@ mod sse_delivery_tests {
             sessions,
             inbound: Arc::new(InboundAuth::legacy_only()),
             surface,
+            net: super::NetOptions::default(),
         }
     }
 
@@ -902,6 +1028,7 @@ mod sse_delivery_tests {
             sessions: Arc::clone(&sessions),
             inbound: Arc::new(InboundAuth::legacy_only()),
             surface: ToolSurface::new(McpToolMode::Full, true),
+            net: super::NetOptions::default(),
         };
         let refusal = handle_sse_message(
             State(state),
@@ -981,6 +1108,30 @@ async fn write_stdio_response(
     Ok(())
 }
 
+/// The messages stdout is to carry, each in the framing of the request it answers.
+type StdioSender = mpsc::Sender<(String, StdioFrame)>;
+
+/// Open listen streams of a stdio pipe by JSON-RPC id (as JSON text, so `7` and `"7"` differ).
+type OpenListens = Arc<Mutex<HashMap<String, CancellationToken>>>;
+
+/// Capacity of the channel in front of the stdout writer.
+const STDIO_WRITER_CAPACITY: usize = 1_024;
+
+/// The one task that owns stdout. Every message, whichever task produced it, goes through here, so
+/// two messages never interleave on the pipe.
+async fn stdio_writer(mut messages: mpsc::Receiver<(String, StdioFrame)>) {
+    let mut stdout = tokio::io::stdout();
+    while let Some((message, frame)) = messages.recv().await {
+        if let Err(error) = write_stdio_response(&mut stdout, &message, frame).await {
+            tracing::error!(error = %error, "Failed to write to stdout");
+            break;
+        }
+    }
+    if let Err(error) = stdout.flush().await {
+        tracing::error!(error = %error, "Failed to flush stdout");
+    }
+}
+
 /// Read HTTP-style headers until empty line; return the Content-Length value (0 if absent).
 async fn read_headers_get_content_length(reader: &mut BufReader<tokio::io::Stdin>, first_line: &str) -> usize {
     let mut content_length = parse_content_length(first_line);
@@ -1000,18 +1151,31 @@ async fn read_headers_get_content_length(reader: &mut BufReader<tokio::io::Stdin
     content_length.unwrap_or(0)
 }
 
-/// The stdio transport: one JSON-RPC message at a time from stdin, answers on stdout.
+/// The stdio transport.
 ///
-/// On SIGTERM/SIGINT it stops reading. A message already being handled is finished and its
-/// answer written (bounded by [`SHUTDOWN_DRAIN_BOUND`]), stdout is flushed and the transport
-/// returns, so the process exits 0 even though the parent still holds stdin open.
-async fn run_stdio(client: OpenPrClient, surface: ToolSurface, shutdown: Shutdown) -> anyhow::Result<()> {
+/// Ordinary requests are handled one at a time, in order, as before. A modern
+/// `subscriptions/listen` is a long-lived request: it runs as its own task, so the pipe keeps
+/// serving other requests while it is open, and `notifications/cancelled` ends it. One writer task
+/// owns stdout.
+///
+/// On SIGTERM/SIGINT or when stdin closes it stops reading. A message already being handled is
+/// finished (bounded by [`SHUTDOWN_DRAIN_BOUND`]), every open listen stream gets its final result,
+/// stdout is flushed and the transport returns, so the process exits 0 even though the parent
+/// still holds stdin open.
+async fn run_stdio(
+    client: OpenPrClient,
+    surface: ToolSurface,
+    listen: ListenRegistry,
+    shutdown: Shutdown,
+) -> anyhow::Result<()> {
     tracing::info!("MCP stdio transport started");
 
     let server = McpServer::for_surface(client, surface);
     let stdin = tokio::io::stdin();
-    let mut stdout = tokio::io::stdout();
     let mut reader = BufReader::new(stdin);
+    let (out, out_rx) = mpsc::channel::<(String, StdioFrame)>(STDIO_WRITER_CAPACITY);
+    let writer = tokio::spawn(stdio_writer(out_rx));
+    let open: OpenListens = Arc::new(Mutex::new(HashMap::new()));
 
     loop {
         let mut line = String::new();
@@ -1034,7 +1198,7 @@ async fn run_stdio(client: OpenPrClient, surface: ToolSurface, shutdown: Shutdow
                     continue;
                 }
                 tokio::select! {
-                    () = process_stdio_message(&server, &mut reader, &mut stdout, trimmed) => {}
+                    () = process_stdio_message(&server, &listen, &open, &out, &mut reader, trimmed) => {}
                     () = shutdown.drain_deadline() => {
                         tracing::warn!(
                             drain_bound_ms = u64::try_from(SHUTDOWN_DRAIN_BOUND.as_millis()).unwrap_or(u64::MAX),
@@ -1051,16 +1215,42 @@ async fn run_stdio(client: OpenPrClient, surface: ToolSurface, shutdown: Shutdow
         }
     }
 
-    stdout.flush().await?;
+    // Every open listen stream ends with its final result, then the writer drains and flushes.
+    listen.shutdown();
+    if tokio::time::timeout(SHUTDOWN_DRAIN_BOUND, listen.wait_idle())
+        .await
+        .is_err()
+    {
+        tracing::warn!("MCP stdio drain bound elapsed with listen streams still open");
+    }
+    drop(out);
+    if tokio::time::timeout(SHUTDOWN_DRAIN_BOUND, writer).await.is_err() {
+        tracing::warn!("MCP stdio drain bound elapsed with output still pending");
+    }
     Ok(())
 }
 
-/// Reads the rest of one stdio message that starts with `first_line`, handles it and writes the
-/// answer in the framing the message arrived in.
+/// Sends one message to the stdout writer. A closed writer means stdout is gone; the message is
+/// dropped.
+async fn send_stdio(out: &StdioSender, message: &(impl serde::Serialize + Sync), frame: StdioFrame) {
+    match serde_json::to_string(message) {
+        Ok(json) => {
+            if out.send((json, frame)).await.is_err() {
+                tracing::error!("Failed to write response: the stdout writer is gone");
+            }
+        }
+        Err(e) => tracing::error!(error = %e, "Failed to serialize response"),
+    }
+}
+
+/// Reads the rest of one stdio message that starts with `first_line`, handles it and answers in
+/// the framing the message arrived in.
 async fn process_stdio_message(
     server: &McpServer,
+    listen: &ListenRegistry,
+    open: &OpenListens,
+    out: &StdioSender,
     reader: &mut BufReader<tokio::io::Stdin>,
-    stdout: &mut tokio::io::Stdout,
     first_line: &str,
 ) {
     // Detect Content-Length framing (used by Codex, Claude Desktop)
@@ -1086,27 +1276,83 @@ async fn process_stdio_message(
             tracing::error!(error = %e, "Failed to parse request");
             let error_response =
                 JsonRpcResponse::error(None, protocol::JsonRpcError::parse_error(format!("Invalid JSON: {e}")));
-            if let Ok(rj) = serde_json::to_string(&error_response) {
-                let _ = write_stdio_response(stdout, &rj, frame).await;
-            }
+            send_stdio(out, &error_response, frame).await;
             return;
         }
     };
 
     tracing::debug!(method = %request.method, "Received request");
 
-    let Some(response) = server.handle_request(request).await else {
+    if request.method == "notifications/cancelled" && request.id.is_none() {
+        cancel_listen(open, request.params.as_ref()).await;
+        return;
+    }
+    if request.method == "subscriptions/listen"
+        && request.id.is_some()
+        && matches!(era::classify(&request), Ok(Era::Modern { .. }))
+    {
+        open_stdio_listen(listen, open, out, request, frame).await;
+        return;
+    }
+
+    if let Some(response) = server.handle_request(request).await {
+        send_stdio(out, &response, frame).await;
+    }
+}
+
+/// `notifications/cancelled`: ends the listen the `requestId` names, without a final result. Any
+/// other id is ignored.
+async fn cancel_listen(open: &OpenListens, params: Option<&serde_json::Value>) {
+    let Some(request_id) = params.and_then(|params| params.get("requestId")) else {
         return;
     };
-
-    match serde_json::to_string(&response) {
-        Ok(response_json) => {
-            if let Err(e) = write_stdio_response(stdout, &response_json, frame).await {
-                tracing::error!(error = %e, "Failed to write response");
-            }
-        }
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to serialize response");
-        }
+    if let Some(cancel) = open.lock().await.get(&request_id.to_string()) {
+        cancel.cancel();
     }
+}
+
+/// Starts a listen stream as its own task writing through the stdout writer.
+async fn open_stdio_listen(
+    listen: &ListenRegistry,
+    open: &OpenListens,
+    out: &StdioSender,
+    request: JsonRpcRequest,
+    frame: StdioFrame,
+) {
+    let Some(id) = request.id.clone() else { return };
+    let refuse = |error: protocol::JsonRpcError| JsonRpcResponse::error(Some(id.clone()), error);
+    if !listen.enabled() {
+        let error = protocol::JsonRpcError::method_not_found("Unknown method: subscriptions/listen");
+        send_stdio(out, &refuse(error), frame).await;
+        return;
+    }
+    let key = id.to_string();
+    if open.lock().await.contains_key(&key) {
+        let error = protocol::JsonRpcError::invalid_request("duplicate request id");
+        send_stdio(out, &refuse(error), frame).await;
+        return;
+    }
+    // One pipe is one credential: the configured bot.
+    let mut handle = match listen.open(caller_key("stdio"), &id, request.params.as_ref()) {
+        Ok(handle) => handle,
+        Err(error) => {
+            send_stdio(out, &refuse(error.into_rpc_error()), frame).await;
+            return;
+        }
+    };
+    open.lock().await.insert(key.clone(), handle.cancel_token());
+    tracing::info!(
+        method = "subscriptions/listen",
+        era = "modern",
+        id_kind = mcp_server::server::id_kind(Some(&id)),
+        "Opened a listen stream"
+    );
+    let out = out.clone();
+    let open = Arc::clone(open);
+    tokio::spawn(async move {
+        while let Some(message) = handle.next_message().await {
+            send_stdio(&out, &message, frame).await;
+        }
+        open.lock().await.remove(&key);
+    });
 }

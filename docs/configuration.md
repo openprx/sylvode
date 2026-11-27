@@ -165,6 +165,9 @@ command line in [integrations/cli.md](integrations/cli.md).
 | `oauth_forward_secret` | string | none | Credential presented to the API when the server forwards a delegated token; equal to `oauth.internal_forward_secret`. At least 32 bytes. Never logged. |
 | `tool_mode` | string | `search` | `search` or `full`. Which tools the server lists; see the MCP server README. |
 | `allow_write_call` | boolean | `true` | `false` disables every write tool except the task lifecycle tools. Reads are not affected. |
+| `listen` | boolean | `true` | `false` turns push off: the server stops declaring `tools.listChanged` and `resources.subscribe` and answers `subscriptions/listen` with `-32601`. |
+| `allowed_origins` | array of strings | `[]` | `Origin` values the MCP routes accept, exact `scheme://host[:port]`. A request without `Origin` is always served; a request with an unlisted `Origin` gets `403`. |
+| `max_listen_streams` | integer | `10000` | At least 1. Open listen streams the `http` transport accepts in total (one credential may hold 1,000). |
 
 `oauth_issuer`, `oauth_resource` and `oauth_forward_secret` are set together or not at all; a
 partial set stops the server and names the missing keys. Without them the server accepts

@@ -202,6 +202,9 @@ struct RawMcp {
     oauth_forward_secret: Option<String>,
     tool_mode: Option<String>,
     allow_write_call: Option<bool>,
+    listen: Option<bool>,
+    allowed_origins: Option<Vec<String>>,
+    max_listen_streams: Option<u32>,
 }
 
 /// Collects validation problems so the operator sees all of them at once.
@@ -873,6 +876,20 @@ impl RawMcp {
                 )
             },
         );
+        let allowed_origins = self.allowed_origins.map(|origins| {
+            origins
+                .into_iter()
+                .filter_map(|origin| issues.record(validate_origin("mcp.allowed_origins", &origin)))
+                .collect()
+        });
+        let max_listen_streams = self.max_listen_streams.and_then(|limit| {
+            if limit == 0 {
+                issues.push("mcp.max_listen_streams must be at least 1");
+                None
+            } else {
+                Some(limit)
+            }
+        });
         McpConfig {
             api_url,
             bot_token,
@@ -884,7 +901,26 @@ impl RawMcp {
             oauth_forward_secret,
             tool_mode: tool_mode.unwrap_or_default(),
             allow_write_call: self.allow_write_call,
+            listen: self.listen,
+            allowed_origins,
+            max_listen_streams,
         }
+    }
+}
+
+/// One `Origin` an MCP route accepts: `http://` or `https://`, a host and an optional port, no
+/// path, query, fragment or credentials. The comparison at request time is exact.
+fn validate_origin(key: &str, raw: &str) -> Result<String, String> {
+    let value = raw.trim();
+    let authority = value
+        .strip_prefix("https://")
+        .or_else(|| value.strip_prefix("http://"))
+        .ok_or_else(|| format!("{key}: {value} must start with http:// or https://"))?;
+    let valid = !authority.is_empty() && !authority.contains(['/', '?', '#', '@', ' ']) && !authority.starts_with(':');
+    if valid {
+        Ok(value.to_string())
+    } else {
+        Err(format!("{key}: {value} must be scheme://host[:port] with no path"))
     }
 }
 

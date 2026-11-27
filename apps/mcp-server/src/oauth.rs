@@ -28,6 +28,7 @@
 
 use crate::client::OpenPrClient;
 use crate::era::Era;
+use crate::http_modern;
 use crate::oauth_scopes::{self, ToolDecision};
 use crate::protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 use crate::server::{McpServer, ToolSurface};
@@ -814,7 +815,10 @@ pub async fn handle_rpc(
 async fn respond(server: McpServer, era: &Era, request: JsonRpcRequest) -> Response {
     server.handle_request_in(era, request).await.map_or_else(
         || (StatusCode::ACCEPTED, Json(json!({"status": "accepted"}))).into_response(),
-        |response| (StatusCode::OK, Json(json!(response))).into_response(),
+        |response| {
+            let status = http_modern::status_for_response(&response, era.is_modern());
+            (status, Json(json!(response))).into_response()
+        },
     )
 }
 

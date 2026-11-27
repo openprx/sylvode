@@ -34,7 +34,10 @@
       "oauth_resource",
       "oauth_forward_secret",
       "tool_mode",
-      "allow_write_call"
+      "allow_write_call",
+      "listen",
+      "allowed_origins",
+      "max_listen_streams"
     ],
     "flow": ["dispatch_max_attempts", "collab_allowed_origins", "conversion_reap_interval_secs", "body_asset_max_bytes", "incremental_window", "setup_cpu_budget_ms"],
     "oauth": [

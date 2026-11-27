@@ -1489,6 +1489,52 @@ fn the_tool_mode_and_the_write_switch_are_read_from_the_file() {
 }
 
 #[test]
+fn the_listen_switch_origins_and_stream_cap_have_defaults_and_are_read_from_the_file() {
+    let defaults = parse(&mcp_file("")).expect("validates").mcp_runtime().expect("runtime");
+    assert!(defaults.listen);
+    assert!(defaults.allowed_origins.is_empty());
+    assert_eq!(defaults.max_listen_streams, 10_000);
+    let set = parse(&mcp_file(
+        "listen = false\nallowed_origins = [\"https://app.example.com\", \"http://localhost:3000\"]\nmax_listen_streams = 50",
+    ))
+    .expect("validates")
+    .mcp_runtime()
+    .expect("runtime");
+    assert!(!set.listen);
+    assert_eq!(
+        set.allowed_origins,
+        vec![
+            "https://app.example.com".to_string(),
+            "http://localhost:3000".to_string()
+        ]
+    );
+    assert_eq!(set.max_listen_streams, 50);
+}
+
+#[test]
+fn a_malformed_origin_or_a_zero_stream_cap_is_refused() {
+    for origin in [
+        "app.example.com",
+        "https://app.example.com/path",
+        "ftp://x",
+        "https://",
+        "https://u@h",
+    ] {
+        let reported = issues(&mcp_file(&format!("allowed_origins = [\"{origin}\"]")));
+        assert!(
+            reported.iter().any(|issue| issue.contains("mcp.allowed_origins")),
+            "{origin}: {reported:?}"
+        );
+    }
+    let reported = issues(&mcp_file("max_listen_streams = 0"));
+    assert!(
+        reported.iter().any(|issue| issue.contains("mcp.max_listen_streams")),
+        "{reported:?}"
+    );
+    assert!(parse(&mcp_file("listen = \"yes\"")).is_err());
+}
+
+#[test]
 fn an_unknown_tool_mode_or_a_mistyped_switch_is_refused() {
     let reported = issues(&mcp_file("tool_mode = \"everything\""));
     assert!(

@@ -196,7 +196,17 @@ async fn http_serves_both_eras_on_one_endpoint_without_a_session_id() -> TestRes
         let http = http.clone();
         let url = format!("{base}/mcp/rpc");
         async move {
-            let response = http.post(url).bearer_auth(TOKEN).json(&request).send().await?;
+            let mut post = http.post(url).bearer_auth(TOKEN).json(&request);
+            // A modern request carries the `Mcp-*` headers that repeat its body.
+            if request["params"]["_meta"][META] == "2026-07-28" {
+                post = post
+                    .header("MCP-Protocol-Version", "2026-07-28")
+                    .header("Mcp-Method", request["method"].as_str().unwrap_or_default());
+                if request["method"] == "tools/call" {
+                    post = post.header("Mcp-Name", request["params"]["name"].as_str().unwrap_or_default());
+                }
+            }
+            let response = post.send().await?;
             assert!(response.headers().get("mcp-session-id").is_none());
             let status = response.status();
             let body = response.text().await?;

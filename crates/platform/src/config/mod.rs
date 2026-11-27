@@ -694,7 +694,16 @@ pub struct McpConfig {
     pub tool_mode: McpToolMode,
     /// Whether `sylvode_write` may be used at all. `None` means the default, `true`.
     pub allow_write_call: Option<bool>,
+    /// Whether the MCP server offers push (`subscriptions/listen`). `None` means the default, `true`.
+    pub listen: Option<bool>,
+    /// `Origin` values the MCP routes accept, exact `scheme://host[:port]`. `None` means none.
+    pub allowed_origins: Option<Vec<String>>,
+    /// Process wide cap on open listen streams of the HTTP transport. `None` means the default.
+    pub max_listen_streams: Option<u32>,
 }
+
+/// Default of `[mcp] max_listen_streams`.
+pub const DEFAULT_MCP_MAX_LISTEN_STREAMS: u32 = 10_000;
 
 /// What a deployment whose transport has no per-request credential is told.
 ///
@@ -742,6 +751,9 @@ impl McpConfig {
             oauth,
             tool_mode: self.tool_mode,
             allow_write_call: self.allow_write_call.unwrap_or(true),
+            listen: self.listen.unwrap_or(true),
+            allowed_origins: self.allowed_origins.clone().unwrap_or_default(),
+            max_listen_streams: self.max_listen_streams.unwrap_or(DEFAULT_MCP_MAX_LISTEN_STREAMS),
         })
     }
 
@@ -806,6 +818,12 @@ pub struct McpRuntime {
     pub tool_mode: McpToolMode,
     /// `true` unless the file says `false`; the runner writes `false` for its bots.
     pub allow_write_call: bool,
+    /// `true` unless the file says `false`; `false` turns push off (`subscriptions/listen`).
+    pub listen: bool,
+    /// `Origin` values the MCP routes accept; empty by default.
+    pub allowed_origins: Vec<String>,
+    /// Open listen streams the HTTP transport accepts in total.
+    pub max_listen_streams: u32,
 }
 
 /// The subset of the configuration carried in `AppState` and reached from request handlers.

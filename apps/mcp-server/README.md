@@ -169,6 +169,39 @@ The server speaks two protocol eras on the same endpoints (`POST /mcp/rpc` and s
   a JSON object or array. A modern request naming another version is answered with `-32022`
   (`data.supported`, `data.requested`); `ping` and `initialize` do not exist in this era.
 
+#### Modern requests over HTTP
+
+* A modern request carries `MCP-Protocol-Version` (the `_meta` version), `Mcp-Method` (the method)
+  and, for `tools/call`, `resources/read` and `prompts/get`, `Mcp-Name` (the tool name or the
+  URI). A value may be written `=?base64?<standard base64>?=`. A missing or different header is
+  answered `-32020` with `data.header`, status `400`. The headers are checked after
+  authentication; legacy requests are never checked.
+* Statuses of a modern request: `-32020`, `-32022`, `-32700`, `-32600` answer `400`; `-32601`
+  answers `404`; `-32000` (too many listen streams) answers `429` with `Retry-After: 30`;
+  everything else `200`; a notification `202`. Legacy requests keep answering `200`.
+* No response carries `Mcp-Session-Id`; `GET /mcp/rpc` answers `405`.
+* `Origin`: a request without an `Origin` header is served. A request whose `Origin` is present
+  and not listed in `[mcp] allowed_origins` (exact `scheme://host[:port]`, empty by default) is
+  answered `403` on every route except `/health` and the well-known metadata, before
+  authentication.
+
+#### Listen streams
+
+`subscriptions/listen` answers on `POST /mcp/rpc` with `text/event-stream` (`Cache-Control:
+no-cache`, `X-Accel-Buffering: no`): one `data:` event per JSON-RPC message, a comment line every
+15 seconds, and the first message is the acknowledgment
+(`notifications/subscriptions/acknowledged`, whose `_meta` subscription id is the request id).
+This release acknowledges the empty subset and delivers nothing; the server declares no push
+capability yet. On SIGTERM or SIGINT every open stream ends with a final result
+(`resultType: complete`) before the process exits. Limits: 1,000 open streams per credential (the
+key is a digest of the bearer token), `[mcp] max_listen_streams` (default 10,000) per process;
+beyond either the request is answered `429`. `[mcp] listen = false` removes the method
+(`-32601`).
+
+Over stdio a listen request runs next to ordinary requests on the same pipe; a second listen
+with an id that is still open is answered `-32600`, and `notifications/cancelled` with the
+listen's `requestId` ends it without a final result.
+
 ## Authentication
 
 | Door | Who the server acts as |

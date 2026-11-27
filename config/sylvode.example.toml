@@ -321,6 +321,20 @@ transport = "stdio"
 # marks as writing is refused before any request. Reads are not affected.
 # allow_write_call = true
 
+# Whether the MCP server offers push (`subscriptions/listen`). Default: true. false stops the
+# server declaring `tools.listChanged` and `resources.subscribe` and answers `subscriptions/listen`
+# with "method not found"; every read keeps working. The rollback lever for push.
+# listen = true
+
+# `Origin` values the MCP routes accept, exact `scheme://host[:port]`. Default: none. A request
+# without an `Origin` header is always served (agent CLIs and servers send none); a request whose
+# `Origin` is present and not listed is refused with 403 (DNS rebinding defence).
+# allowed_origins = ["https://app.example.com"]
+
+# Open listen streams the http transport accepts in total. Default: 10000. One credential may hold
+# 1000 of them.
+# max_listen_streams = 10000
+
 
 # ---------------------------------------------------------------------------------------------
 # [oauth] — authorization server for the API and the MCP server. Optional; off by default.

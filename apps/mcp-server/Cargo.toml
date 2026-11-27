@@ -30,6 +30,7 @@ api = { path = "../api" }
 axum.workspace = true
 base64 = "0.22"
 clap.workspace = true
+parking_lot = "0.12"
 platform = { path = "../../crates/platform" }
 reqwest.workspace = true
 serde.workspace = true
@@ -47,7 +48,6 @@ collab-core = { path = "../../crates/collab-core" }
 hex = "0.4"
 sea-orm.workspace = true
 serde_jcs.workspace = true
-parking_lot = "0.12"
 tracing-subscriber.workspace = true
 
 # The end-to-end test that starts the shipped server from the files and argument vectors the

@@ -2491,7 +2491,7 @@ impl McpServer {
 }
 
 /// The kind of a JSON-RPC id for the request log; the id itself is never logged.
-const fn id_kind(id: Option<&Value>) -> &'static str {
+pub const fn id_kind(id: Option<&Value>) -> &'static str {
     match id {
         None => "none",
         Some(Value::String(_)) => "string",
