@@ -28,6 +28,8 @@ sv-package = { path = "../../crates/sv-package" }
 sv-rules = { path = "../../crates/sv-rules" }
 rand = "0.8"
 reqwest.workspace = true
+# Anchored, linear-time matching for form field `validation.pattern`; already in the lock file.
+regex-automata = "0.4"
 ring.workspace = true
 rust_decimal.workspace = true
 sea-orm.workspace = true

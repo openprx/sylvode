@@ -149,7 +149,7 @@ pub fn normalize_record_values_report(
     })
 }
 
-fn normalize_field_value(field: &FormField, raw: &Value, existing: Option<&Value>) -> Result<Value, String> {
+pub(crate) fn normalize_field_value(field: &FormField, raw: &Value, existing: Option<&Value>) -> Result<Value, String> {
     match field.field_type.as_str() {
         "text" | "textarea" | "rich_text" | "date" | "datetime" | "ai_summary" | "phone" | "address" | "scan"
         | "signature" | "autonumber" => raw

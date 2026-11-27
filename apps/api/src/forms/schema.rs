@@ -49,6 +49,7 @@ pub fn validate_schema(schema: &Value) -> Result<(), String> {
     }
     let fields = parse_fields(schema)?;
     validate_signature_reason_fields(&fields)?;
+    super::field_rules::validate_schema_field_rules(schema)?;
     let mut seen = std::collections::BTreeSet::new();
     let mut seen_field_ids = std::collections::BTreeSet::new();
     for field in fields {

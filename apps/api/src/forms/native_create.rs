@@ -12,6 +12,7 @@ use uuid::Uuid;
 use crate::{
     error::ApiError,
     forms::{
+        field_rules::{apply_default_values, ensure_read_only_fields_untouched},
         permissions::ensure_field_write_policy_allows,
         projections::refresh_record_projection,
         schema::{ensure_schema_field_ids, normalize_key, validate_schema},
@@ -136,13 +137,15 @@ pub async fn create_record_in_transaction(
     }
 
     ensure_field_write_policy_allows(state, form.id, role, &req.values).await?;
+    ensure_read_only_fields_untouched(&form.schema, &req.values, None)?;
+    let with_defaults = apply_default_values(&form.schema, req.values)?;
     let values_with_formula = run_formula_hooks(
         state,
         form.workspace_id,
         form.project_id,
         form.id,
         &form.key,
-        req.values,
+        with_defaults,
     )
     .await?;
     let record_id = req.record_id.unwrap_or_else(Uuid::new_v4);
@@ -150,7 +153,7 @@ pub async fn create_record_in_transaction(
     let source = ensure_json_object(req.source, "source")?;
     let calculated = calculate_values(state, form, None, values_with_formula).await?;
     let with_autonumber = apply_autonumber_values(tx, form, None, calculated).await?;
-    let normalized = validate_and_normalize_values(&form.schema, with_autonumber).map_err(ApiError::BadRequest)?;
+    let normalized = validate_and_normalize_values(&form.schema, with_autonumber)?;
     let signature_materialization = materialize_signature_values_with_audit(&form.schema, normalized).await?;
     let normalized = signature_materialization.values;
     ensure_record_objects_claimable(state, form.workspace_id, &normalized, None).await?;

@@ -33,6 +33,7 @@ use crate::{
         },
         calculation::{evaluate_calculated_values, merge_values_for_calculation, overlay_calculated_values},
         event_redaction::{redact_event_metadata, redact_event_payload, redact_event_source},
+        field_rules::{apply_default_values, ensure_read_only_fields_untouched},
         job_context::{add_form_job_worker_context, form_job_requester, form_job_worker_context},
         permissions::{
             append_record_scope_sql, denied_read_field_keys, ensure_field_read_policy_allows,
@@ -3434,8 +3435,10 @@ pub async fn preview_form_record_recalculation(
     let form = find_form(&state, form_id).await?;
     let (_, role, _) = require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "record.create").await?;
     ensure_field_write_policy_allows(&state, form.id, &role, &req.values).await?;
-    let calculated = calculate_values(&state, &form, None, req.values).await?;
-    let normalized = validate_and_normalize_values(&form.schema, calculated.clone()).map_err(ApiError::BadRequest)?;
+    ensure_read_only_fields_untouched(&form.schema, &req.values, None)?;
+    let with_defaults = apply_default_values(&form.schema, req.values)?;
+    let calculated = calculate_values(&state, &form, None, with_defaults).await?;
+    let normalized = validate_and_normalize_values(&form.schema, calculated.clone())?;
     let denied_read_fields = denied_read_field_keys(&state, form.id, &role).await?;
     Ok(ApiResponse::success(RecalculatePreviewResponse {
         form_id,
@@ -3518,8 +3521,7 @@ pub async fn recalculate_form_record(
     let tx = state.db.begin().await?;
     let calculated = calculate_values(&state, &form, Some(record_id), record.values.clone()).await?;
     let with_autonumber = apply_autonumber_values(&tx, &form, Some(&record.values), calculated).await?;
-    let values = validate_and_normalize_values_with_existing(&form.schema, with_autonumber, &record.values)
-        .map_err(ApiError::BadRequest)?;
+    let values = validate_and_normalize_values_with_existing(&form.schema, with_autonumber, &record.values)?;
     let title = render_title(&form.title_template, record_id, &values);
 
     tx.execute(Statement::from_sql_and_values(
@@ -3808,6 +3810,7 @@ async fn update_record_for_form_internal(
     let values = match req.values {
         Some(values) => {
             ensure_field_write_policy_allows(state, form.id, role, &values).await?;
+            ensure_read_only_fields_untouched(&form.schema, &values, Some(&record.values))?;
             let values_with_formula =
                 run_formula_hooks(state, form.workspace_id, form.project_id, form.id, &form.key, values).await?;
             let calculated =
@@ -3815,8 +3818,7 @@ async fn update_record_for_form_internal(
                     .await?;
             let with_autonumber = apply_autonumber_values(&tx, form, Some(&record.values), calculated).await?;
             let normalized =
-                validate_and_normalize_values_with_existing_report(&form.schema, with_autonumber, &record.values)
-                    .map_err(ApiError::BadRequest)?;
+                validate_and_normalize_values_with_existing_report(&form.schema, with_autonumber, &record.values)?;
             if !normalized.unmet_required_fields.is_empty() {
                 // Required fields that were already empty before this write. The update is allowed
                 // through so the record stays repairable, but the gap is recorded rather than
@@ -4754,7 +4756,7 @@ async fn calculate_and_normalize_values(
     values: Value,
 ) -> Result<Value, ApiError> {
     let calculated = calculate_values(state, form, record_id, values).await?;
-    validate_and_normalize_values(&form.schema, calculated).map_err(ApiError::BadRequest)
+    validate_and_normalize_values(&form.schema, calculated)
 }
 
 pub(crate) async fn calculate_values(
@@ -5196,8 +5198,7 @@ async fn recalculate_record_values(
     let tx = state.db.begin().await?;
     let calculated = calculate_values(state, &form, Some(record_id), record.values.clone()).await?;
     let with_autonumber = apply_autonumber_values(&tx, &form, Some(&record.values), calculated).await?;
-    let values = validate_and_normalize_values_with_existing(&form.schema, with_autonumber, &record.values)
-        .map_err(ApiError::BadRequest)?;
+    let values = validate_and_normalize_values_with_existing(&form.schema, with_autonumber, &record.values)?;
     let title = render_title(&form.title_template, record_id, &values);
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -6131,6 +6132,8 @@ async fn preview_import_row(
     ensure_field_write_policy_allows(state, form.id, role, &row.values)
         .await
         .map_err(|error| error.to_string())?;
+    ensure_read_only_fields_untouched(&form.schema, &row.values, None).map_err(|error| error.to_string())?;
+    let row_values = apply_default_values(&form.schema, row.values.clone()).map_err(|error| error.to_string())?;
     let source = ensure_json_object(
         row.source.clone().unwrap_or_else(
             || json!({ "type": if is_bot { "bot" } else { "user" }, "actor_id": actor_id, "origin": "import_preview" }),
@@ -6144,7 +6147,7 @@ async fn preview_import_row(
         form.project_id,
         form.id,
         &form.key,
-        row.values.clone(),
+        row_values,
     )
     .await
     .map_err(|error| error.to_string())?;

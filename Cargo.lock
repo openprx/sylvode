@@ -156,6 +156,7 @@ dependencies = [
  "parking_lot",
  "platform",
  "rand 0.8.6",
+ "regex-automata",
  "reqwest",
  "ring",
  "rust_decimal",

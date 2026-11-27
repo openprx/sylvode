@@ -3,6 +3,7 @@ pub mod attachment_package;
 pub mod calculation;
 pub mod decimal;
 pub mod event_redaction;
+pub mod field_rules;
 pub mod job_context;
 pub mod native_create;
 pub mod permissions;
