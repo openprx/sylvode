@@ -23,6 +23,7 @@ image.workspace = true
 jsonwebtoken.workspace = true
 parking_lot = "0.12"
 platform = { path = "../../crates/platform" }
+sv-layout = { path = "../../crates/sv-layout" }
 rand = "0.8"
 reqwest.workspace = true
 ring.workspace = true
