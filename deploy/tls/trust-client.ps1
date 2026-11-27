@@ -133,37 +133,133 @@ try {
 
     # --- SD-17 checks and display -----------------------------------------------------------------
 
-    function Show-Certificate {
+    # The extensions are read from their DER bytes, never from formatted text: the subject and the
+    # names can hold any characters.
+    function Read-Tlv([byte[]]$Data, [int]$Pos, [int]$End) {
+        if ($Pos + 2 -gt $End) { return $null }
+        $tag = [int]$Data[$Pos]
+        $len = [int]$Data[$Pos + 1]
+        $hl = 2
+        if ($len -ge 128) {
+            $k = $len - 128
+            if ($k -lt 1 -or $k -gt 3 -or ($Pos + 2 + $k) -gt $End) { return $null }
+            $len = 0
+            for ($i = 0; $i -lt $k; $i++) { $len = ($len * 256) + [int]$Data[$Pos + 2 + $i] }
+            $hl = 2 + $k
+        }
+        if (($Pos + $hl + $len) -gt $End) { return $null }
+        return [pscustomobject]@{ Tag = $tag; Start = ($Pos + $hl); Length = $len; Next = ($Pos + $hl + $len) }
+    }
+
+    function Read-Children([byte[]]$Data, [int]$Start, [int]$End) {
+        $items = New-Object System.Collections.ArrayList
+        $pos = $Start
+        while ($pos -lt $End) {
+            $tlv = Read-Tlv $Data $pos $End
+            if ($null -eq $tlv) { Stop-Script 3 'Cannot parse the structure of the certificate; refusing it.' }
+            [void]$items.Add($tlv)
+            $pos = $tlv.Next
+        }
+        return $items.ToArray()
+    }
+
+    function Format-SafeText([byte[]]$Data, [int]$Start, [int]$Length) {
+        $sb = New-Object System.Text.StringBuilder
+        for ($i = 0; $i -lt $Length; $i++) {
+            $b = [int]$Data[$Start + $i]
+            if ($b -ge 33 -and $b -le 126) { [void]$sb.Append([char]$b) } else { [void]$sb.Append('?') }
+        }
+        return $sb.ToString()
+    }
+
+    function Format-GeneralName([byte[]]$Data, $Tlv) {
+        if ($Tlv.Tag -eq 0x82) {
+            return @{ Kind = 'dns'; Text = ('DNS:' + (Format-SafeText $Data $Tlv.Start $Tlv.Length)) }
+        }
+        if ($Tlv.Tag -eq 0x87) {
+            if ($Tlv.Length -eq 8) {
+                $a = (0..3 | ForEach-Object { [string][int]$Data[$Tlv.Start + $_] }) -join '.'
+                $m = (4..7 | ForEach-Object { [string][int]$Data[$Tlv.Start + $_] }) -join '.'
+                return @{ Kind = 'ip'; Text = "IP:$a/$m" }
+            }
+            if ($Tlv.Length -eq 32) {
+                $a = (0..7 | ForEach-Object { '{0:x}' -f (([int]$Data[$Tlv.Start + 2 * $_] * 256) + [int]$Data[$Tlv.Start + 2 * $_ + 1]) }) -join ':'
+                $m = (8..15 | ForEach-Object { '{0:x}' -f (([int]$Data[$Tlv.Start + 2 * $_] * 256) + [int]$Data[$Tlv.Start + 2 * $_ + 1]) }) -join ':'
+                return @{ Kind = 'ip'; Text = "IP:$a/$m" }
+            }
+            return @{ Kind = 'other'; Text = 'IP:(invalid length)' }
+        }
+        return @{ Kind = 'other'; Text = ('(other name type, tag 0x{0:x2})' -f $Tlv.Tag) }
+    }
+
+    function Get-CaInfo {
+        $info = @{ IsCa = $false; NcCount = 0; NcCritical = $false; PermIp = 0; PermDns = 0; Perm = @(); Excl = @() }
+        foreach ($ext in $cert.Extensions) {
+            $raw = [byte[]]$ext.RawData
+            if ($ext.Oid.Value -eq '2.5.29.19') {
+                $seq = Read-Tlv $raw 0 $raw.Length
+                if ($null -eq $seq -or $seq.Tag -ne 0x30) { Stop-Script 3 'Cannot parse the structure of the certificate; refusing it.' }
+                $kids = @(Read-Children $raw $seq.Start $seq.Next)
+                if ($kids.Count -ge 1 -and $kids[0].Tag -eq 1 -and $kids[0].Length -eq 1 -and $raw[$kids[0].Start] -eq 0xFF) {
+                    $info.IsCa = $true
+                }
+            }
+            if ($ext.Oid.Value -eq '2.5.29.30') {
+                $info.NcCount++
+                $info.NcCritical = [bool]$ext.Critical
+                $seq = Read-Tlv $raw 0 $raw.Length
+                if ($null -eq $seq -or $seq.Tag -ne 0x30) { Stop-Script 3 'Cannot parse the structure of the certificate; refusing it.' }
+                foreach ($group in @(Read-Children $raw $seq.Start $seq.Next)) {
+                    if ($group.Tag -ne 0xA0 -and $group.Tag -ne 0xA1) { Stop-Script 3 'Cannot parse the structure of the certificate; refusing it.' }
+                    foreach ($subtree in @(Read-Children $raw $group.Start $group.Next)) {
+                        if ($subtree.Tag -ne 0x30) { Stop-Script 3 'Cannot parse the structure of the certificate; refusing it.' }
+                        $base = @(Read-Children $raw $subtree.Start $subtree.Next)
+                        if ($base.Count -lt 1) { Stop-Script 3 'Cannot parse the structure of the certificate; refusing it.' }
+                        $name = Format-GeneralName $raw $base[0]
+                        if ($group.Tag -eq 0xA0) {
+                            $info.Perm += $name.Text
+                            if ($name.Kind -eq 'ip') { $info.PermIp++ }
+                            if ($name.Kind -eq 'dns') { $info.PermDns++ }
+                        }
+                        else {
+                            $info.Excl += $name.Text
+                        }
+                    }
+                }
+            }
+        }
+        return $info
+    }
+
+    function Show-Certificate($info) {
         Write-Output "Certificate: $CertPath"
         Write-Output "Subject:     $($cert.Subject)"
         Write-Output "Valid from:  $($cert.NotBefore.ToUniversalTime().ToString('u'))"
         Write-Output "Valid until: $($cert.NotAfter.ToUniversalTime().ToString('u'))"
         Write-Output "SHA-256:     $fp"
         Write-Output 'This CA may vouch for these names only:'
-        foreach ($ext in $cert.Extensions) {
-            if ($ext.Oid.Value -eq '2.5.29.30') {
-                Write-Output ($ext.Format($true))
-            }
+        Write-Output '  Permitted:'
+        foreach ($line in $info.Perm) { Write-Output "    $line" }
+        if (@($info.Excl).Count -gt 0) {
+            Write-Output '  Excluded:'
+            foreach ($line in $info.Excl) { Write-Output "    $line" }
         }
     }
 
-    function Assert-ConstrainedCa {
-        $isCa = $false
-        $constrained = $false
-        foreach ($ext in $cert.Extensions) {
-            if ($ext.Oid.Value -eq '2.5.29.19') {
-                $bc = New-Object System.Security.Cryptography.X509Certificates.X509BasicConstraintsExtension -ArgumentList $ext, $ext.Critical
-                if ($bc.CertificateAuthority) { $isCa = $true }
-            }
-            if ($ext.Oid.Value -eq '2.5.29.30' -and $ext.Critical) {
-                $constrained = $true
-            }
+    # SD-17 (tightened 2026-11-27): a CA with a critical name constraint that permits at least
+    # one IP subtree and one DNS subtree.
+    function Assert-ConstrainedCa($info) {
+        if (-not $info.IsCa) {
+            Stop-Script 3 'Refusing the certificate: it is not a CA certificate (basicConstraints CA:TRUE is missing).'
         }
-        if (-not $isCa) {
-            Stop-Script 3 'Refusing the certificate: it is not a CA certificate.'
+        if ($info.NcCount -ne 1) {
+            Stop-Script 3 'Refusing the certificate: it has no single name constraint, so it could vouch for any site.'
         }
-        if (-not $constrained) {
-            Stop-Script 3 'Refusing the certificate: it has no critical name constraint, so it could vouch for any site.'
+        if (-not $info.NcCritical) {
+            Stop-Script 3 'Refusing the certificate: its name constraint is not critical.'
+        }
+        if ($info.PermIp -lt 1 -or $info.PermDns -lt 1) {
+            Stop-Script 3 'Refusing the certificate: its name constraint must permit at least one IP address and one DNS name; a missing type leaves that kind of name open.'
         }
     }
 
@@ -209,8 +305,9 @@ try {
     # --- actions ------------------------------------------------------------------------------------
 
     if ($actionName -eq 'Install') {
-        Assert-ConstrainedCa
-        Show-Certificate
+        $caInfo = Get-CaInfo
+        Assert-ConstrainedCa $caInfo
+        Show-Certificate $caInfo
         Confirm-Trust
         Assert-Elevated
         if ($DryRun) {
@@ -235,7 +332,7 @@ try {
         }
         $store = Open-RootStore ([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
         try {
-            $found = Find-InStore $store
+            $found = @(Find-InStore $store)
             foreach ($c in $found) { $store.Remove($c) }
         }
         finally { $store.Close() }
@@ -251,7 +348,7 @@ try {
     # Check
     $rc = 0
     $store = Open-RootStore ([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
-    try { $present = (Find-InStore $store).Count -gt 0 } finally { $store.Close() }
+    try { $present = @(Find-InStore $store).Count -gt 0 } finally { $store.Close() }
     if ($present) {
         Write-Output "present: $fp in the Root store ($scopeName)"
     }

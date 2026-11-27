@@ -188,10 +188,74 @@ if ! { apt-get update -qq && apt-get install -y -qq --no-install-recommends open
   tail -n 20 "$LOGDIR/apt.log" >&2
   exit 1
 fi
-cp "$SRC/sylvode-tls.sh" "$SRC/trust-client.sh" /opt/tls/
+cp "$SRC/sylvode-tls.sh" "$SRC/trust-client.sh" "$SRC/trust-client.ps1" /opt/tls/
 chmod 0755 /opt/tls/sylvode-tls.sh /opt/tls/trust-client.sh
 openssl version
+
+# PowerShell 7 (pinned release and checksum) to run trust-client.ps1 on Linux .NET.
+PWSH_OK=0
+case $(uname -m) in
+  aarch64 | arm64)
+    PWSH_ARCH=arm64
+    PWSH_SHA=c0159b03e85f44ae1e7697818a011558da6c813d0aae848bf5ac13bf435d8624
+    ;;
+  x86_64)
+    PWSH_ARCH=x64
+    PWSH_SHA=6f6015203c47806c5cc444c19d8ed019695e610fbd948154264bf9ca8e157561
+    ;;
+  *) PWSH_ARCH= ;;
+esac
+if [ -n "$PWSH_ARCH" ]; then
+  if curl -fsSL -o "$LOGDIR/pwsh.tgz" "https://github.com/PowerShell/PowerShell/releases/download/v7.4.6/powershell-7.4.6-linux-$PWSH_ARCH.tar.gz" &&
+    [ "$(sha256sum "$LOGDIR/pwsh.tgz" | cut -d' ' -f1)" = "$PWSH_SHA" ] &&
+    mkdir -p /opt/pwsh && tar -xzf "$LOGDIR/pwsh.tgz" -C /opt/pwsh && chmod 0755 /opt/pwsh/pwsh; then
+    PWSH_VER=$(DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 /opt/pwsh/pwsh -NoProfile -Command "\$PSVersionTable.PSVersion.ToString()" 2>/dev/null)
+    if [ -n "$PWSH_VER" ]; then
+      PWSH_OK=1
+      echo "PowerShell $PWSH_VER"
+    fi
+  fi
+fi
 echo "== running"
+
+# hostile NAME BASICCONSTRAINTS EXTENSION-LINE: a self-signed CA whose subject imitates the text
+# a naive parser looks for.
+hostile() {
+  printf '[req]\ndistinguished_name = dn\nprompt = no\nx509_extensions = x\n[dn]\nO = X509v3 Name Constraints: critical\nCN = CA:TRUE\n[x]\nbasicConstraints = %s\n%s\n' "$2" "$3" >"$W/h-$1.cnf"
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -keyout "$W/h-$1.key" -out "$W/h-$1.crt" -days 5 -config "$W/h-$1.cnf" 2>/dev/null
+}
+
+# hostile_inject: DNS-only constraint whose DNS name carries a newline and a fake IP line.
+hostile_inject() {
+  _s=$(printf 'a\n      IP:10.0.0.1/255.255.255.255' | od -An -v -tx1 | tr -d ' \n')
+  _sl=$(printf '%02x' $(( ${#_s} / 2 )))
+  _e=82$_sl$_s
+  _el=$(printf '%02x' $(( ${#_e} / 2 )))
+  _t=30$_el$_e
+  _tl=$(printf '%02x' $(( ${#_t} / 2 )))
+  _g=a0$_tl$_t
+  _gl=$(printf '%02x' $(( ${#_g} / 2 )))
+  hostile inject "critical,CA:TRUE" "nameConstraints = critical,DER:30$_gl$_g"
+}
+
+# trust_refused NAME: trust-client.sh must refuse the hostile CA with exit 3 and install nothing.
+trust_refused() {
+  _fp=$(fp_of "$W/h-$1.crt")
+  _f16=$(printf '%s' "$_fp" | tr -d ':' | tr 'A-F' 'a-f' | cut -c1-16)
+  trust install "$W/h-$1.crt" --fingerprint "$_fp" --yes
+  ck "$1: exit 3 (got $RC)" [ "$RC" = 3 ]
+  ck "$1: nothing installed" [ ! -e "/usr/local/share/ca-certificates/sylvode-ca-$_f16.crt" ]
+}
+
+ps() {
+  runlog env HOME=/root DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 /opt/pwsh/pwsh -NoProfile -File /opt/tls/trust-client.ps1 "$@"
+}
+
+# ps_refused NAME: trust-client.ps1 must refuse the hostile CA with exit 3.
+ps_refused() {
+  ps -Action Install -CertPath "$W/h-$1.crt" -Fingerprint "$(fp_of "$W/h-$1.crt")" -Yes -Scope CurrentUser
+  ck "$1: exit 3 (got $RC)" [ "$RC" = 3 ]
+}
 
 # ---------------------------------------------------------------------------------------------
 # Tests
@@ -540,6 +604,149 @@ t_30() {
   ck "hand-minted DNS leaf fails verification" [ "$RC" != 0 ]
 }
 
+
+t_26b() {
+  # M1: subject text that imitates the extension names; no real name constraint.
+  hostile spoof "critical,CA:TRUE" ""
+  trust_refused spoof
+  # M1: a CA:FALSE certificate with a good constraint and a spoofed subject.
+  hostile cafalse "critical,CA:FALSE" "nameConstraints = critical,permitted;DNS:a.test,permitted;IP:10.0.0.1/255.255.255.255"
+  trust_refused cafalse
+}
+
+t_26c() {
+  # M2: constraints that leave a name type open.
+  hostile dnsonly "critical,CA:TRUE" "nameConstraints = critical,permitted;DNS:sylvode.lan"
+  trust_refused dnsonly
+  hostile iponly "critical,CA:TRUE" "nameConstraints = critical,permitted;IP:10.0.0.1/255.255.255.255"
+  trust_refused iponly
+  hostile excl "critical,CA:TRUE" "nameConstraints = critical,excluded;DNS:nothing.test"
+  trust_refused excl
+  hostile noncrit "critical,CA:TRUE" "nameConstraints = permitted;DNS:a.test,permitted;IP:10.0.0.1/255.255.255.255"
+  trust_refused noncrit
+}
+
+t_26d() {
+  # M1/M2: a DNS-only constraint whose name carries a newline and a fake IP line.
+  hostile_inject
+  ck "the injected certificate was created" [ -f "$W/h-inject.crt" ]
+  trust_refused inject
+  # control: a well-formed hand-made CA with both subtrees is accepted (dry run)
+  hostile good "critical,CA:TRUE" "nameConstraints = critical,permitted;DNS:a.test,permitted;IP:10.0.0.1/255.255.255.255"
+  trust install "$W/h-good.crt" --fingerprint "$(fp_of "$W/h-good.crt")" --yes --dry-run
+  ck "control: both subtrees accepted (got $RC)" [ "$RC" = 0 ]
+}
+
+t_31() {
+  # M4: the cron and systemd command lines of docs/install.md, verbatim.
+  cron=$(grep -E '^17 3 \* \* \* root ' /src/docs/install.md | head -n 1)
+  unit=$(grep -E '^ExecStart=/usr/local/sbin/sylvode-tls.sh' /src/docs/install.md | head -n 1)
+  ck "cron line found in the docs" [ -n "$cron" ]
+  ck "ExecStart line found in the docs" [ -n "$unit" ]
+  cmd=${cron#"17 3 * * * root "}
+  execline=${unit#ExecStart=}
+  install -m 0755 /opt/tls/sylvode-tls.sh /usr/local/sbin/sylvode-tls.sh
+  # A stand-in for systemctl: the container has no systemd. It accepts only "reload nginx".
+  printf '%s\n' '#!/bin/sh' "[ \"\$1 \$2\" = \"reload nginx\" ] || exit 1" 'touch /tmp/systemctl-reload' >/usr/local/bin/systemctl
+  chmod 0755 /usr/local/bin/systemctl
+  runlog /usr/local/sbin/sylvode-tls.sh init-ca --ip 127.0.0.1
+  ck "init-ca in the default directory (got $RC)" [ "$RC" = 0 ]
+  runlog /usr/local/sbin/sylvode-tls.sh issue --days 30
+  ck "issue in the default directory (got $RC)" [ "$RC" = 0 ]
+  s0=$(serial_of /var/lib/sylvode-tls/server/server.crt)
+  rm -f /tmp/systemctl-reload /var/log/sylvode-tls.log
+  runlog sh -c "$cmd"
+  ck "cron line exits 0 (got $RC)" [ "$RC" = 0 ]
+  ck "cron line renewed the certificate" [ "$(serial_of /var/lib/sylvode-tls/server/server.crt)" != "$s0" ]
+  ck "cron line ran the reload hook" [ -e /tmp/systemctl-reload ]
+  ck "cron log holds no usage or error text" sh -c "! grep -qiE 'usage|error|unknown' /var/log/sylvode-tls.log"
+  s1=$(serial_of /var/lib/sylvode-tls/server/server.crt)
+  rm -f /tmp/systemctl-reload
+  runlog sh -c "$execline"
+  ck "ExecStart line exits 0 (got $RC)" [ "$RC" = 0 ]
+  ck "ExecStart line renewed the certificate" [ "$(serial_of /var/lib/sylvode-tls/server/server.crt)" != "$s1" ]
+  ck "ExecStart line ran the reload hook" [ -e /tmp/systemctl-reload ]
+}
+
+t_32() {
+  # F1: a symlink planted as .reload-pending is refused, its target is not truncated.
+  tls init-ca --dir "$W/f1" --ip 127.0.0.1
+  tls issue --dir "$W/f1"
+  echo precious >"$W/victim"
+  ln -s "$W/victim" "$W/f1/server/.reload-pending"
+  tls renew --dir "$W/f1" --force --exec true
+  ck "exit 3 (got $RC)" [ "$RC" = 3 ]
+  ck "the symlink target is intact" [ "$(cat "$W/victim")" = precious ]
+}
+
+t_33() {
+  # F2: an interrupted promote (new key already installed) is not destroyed by --abort.
+  tls init-ca --dir "$W/f2" --ip 127.0.0.1
+  tls issue --dir "$W/f2"
+  tls rotate-ca --dir "$W/f2"
+  ck "rotate-ca exits 0 (got $RC)" [ "$RC" = 0 ]
+  nh=$(h "$W/f2/next.crt")
+  mv -f "$W/f2/next/ca.key" "$W/f2/ca/ca.key"
+  tls rotate-ca --dir "$W/f2" --abort
+  ck "--abort exits 3 (got $RC)" [ "$RC" = 3 ]
+  ck "next.crt is kept" [ -f "$W/f2/next.crt" ]
+  tls rotate-ca --dir "$W/f2" --promote
+  ck "--promote resumes and exits 0 (got $RC)" [ "$RC" = 0 ]
+  ck "ca.crt is the former next.crt" [ "$(h "$W/f2/ca.crt")" = "$nh" ]
+  tls issue --dir "$W/f2" --force
+  ck "issue works afterwards (got $RC)" [ "$RC" = 0 ]
+}
+
+t_34() {
+  # F9: a dry run says "would install", not "installed".
+  fp=$(fp_of "$D/ca.crt")
+  trust install "$D/ca.crt" --fingerprint "$fp" --yes --dry-run
+  ck "dry run exits 0 (got $RC)" [ "$RC" = 0 ]
+  ck "says would install" err_has 'would install'
+  ck "does not say installed" sh -c "! grep -q ' installed ' $LOGDIR/e"
+}
+
+t_35() {
+  # F7: the script and its children run with a zero core file limit.
+  rm -f /tmp/ulim
+  tls init-ca --dir "$W/f35" --ip 127.0.0.1
+  runlog sh -c "ulimit -c unlimited 2>/dev/null; dash /opt/tls/sylvode-tls.sh issue --dir $W/f35 --force --exec 'ulimit -c >/tmp/ulim'"
+  ck "issue exits 0 (got $RC)" [ "$RC" = 0 ]
+  ck "core limit is 0 (got $(cat /tmp/ulim 2>/dev/null))" [ "$(cat /tmp/ulim 2>/dev/null)" = 0 ]
+}
+
+p_01() {
+  ps -Action Install -CertPath "$D/ca.crt" -Fingerprint "$(fp_of "$D/ca.crt")" -Yes -Scope CurrentUser -DryRun
+  ck "DryRun install exits 0 (got $RC)" [ "$RC" = 0 ]
+  ck "prints would run" out_has 'would run'
+  ps -Action Install -CertPath "$D/ca.crt" -Fingerprint 00:11 -Yes -Scope CurrentUser
+  ck "wrong fingerprint exits 3 (got $RC)" [ "$RC" = 3 ]
+  ps -Action Install -CertPath "$D/ca.crt" -Yes -Scope CurrentUser
+  ck "-Yes without -Fingerprint exits 2 (got $RC)" [ "$RC" = 2 ]
+}
+
+p_02() {
+  fp=$(fp_of "$D/ca.crt")
+  ps -Action Check -CertPath "$D/ca.crt" -Scope CurrentUser
+  ck "Check before install exits 1 (got $RC)" [ "$RC" = 1 ]
+  ps -Action Install -CertPath "$D/ca.crt" -Fingerprint "$fp" -Yes -Scope CurrentUser
+  ck "Install exits 0 (got $RC)" [ "$RC" = 0 ]
+  ps -Action Check -CertPath "$D/ca.crt" -Scope CurrentUser
+  ck "Check after install exits 0 (got $RC)" [ "$RC" = 0 ]
+  ck "Check says present" out_has 'present'
+  ps -Action Remove -CertPath "$D/ca.crt" -Scope CurrentUser
+  ck "Remove exits 0 (got $RC)" [ "$RC" = 0 ]
+  ps -Action Check -CertPath "$D/ca.crt" -Scope CurrentUser
+  ck "Check after Remove exits 1 (got $RC)" [ "$RC" = 1 ]
+  ck "Check says missing" out_has 'missing'
+}
+
+p_03() {
+  for _n in spoof cafalse dnsonly iponly excl noncrit inject; do
+    ps_refused "$_n"
+  done
+}
+
 o_ipv6() {
   tls init-ca --dir "$W/v6" --ip ::1
   ck "init-ca exits 0 (got $RC)" [ "$RC" = 0 ]
@@ -581,6 +788,21 @@ run_test T-27 "trust-client install --target user (NSS)" t_27
 run_test T-28 "trust-client remove" t_28
 run_test T-29 "invalid names" t_29
 run_test T-30 "IP-only CA is limited to DNS:invalid" t_30
+run_test T-26b "trust-client refuses a spoofed subject and a CA:FALSE certificate (M1)" t_26b
+run_test T-26c "trust-client refuses constraints that leave a name type open (M2)" t_26c
+run_test T-26d "trust-client refuses a newline-injected DNS-only constraint" t_26d
+run_test T-31 "the cron and systemd lines of docs/install.md work (M4)" t_31
+run_test T-32 ".reload-pending symlink is refused (F1)" t_32
+run_test T-33 "an interrupted promote survives --abort (F2)" t_33
+run_test T-34 "dry run says would install (F9)" t_34
+run_test T-35 "core files are disabled (F7)" t_35
+if [ "$PWSH_OK" = 1 ]; then
+  run_test P-01 "trust-client.ps1 DryRun, wrong fingerprint, -Yes alone" p_01
+  run_test P-02 "trust-client.ps1 Install, Check, Remove (M3)" p_02
+  run_test P-03 "trust-client.ps1 refuses the hostile CAs (M1, M2)" p_03
+else
+  skip "P-01..P-03 PowerShell 7 could not be installed"
+fi
 
 if grep -q ' ::1$' /proc/net/if_inet6 2>/dev/null || grep -q '^00000000000000000000000000000001' /proc/net/if_inet6 2>/dev/null; then
   run_test O-IPV6 "IPv6 CA, certificate and curl" o_ipv6

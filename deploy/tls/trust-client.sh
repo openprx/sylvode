@@ -101,6 +101,15 @@ run() {
   "$@"
 }
 
+# say_done VERB PAST TEXT: reports a finished change, or in dry-run mode what would be done.
+say_done() {
+  if [ "$DRY_RUN" = 1 ]; then
+    info "would $1 $3"
+  else
+    info "$2 $3"
+  fi
+}
+
 run_or_die() {
   run "$@" || die 1 "command failed: $*"
 }
@@ -212,29 +221,242 @@ LABEL=sylvode-ca-$FP16
 # SHA-1 is only a lookup key for the macOS keychain, never a trust decision.
 SHA1=$("$OPENSSL" x509 -in "$CA_FILE" -noout -fingerprint -sha1 | sed -n 's/^.*Fingerprint=//p' | head -n 1 | tr -d ':' | tr 'a-f' 'A-F')
 
-TEXT=$("$OPENSSL" x509 -in "$CA_FILE" -noout -text)
+# ---------------------------------------------------------------------------------------------
+# Structural certificate parse (SD-17). The extensions are read from the DER encoding, never
+# from free text, because the subject and the names can hold any characters.
+# ---------------------------------------------------------------------------------------------
 
-permitted_names() {
-  printf '%s\n' "$TEXT" |
-    sed -n '/X509v3 Name Constraints/,/X509v3 [A-Z]/p' |
-    grep -E '^[[:space:]]*(Permitted|Excluded|IP|DNS|email|URI|DirName)'
+DER_HEX=
+REST=
+T=
+VAL=
+IS_CA=0
+NC_COUNT=0
+NC_CRITICAL=0
+N_PERM_IP=0
+N_PERM_DNS=0
+PERM_LINES=
+EXCL_LINES=
+
+bad_der() {
+  die 3 "cannot parse the structure of $(safe_str "$CA_FILE"); refusing it"
+}
+
+# der_next: reads one TLV from the front of REST (hex). Sets T (tag), VAL (content) and REST (remainder).
+der_next() {
+  [ -n "$REST" ] || return 1
+  T=$(printf '%s' "$REST" | cut -c1-2)
+  _lb=$(printf '%s' "$REST" | cut -c3-4)
+  case $T$_lb in
+    *[!0-9a-f]* | ??) return 1 ;;
+  esac
+  _ln=$((0x$_lb))
+  if [ "$_ln" -lt 128 ]; then
+    _dl=$_ln
+    _dh=4
+  else
+    _dk=$((_ln - 128))
+    if [ "$_dk" -lt 1 ] || [ "$_dk" -gt 3 ]; then
+      return 1
+    fi
+    _dh=$((4 + 2 * _dk))
+    _dl=$((0x$(printf '%s' "$REST" | cut -c5-"$_dh")))
+  fi
+  _dt=$((_dh + 2 * _dl))
+  [ "${#REST}" -ge "$_dt" ] || return 1
+  if [ "$_dl" = 0 ]; then
+    VAL=
+  else
+    VAL=$(printf '%s' "$REST" | cut -c$((_dh + 1))-"$_dt")
+  fi
+  REST=$(printf '%s' "$REST" | cut -c$((_dt + 1))-)
+}
+
+# der_get TAG: der_next, and the tag must be TAG.
+der_get() {
+  der_next || bad_der
+  [ "$T" = "$1" ] || bad_der
+}
+
+hex_ascii() {
+  _ha=$1
+  _hout=
+  while [ -n "$_ha" ]; do
+    _hb=$(printf '%s' "$_ha" | cut -c1-2)
+    _ha=$(printf '%s' "$_ha" | cut -c3-)
+    _hn=$((0x$_hb))
+    if [ "$_hn" -ge 33 ] && [ "$_hn" -le 126 ]; then
+      _ho=$(printf '%o' "$_hn")
+      _hout=$_hout$(printf '%b' "\\0$_ho")
+    else
+      _hout=$_hout'?'
+    fi
+  done
+  printf '%s' "$_hout"
+}
+
+# describe_base: T and VAL hold a GeneralName; prints the display text, sets BASE_KIND (ip, dns, other).
+describe_base() {
+  case $T in
+    82)
+      BASE_KIND=dns
+      printf 'DNS:%s\n' "$(hex_ascii "$VAL")"
+      ;;
+    87)
+      BASE_KIND=ip
+      case ${#VAL} in
+        16)
+          _ia=$(printf '%s' "$VAL" | cut -c1-8)
+          _im=$(printf '%s' "$VAL" | cut -c9-16)
+          printf 'IP:%s.%s.%s.%s/%s.%s.%s.%s\n' \
+            $((0x$(printf '%s' "$_ia" | cut -c1-2))) $((0x$(printf '%s' "$_ia" | cut -c3-4))) \
+            $((0x$(printf '%s' "$_ia" | cut -c5-6))) $((0x$(printf '%s' "$_ia" | cut -c7-8))) \
+            $((0x$(printf '%s' "$_im" | cut -c1-2))) $((0x$(printf '%s' "$_im" | cut -c3-4))) \
+            $((0x$(printf '%s' "$_im" | cut -c5-6))) $((0x$(printf '%s' "$_im" | cut -c7-8)))
+          ;;
+        64)
+          printf 'IP:%s/%s\n' \
+            "$(printf '%s' "$VAL" | cut -c1-32 | sed 's/..../&:/g;s/:$//')" \
+            "$(printf '%s' "$VAL" | cut -c33-64 | sed 's/..../&:/g;s/:$//')"
+          ;;
+        *) printf 'IP:(invalid length)\n' ;;
+      esac
+      ;;
+    *)
+      BASE_KIND=other
+      printf '(other name type, tag %s)\n' "$T"
+      ;;
+  esac
+}
+
+parse_basic() {
+  REST=$1
+  der_get 30
+  REST=$VAL
+  if der_next && [ "$T" = 01 ] && [ "$VAL" = ff ]; then
+    IS_CA=1
+  fi
+}
+
+parse_nc() {
+  REST=$1
+  der_get 30
+  REST=$VAL
+  while der_next; do
+    _ng=$T
+    _nv=$VAL
+    _no=$REST
+    case $_ng in
+      a0 | a1)
+        REST=$_nv
+        while der_next; do
+          [ "$T" = 30 ] || bad_der
+          _ns=$REST
+          REST=$VAL
+          der_next || bad_der
+          _nl=$(describe_base)
+          describe_base >/dev/null
+          if [ "$_ng" = a0 ]; then
+            PERM_LINES=$PERM_LINES"    $_nl
+"
+            [ "$BASE_KIND" != ip ] || N_PERM_IP=$((N_PERM_IP + 1))
+            [ "$BASE_KIND" != dns ] || N_PERM_DNS=$((N_PERM_DNS + 1))
+          else
+            EXCL_LINES=$EXCL_LINES"    $_nl
+"
+          fi
+          REST=$_ns
+        done
+        ;;
+      *) bad_der ;;
+    esac
+    REST=$_no
+  done
+}
+
+parse_ca_der() {
+  DER_HEX=$("$OPENSSL" x509 -in "$CA_FILE" -outform DER | od -An -v -tx1 | tr -d ' \n')
+  [ -n "$DER_HEX" ] || bad_der
+  REST=$DER_HEX
+  der_get 30
+  REST=$VAL
+  der_get 30
+  REST=$VAL
+  der_next || bad_der
+  if [ "$T" = a0 ]; then
+    der_next || bad_der
+  fi
+  [ "$T" = 02 ] || bad_der
+  _skip=0
+  while [ "$_skip" -lt 5 ]; do
+    der_get 30
+    _skip=$((_skip + 1))
+  done
+  _ex=
+  while der_next; do
+    case $T in
+      81 | 82) ;;
+      a3)
+        _ex=$VAL
+        break
+        ;;
+      *) bad_der ;;
+    esac
+  done
+  [ -n "$_ex" ] || bad_der
+  REST=$_ex
+  der_get 30
+  REST=$VAL
+  while der_next; do
+    _xo=$REST
+    REST=$VAL
+    der_get 06
+    _oid=$VAL
+    der_next || bad_der
+    _crit=0
+    if [ "$T" = 01 ]; then
+      [ "$VAL" != ff ] || _crit=1
+      der_next || bad_der
+    fi
+    [ "$T" = 04 ] || bad_der
+    _xv=$VAL
+    case $_oid in
+      551d13) parse_basic "$_xv" ;;
+      551d1e)
+        NC_COUNT=$((NC_COUNT + 1))
+        [ "$NC_COUNT" = 1 ] || die 3 "refusing $(safe_str "$CA_FILE"): it repeats the name constraint extension"
+        NC_CRITICAL=$_crit
+        parse_nc "$_xv"
+        ;;
+    esac
+    REST=$_xo
+  done
 }
 
 show_certificate() {
-  printf 'Certificate: %s\n' "$CA_FILE"
-  printf 'Subject:     %s\n' "$("$OPENSSL" x509 -in "$CA_FILE" -noout -subject -nameopt RFC2253 | sed -n 's/^subject= *//p' | sed 's/,/, /g')"
+  printf 'Certificate: %s\n' "$(safe_str "$CA_FILE")"
+  printf 'Subject:     %s\n' "$("$OPENSSL" x509 -in "$CA_FILE" -noout -subject -nameopt RFC2253 | sed -n 's/^subject= *//p' | sed 's/,/, /g' | tr -c 'A-Za-z0-9._:/@=,+ -' '?')"
   printf 'Valid from:  %s\n' "$("$OPENSSL" x509 -in "$CA_FILE" -noout -startdate | sed -n 's/^notBefore=//p')"
   printf 'Valid until: %s\n' "$("$OPENSSL" x509 -in "$CA_FILE" -noout -enddate | sed -n 's/^notAfter=//p')"
   printf 'SHA-256:     %s\n' "$FP"
   printf 'This CA may vouch for these names only:\n'
-  permitted_names | sed -E -e 's/^[[:space:]]*(Permitted|Excluded)/  \1/' -e 's/^[[:space:]]*(IP|DNS|email|URI|DirName)/    \1/'
+  printf '  Permitted:\n%s' "$PERM_LINES"
+  if [ -n "$EXCL_LINES" ]; then
+    printf '  Excluded:\n%s' "$EXCL_LINES"
+  fi
 }
 
+# check_constrained: SD-17 (tightened 2026-11-27): a CA with a critical name constraint that
+# permits at least one IP subtree and one DNS subtree.
 check_constrained() {
-  printf '%s\n' "$TEXT" | grep -q 'CA:TRUE' ||
-    die 3 "refusing $(safe_str "$CA_FILE"): it is not a CA certificate"
-  printf '%s\n' "$TEXT" | grep -q 'X509v3 Name Constraints: critical' ||
-    die 3 "refusing $(safe_str "$CA_FILE"): it has no critical name constraint, so it could vouch for any site"
+  parse_ca_der
+  _n=$(safe_str "$CA_FILE")
+  [ "$IS_CA" = 1 ] || die 3 "refusing $_n: it is not a CA certificate (basicConstraints CA:TRUE is missing)"
+  [ "$NC_COUNT" = 1 ] || die 3 "refusing $_n: it has no name constraint, so it could vouch for any site"
+  [ "$NC_CRITICAL" = 1 ] || die 3 "refusing $_n: its name constraint is not critical"
+  if [ "$N_PERM_IP" -lt 1 ] || [ "$N_PERM_DNS" -lt 1 ]; then
+    die 3 "refusing $_n: its name constraint must permit at least one IP address and one DNS name; a missing type leaves that kind of name open"
+  fi
 }
 
 confirm() {
@@ -284,7 +506,7 @@ mac_install() {
   else
     run_or_die security add-trusted-cert -r trustRoot -k "$_kc" "$CA_FILE"
   fi
-  info "installed $LABEL in $_kc"
+  say_done install installed "$LABEL in $_kc"
   printf 'Hints:\n'
   printf '  Firefox: set security.enterprise_roots.enabled to true in about:config if it is not already (the default in current releases).\n'
   printf '  Node.js: NODE_EXTRA_CA_CERTS=%s (read at start-up), or NODE_USE_SYSTEM_CA=1 on recent releases.\n' "$CA_FILE"
@@ -300,7 +522,7 @@ mac_remove() {
     run_or_die security remove-trusted-cert "$CA_FILE"
   fi
   run_or_die security delete-certificate -Z "$SHA1" "$_kc"
-  info "removed $LABEL from $_kc"
+  say_done remove removed "$LABEL from $_kc"
 }
 
 mac_present() {
@@ -375,7 +597,7 @@ linux_install() {
       debian | suse) run_or_die update-ca-certificates ;;
       redhat) run_or_die update-ca-trust extract ;;
     esac
-    info "installed $LABEL as $DEST"
+    say_done install installed "$LABEL as $DEST"
     HINT_CA=$DEST
   else
     linux_user_prereq
@@ -384,7 +606,7 @@ linux_install() {
     printf '%s\n' "$_dirs" | while IFS= read -r _d; do
       [ -n "$_d" ] || continue
       run_or_die certutil -A -d "sql:$_d" -n "$LABEL" -t "C,," -i "$CA_FILE"
-      info "installed $LABEL in $_d"
+      say_done install installed "$LABEL in $_d"
     done
     HINT_CA=$CA_FILE
   fi
@@ -407,7 +629,7 @@ linux_remove() {
       suse) run_or_die update-ca-certificates ;;
       redhat) run_or_die update-ca-trust extract ;;
     esac
-    info "removed $LABEL ($DEST)"
+    say_done remove removed "$LABEL ($DEST)"
   else
     linux_user_prereq
     warn "close Firefox before removing; it may not pick the change up while running"
@@ -416,7 +638,7 @@ linux_remove() {
       [ -n "$_d" ] || continue
       if certutil -L -d "sql:$_d" -n "$LABEL" >/dev/null 2>&1; then
         run_or_die certutil -D -d "sql:$_d" -n "$LABEL"
-        info "removed $LABEL from $_d"
+        say_done remove removed "$LABEL from $_d"
       fi
     done
   fi

@@ -10,6 +10,9 @@
 # contains key material.
 
 umask 077
+# No core file: a crash while openssl holds the CA key must not leave key material on disk.
+# shellcheck disable=SC3045 # ulimit -c is not in POSIX but dash, bash and macOS sh all have it
+ulimit -c 0 2>/dev/null
 
 PROG=sylvode-tls
 VERSION=1
@@ -208,8 +211,10 @@ Renew the server certificate in OUT when it is due: it expires within the thresh
 signed by the current CA, its key does not match, or one of its names left the CA's list.
 
   --out OUT               directory with server.crt, server.key, issue.conf (default DIR/server)
-  --threshold-days N      renew when fewer than N days remain, 1-400 (default 60); must be lower
-                          than the lifetime in days (issue.conf, or --days)
+  --threshold-days N      renew when fewer than N days remain, 1-400 (default 60). With an
+                          explicit --days the threshold must be lower than it (else exit 2). A
+                          threshold not lower than the stored lifetime only warns: every run then
+                          renews, because each new certificate is due at once
   --days N                lifetime of the new certificate (default: days= of issue.conf)
   --owner USER[:GROUP]    owner of server.key (default: owner= of issue.conf)
   --force                 renew now
@@ -1200,7 +1205,16 @@ renewal_due() {
 # run_hook OUT: creates .reload-pending, releases the lock, runs the hook (SD-16).
 run_hook() {
   _rh_o=$1
-  : >"$_rh_o/.reload-pending" || die 1 "cannot create $_rh_o/.reload-pending"
+  _rh_p=$_rh_o/.reload-pending
+  if [ -L "$_rh_p" ]; then
+    die 3 "$_rh_p is a symbolic link; refusing to write through it"
+  fi
+  if [ ! -e "$_rh_p" ]; then
+    (
+      set -C
+      : >"$_rh_p"
+    ) 2>/dev/null || die 1 "cannot create $_rh_p"
+  fi
   release_lock
   _rh_na=$(cert_enddate "$_rh_o/server.crt")
   SYLVODE_TLS_OUT=$_rh_o SYLVODE_TLS_CERT=$_rh_o/server.crt SYLVODE_TLS_KEY=$_rh_o/server.key \
@@ -1505,16 +1519,32 @@ cmd_rotate_ca() {
     _cv_pending=1
   fi
   if [ "$O_ABORT" = 1 ]; then
+    if [ -f "$DIR/next.crt" ] && [ ! -f "$DIR/next/ca.key" ]; then
+      die 3 "refusing --abort: $DIR/next.crt exists but $DIR/next/ca.key does not, so a promote was interrupted and next.crt may be the only certificate for the installed CA key; run rotate-ca --promote to finish it"
+    fi
     rm -rf "${DIR:?}/next" "${DIR:?}/next.crt" "${DIR:?}/next.names"
     info "the pending CA was discarded"
     return 0
   fi
   if [ "$O_PROMOTE" = 1 ]; then
     [ "$_cv_pending" = 1 ] || die 4 "no pending CA; run rotate-ca first"
-    if [ ! -f "$DIR/next.crt" ] || [ ! -f "$DIR/next.names" ] || [ ! -f "$DIR/next/ca.key" ]; then
-      die 3 "inconsistent pending CA in $DIR; run rotate-ca --abort and start again"
+    if [ ! -f "$DIR/next.crt" ] && [ ! -f "$DIR/next.names" ] && [ ! -f "$DIR/next/ca.key" ]; then
+      rm -rf "${DIR:?}/next"
+      info "the promotion was already complete"
+      return 0
     fi
-    check_key_perms "$DIR/next"
+    # An interrupted promotion has already moved the new key: finish it.
+    _cv_resume=0
+    if [ -f "$DIR/next.crt" ] && [ ! -f "$DIR/next/ca.key" ] && [ -f "$DIR/ca/ca.key" ] && key_matches "$DIR/ca/ca.key" "$DIR/next.crt"; then
+      _cv_resume=1
+      warn "resuming an interrupted promotion"
+    fi
+    if [ "$_cv_resume" = 0 ]; then
+      if [ ! -f "$DIR/next.crt" ] || [ ! -f "$DIR/next.names" ] || [ ! -f "$DIR/next/ca.key" ]; then
+        die 3 "inconsistent pending CA in $DIR; run rotate-ca --abort and start again"
+      fi
+      check_key_perms "$DIR/next"
+    fi
     [ -f "$DIR/ca/ca.key" ] || die 3 "the current CA key $DIR/ca/ca.key is missing"
     check_key_perms "$DIR/ca"
     _cv_fp=$(cert_fp "$DIR/ca.crt")
@@ -1527,8 +1557,12 @@ cmd_rotate_ca() {
     chmod 0644 "$TMPD/retired.crt"
     mv -f "$TMPD/retired.crt" "$DIR/retired/$_cv_name" || die 1 "cannot store the old CA certificate"
     rm -rf "$TMPD"
-    mv -f "$DIR/next/ca.key" "$DIR/ca/ca.key" || die 1 "cannot install the new CA key"
-    mv -f "$DIR/next.names" "$DIR/ca.names" || die 1 "cannot install the new name list"
+    if [ -f "$DIR/next/ca.key" ]; then
+      mv -f "$DIR/next/ca.key" "$DIR/ca/ca.key" || die 1 "cannot install the new CA key"
+    fi
+    if [ -f "$DIR/next.names" ]; then
+      mv -f "$DIR/next.names" "$DIR/ca.names" || die 1 "cannot install the new name list"
+    fi
     mv -f "$DIR/next.crt" "$DIR/ca.crt" || die 1 "cannot install the new CA certificate"
     rm -rf "${DIR:?}/next"
     info "the new CA is current; the old key was deleted"
