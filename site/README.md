@@ -1,7 +1,9 @@
 # Sylvode front site (skeleton)
 
-Public-facing site client of the low-code platform. This batch holds the skeleton only: build setup,
-router shell, design tokens, a small UI kit and a component gallery. No site API endpoints exist yet.
+Public-facing site client of the low-code platform (contract C3 section 6, `sv.layout.v1` section 1): build
+setup, router, design tokens, a small UI kit, the layout renderer for the 12 components, public field
+renderers, visitor submit, "my records", operator sign in and the operator list/update view. A mock mode
+lets it run before the backend (`/api/site/v1`) exists.
 
 ## Stack (exact versions)
 
@@ -31,9 +33,49 @@ bun run format       # biome format --write
 - `src/styles/tokens.css`: design tokens. `src/styles/app.css`: Tailwind import and `@theme inline` mapping.
 - `src/lib/api.ts`: typed fetch helper.
 
+## Application structure (L3.S2m)
+
+- `src/lib/api.ts`, `src/lib/site/client.ts`: typed client of every `/api/site/v1/{slug}` endpoint (manifest,
+  pages, field list, record list/read/submit/update, operator login/logout). Cookies `sv_site_v` and `sv_site_op`
+  are set by the server (`credentials: "include"`); writes send `X-SV-Site: 1`. Real HTTP statuses; `ApiError`
+  carries `status`, `errorCode`, `details`.
+- Routing: the app's own routes are `/login`, `/mine/:binding`, `/operator/:binding`, `/gallery`; every other
+  path (including `/` and `/p/:slug` = route `/<slug>`) is matched against the manifest pages
+  (`src/routes/page.tsx`, static routes win over `:param` routes) and loaded with `GET /pages?route=`.
+  Unknown routes show the 404 page. The site is chosen by `VITE_SV_SITE_SLUG` or `?site=<slug>`.
+- `src/lib/layout/`, `src/components/layout/`: renderer of the 12 components, same layout JSON and same
+  `data-layout-node` structure as the console (`frontend/src/lib/layout`). `when` and `{cel}` use the vendored
+  rules mirror; unknown nodes render a neutral placeholder; every node sits in its own `Errored` boundary.
+  Site data sources use `binding:<key>`; only `submit` (create/update) and `navigate` with `route` run.
+- `src/lib/rules/`: **vendored copy** of `frontend/src/lib/forms/rules/` (the `frontend/` tree is not
+  importable from `site/` without changing its build). The only edits are `.ts` import suffixes dropped and
+  `noUncheckedIndexedAccess` guards; lint is off for that folder (`biome.json` override). Re-copy and re-apply
+  these edits when the console mirror changes. Dependency `@marcbachmann/cel-js` 8.0.0 (no `eval`).
+- `src/lib/fields/`, `src/components/field-input.tsx`, `field-value.tsx`: public renderers. Editable: text,
+  phone, email, address, textarea, rich_text (plain textarea), number, integer, amount, rating, progress, date,
+  datetime, single/multi select, boolean. `member`, `relation`, `child_table`, files, images, `signature`,
+  `location`, `scan` are blocked (nothing is shown or editable). Client validation is a hint (required and the
+  built-in rules of `rules_client`); the server C2 report is the verdict and is shown per field.
+
+## Mock mode
+
+`VITE_SV_SITE_MOCK=1` installs a fixture-backed `fetch` (`src/lib/site/mock/`, shapes of contract section 6.6,
+real statuses; state in `sessionStorage`). The import sits behind that build-time flag, so a normal build
+contains no fixture (checked by grepping `dist/`). Operator login of the mock: `operator@demo.test` /
+`mock-operator` (exists nowhere else). Mock site slug `demo`.
+
+```bash
+VITE_SV_SITE_MOCK=1 VITE_SV_SITE_SLUG=demo bun run build --outDir <dir> --emptyOutDir
+bunx vite preview --outDir <dir> --port <port> --strictPort     # or: VITE_SV_SITE_MOCK=1 VITE_SV_SITE_SLUG=demo bun run dev
+```
+
+Mock pages: `/` (table of own requests), `/requests/new` (visitor form), `/showcase` (all 12 components, `when`,
+`{cel}`, an unknown node), `/requests/<id>` (operator page, update form), `/mine/requests`, `/operator/requests`.
+
 ## Configuration
 
 - `VITE_SV_SITE_API`: API base URL, default `/api/site/v1` (same origin).
+- `VITE_SV_SITE_SLUG`: the site slug (else `?site=<slug>`). `VITE_SV_SITE_MOCK=1`: mock mode.
 - `VITE_SV_SITE_ROUTING=hash`: use hash routing so a plain static file server can serve every route.
   Default is browser history, which needs the server to fall back to `index.html`
   (`vite preview` does).
