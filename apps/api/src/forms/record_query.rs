@@ -5,7 +5,10 @@ use serde_json::Value;
 
 use crate::{
     error::ApiError,
-    forms::schema::{FormField, normalize_key},
+    forms::{
+        read_policy::QueryReadGuard,
+        schema::{FormField, normalize_key},
+    },
 };
 
 #[derive(Debug, Default)]
@@ -237,15 +240,18 @@ fn normalize_filter_op(raw: &str) -> Result<String, ApiError> {
     }
 }
 
+/// Appends the filter expression as SQL. A condition on a field `guard` marks read-denied is
+/// refused (`field_read_denied`): its match count would reveal the hidden value.
 pub fn append_record_filter_expression_sql(
     fields: &[FormField],
+    guard: QueryReadGuard<'_>,
     filter_expression: Option<&RecordFilterExpressionConfig>,
     where_parts: &mut Vec<String>,
     values: &mut Vec<sea_orm::Value>,
     next_idx: &mut usize,
 ) -> Result<(), ApiError> {
     if let Some(expression) = filter_expression
-        && let Some(condition) = record_filter_expression_sql(fields, expression, values, next_idx, &mut 0)?
+        && let Some(condition) = record_filter_expression_sql(fields, guard, expression, values, next_idx, &mut 0)?
     {
         where_parts.push(condition);
     }
@@ -254,6 +260,7 @@ pub fn append_record_filter_expression_sql(
 
 fn record_filter_expression_sql(
     fields: &[FormField],
+    guard: QueryReadGuard<'_>,
     expression: &RecordFilterExpressionConfig,
     values: &mut Vec<sea_orm::Value>,
     next_idx: &mut usize,
@@ -262,6 +269,7 @@ fn record_filter_expression_sql(
     match expression {
         RecordFilterExpressionConfig::Condition(filter) => {
             let field = find_schema_field(fields, &filter.field)?;
+            guard.ensure_field_readable(&field.key)?;
             let op = normalize_filter_op(&filter.op)?;
             let filter_value = filter
                 .value
@@ -294,7 +302,7 @@ fn record_filter_expression_sql(
         RecordFilterExpressionConfig::Group { logic, children } => {
             let child_conditions = children
                 .iter()
-                .map(|child| record_filter_expression_sql(fields, child, values, next_idx, alias_idx))
+                .map(|child| record_filter_expression_sql(fields, guard, child, values, next_idx, alias_idx))
                 .collect::<Result<Vec<_>, _>>()?
                 .into_iter()
                 .flatten()
@@ -340,9 +348,12 @@ fn filter_condition_sql(kind: QueryValueKind, op: &str, alias: &str, value_idx: 
     }
 }
 
+/// Builds the ORDER BY for `raw_sort`. Sorting by a read-denied field, or by a title whose template
+/// renders one, is refused (`field_read_denied`): the order would reveal the hidden value.
 pub fn record_sort_sql(
     raw_sort: Option<&str>,
     fields: &[FormField],
+    guard: QueryReadGuard<'_>,
     key_idx: usize,
 ) -> Result<(Option<String>, String, Option<String>), ApiError> {
     let Some(raw_sort) = raw_sort.map(str::trim).filter(|value| !value.is_empty()) else {
@@ -357,13 +368,17 @@ pub fn record_sort_sql(
         _ => return Err(ApiError::BadRequest("unsupported sort direction".to_string())),
     };
     match raw_field {
-        "title" => return Ok((None, format!("form_records.title {direction}"), None)),
+        "title" => {
+            guard.ensure_title_queryable()?;
+            return Ok((None, format!("form_records.title {direction}"), None));
+        }
         "created_at" => return Ok((None, format!("form_records.created_at {direction}"), None)),
         "updated_at" => return Ok((None, format!("form_records.updated_at {direction}"), None)),
         _ => {}
     }
 
     let field = find_schema_field(fields, raw_field)?;
+    guard.ensure_field_readable(&field.key)?;
     let kind = indexed_value_kind(&field.field_type)
         .ok_or_else(|| ApiError::BadRequest("sort field is not queryable".to_string()))?;
     let join = format!(
@@ -397,8 +412,46 @@ mod tests {
         append_record_filter_expression_sql, indexed_value_kind, query_filter_expression,
         record_filter_expression_from_config, record_sort_sql,
     };
-    use crate::forms::schema::FormField;
+    use crate::forms::{read_policy::QueryReadGuard, schema::FormField};
     use serde_json::json;
+    use std::collections::BTreeSet;
+
+    fn open_guard(denied: &BTreeSet<String>) -> QueryReadGuard<'_> {
+        QueryReadGuard {
+            denied_read_fields: denied,
+            title_template: "{name} {salary}",
+        }
+    }
+
+    #[test]
+    fn filters_and_sorts_on_read_denied_fields_are_refused() {
+        let fields = vec![
+            test_field("name", "Name", "text"),
+            test_field("salary", "Salary", "number"),
+        ];
+        let denied: BTreeSet<String> = ["salary".to_string()].into_iter().collect();
+        let guard = open_guard(&denied);
+        let expression = query_filter_expression(Some("salary"), Some("gt".to_string()), Some("100".to_string()));
+        let mut where_parts = Vec::new();
+        let mut values = Vec::new();
+        let mut next_idx = 1;
+
+        assert!(
+            append_record_filter_expression_sql(
+                &fields,
+                guard,
+                expression.as_ref(),
+                &mut where_parts,
+                &mut values,
+                &mut next_idx,
+            )
+            .is_err()
+        );
+        assert!(where_parts.is_empty());
+        assert!(record_sort_sql(Some("salary:asc"), &fields, guard, 2).is_err());
+        assert!(record_sort_sql(Some("title:asc"), &fields, guard, 2).is_err());
+        assert!(record_sort_sql(Some("name:asc"), &fields, guard, 2).is_ok());
+    }
 
     #[test]
     fn parses_nested_filter_expression_and_appends_sql() {
@@ -420,9 +473,11 @@ mod tests {
         let mut where_parts = Vec::new();
         let mut values = Vec::new();
         let mut next_idx = 1;
+        let no_denied = BTreeSet::new();
 
         append_record_filter_expression_sql(
             &fields,
+            open_guard(&no_denied),
             expression.as_ref(),
             &mut where_parts,
             &mut values,
@@ -460,9 +515,11 @@ mod tests {
         let mut where_parts = Vec::new();
         let mut values = Vec::new();
         let mut next_idx = 1;
+        let no_denied = BTreeSet::new();
 
         append_record_filter_expression_sql(
             &fields,
+            open_guard(&no_denied),
             expression.as_ref(),
             &mut where_parts,
             &mut values,
@@ -486,9 +543,11 @@ mod tests {
         let mut where_parts = Vec::new();
         let mut values = Vec::new();
         let mut next_idx = 1;
+        let no_denied = BTreeSet::new();
 
         append_record_filter_expression_sql(
             &fields,
+            open_guard(&no_denied),
             expression.as_ref(),
             &mut where_parts,
             &mut values,
@@ -503,7 +562,9 @@ mod tests {
     #[test]
     fn builds_indexed_field_sort_sql() {
         let fields = vec![test_field("quantity", "Quantity", "integer")];
-        let (join, order_by, field_key) = record_sort_sql(Some("quantity:desc"), &fields, 7).unwrap();
+        let no_denied = BTreeSet::new();
+        let (join, order_by, field_key) =
+            record_sort_sql(Some("quantity:desc"), &fields, open_guard(&no_denied), 7).unwrap();
 
         assert!(join.unwrap().contains("sort_idx.field_key = $7"));
         assert_eq!(

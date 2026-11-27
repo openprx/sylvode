@@ -33,7 +33,7 @@ use crate::{
         },
         calculation::{evaluate_calculated_values, merge_values_for_calculation, overlay_calculated_values},
         event_redaction::{redact_event_metadata, redact_event_payload, redact_event_source},
-        job_context::{add_form_job_worker_context, form_job_worker_context},
+        job_context::{add_form_job_worker_context, form_job_requester, form_job_worker_context},
         permissions::{
             append_record_scope_sql, denied_read_field_keys, ensure_field_read_policy_allows,
             ensure_field_write_policy_allows, ensure_record_scope_allows_created_by, filter_values_for_read_policy,
@@ -42,6 +42,7 @@ use crate::{
             role_record_scope_predicate_sql, validate_permission_action, validate_permission_policy,
         },
         projections::refresh_record_projection,
+        read_policy::{QueryReadGuard, reader_title},
         record_comments::{
             CreateRecordCommentRequest, InsertRecordCommentInput, ListRecordCommentsQuery, count_record_comments,
             find_record_comment, insert_record_comment, list_record_comments, record_comment_page,
@@ -77,8 +78,8 @@ use crate::{
         signature_media::{
             annotate_signature_audit_entries, append_signature_audit_source,
             cleanup_expired_replaced_signature_audit_entries, cleanup_expired_signature_values,
-            materialize_signature_values_with_existing_audit, signature_lifecycle_summary,
-            signature_workflow_verification_summary, verify_signature_audit_source,
+            materialize_signature_values_with_existing_audit, signature_audit_source_for_reader,
+            signature_lifecycle_summary, signature_workflow_verification_summary, verify_signature_audit_source,
         },
         validation::{
             validate_and_normalize_values, validate_and_normalize_values_with_existing,
@@ -1335,6 +1336,11 @@ pub async fn list_form_records(
     )
     .await?;
 
+    let denied_read_fields = denied_read_field_keys(&state, form.id, &role).await?;
+    let read_guard = QueryReadGuard {
+        denied_read_fields: &denied_read_fields,
+        title_template: &form.title_template,
+    };
     let view_query = record_query_config_from_view(&state, form_id, query.view_id, actor_id).await?;
     let sort = query.sort.as_deref().or(view_query.sort.as_deref());
     let query_filter_expression = query_filter_expression(
@@ -1345,13 +1351,14 @@ pub async fn list_form_records(
     .or(view_query.filter_expression);
     append_record_filter_expression_sql(
         &fields,
+        read_guard,
         query_filter_expression.as_ref(),
         &mut where_parts,
         &mut values,
         &mut next_idx,
     )?;
 
-    let (sort_join, order_by, sort_value) = record_sort_sql(sort, &fields, next_idx)?;
+    let (sort_join, order_by, sort_value) = record_sort_sql(sort, &fields, read_guard, next_idx)?;
     if let Some(join) = sort_join {
         joins.push(join);
         if let Some(value) = sort_value {
@@ -1395,10 +1402,9 @@ pub async fn list_form_records(
     ))
     .all(&state.db)
     .await?;
-    let denied_read_fields = denied_read_field_keys(&state, form.id, &role).await?;
     let items = items
         .into_iter()
-        .map(|record| filter_record_response_values(record, &denied_read_fields))
+        .map(|record| filter_record_response_values(record, &form.title_template, &denied_read_fields))
         .collect();
 
     Ok(ApiResponse::success(PaginatedData {
@@ -1469,9 +1475,9 @@ pub async fn get_form_export_job(
 ) -> Result<impl IntoResponse, ApiError> {
     let job = find_export_job(&state, job_id).await?;
     let form = find_form(&state, job.form_id).await?;
-    let (actor_id, role, is_bot) =
+    let (actor_id, role, _) =
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "record.export").await?;
-    ensure_can_read_job_result(job.created_by, actor_id, &role, is_bot)?;
+    ensure_can_read_job_result(form_job_requester(&job.input, job.created_by), actor_id, &role)?;
     Ok(ApiResponse::success(job))
 }
 
@@ -1595,14 +1601,19 @@ async fn export_records_for_form(
         &mut next_idx,
     )
     .await?;
+    let read_guard = QueryReadGuard {
+        denied_read_fields: &denied_read_fields,
+        title_template: &form.title_template,
+    };
     append_record_filter_expression_sql(
         &fields,
+        read_guard,
         view_query.filter_expression.as_ref(),
         &mut where_parts,
         &mut values,
         &mut next_idx,
     )?;
-    let (sort_join, order_by, sort_value) = record_sort_sql(view_query.sort.as_deref(), &fields, next_idx)?;
+    let (sort_join, order_by, sort_value) = record_sort_sql(view_query.sort.as_deref(), &fields, read_guard, next_idx)?;
     if let Some(join) = sort_join {
         joins.push(join);
         if let Some(value) = sort_value {
@@ -1653,7 +1664,13 @@ async fn export_records_for_form(
             }
             ExportRecordRowResponse {
                 record_id: record.id,
-                title: record.title.clone(),
+                title: reader_title(
+                    &form.title_template,
+                    record.id,
+                    record.title.clone(),
+                    &record.values,
+                    &denied_read_fields,
+                ),
                 values,
             }
         })
@@ -1770,9 +1787,9 @@ pub async fn get_form_attachment_package_job(
 ) -> Result<impl IntoResponse, ApiError> {
     let job = find_attachment_package_job(&state, job_id).await?;
     let form = find_form(&state, job.form_id).await?;
-    let (actor_id, role, is_bot) =
+    let (actor_id, role, _) =
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "record.export").await?;
-    ensure_can_read_job_result(job.created_by, actor_id, &role, is_bot)?;
+    ensure_can_read_job_result(form_job_requester(&job.input, job.created_by), actor_id, &role)?;
     Ok(ApiResponse::success(job))
 }
 
@@ -1784,9 +1801,9 @@ pub async fn download_form_attachment_package_job(
 ) -> Result<Response, ApiError> {
     let job = find_attachment_package_job(&state, job_id).await?;
     let form = find_form(&state, job.form_id).await?;
-    let (actor_id, role, is_bot) =
+    let (actor_id, role, _) =
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "record.export").await?;
-    ensure_can_read_job_result(job.created_by, actor_id, &role, is_bot)?;
+    ensure_can_read_job_result(form_job_requester(&job.input, job.created_by), actor_id, &role)?;
     if job.status != "completed" {
         return Err(ApiError::BadRequest(
             "attachment package job is not completed".to_string(),
@@ -1899,7 +1916,8 @@ async fn build_attachment_package_for_form(
 ) -> Result<AttachmentPackageArtifact, ApiError> {
     let fields = parse_fields(&form.schema).map_err(ApiError::BadRequest)?;
     let denied_read_fields = denied_read_field_keys(state, form.id, role).await?;
-    let record_ids = visible_form_record_ids_for_export(state, form, &fields, actor_id, role, view_id).await?;
+    let record_ids =
+        visible_form_record_ids_for_export(state, form, &fields, &denied_read_fields, actor_id, role, view_id).await?;
     let attachments = form_attachments_for_package(state, form.id, Some(&record_ids), &denied_read_fields).await?;
     let (entries, binary_file_count) = attachment_package_entries(form, view_id, &attachments).await?;
     let zip = build_stored_zip(&entries)?;
@@ -2189,9 +2207,9 @@ pub async fn get_form_import_job(
 ) -> Result<impl IntoResponse, ApiError> {
     let job = find_import_job(&state, job_id).await?;
     let form = find_form(&state, job.form_id).await?;
-    let (actor_id, role, is_bot) =
+    let (actor_id, role, _) =
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "record.create").await?;
-    ensure_can_read_job_result(job.created_by, actor_id, &role, is_bot)?;
+    ensure_can_read_job_result(form_job_requester(&job.input, job.created_by), actor_id, &role)?;
     Ok(ApiResponse::success(job))
 }
 
@@ -2695,7 +2713,11 @@ async fn import_form_record_rows(
         )
         .await?;
         let denied_read_fields = denied_read_field_keys(state, form.id, role).await?;
-        created.push(filter_record_response_values(record, &denied_read_fields));
+        created.push(filter_record_response_values(
+            record,
+            &form.title_template,
+            &denied_read_fields,
+        ));
     }
 
     Ok(ImportRecordsResponse {
@@ -3362,6 +3384,7 @@ pub async fn create_form_record(
     let denied_read_fields = denied_read_field_keys(&state, form.id, &role).await?;
     Ok(ApiResponse::success(filter_record_response_values(
         record,
+        &form.title_template,
         &denied_read_fields,
     )))
 }
@@ -3447,7 +3470,7 @@ pub async fn get_form_record(
         crate::flow::bridge::record_flow_lineage(&state, &extensions, record.workspace_id, record.id).await?
     };
     Ok(ApiResponse::success(RecordDetailResponse {
-        record: filter_record_response_values(record, &denied_read_fields),
+        record: filter_record_response_values(record, &form.title_template, &denied_read_fields),
         flow_lineage,
     }))
 }
@@ -3463,8 +3486,11 @@ pub async fn verify_form_record_signature_audit(
     let (actor_id, role, _) =
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "form.view").await?;
     ensure_record_scope_allows_created_by(&state, form.id, &role, actor_id, record.created_by).await?;
-    let verification = verify_signature_audit_source(&record.source).await?;
-    let lifecycle = signature_lifecycle_summary(&form.schema, &record.values, &record.source)?;
+    let denied_read_fields = denied_read_field_keys(&state, form.id, &role).await?;
+    let readable_source = signature_audit_source_for_reader(&record.source, &denied_read_fields);
+    let readable_values = filter_values_for_read_policy(record.values.clone(), &denied_read_fields);
+    let verification = verify_signature_audit_source(&readable_source).await?;
+    let lifecycle = signature_lifecycle_summary(&form.schema, &readable_values, &readable_source, &denied_read_fields)?;
     let workflow = signature_workflow_verification_summary(&verification, &lifecycle);
     Ok(ApiResponse::success(json!({
         "form_id": form.id,
@@ -3543,6 +3569,7 @@ pub async fn recalculate_form_record(
     let denied_read_fields = denied_read_field_keys(&state, form.id, &role).await?;
     Ok(ApiResponse::success(filter_record_response_values(
         record,
+        &form.title_template,
         &denied_read_fields,
     )))
 }
@@ -3690,6 +3717,7 @@ pub async fn update_form_record(
     let denied_read_fields = denied_read_field_keys(&state, form.id, &role).await?;
     Ok(ApiResponse::success(filter_record_response_values(
         record,
+        &form.title_template,
         &denied_read_fields,
     )))
 }
@@ -4001,6 +4029,7 @@ pub async fn restore_form_record(
     let denied_read_fields = denied_read_field_keys(&state, form.id, &role).await?;
     Ok(ApiResponse::success(filter_record_response_values(
         restored,
+        &form.title_template,
         &denied_read_fields,
     )))
 }
@@ -4202,11 +4231,20 @@ pub async fn list_relation_targets(
     {
         values.push(format!("%{q}%").into());
         let idx = values.len();
-        // Searching the raw value document would let an actor probe fields they cannot read.
         if denied_read_fields.is_empty() {
             where_parts.push(format!("(title ILIKE ${idx} OR values::text ILIKE ${idx})"));
         } else {
-            where_parts.push(format!("title ILIKE ${idx}"));
+            // Searching the raw value document, or the stored title rendered from every field,
+            // would let an actor probe fields they cannot read: match readable values only.
+            let mut excluded = Vec::with_capacity(denied_read_fields.len());
+            for field_key in &denied_read_fields {
+                values.push(field_key.clone().into());
+                excluded.push(format!("${}", values.len()));
+            }
+            where_parts.push(format!(
+                "EXISTS (SELECT 1 FROM jsonb_each_text(values) readable WHERE readable.key NOT IN ({}) AND readable.value ILIKE ${idx})",
+                excluded.join(", ")
+            ));
         }
     }
 
@@ -4239,13 +4277,20 @@ pub async fn list_relation_targets(
         RelationTargetResponse::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres, sql, values))
             .all(&state.db)
             .await?;
-    if let Some(display_field) = display_field {
-        for item in &mut items {
-            if !denied_read_fields.contains(&display_field)
-                && let Some(display) = item.values.get(&display_field).map(display_value)
-            {
-                item.display = display;
-            }
+    for item in &mut items {
+        item.title = reader_title(
+            &target_form.title_template,
+            item.record_id,
+            std::mem::take(&mut item.title),
+            &item.values,
+            &denied_read_fields,
+        );
+        item.display.clone_from(&item.title);
+        if let Some(display_field) = display_field.as_ref()
+            && !denied_read_fields.contains(display_field)
+            && let Some(display) = item.values.get(display_field).map(display_value)
+        {
+            item.display = display;
         }
     }
     let items = items
@@ -4364,7 +4409,7 @@ pub async fn list_record_children(
             link_id: row.link_id,
             relation_key: row.relation_key,
             relation_type: row.relation_type,
-            record: filter_record_response_values(record, &denied_read_fields),
+            record: filter_record_response_values(record, &child_form.title_template, &denied_read_fields),
         });
     }
 
@@ -4443,7 +4488,7 @@ pub async fn create_child_record(
 
     Ok(ApiResponse::success(ChildRecordMutationResponse {
         link,
-        record: filter_record_response_values(child_record, &denied_read_fields),
+        record: filter_record_response_values(child_record, &child_form.title_template, &denied_read_fields),
     }))
 }
 
@@ -4506,7 +4551,7 @@ pub async fn update_child_record(
 
     Ok(ApiResponse::success(ChildRecordMutationResponse {
         link,
-        record: filter_record_response_values(updated, &denied_read_fields),
+        record: filter_record_response_values(updated, &child_form.title_template, &denied_read_fields),
     }))
 }
 
@@ -4555,7 +4600,7 @@ pub async fn archive_child_record(
 
     Ok(ApiResponse::success(ChildRecordMutationResponse {
         link,
-        record: filter_record_response_values(archived, &denied_read_fields),
+        record: filter_record_response_values(archived, &child_form.title_template, &denied_read_fields),
     }))
 }
 
@@ -4604,7 +4649,7 @@ pub async fn restore_child_record(
 
     Ok(ApiResponse::success(ChildRecordMutationResponse {
         link,
-        record: filter_record_response_values(restored, &denied_read_fields),
+        record: filter_record_response_values(restored, &child_form.title_template, &denied_read_fields),
     }))
 }
 
@@ -5278,6 +5323,7 @@ async fn visible_form_record_ids_for_export(
     state: &AppState,
     form: &FormResponse,
     fields: &[FormField],
+    denied_read_fields: &BTreeSet<String>,
     actor_id: Uuid,
     role: &str,
     view_id: Option<Uuid>,
@@ -5300,14 +5346,19 @@ async fn visible_form_record_ids_for_export(
         &mut next_idx,
     )
     .await?;
+    let read_guard = QueryReadGuard {
+        denied_read_fields,
+        title_template: &form.title_template,
+    };
     append_record_filter_expression_sql(
         fields,
+        read_guard,
         view_query.filter_expression.as_ref(),
         &mut where_parts,
         &mut values,
         &mut next_idx,
     )?;
-    let (sort_join, order_by, sort_value) = record_sort_sql(view_query.sort.as_deref(), fields, next_idx)?;
+    let (sort_join, order_by, sort_value) = record_sort_sql(view_query.sort.as_deref(), fields, read_guard, next_idx)?;
     if let Some(join) = sort_join {
         joins.push(join);
         if let Some(value) = sort_value {
@@ -5556,13 +5607,12 @@ fn ensure_link_target_scope(
 
 /// Async job results are computed with the creating actor's field and record permissions, so they may
 /// only be read back by that actor (or by a form administrator).
-fn ensure_can_read_job_result(
-    created_by: Option<Uuid>,
-    actor_id: Uuid,
-    role: &str,
-    is_bot: bool,
-) -> Result<(), ApiError> {
-    if is_bot || role_is_form_admin(role) || created_by == Some(actor_id) {
+/// A job and its result are readable by the principal that requested it and by form admins.
+///
+/// Bots follow the same rule: a bot resolves to `admin` only when its token carries the `admin`
+/// permission, otherwise it reads its own jobs (`requester` from [`form_job_requester`]) only.
+fn ensure_can_read_job_result(requester: Option<Uuid>, actor_id: Uuid, role: &str) -> Result<(), ApiError> {
+    if role_is_form_admin(role) || requester == Some(actor_id) {
         return Ok(());
     }
     Err(ApiError::NotFound("form job not found".to_string()))
@@ -5587,13 +5637,23 @@ fn summarize_job_result(result: Option<Value>) -> Option<Value> {
     Some(Value::Object(summary))
 }
 
-/// Restricts a job listing to the jobs the actor created, unless the actor administers the form.
+/// Restricts a job listing to the jobs the actor requested, unless the actor administers the form.
+/// A bot's jobs carry no `created_by`; they are matched through the recorded worker context, the
+/// same way [`form_job_requester`] attributes them.
 fn job_listing_owner_filter(actor_id: Uuid, role: &str, is_bot: bool, values: &mut Vec<sea_orm::Value>) -> String {
-    if is_bot || role_is_form_admin(role) {
+    if role_is_form_admin(role) {
         return String::new();
     }
     values.push(actor_id.into());
-    format!(" AND created_by = ${}", values.len())
+    let idx = values.len();
+    if is_bot {
+        format!(
+            " AND created_by IS NULL AND input->'worker_context'->>'is_bot' = 'true' \
+             AND input->'worker_context'->>'actor_id' = (${idx}::uuid)::text"
+        )
+    } else {
+        format!(" AND created_by = ${idx}")
+    }
 }
 
 fn ensure_can_manage_import_mapping_template(
@@ -6037,7 +6097,13 @@ async fn preview_import_rows(
             Ok((title, values)) => ImportRecordPreviewRow {
                 row_number,
                 valid: true,
-                title: Some(title),
+                title: Some(reader_title(
+                    &form.title_template,
+                    Uuid::new_v4(),
+                    title,
+                    &values,
+                    &denied_read_fields,
+                )),
                 normalized_values: Some(filter_values_for_read_policy(values, &denied_read_fields)),
                 error: None,
             },
@@ -6144,7 +6210,20 @@ fn ensure_form_permission_manager(role: &str) -> Result<(), ApiError> {
     }
 }
 
-fn filter_record_response_values(mut record: RecordResponse, denied_read_fields: &BTreeSet<String>) -> RecordResponse {
+/// Applies field read permissions to a record before it leaves the API: denied values are
+/// stripped and the title is rendered again from readable fields only.
+fn filter_record_response_values(
+    mut record: RecordResponse,
+    title_template: &str,
+    denied_read_fields: &BTreeSet<String>,
+) -> RecordResponse {
+    record.title = reader_title(
+        title_template,
+        record.id,
+        std::mem::take(&mut record.title),
+        &record.values,
+        denied_read_fields,
+    );
     record.values = filter_values_for_read_policy(record.values, denied_read_fields);
     record
 }
@@ -7483,16 +7562,16 @@ mod tests {
         let creator = Uuid::new_v4();
         let other_member = Uuid::new_v4();
 
-        assert!(ensure_can_read_job_result(Some(creator), creator, "member", false).is_ok());
-        assert!(ensure_can_read_job_result(Some(creator), other_member, "admin", false).is_ok());
-        assert!(ensure_can_read_job_result(Some(creator), other_member, "owner", false).is_ok());
-        assert!(ensure_can_read_job_result(Some(creator), other_member, "member", true).is_ok());
+        assert!(ensure_can_read_job_result(Some(creator), creator, "member").is_ok());
+        assert!(ensure_can_read_job_result(Some(creator), other_member, "admin").is_ok());
+        assert!(ensure_can_read_job_result(Some(creator), other_member, "owner").is_ok());
+        // A member bot is no longer exempt: it reads another principal's job no more than a person.
         assert!(matches!(
-            ensure_can_read_job_result(Some(creator), other_member, "member", false),
+            ensure_can_read_job_result(Some(creator), other_member, "member"),
             Err(ApiError::NotFound(_))
         ));
         assert!(matches!(
-            ensure_can_read_job_result(None, other_member, "member", false),
+            ensure_can_read_job_result(None, other_member, "member"),
             Err(ApiError::NotFound(_))
         ));
     }
@@ -7510,6 +7589,12 @@ mod tests {
         let mut admin_values: Vec<sea_orm::Value> = vec![Uuid::new_v4().into()];
         assert!(job_listing_owner_filter(actor_id, "admin", false, &mut admin_values).is_empty());
         assert_eq!(admin_values.len(), 1);
+
+        let mut bot_values: Vec<sea_orm::Value> = vec![Uuid::new_v4().into()];
+        let bot_filter = job_listing_owner_filter(actor_id, "member", true, &mut bot_values);
+        assert!(bot_filter.contains("created_by IS NULL"));
+        assert!(bot_filter.contains("'actor_id' = ($2::uuid)::text"));
+        assert_eq!(bot_values.len(), 2);
     }
 
     #[test]

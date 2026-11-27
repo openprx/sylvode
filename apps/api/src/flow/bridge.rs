@@ -360,6 +360,8 @@ struct BridgeActor {
 struct TargetView {
     form_id: Uuid,
     title: String,
+    /// The record title template; empty for a form target.
+    title_template: String,
     status: String,
     summary: Value,
     created_by: Option<Uuid>,
@@ -465,6 +467,7 @@ async fn target_view<C: ConnectionTrait>(
     struct Row {
         form_id: Uuid,
         title: String,
+        title_template: String,
         summary: Value,
         created_by: Option<Uuid>,
     }
@@ -472,7 +475,7 @@ async fn target_view<C: ConnectionTrait>(
         "form" => {
             Row::find_by_statement(Statement::from_sql_and_values(
                 DbBackend::Postgres,
-                "SELECT id AS form_id, name AS title, \
+                "SELECT id AS form_id, name AS title, '' AS title_template, \
              jsonb_build_object('description', description) AS summary, created_by \
              FROM project_forms WHERE id = $1 AND workspace_id = $2 AND archived_at IS NULL",
                 vec![target_id.into(), workspace_id.into()],
@@ -483,7 +486,7 @@ async fn target_view<C: ConnectionTrait>(
         "form_record" => {
             Row::find_by_statement(Statement::from_sql_and_values(
                 DbBackend::Postgres,
-                "SELECT r.form_id, r.title, r.values AS summary, r.created_by \
+                "SELECT r.form_id, r.title, f.title_template, r.values AS summary, r.created_by \
              FROM form_records r INNER JOIN project_forms f ON f.id = r.form_id \
              WHERE r.id = $1 AND r.workspace_id = $2 AND r.archived_at IS NULL AND f.archived_at IS NULL",
                 vec![target_id.into(), workspace_id.into()],
@@ -500,6 +503,7 @@ async fn target_view<C: ConnectionTrait>(
     Ok(row.map(|row| TargetView {
         form_id: row.form_id,
         title: row.title,
+        title_template: row.title_template,
         status: "active".to_string(),
         summary: row.summary,
         created_by: row.created_by,
@@ -2579,8 +2583,17 @@ pub async fn list_scope_references(
         let Some(permission) = target_permission(&tx, &actor, &target).await? else {
             continue;
         };
-        let summary = if row.target_type == "form_record" {
-            permission
+        let (title, summary) = if row.target_type == "form_record" {
+            // The stored title is rendered from every field; a reader with denied fields gets one
+            // rendered from the readable fields only.
+            let title = crate::forms::read_policy::reader_title(
+                &target.title_template,
+                row.target_id,
+                target.title,
+                &target.summary,
+                &permission.denied_read_fields,
+            );
+            let summary = permission
                 .denied_read_fields
                 .iter()
                 .fold(target.summary, |mut values, key| {
@@ -2588,9 +2601,10 @@ pub async fn list_scope_references(
                         values.remove(key);
                     }
                     values
-                })
+                });
+            (title, summary)
         } else {
-            target.summary
+            (target.title, target.summary)
         };
         let permission_state = if bridge_enabled(&tx, row.workspace_id).await? {
             permission.state
@@ -2602,7 +2616,7 @@ pub async fn list_scope_references(
             source_object_id: row.source_object_id,
             target_type: row.target_type,
             target_id: row.target_id,
-            title: target.title,
+            title,
             status: target.status,
             summary,
             display: row.display,

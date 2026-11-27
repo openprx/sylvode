@@ -7,6 +7,7 @@ pub mod job_context;
 pub mod native_create;
 pub mod permissions;
 pub mod projections;
+pub mod read_policy;
 pub mod record_comments;
 pub mod record_export;
 pub mod record_import;

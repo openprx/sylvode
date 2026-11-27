@@ -5,7 +5,10 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
-use crate::{error::ApiError, forms::schema::normalize_key};
+use crate::{
+    error::ApiError,
+    forms::{read_policy::field_read_denied, schema::normalize_key},
+};
 
 pub const FORM_PERMISSION_ACTIONS: [&str; 6] = [
     "form.view",
@@ -263,9 +266,7 @@ pub async fn ensure_field_read_policy_allows(
     if let Some(row) = permission_policy_for_role(state, form_id, role).await?
         && !permission_policy_field_allows(&row.policy, field_key, "read")
     {
-        return Err(ApiError::Forbidden(format!(
-            "form field read permission denied: {field_key}"
-        )));
+        return Err(field_read_denied(field_key));
     }
     Ok(())
 }

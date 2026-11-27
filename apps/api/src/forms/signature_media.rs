@@ -1,6 +1,8 @@
 // Extension matching stays case-sensitive to preserve the established upload and media policy.
 #![allow(clippy::case_sensitive_file_extension_comparisons)]
 
+use std::collections::BTreeSet;
+
 use base64::Engine;
 use platform::timestamp::Timestamp;
 use serde_json::{Value, json};
@@ -215,13 +217,49 @@ pub fn append_signature_audit_source(source: Value, audit_entries: Vec<Value>) -
     Ok(Value::Object(object))
 }
 
-pub fn signature_lifecycle_summary(schema: &Value, values: &Value, source: &Value) -> Result<Value, ApiError> {
+/// Keeps only the signature audit entries of fields the reader may read.
+///
+/// An entry names its field, object key, digest and timestamps; for a read-denied signature field
+/// that is the field's history. An entry without a `field_key` cannot be attributed and is dropped
+/// as soon as any field is denied.
+pub fn signature_audit_source_for_reader(source: &Value, denied_read_fields: &BTreeSet<String>) -> Value {
+    if denied_read_fields.is_empty() {
+        return source.clone();
+    }
+    let entries = source
+        .get("signature_media")
+        .and_then(|value| value.get("entries"))
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter(|entry| {
+                    entry
+                        .get("field_key")
+                        .and_then(Value::as_str)
+                        .is_some_and(|field_key| !denied_read_fields.contains(field_key))
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    json!({ "signature_media": { "version": "v1", "entries": entries } })
+}
+
+/// Summarises the signature lifecycle of the signature fields the reader may read.
+pub fn signature_lifecycle_summary(
+    schema: &Value,
+    values: &Value,
+    source: &Value,
+    denied_read_fields: &BTreeSet<String>,
+) -> Result<Value, ApiError> {
     let fields = parse_fields(schema)
         .map_err(ApiError::BadRequest)?
         .into_iter()
-        .filter(|field| field.field_type == "signature")
+        .filter(|field| field.field_type == "signature" && !denied_read_fields.contains(&field.key))
         .collect::<Vec<_>>();
-    let entries = source
+    let reader_source = signature_audit_source_for_reader(source, denied_read_fields);
+    let entries = reader_source
         .get("signature_media")
         .and_then(|value| value.get("entries"))
         .and_then(Value::as_array)
@@ -1522,8 +1560,8 @@ mod tests {
             }
         });
 
-        let summary =
-            signature_lifecycle_summary(&schema, &values, &source).expect("signature lifecycle should summarize");
+        let summary = signature_lifecycle_summary(&schema, &values, &source, &std::collections::BTreeSet::new())
+            .expect("signature lifecycle should summarize");
 
         assert_eq!(summary["version"], "v1");
         assert_eq!(summary["signature_field_count"], 2);

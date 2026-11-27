@@ -54,9 +54,42 @@ pub fn form_job_worker_context(input: &Value, created_by: Option<Uuid>) -> Resul
     Ok((actor_id, role, is_bot))
 }
 
+/// The principal that requested a job.
+///
+/// A user is recorded in `created_by`. A bot leaves `created_by` empty (it is not a user row) and is
+/// recognised only through the worker context written when the job was created, which must say
+/// `is_bot: true`. A job with neither has no requester and is readable by form admins only.
+pub fn form_job_requester(input: &Value, created_by: Option<Uuid>) -> Option<Uuid> {
+    if created_by.is_some() {
+        return created_by;
+    }
+    let context = input.get("worker_context")?;
+    if context.get("is_bot").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    context
+        .get("actor_id")
+        .and_then(Value::as_str)
+        .and_then(|actor_id| Uuid::parse_str(actor_id).ok())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{add_form_job_worker_context, form_job_worker_context};
+    use super::{add_form_job_worker_context, form_job_requester, form_job_worker_context};
+    use uuid::Uuid;
+
+    #[test]
+    fn job_requester_is_the_creating_user_or_the_recorded_bot() {
+        let user = Uuid::new_v4();
+        let bot = Uuid::new_v4();
+        let bot_input = add_form_job_worker_context(json!({}), bot, "member", true).unwrap();
+        let user_input = add_form_job_worker_context(json!({}), user, "member", false).unwrap();
+
+        assert_eq!(form_job_requester(&user_input, Some(user)), Some(user));
+        assert_eq!(form_job_requester(&bot_input, None), Some(bot));
+        assert_eq!(form_job_requester(&user_input, None), None);
+        assert_eq!(form_job_requester(&json!({}), None), None);
+    }
     use serde_json::json;
     use uuid::Uuid;
 
