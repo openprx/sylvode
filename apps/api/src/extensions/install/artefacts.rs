@@ -163,9 +163,9 @@ pub async fn create_pages(
     Ok(())
 }
 
-/// The site that already holds pages of this installation (an upgrade adds its pages beside the
+/// The `draft` site that already holds pages of this installation (an upgrade adds its pages beside the
 /// earlier generation's), or a new `draft` site named after the project. A package never adds pages
-/// to a site somebody else runs, and never publishes one.
+/// to a site that is not a draft (published or disabled, which a person runs) and never publishes one.
 async fn site_of_installation(
     tx: &impl ConnectionTrait,
     workspace_id: Uuid,
@@ -175,7 +175,8 @@ async fn site_of_installation(
 ) -> Result<Uuid, ApiError> {
     let existing = Id::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT site_id AS id FROM site_pages WHERE installation_id = $1 ORDER BY generation DESC, id LIMIT 1",
+        "SELECT p.site_id AS id FROM site_pages p JOIN sites s ON s.id = p.site_id \
+         WHERE p.installation_id = $1 AND s.status = 'draft' ORDER BY p.generation DESC, p.id LIMIT 1",
         vec![installation_id.into()],
     ))
     .one(tx)

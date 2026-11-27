@@ -333,11 +333,36 @@ fn display_text_ok(text: &str, max_chars: usize) -> bool {
     (1..=max_chars).contains(&chars)
         && text.trim() == text
         && is_nfc(text)
-        && !text.chars().any(|c| {
-            c.is_control()
-                || matches!(c, '\u{200b}'..='\u{200d}' | '\u{feff}' | '\u{61c}' | '\u{2028}' | '\u{2029}' | '\u{2060}'..='\u{2064}')
-                || matches!(c, '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
-        })
+        && !text.chars().any(|c| c.is_control() || is_format_char(c))
+}
+
+/// Unicode general category Cf (format), plus the line and paragraph separators Zl and Zp: invisible
+/// in a name that is shown across the workspace.
+fn is_format_char(c: char) -> bool {
+    matches!(
+        u32::from(c),
+        0x00AD
+            | 0x0600..=0x0605
+            | 0x061C
+            | 0x06DD
+            | 0x070F
+            | 0x0890..=0x0891
+            | 0x08E2
+            | 0x180E
+            | 0x200B..=0x200F
+            | 0x2028..=0x202E
+            | 0x2060..=0x2064
+            | 0x2066..=0x206F
+            | 0xFEFF
+            | 0xFFF9..=0xFFFB
+            | 0x110BD
+            | 0x110CD
+            | 0x13430..=0x1343F
+            | 0x1BCA0..=0x1BCA3
+            | 0x1D173..=0x1D17A
+            | 0xE0001
+            | 0xE0020..=0xE007F
+    )
 }
 
 /// An i18n map of a project block: at most 8 keys of the form `xx` or `xx-XX`, `en` present, every
