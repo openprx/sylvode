@@ -1,5 +1,8 @@
 <script lang="ts">
+	import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
 	import { locale, t } from 'svelte-i18n';
+	import CustomiseSheet from '#lib/nav/CustomiseSheet.svelte';
+	import IconButton from '#lib/ui/icon-button/IconButton.svelte';
 	import { navStore } from '#lib/nav/store.svelte.js';
 	import { workspaceGroups } from '#lib/nav/rows.js';
 	import { PERSONAL_SCOPE, type FlowAvailability } from '../destinations';
@@ -48,6 +51,7 @@
 			: null
 	);
 	const main = $derived(homeRows({ unread, tr }));
+	let customising = $state(false);
 
 	/** Groups the person opened or closed against the configured default (memory only). */
 	let flipped = $state.raw<readonly string[]>([]);
@@ -59,7 +63,24 @@
 	const selectedId = $derived(selectedRowId(allRows, url));
 </script>
 
-{#if groups}
+{#if groups && workspaceId}
+	<div class="tools">
+		<IconButton
+			icon={SlidersHorizontal}
+			label={$t('nav.customise.open')}
+			data-testid="nav-customise-home"
+			onclick={() => (customising = true)}
+		/>
+	</div>
+	{#if customising}
+		<CustomiseSheet
+			open
+			scope="workspace"
+			scopeId={workspaceId}
+			{workspaceId}
+			onclose={() => (customising = false)}
+		/>
+	{/if}
 	{#each groups as group (group.id)}
 		{@const open = group.collapsed === flipped.includes(group.id)}
 		<div class="group" data-column-group={group.id}>
@@ -91,6 +112,11 @@
 {/if}
 
 <style>
+	.tools {
+		display: flex;
+		justify-content: flex-end;
+		padding-inline: var(--rf-space-4);
+	}
 	.group {
 		display: flex;
 		flex-direction: column;

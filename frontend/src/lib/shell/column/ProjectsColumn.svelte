@@ -1,4 +1,5 @@
 <script lang="ts">
+	import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal';
 	import { untrack } from 'svelte';
 	import { locale, t } from 'svelte-i18n';
 	import { projectDiscovery } from '#lib/plugins/contributions.js';
@@ -9,7 +10,9 @@
 	import type { Shortcut } from '../shortcuts.svelte';
 	import type { ShellState } from '../shell-state.svelte';
 	import { projectTree } from '../../project/nav';
+	import CustomiseSheet from '#lib/nav/CustomiseSheet.svelte';
 	import { navStore } from '#lib/nav/store.svelte.js';
+	import IconButton from '#lib/ui/icon-button/IconButton.svelte';
 	import { appsOf } from './apps-count';
 	import type { ColumnData } from './column-data.svelte';
 	import {
@@ -63,6 +66,9 @@
 	// --- workspace scope ---
 	const options = $derived($optionsStore);
 	const projects = $derived(projectsOfWorkspace(options.items, scope, $locale ?? undefined));
+
+	/** The project whose navigation the person is customising. */
+	let customiseProject = $state<string | null>(null);
 
 	/** Forms groups that are open; memory only (the project expansion is what survives reload). */
 	let openForms = $state.raw<ReadonlySet<string>>(emptyIdSet());
@@ -269,6 +275,14 @@
 							onfollow={follow}
 						/>
 					{/if}
+					<div class="customise">
+						<IconButton
+							icon={SlidersHorizontal}
+							label={$t('nav.customise.open')}
+							data-testid="nav-customise-project"
+							onclick={() => (customiseProject = branch.project.id)}
+						/>
+					</div>
 					{#if branch.formsOpen}
 						{#if branch.forms.status === 'loading'}
 							<SkeletonRows thing={$t('shell.column.things.forms')} count={2} />
@@ -285,6 +299,16 @@
 		{/each}
 	</div>
 {/if}
+{#if customiseProject}
+	<CustomiseSheet
+		open
+		scope="project"
+		scopeId={customiseProject}
+		workspaceId={scope}
+		projectId={customiseProject}
+		onclose={() => (customiseProject = null)}
+	/>
+{/if}
 {#if milestonesNav}
 	<div class="milestones" data-nav-section="milestones">
 		<NavList rows={[milestonesNav]} {selectedId} onfollow={follow} />
@@ -292,6 +316,11 @@
 {/if}
 
 <style>
+	.customise {
+		display: flex;
+		justify-content: flex-end;
+		padding-inline: var(--rf-space-4);
+	}
 	.milestones {
 		margin-top: var(--rf-space-2);
 	}

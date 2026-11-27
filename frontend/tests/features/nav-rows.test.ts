@@ -27,6 +27,7 @@ function entry(id: string, target: ResolvedEntry['target'], extra: Partial<Resol
 		pinned: false,
 		locked: false,
 		user_hidden: false,
+		position: 0,
 		...extra
 	} satisfies ResolvedEntry;
 }

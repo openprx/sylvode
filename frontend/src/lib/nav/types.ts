@@ -50,6 +50,8 @@ export interface NavPrefs {
 	pinned: string[];
 	unpinned: string[];
 	collapsed: string[];
+	/** Sections collapsed by default that this person keeps open. */
+	expanded: string[];
 }
 
 export interface ResolvedEntry {
@@ -65,6 +67,8 @@ export interface ResolvedEntry {
 	pinned: boolean;
 	locked: boolean;
 	user_hidden: boolean;
+	/** Index in its stored section after the person's order is applied (also when pinned). */
+	position: number;
 }
 
 export interface ResolvedSection {
