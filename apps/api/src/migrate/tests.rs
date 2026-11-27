@@ -148,6 +148,7 @@ fn the_adoption_cutoff_names_a_registered_migration() {
             "0138_installations.sql",
             "0139_artefact_drafts.sql",
             "0140_nav.sql",
+            "0142_cap_record_titles.sql",
         ],
         "everything past the cutoff re-runs on an adopted database and must be idempotent"
     );
@@ -297,6 +298,7 @@ fn only_rerunnable_probes_have_no_statement() {
             "0125_oauth_client_scopes.sql",
             "0127_retire_legacy_objects.sql",
             "0136_form_schema_v2.sql",
+            "0142_cap_record_titles.sql",
         ],
         "a migration may only skip its probe when re-executing it is a no-op"
     );

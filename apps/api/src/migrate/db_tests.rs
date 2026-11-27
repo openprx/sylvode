@@ -1990,7 +1990,7 @@ async fn the_legacy_objects_migration_keeps_only_package_imports() {
     scratch.drop_self().await;
 }
 
-/// The low-code migrations (0133-0140) apply on a fresh database, each re-runs as a no-op, and
+/// The low-code migrations (0133-0142; 0141 is unused) apply on a fresh database, each re-runs as a no-op, and
 /// the runner's replay start succeeds after them. 0136 also rewrites a v1 form schema it finds.
 #[tokio::test]
 async fn low_code_migrations_apply_and_rerun() {
@@ -2002,9 +2002,9 @@ async fn low_code_migrations_apply_and_rerun() {
     let low_code: Vec<(&str, &str)> = MIGRATIONS
         .iter()
         .copied()
-        .filter(|(name, _)| ("0133".."0141").contains(&name.get(..4).unwrap_or_default()))
+        .filter(|(name, _)| ("0133".."0143").contains(&name.get(..4).unwrap_or_default()))
         .collect();
-    assert_eq!(low_code.len(), 8, "0133 through 0140 are registered");
+    assert_eq!(low_code.len(), 9, "0133 through 0142 (no 0141) are registered");
     for (name, sql) in &low_code {
         db.execute_unprepared(&format!("BEGIN; {sql}\nCOMMIT;"))
             .await
@@ -2076,6 +2076,59 @@ async fn low_code_migrations_apply_and_rerun() {
             status_of(&ledger, name),
             "applied",
             "{name} stays applied after the replay"
+        );
+    }
+    scratch.drop_self().await;
+}
+
+/// 0142 cuts a stored record title longer than the renderer's cap to its first 1,024 characters
+/// (characters, not bytes: the title is multi-byte), leaves a title within the cap alone, and a
+/// second run changes nothing.
+#[tokio::test]
+async fn record_title_cap_migration_cuts_on_characters_and_reruns() {
+    let scratch = scratch_or_skip!("record_title_cap");
+    let db = scratch.connection();
+    run_migrations_with(db, MigrationOptions::default())
+        .await
+        .expect("a fresh database migrates cleanly");
+    db.execute_unprepared(
+        "INSERT INTO users (id, email, name, password_hash) VALUES \
+         ('10000000-0000-0000-0000-000000000142', 'title-cap@example.test', 'Title Cap', 'x'); \
+         INSERT INTO workspaces (id, slug, name, created_by) VALUES \
+         ('20000000-0000-0000-0000-000000000142', 'title-cap', 'Title Cap', \
+          '10000000-0000-0000-0000-000000000142'); \
+         INSERT INTO projects (id, workspace_id, key, name, created_by) VALUES \
+         ('25000000-0000-0000-0000-000000000142', '20000000-0000-0000-0000-000000000142', \
+          'TCP', 'Title Cap', '10000000-0000-0000-0000-000000000142'); \
+         INSERT INTO project_forms (id, workspace_id, project_id, key, name, title_template, schema) VALUES \
+         ('30000000-0000-0000-0000-000000000142', '20000000-0000-0000-0000-000000000142', \
+          '25000000-0000-0000-0000-000000000142', 'tc', 'Title Cap', '{id}', \
+          '{\"version\":\"sv.form.schema.v2\",\"fields\":[]}'::jsonb); \
+         INSERT INTO form_records (id, workspace_id, project_id, form_id, title) VALUES \
+         ('40000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000142', \
+          '25000000-0000-0000-0000-000000000142', '30000000-0000-0000-0000-000000000142', \
+          repeat('\u{00e9}', 1500)), \
+         ('40000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000142', \
+          '25000000-0000-0000-0000-000000000142', '30000000-0000-0000-0000-000000000142', \
+          repeat('a', 1024));",
+    )
+    .await
+    .expect("a form with a long and a capped title is inserted");
+    let sql_0142 = MIGRATIONS
+        .iter()
+        .find(|(name, _)| name.starts_with("0142"))
+        .map(|(_, sql)| *sql)
+        .expect("0142 is registered");
+    let lengths = "SELECT string_agg(char_length(title)::text || ':' || octet_length(title)::text, ',' \
+                   ORDER BY id) AS v FROM form_records WHERE form_id = '30000000-0000-0000-0000-000000000142'";
+    for run in ["first", "second"] {
+        db.execute_unprepared(&format!("BEGIN; {sql_0142}\nCOMMIT;"))
+            .await
+            .unwrap_or_else(|err| panic!("the {run} run of 0142 fails: {err}"));
+        assert_eq!(
+            scalar_text(db, lengths).await,
+            "1024:2048,1024:1024",
+            "after the {run} run the long title holds 1,024 two-byte characters and the other is untouched"
         );
     }
     scratch.drop_self().await;

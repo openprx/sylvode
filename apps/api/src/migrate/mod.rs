@@ -673,6 +673,7 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
         SchemaProbe::Trigger("artefact_drafts", "trg_sv_hint_draft_status"),
     ),
     ("0140_nav.sql", SchemaProbe::Relation("nav_user_prefs")),
+    ("0142_cap_record_titles.sql", SchemaProbe::Rerunnable),
 ];
 
 /// One recorded migration outcome.
