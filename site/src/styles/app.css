@@ -1,0 +1,102 @@
+@import "tailwindcss";
+@import "./tokens.css";
+
+@theme inline {
+  --color-*: initial;
+  --color-bg: var(--rf-bg);
+  --color-nav: var(--rf-nav);
+  --color-surface: var(--rf-surface);
+  --color-surface-white: var(--rf-surface-white);
+  --color-selected: var(--rf-selected);
+  --color-overlay: var(--rf-overlay);
+  --color-overlay-border: var(--rf-overlay-border);
+  --color-input: var(--rf-input);
+  --color-input-border: var(--rf-input-border);
+  --color-text: var(--rf-text);
+  --color-secondary: var(--rf-secondary);
+  --color-control: var(--rf-control);
+  --color-line: var(--rf-line);
+  --color-line-strong: var(--rf-line-strong);
+  --color-primary: var(--rf-primary);
+  --color-on-primary: var(--rf-on-primary);
+  --color-focus: var(--rf-focus);
+  --color-badge: var(--rf-badge);
+  --color-on-badge: var(--rf-on-badge);
+  --color-scrim: var(--rf-scrim);
+  --color-success: var(--rf-success);
+  --color-success-bg: var(--rf-success-bg);
+  --color-on-success: var(--rf-on-success);
+  --color-warning: var(--rf-warning);
+  --color-warning-bg: var(--rf-warning-bg);
+  --color-danger: var(--rf-danger);
+  --color-danger-bg: var(--rf-danger-bg);
+  --color-on-danger: var(--rf-on-danger);
+  --color-hover: var(--rf-hover);
+  --color-pressed: var(--rf-pressed);
+  --color-transparent: transparent;
+  --color-current: currentColor;
+
+  --font-sans: var(--rf-font-sans-stack);
+  --font-mono: var(--rf-font-mono-stack);
+
+  --radius-xs: var(--rf-radius-xs);
+  --radius-sm: var(--rf-radius-sm);
+  --radius-md: var(--rf-radius-md);
+  --radius-lg: var(--rf-radius-lg);
+  --radius-full: var(--rf-radius-full);
+  --radius-button: var(--rf-radius-button);
+  --radius-input: var(--rf-radius-input);
+  --radius-chip: var(--rf-radius-chip);
+  --radius-card: var(--rf-radius-card);
+  --radius-dialog: var(--rf-radius-dialog);
+
+  --shadow-overlay: var(--rf-shadow-overlay);
+  --shadow-modal: var(--rf-shadow-modal);
+
+  --text-caption: var(--rf-size-caption);
+  --text-meta: var(--rf-size-meta);
+  --text-small: var(--rf-size-secondary);
+  --text-button: var(--rf-size-button);
+  --text-body: var(--rf-size-body);
+  --text-subheading: var(--rf-size-subheading);
+  --text-title: var(--rf-size-title);
+  --text-page: var(--rf-size-page);
+}
+
+@layer base {
+  html {
+    background: var(--rf-bg);
+    color: var(--rf-text);
+    font-family: var(--rf-font-sans-stack);
+    font-size: var(--rf-size-body);
+    line-height: 1.6;
+  }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--rf-bg);
+  }
+  :focus-visible {
+    outline: var(--rf-border-width-focus) solid var(--rf-focus);
+    outline-offset: 2px;
+  }
+}
+
+@keyframes site-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes site-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

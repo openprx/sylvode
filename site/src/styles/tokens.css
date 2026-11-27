@@ -1,0 +1,162 @@
+/*
+ * Site design tokens. A subset of the Ramflux / Sylvode console tokens (frontend/src/tokens.css),
+ * keeping the same "--rf-*" names and values so the site and the console share one language.
+ * Theme axis: light by default; dark under [data-theme="dark"], or under prefers-color-scheme: dark
+ * unless the page is pinned with [data-theme="light"].
+ */
+
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+
+  --rf-bg: #fcfbf9;
+  --rf-nav: #f5f4f1;
+  --rf-surface: #efefef;
+  --rf-surface-white: #ffffff;
+  --rf-selected: #e6e5e2;
+  --rf-overlay: #ffffff;
+  --rf-overlay-border: #e2e2e2;
+  --rf-input: #ffffff;
+  --rf-input-border: #8e8e8e;
+  --rf-text: #161616;
+  --rf-secondary: #585858;
+  --rf-control: #8e8e8e;
+  --rf-line: #e6e6e6;
+  --rf-line-strong: #d4d4d4;
+  --rf-primary: #222224;
+  --rf-on-primary: #ffffff;
+  --rf-focus: #222224;
+  --rf-badge: #222224;
+  --rf-on-badge: #ffffff;
+  --rf-scrim: rgb(0 0 0 / 0.3);
+  --rf-shadow: rgb(0 0 0 / 0.12);
+  --rf-success: #2b782f;
+  --rf-success-bg: #e8f2e9;
+  --rf-on-success: #ffffff;
+  --rf-warning: #9a5800;
+  --rf-warning-bg: #fbf0de;
+  --rf-danger: #c62828;
+  --rf-danger-bg: #fceaea;
+  --rf-on-danger: #ffffff;
+
+  --rf-font-sans-stack:
+    "Hanken Grotesk", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    system-ui, sans-serif;
+  --rf-font-mono-stack: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --rf-size-caption: 11px;
+  --rf-size-meta: 12px;
+  --rf-size-secondary: 13px;
+  --rf-size-button: 14px;
+  --rf-size-body: 15px;
+  --rf-size-subheading: 17px;
+  --rf-size-title: 20px;
+  --rf-size-page: 24px;
+
+  --rf-weight-regular: 400;
+  --rf-weight-medium: 500;
+  --rf-weight-semibold: 600;
+
+  --rf-radius-xs: 4px;
+  --rf-radius-sm: 6px;
+  --rf-radius-md: 8px;
+  --rf-radius-lg: 12px;
+  --rf-radius-full: 999px;
+  --rf-radius-button: 4px;
+  --rf-radius-input: 4px;
+  --rf-radius-chip: 4px;
+  --rf-radius-card: 8px;
+  --rf-radius-dialog: 12px;
+
+  --rf-space-1: 2px;
+  --rf-space-2: 4px;
+  --rf-space-3: 6px;
+  --rf-space-4: 8px;
+  --rf-space-5: 12px;
+  --rf-space-6: 16px;
+  --rf-space-7: 20px;
+  --rf-space-8: 24px;
+  --rf-space-9: 32px;
+
+  --rf-border-width: 1px;
+  --rf-border-width-control: 1.5px;
+  --rf-border-width-focus: 2px;
+  --rf-disabled-opacity: 0.45;
+  --rf-control-height: 36px;
+  --rf-shadow-overlay: 0 8px 24px var(--rf-shadow);
+  --rf-shadow-modal: 0 16px 48px var(--rf-shadow);
+  --rf-hover: var(--rf-surface);
+  --rf-pressed: var(--rf-selected);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --rf-bg: #171716;
+    --rf-nav: #121211;
+    --rf-surface: #212121;
+    --rf-surface-white: #1e1e1e;
+    --rf-selected: #222221;
+    --rf-overlay: #1e1e1e;
+    --rf-overlay-border: #303030;
+    --rf-input: #1c1c1c;
+    --rf-input-border: #7a7a7a;
+    --rf-text: #ebebeb;
+    --rf-secondary: #9e9e9e;
+    --rf-control: #7a7a7a;
+    --rf-line: #262626;
+    --rf-line-strong: #3a3a3a;
+    --rf-primary: #ebebeb;
+    --rf-on-primary: #121211;
+    --rf-focus: #c8c8c8;
+    --rf-badge: #ebebeb;
+    --rf-on-badge: #121211;
+    --rf-scrim: rgb(0 0 0 / 0.55);
+    --rf-shadow: rgb(0 0 0 / 0.48);
+    --rf-success: #5fd27a;
+    --rf-success-bg: #14251a;
+    --rf-on-success: #121211;
+    --rf-warning: #f2b94b;
+    --rf-warning-bg: #2b2210;
+    --rf-danger: #ff6b6b;
+    --rf-danger-bg: #2e1818;
+    --rf-on-danger: #121211;
+    --rf-shadow-overlay: 0 8px 24px var(--rf-shadow);
+    --rf-shadow-modal: 0 16px 48px var(--rf-shadow);
+  }
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --rf-bg: #171716;
+  --rf-nav: #121211;
+  --rf-surface: #212121;
+  --rf-surface-white: #1e1e1e;
+  --rf-selected: #222221;
+  --rf-overlay: #1e1e1e;
+  --rf-overlay-border: #303030;
+  --rf-input: #1c1c1c;
+  --rf-input-border: #7a7a7a;
+  --rf-text: #ebebeb;
+  --rf-secondary: #9e9e9e;
+  --rf-control: #7a7a7a;
+  --rf-line: #262626;
+  --rf-line-strong: #3a3a3a;
+  --rf-primary: #ebebeb;
+  --rf-on-primary: #121211;
+  --rf-focus: #c8c8c8;
+  --rf-badge: #ebebeb;
+  --rf-on-badge: #121211;
+  --rf-scrim: rgb(0 0 0 / 0.55);
+  --rf-shadow: rgb(0 0 0 / 0.48);
+  --rf-success: #5fd27a;
+  --rf-success-bg: #14251a;
+  --rf-on-success: #121211;
+  --rf-warning: #f2b94b;
+  --rf-warning-bg: #2b2210;
+  --rf-danger: #ff6b6b;
+  --rf-danger-bg: #2e1818;
+  --rf-on-danger: #121211;
+  --rf-shadow-overlay: 0 8px 24px var(--rf-shadow);
+  --rf-shadow-modal: 0 16px 48px var(--rf-shadow);
+}
