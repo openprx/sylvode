@@ -3,7 +3,7 @@
 -- A blob is shared content only and is never listed; every lookup of a package row is filtered to
 -- built-in packages or the caller's workspace.
 
-CREATE TABLE publisher_keys (
+CREATE TABLE IF NOT EXISTS publisher_keys (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id UUID NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   publisher TEXT NOT NULL CHECK (publisher ~ '^[a-z0-9][a-z0-9-]{0,38}$'),
@@ -17,14 +17,14 @@ CREATE TABLE publisher_keys (
   UNIQUE NULLS NOT DISTINCT (workspace_id, key_id)
 );
 
-CREATE TABLE package_blobs (
+CREATE TABLE IF NOT EXISTS package_blobs (
   blob_digest TEXT PRIMARY KEY CHECK (blob_digest ~ '^sha256:[0-9a-f]{64}$'),
   size BIGINT NOT NULL CHECK (size > 0),
   bytes BYTEA NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE packages (
+CREATE TABLE IF NOT EXISTS packages (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id UUID NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   digest TEXT NOT NULL CHECK (digest ~ '^sha256:[0-9a-f]{64}$'),
@@ -44,6 +44,6 @@ CREATE TABLE packages (
   UNIQUE NULLS NOT DISTINCT (digest, workspace_id),
   UNIQUE NULLS NOT DISTINCT (package_key, version, workspace_id)
 );
-CREATE INDEX packages_workspace ON packages (workspace_id, created_at DESC);
-CREATE INDEX packages_key ON packages (publisher_key_id);
-CREATE INDEX packages_blob ON packages (blob_digest);
+CREATE INDEX IF NOT EXISTS packages_workspace ON packages (workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS packages_key ON packages (publisher_key_id);
+CREATE INDEX IF NOT EXISTS packages_blob ON packages (blob_digest);
