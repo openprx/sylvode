@@ -459,7 +459,7 @@ A failed read is answered with a JSON-RPC error; `data.uri` is the requested tex
 ## Tools
 
 <!-- BEGIN GENERATED: tool-table (sylvode-skillgen; do not edit) -->
-The MCP server registers 158 tools in 20 categories. By default it lists nine of them (search mode) and reaches the rest through `sylvode_search`, `sylvode_read` and `sylvode_write`. Every tool, with its category and access, is in [reference/tools.md](../../skills/sylvode-mcp/reference/tools.md).
+The MCP server registers 162 tools in 21 categories. By default it lists nine of them (search mode) and reaches the rest through `sylvode_search`, `sylvode_read` and `sylvode_write`. Every tool, with its category and access, is in [reference/tools.md](../../skills/sylvode-mcp/reference/tools.md).
 
 | Category | Tools | Read | Write | Covers |
 |---|---:|---:|---:|---|
@@ -467,7 +467,8 @@ The MCP server registers 158 tools in 20 categories. By default it lists nine of
 | `project_types`: Project types | 2 | 2 | 0 | Read the project scenario types and their capability schemas |
 | `scenario_templates`: Scenario templates | 3 | 2 | 1 | Browse and install ready-made multi-form setups |
 | `context`: Context | 3 | 3 | 0 | Read project context, governance and the agent policy |
-| `forms`: Universal forms | 34 | 16 | 18 | Forms, records, attachments, permissions, imports and business events |
+| `forms`: Universal forms | 36 | 17 | 19 | Forms, records, attachments, permissions, imports and business events |
+| `layouts`: Layouts | 2 | 1 | 1 | Check layouts and propose them as drafts for a person to approve |
 | `plugins`: Plugins | 5 | 3 | 2 | Install, inspect and invoke WASM plugins |
 | `work_items`: Work items | 14 | 6 | 8 | Issues of a project: list, read, create, update, label |
 | `comments`: Comments | 3 | 1 | 2 | Discuss work items |

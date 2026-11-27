@@ -79,6 +79,11 @@ pub static CATEGORIES: &[Category] = &[
         summary: "Forms, records, attachments, permissions, imports and business events",
     },
     Category {
+        name: "layouts",
+        title: "Layouts",
+        summary: "Check layouts and propose them as drafts for a person to approve",
+    },
+    Category {
         name: "plugins",
         title: "Plugins",
         summary: "Install, inspect and invoke WASM plugins",
@@ -163,6 +168,18 @@ pub static ACCESS_EXCEPTIONS: &[(&str, &str)] = &[];
 
 /// `Read` tools that issue a non-GET request, each with the endpoint and why it reads only.
 pub static POST_READ_ENDPOINTS: &[(&str, &str)] = &[
+    // POST /api/v1/forms/schema/validate: the save-time check of a schema. The handler stores nothing and
+    // emits no event; it answers the verdict and the normalised schema. The POST carries the schema.
+    (
+        "forms.validate_schema",
+        "POST /api/v1/forms/schema/validate (schema in the body, answers a report, stores nothing)",
+    ),
+    // POST /api/v1/layouts/validate: the validator of sv.layout.v1. The handler stores nothing; the POST
+    // carries the spec.
+    (
+        "layouts.validate",
+        "POST /api/v1/layouts/validate (spec in the body, answers a report, stores nothing)",
+    ),
     // POST /api/v2/flow/objects/{object_id}/collab/verify (the object_id shape): the shallow integrity
     // check of one object. The handler only reads (`verify_collab` writes no row, answers a dry-run
     // receipt with a random operation id and no audit event); the POST carries `deep: false` and an
@@ -499,6 +516,44 @@ pub static CATALOG: &[ToolMeta] = &[
         access: Access::Read,
         summary: "Read recent business events of a form or record",
         keywords: &["audit", "history", "activity log", "changes"],
+    },
+    ToolMeta {
+        name: "forms.validate_schema",
+        category: "forms",
+        access: Access::Read,
+        summary: "Check a form schema and get the typed error report",
+        keywords: &["validate schema", "check fields", "schema errors", "lint form"],
+    },
+    ToolMeta {
+        name: "forms.create_schema_draft",
+        category: "forms",
+        access: Access::Write,
+        summary: "Propose a form schema as a draft for a person to approve",
+        keywords: &[
+            "draft form",
+            "propose schema",
+            "new form for review",
+            "change fields for review",
+        ],
+    },
+    ToolMeta {
+        name: "layouts.validate",
+        category: "layouts",
+        access: Access::Read,
+        summary: "Check a layout spec and get the typed error report",
+        keywords: &[
+            "validate layout",
+            "check layout",
+            "layout errors",
+            "capabilities of a layout",
+        ],
+    },
+    ToolMeta {
+        name: "layouts.create_draft",
+        category: "layouts",
+        access: Access::Write,
+        summary: "Propose a layout for a slot as a draft for a person to approve",
+        keywords: &["draft layout", "propose layout", "place layout", "ui for review"],
     },
     ToolMeta {
         name: "plugins.list",
@@ -1361,12 +1416,13 @@ mod tests {
     use serde_json::json;
     use std::collections::BTreeSet;
 
-    const FROZEN_CATEGORIES: [&str; 20] = [
+    const FROZEN_CATEGORIES: [&str; 21] = [
         "projects",
         "project_types",
         "scenario_templates",
         "context",
         "forms",
+        "layouts",
         "plugins",
         "work_items",
         "comments",
@@ -1416,7 +1472,7 @@ mod tests {
     }
 
     #[test]
-    fn the_category_names_are_the_frozen_twenty() {
+    fn the_category_names_are_the_frozen_twenty_one() {
         let names = CATEGORIES.iter().map(|category| category.name).collect::<Vec<_>>();
         assert_eq!(names, FROZEN_CATEGORIES);
         for category in CATEGORIES {

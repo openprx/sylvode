@@ -12,6 +12,7 @@ mod flow_scope_existing;
 pub mod flow_social;
 pub mod forms;
 pub mod labels;
+pub mod layouts;
 pub mod members;
 pub mod milestones;
 pub mod objects;
@@ -85,6 +86,10 @@ pub fn get_all_tool_definitions() -> Vec<ToolDefinition> {
         forms::restore_child_form_record_tool(),
         forms::aggregate_form_records_tool(),
         forms::events_tail_tool(),
+        forms::validate_form_schema_tool(),
+        forms::create_schema_draft_tool(),
+        layouts::validate_layout_tool(),
+        layouts::create_layout_draft_tool(),
         plugins::list_plugins_tool(),
         plugins::get_plugin_tool(),
         plugins::install_plugin_tool(),

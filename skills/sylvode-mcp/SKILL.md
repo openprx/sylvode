@@ -2,7 +2,7 @@
 name: sylvode-mcp
 description: Work on Sylvode tasks and data through the Sylvode MCP server. Use when a message starts with "[Sylvode task]" or "[Sylvode reminder]", or when you need to read or change Sylvode projects, issues, comments, forms, proposals or Flow objects.
 ---
-<!-- sylvode-skill v=0.5.0 h=cd1c20f2360b -->
+<!-- sylvode-skill v=0.5.0 h=60c72c4dbe6c -->
 
 # Sylvode MCP
 
@@ -100,12 +100,22 @@ Full mode is an explicit choice of whoever configured the server. Then the tool 
 1. `sylvode_search {"query": "<what you want>"}`.
 2. Read with `sylvode_read`. Change with `sylvode_write`, using the schema from the search result.
 3. Do not use the task tools when you have no task id.
+
+### Propose a form schema or a layout
+
+A form schema or a layout you write is a draft. A person who owns or administers the workspace reviews and approves it in the console (project settings, Drafts); you cannot approve, and nothing is live before that.
+
+1. For a form: read the target with `forms.get` (an existing form) and write the full schema (`sv.form.schema.v2`). For a layout: write the spec (`sv.layout.v1`) for a slot, for example "form.record.detail", at a scope (`workspace`, `project` or `form`).
+2. Check it first: `forms.validate_schema` or `layouts.validate`. The answer lists every error with a JSON Pointer `path` and a `code`. Fix them and check again until `valid` is true.
+3. Send it: `forms.create_schema_draft` (`form_id` for an existing form, `key` and `name` for a new one) or `layouts.create_draft`. The answer is the stored draft. Read `valid` and `errors` in the draft's `validation`: an invalid draft is kept with its report but cannot be approved, so send a corrected one. A newer draft of yours for the same target replaces your older pending one.
+4. A draft for an existing form records the schema version it was written against. If the form changed before approval the draft is refused as stale: read the form again and send a new draft.
+5. Say in your summary which draft you created and that it waits for review. Do not retry an approval you cannot make.
 <!-- agents:end -->
 
 ## Tools
 
 <!-- BEGIN GENERATED: tool-overview (sylvode-skillgen; do not edit) -->
-Sylvode has 158 tools in 20 categories. In search mode (the default) the tool list holds only `sylvode_overview`, `sylvode_search`, `sylvode_read`, `sylvode_write` and the task tools. Find a tool with `sylvode_search`, call a `read` tool with `sylvode_read` and a `write` tool with `sylvode_write`. The five task tools are called directly.
+Sylvode has 162 tools in 21 categories. In search mode (the default) the tool list holds only `sylvode_overview`, `sylvode_search`, `sylvode_read`, `sylvode_write` and the task tools. Find a tool with `sylvode_search`, call a `read` tool with `sylvode_read` and a `write` tool with `sylvode_write`. The five task tools are called directly.
 
 | Category | Tools | Read | Write | Covers |
 |---|---:|---:|---:|---|
@@ -113,7 +123,8 @@ Sylvode has 158 tools in 20 categories. In search mode (the default) the tool li
 | `project_types`: Project types | 2 | 2 | 0 | Read the project scenario types and their capability schemas |
 | `scenario_templates`: Scenario templates | 3 | 2 | 1 | Browse and install ready-made multi-form setups |
 | `context`: Context | 3 | 3 | 0 | Read project context, governance and the agent policy |
-| `forms`: Universal forms | 34 | 16 | 18 | Forms, records, attachments, permissions, imports and business events |
+| `forms`: Universal forms | 36 | 17 | 19 | Forms, records, attachments, permissions, imports and business events |
+| `layouts`: Layouts | 2 | 1 | 1 | Check layouts and propose them as drafts for a person to approve |
 | `plugins`: Plugins | 5 | 3 | 2 | Install, inspect and invoke WASM plugins |
 | `work_items`: Work items | 14 | 6 | 8 | Issues of a project: list, read, create, update, label |
 | `comments`: Comments | 3 | 1 | 2 | Discuss work items |

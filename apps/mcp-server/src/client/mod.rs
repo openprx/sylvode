@@ -738,6 +738,19 @@ impl OpenPrClient {
             .await
     }
 
+    pub async fn validate_form_schema(&self, body: Value) -> Result<Value, String> {
+        self.post("/api/v1/forms/schema/validate", &body).await
+    }
+
+    pub async fn validate_layout(&self, body: Value) -> Result<Value, String> {
+        self.post("/api/v1/layouts/validate", &body).await
+    }
+
+    /// Creates a draft of an artefact; a person reviews it in the console.
+    pub async fn create_draft(&self, body: Value) -> Result<Value, String> {
+        self.post("/api/v1/drafts", &body).await
+    }
+
     pub async fn duplicate_form(&self, form_id: &str, body: Value) -> Result<Value, String> {
         self.post(
             &format!("/api/v1/forms/{}/duplicate", urlencoding::encode(form_id)),

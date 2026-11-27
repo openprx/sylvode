@@ -521,6 +521,10 @@ fn build_mcp_tool_registry(capabilities: &Value) -> Value {
                 "form_records.child_restore",
                 "form_records.aggregate",
                 "events.tail",
+                "forms.validate_schema",
+                "forms.create_schema_draft",
+                "layouts.validate",
+                "layouts.create_draft",
             ]),
         );
     }

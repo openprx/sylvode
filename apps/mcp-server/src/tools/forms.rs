@@ -1513,6 +1513,114 @@ pub async fn events_tail(client: &OpenPrClient, args: Value) -> CallToolResult {
     }
 }
 
+/// The note every draft tool shares: what happens to the result.
+const DRAFT_CONTRACT: &str = "The draft changes nothing until a person who owns or administers the workspace \
+approves it in the console; a bot or this tool cannot approve. The answer is the stored draft with its \
+validation report: an invalid spec is stored with its typed errors and can not be approved, so read \
+validation.valid and validation.errors and create a corrected draft. A newer draft of yours for the same \
+target replaces your older pending one.";
+
+pub fn validate_form_schema_tool() -> ToolDefinition {
+    ToolDefinition {
+        annotations: None,
+        name: "forms.validate_schema".to_string(),
+        description: "Check a form schema (sv.form.schema.v2) without storing anything. Returns {valid, schema, \
+errors, warnings}: schema is the normalised schema with field ids filled, each error has a JSON Pointer path and \
+a code. Use it before forms.create_schema_draft."
+            .to_string(),
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "project_id": { "type": "string", "description": "Project UUID the schema is meant for" },
+                "schema": { "type": "object", "description": "The form schema: {version, fields: [...]}" }
+            },
+            "required": ["project_id", "schema"]
+        }),
+    }
+}
+
+pub fn create_schema_draft_tool() -> ToolDefinition {
+    ToolDefinition {
+        annotations: None,
+        name: "forms.create_schema_draft".to_string(),
+        description: format!(
+            "Propose a form schema as a draft for review: the schema of the existing form form_id, or a new form \
+named by key and name. For an existing form the draft records the schema version it was written against and \
+is refused as stale when the form changed before approval. {DRAFT_CONTRACT}"
+        ),
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "project_id": { "type": "string", "description": "Project UUID" },
+                "form_id": { "type": "string", "description": "Form UUID of an existing form; omit for a new form" },
+                "key": { "type": "string", "description": "Form key of a new form (lowercase letters, digits, underscore)" },
+                "name": { "type": "string", "description": "Name of a new form" },
+                "schema": { "type": "object", "description": "The form schema: {version, fields: [...]}" },
+                "note": { "type": "string", "maxLength": 2000, "description": "Why, for the reviewer" }
+            },
+            "required": ["project_id", "schema"]
+        }),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ValidateFormSchemaInput {
+    project_id: String,
+    schema: Value,
+}
+
+pub async fn validate_form_schema(client: &OpenPrClient, args: Value) -> CallToolResult {
+    let input: ValidateFormSchemaInput = match parse_input(args) {
+        Ok(value) => value,
+        Err(err) => return err,
+    };
+    let body = json!({ "project_id": input.project_id, "schema": input.schema });
+    match client.validate_form_schema(body).await {
+        Ok(value) => CallToolResult::success(pretty(&value)),
+        Err(err) => CallToolResult::error(err),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateSchemaDraftInput {
+    project_id: String,
+    form_id: Option<String>,
+    key: Option<String>,
+    name: Option<String>,
+    schema: Value,
+    note: Option<String>,
+}
+
+pub async fn create_schema_draft(client: &OpenPrClient, args: Value) -> CallToolResult {
+    let input: CreateSchemaDraftInput = match parse_input(args) {
+        Ok(value) => value,
+        Err(err) => return err,
+    };
+    let target = match input.form_id {
+        Some(form_id) => json!({ "form_id": form_id, "key": input.key, "name": input.name }),
+        None => json!({ "key": input.key, "name": input.name }),
+    };
+    let body = json!({
+        "kind": "form_schema",
+        "project_id": input.project_id,
+        "target": drop_nulls(target),
+        "spec": input.schema,
+        "note": input.note
+    });
+    match client.create_draft(body).await {
+        Ok(value) => CallToolResult::success(pretty(&value)),
+        Err(err) => CallToolResult::error(err),
+    }
+}
+
+/// A target object without the keys the caller left out, so the API sees exactly what was given.
+pub(super) fn drop_nulls(value: Value) -> Value {
+    match value {
+        Value::Object(map) => Value::Object(map.into_iter().filter(|(_, v)| !v.is_null()).collect()),
+        other => other,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1522,6 +1630,7 @@ mod tests {
         update_child_form_record_tool, update_form_permissions_tool, update_form_record_tool, update_form_schema_tool,
         with_pagination_hint,
     };
+    use super::{create_schema_draft_tool, drop_nulls, validate_form_schema_tool};
     use crate::client::{OpenPrClient, test_api};
     use axum::{
         Json, Router,
@@ -1655,6 +1764,31 @@ mod tests {
         let events = events_tail_tool().input_schema;
         assert!(schema_property(&events, "page").is_some());
         assert!(schema_property(&events, "per_page").is_some());
+    }
+
+    #[test]
+    fn schema_authoring_tools_need_a_project_and_a_schema() {
+        for tool in [validate_form_schema_tool(), create_schema_draft_tool()] {
+            assert_eq!(
+                tool.input_schema.get("required"),
+                Some(&json!(["project_id", "schema"])),
+                "{}",
+                tool.name
+            );
+        }
+        let draft = create_schema_draft_tool();
+        for property in ["form_id", "key", "name", "note"] {
+            assert!(schema_property(&draft.input_schema, property).is_some(), "{property}");
+        }
+        assert!(draft.description.contains("cannot approve"), "{}", draft.description);
+    }
+
+    #[test]
+    fn a_draft_target_keeps_only_the_keys_the_caller_gave() {
+        assert_eq!(
+            drop_nulls(json!({ "form_id": "f", "key": null, "name": null })),
+            json!({ "form_id": "f" })
+        );
     }
 
     #[test]

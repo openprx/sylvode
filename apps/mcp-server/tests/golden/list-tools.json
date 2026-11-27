@@ -221,6 +221,26 @@
   },
   {
     "access": "read",
+    "category": "forms",
+    "name": "forms.validate_schema"
+  },
+  {
+    "access": "write",
+    "category": "forms",
+    "name": "forms.create_schema_draft"
+  },
+  {
+    "access": "read",
+    "category": "layouts",
+    "name": "layouts.validate"
+  },
+  {
+    "access": "write",
+    "category": "layouts",
+    "name": "layouts.create_draft"
+  },
+  {
+    "access": "read",
     "category": "plugins",
     "name": "plugins.list"
   },
