@@ -107,6 +107,10 @@ pub fn precheck(src: &str) -> Result<(), &'static str> {
 /// Errors found by the walk, reported by priority so the verdict does not depend on the order of
 /// traversal.
 #[derive(Default)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "four independent error flags, reported by priority"
+)]
 struct Found {
     not_in_subset: bool,
     pattern_unsupported: bool,

@@ -200,16 +200,28 @@ fn string_pair<'a>(function: &str, this: &'a Value, arg: &'a Value) -> Result<(&
     }
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "the cel function registry passes arguments by value"
+)]
 fn contains(This(this): This<Value>, arg: Value) -> FnResult {
     let (a, b) = string_pair("contains", &this, &arg)?;
     Ok(Value::Bool(a.contains(b)))
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "the cel function registry passes arguments by value"
+)]
 fn starts_with(This(this): This<Value>, arg: Value) -> FnResult {
     let (a, b) = string_pair("startsWith", &this, &arg)?;
     Ok(Value::Bool(a.starts_with(b)))
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "the cel function registry passes arguments by value"
+)]
 fn ends_with(This(this): This<Value>, arg: Value) -> FnResult {
     let (a, b) = string_pair("endsWith", &this, &arg)?;
     Ok(Value::Bool(a.ends_with(b)))
@@ -235,6 +247,7 @@ fn trim(This(v): This<Value>) -> FnResult {
     Ok(Value::String(Arc::new(s.trim_matches(is_js_space).to_owned())))
 }
 
+#[allow(clippy::unnecessary_wraps, reason = "the cel function registry requires a `Result`")]
 fn is_empty(This(v): This<Value>) -> FnResult {
     Ok(Value::Bool(match &v {
         Value::Null => true,
@@ -245,6 +258,10 @@ fn is_empty(This(v): This<Value>) -> FnResult {
     }))
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "the cel function registry passes arguments by value"
+)]
 fn decimal_cmp(This(a): This<Value>, b: Value) -> FnResult {
     let (a, b) = string_pair("decimal_cmp", &a, &b)?;
     let ord = compare_canonical_decimal(a, b).ok_or_else(|| type_error("decimal_cmp"))?;
@@ -261,6 +278,10 @@ fn date(This(v): This<Value>) -> FnResult {
     parse_date(&s).map(Value::Int).ok_or_else(|| type_error("date"))
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "the cel function registry passes arguments by value"
+)]
 fn days_between(This(a): This<Value>, b: Value) -> FnResult {
     match (&a, &b) {
         (Value::Int(a), Value::Int(b)) => b

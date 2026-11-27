@@ -422,7 +422,7 @@ pub fn parse_rule(v: &Value, allowed: &[RuleKind]) -> Result<RuleSpec, RuleDefEr
         }
         _ => return Err(RuleDefError::root("rule_param_invalid")),
     };
-    let runs_on_empty = matches!(kind, RuleKind::Cel | RuleKind::Plugin);
+    let cel_like = matches!(kind, RuleKind::Cel | RuleKind::Plugin);
     let mut keys: Vec<&String> = obj.keys().collect();
     keys.sort();
     for key in keys {
@@ -430,7 +430,7 @@ pub fn parse_rule(v: &Value, allowed: &[RuleKind]) -> Result<RuleSpec, RuleDefEr
             || params.contains(&key.as_str())
             || key == "code"
             || key == "message"
-            || (key == "run_on_empty" && runs_on_empty);
+            || (key == "run_on_empty" && cel_like);
         if !known {
             return Err(param_err(key));
         }
@@ -518,8 +518,8 @@ mod tests {
 
     use super::*;
 
-    fn check(rule: Value, op: &Operand) -> Result<(), &'static str> {
-        match parse_rule(&rule, RuleKind::ALL).map(|s| s.kind) {
+    fn check(rule: &Value, op: &Operand) -> Result<(), &'static str> {
+        match parse_rule(rule, RuleKind::ALL).map(|s| s.kind) {
             Ok(RuleSpecKind::Builtin(b)) => check_builtin(&b, op),
             Ok(_) => Err("not builtin"),
             Err(e) => Err(e.code),
@@ -529,22 +529,25 @@ mod tests {
     #[test]
     fn bounds() {
         assert_eq!(
-            check(json!({"rule": "max", "value": 100}), &Operand::Int(101)),
+            check(&json!({"rule": "max", "value": 100}), &Operand::Int(101)),
             Err("max")
         );
         assert_eq!(
             check(
-                json!({"rule": "min", "value": "1.50"}),
+                &json!({"rule": "min", "value": "1.50"}),
                 &Operand::Decimal(Decimal::new(15, 1))
             ),
             Ok(())
         );
         assert_eq!(
-            check(json!({"rule": "min", "value": "2026-01-01"}), &Operand::Str("x".into())),
+            check(
+                &json!({"rule": "min", "value": "2026-01-01"}),
+                &Operand::Str("x".into())
+            ),
             Err("rule_invalid")
         );
         assert_eq!(
-            check(json!({"rule": "max_length", "value": 2}), &Operand::Str("äöü".into())),
+            check(&json!({"rule": "max_length", "value": 2}), &Operand::Str("äöü".into())),
             Err("max_length")
         );
     }

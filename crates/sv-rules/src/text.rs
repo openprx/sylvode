@@ -28,7 +28,9 @@ fn is_host_name(host: &str) -> bool {
     })
 }
 
-/// The `email` rule: one `@`; local part of 1..64 characters from the RFC 5322 atom set plus `.`
+/// The `email` rule.
+///
+/// One `@`; local part of 1..64 characters from the RFC 5322 atom set plus `.`
 /// (not leading, trailing or doubled); a host name with at least two labels whose last label is not
 /// all digits; 254 characters in all. Non-ASCII addresses are refused.
 #[must_use]
@@ -87,7 +89,9 @@ fn is_authority(authority: &str) -> bool {
     }
 }
 
-/// The `url` rule: `<scheme>://<authority>[<path, query, fragment>]` where the scheme (ASCII case
+/// The `url` rule.
+///
+/// `<scheme>://<authority>[<path, query, fragment>]` where the scheme (ASCII case
 /// ignored) is one of `schemes`, the authority has no user info and is a host name, IPv4 address
 /// or bracketed IPv6 literal with an optional port 1..65535, and the whole string has no whitespace
 /// or control characters and at most 2048 characters. Non-ASCII hosts must be given in punycode.

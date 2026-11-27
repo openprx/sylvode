@@ -124,7 +124,7 @@ impl Vars {
 /// A checked expression, ready to evaluate. `Send + Sync`, so callers can cache it.
 #[derive(Debug)]
 pub struct Program {
-    program: cel::Program,
+    compiled: cel::Program,
     env: Env,
     source: String,
     nodes: usize,
@@ -143,9 +143,8 @@ pub fn compile(src: &str, env: Env) -> Result<Program, RuleDefError> {
     subset::precheck(src).map_err(RuleDefError::root)?;
     // The parser is third-party code; a panic in it is a syntax error, not a crash.
     let parsed = std::panic::catch_unwind(|| cel::Program::compile(src));
-    let program = match parsed {
-        Ok(Ok(program)) => program,
-        Ok(Err(_)) | Err(_) => return Err(RuleDefError::root("cel_syntax")),
+    let Ok(Ok(program)) = parsed else {
+        return Err(RuleDefError::root("cel_syntax"));
     };
     let checked = subset::Walk::new(env.variables())
         .run(program.expression(), env.bool_result())
@@ -153,7 +152,7 @@ pub fn compile(src: &str, env: Env) -> Result<Program, RuleDefError> {
     let mut patterns = Vec::new();
     collect_patterns(program.expression(), &mut patterns)?;
     Ok(Program {
-        program,
+        compiled: program,
         env,
         source: src.to_owned(),
         nodes: checked.nodes,
@@ -243,7 +242,7 @@ impl Program {
             }
         }
         // The interpreter is third-party code; a panic in it fails the rule closed.
-        let result = std::panic::catch_unwind(AssertUnwindSafe(|| self.program.execute(&ctx)));
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| self.compiled.execute(&ctx)));
         match result {
             Ok(Ok(value)) => Ok(value),
             Ok(Err(_)) | Err(_) => Err(RuleEvalError::error()),

@@ -24,6 +24,8 @@
 //! Errors that the scanner accepts but an engine still refuses (for example a reversed range) are
 //! `pattern_invalid`.
 
+use std::fmt::Write;
+
 use regex::{Regex, RegexBuilder};
 
 use crate::limits::{CLASS_UNITS, MAX_PATTERN_BYTES, MAX_REPEAT, MAX_REPEAT_UNITS, REGEX_SIZE_LIMIT};
@@ -65,7 +67,7 @@ const fn class_escape(c: char) -> Option<(&'static str, bool)> {
 }
 
 fn push_code_point(out: &mut String, cp: u32) {
-    out.push_str(&format!("\\x{{{cp:X}}}"));
+    let _ = write!(out, "\\x{{{cp:X}}}");
 }
 
 impl Scanner<'_> {
@@ -123,11 +125,12 @@ impl Scanner<'_> {
 
     fn class(&mut self) -> Result<(), &'static str> {
         let mut body = String::new();
-        let mut negated = false;
-        if self.peek() == Some('^') {
+        let negated = if self.peek() == Some('^') {
             self.next();
-            negated = true;
-        }
+            true
+        } else {
+            false
+        };
         if self.peek() == Some(']') {
             return Err(UNSUPPORTED);
         }
