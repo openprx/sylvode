@@ -14,3 +14,4 @@ until the owning batch adds the real migration. 0128 and 0129 are reserved by an
 | 0138 | installations (added: `0138_installations.sql`) |
 | 0139 | drafts (added: `0139_artefact_drafts.sql`) |
 | 0140 | navigation (added: `0140_nav.sql`) |
+- 0142 cap_record_titles (landed)
