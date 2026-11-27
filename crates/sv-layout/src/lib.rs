@@ -31,6 +31,6 @@ pub use model::{
 };
 pub use slots::{SlotDescriptor, SlotKind, slot, slots};
 pub use validate::{
-    ErrorCode, LayoutError, MAX_ACTIONS, MAX_DATA_SOURCES, MAX_DEPTH, MAX_NODES, MAX_PAGE_SIZE, MAX_SPEC_BYTES,
-    Validated, validate, validate_bytes,
+    Context, ErrorCode, LayoutError, MAX_ACTIONS, MAX_DATA_SOURCES, MAX_DEPTH, MAX_NODES, MAX_PAGE_SIZE,
+    MAX_SPEC_BYTES, Options, Validated, validate, validate_bytes,
 };

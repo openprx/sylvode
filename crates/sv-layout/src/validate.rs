@@ -8,7 +8,7 @@ use serde_json::{Map, Value};
 use crate::analysis::{Analysis, analyse};
 use crate::components::{self, ChildrenRule, ComponentProps, typed_props};
 use crate::model::{Action, DataSource, Layout, SCHEMA_ID};
-use crate::refs::{RefRoot, is_ident, parse_form_ref, parse_ref};
+use crate::refs::{FormRef, RefRoot, is_ident, parse_form_ref, parse_ref};
 use crate::slots::SlotDescriptor;
 
 /// Maximum serialised spec size.
@@ -56,6 +56,10 @@ pub enum ErrorCode {
     LimitExceeded,
     /// The slot does not allow this node or action.
     SlotNodeNotAllowed,
+    /// The action kind is not allowed in a site layout (`invoke`; non-route navigation).
+    ActionNotAllowedOnSite,
+    /// A data source does not resolve to a binding of the site.
+    BindingMissing,
 }
 
 /// One validation error.
@@ -78,16 +82,39 @@ pub struct Validated {
     pub analysis: Analysis,
 }
 
+/// Where the layout will run.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Context {
+    /// The console: all action kinds, `$bind`/`form:` form references.
+    #[default]
+    Console,
+    /// A public site: only `submit` and route `navigate`; every data source must name one of
+    /// these binding keys (as `$bind.<key>` after resolution, or `form:<key>`).
+    Site {
+        /// Binding keys of the site.
+        bindings: BTreeSet<String>,
+    },
+}
+
+/// Validation options.
+#[derive(Debug, Clone, Default)]
+pub struct Options<'a> {
+    /// Slot the layout will be placed in.
+    pub slot: Option<&'a SlotDescriptor>,
+    /// Console or site.
+    pub context: Context,
+}
+
 /// Validates raw bytes (size limit first, then JSON syntax, then [`validate`]).
 ///
 /// # Errors
 /// Returns every error found.
-pub fn validate_bytes(bytes: &[u8], slot: Option<&SlotDescriptor>) -> Result<Validated, Vec<LayoutError>> {
+pub fn validate_bytes(bytes: &[u8], opts: &Options<'_>) -> Result<Validated, Vec<LayoutError>> {
     if bytes.len() > MAX_SPEC_BYTES {
         return Err(vec![err("", ErrorCode::LimitExceeded, "spec larger than 256 KiB")]);
     }
     match serde_json::from_slice::<Value>(bytes) {
-        Ok(v) => validate(&v, slot),
+        Ok(v) => validate(&v, opts),
         Err(e) => Err(vec![err("", ErrorCode::ShapeInvalid, &format!("invalid JSON: {e}"))]),
     }
 }
@@ -96,9 +123,12 @@ pub fn validate_bytes(bytes: &[u8], slot: Option<&SlotDescriptor>) -> Result<Val
 ///
 /// # Errors
 /// Returns every error found, each with a JSON-pointer path.
-pub fn validate(spec: &Value, slot: Option<&SlotDescriptor>) -> Result<Validated, Vec<LayoutError>> {
-    let mut cx = Cx::default();
-    cx.run(spec, slot);
+pub fn validate(spec: &Value, opts: &Options<'_>) -> Result<Validated, Vec<LayoutError>> {
+    let mut cx = Cx {
+        context: opts.context.clone(),
+        ..Cx::default()
+    };
+    cx.run(spec, opts.slot);
     if !cx.errors.is_empty() {
         return Err(cx.errors);
     }
@@ -135,8 +165,23 @@ enum SourceKind {
     Plugin,
 }
 
-#[derive(Default)]
+impl Default for Cx {
+    fn default() -> Self {
+        Self {
+            context: Context::Console,
+            errors: Vec::new(),
+            sources: BTreeMap::new(),
+            actions: BTreeMap::new(),
+            params: BTreeSet::new(),
+            nodes: 0,
+            node_limit_reported: false,
+            depth_reported: false,
+        }
+    }
+}
+
 struct Cx {
+    context: Context,
     errors: Vec<LayoutError>,
     sources: BTreeMap<String, (SourceKind, Vec<String>)>,
     actions: BTreeMap<String, &'static str>,
@@ -410,6 +455,7 @@ impl Cx {
             self.push(p, ErrorCode::ShapeInvalid, "data source members have the wrong shape");
         }
         self.form_ref(m.get("form"), &join(p, "form"));
+        self.site_binding(m.get("form"), &join(p, "form"));
         if let Some(r) = m.get("record") {
             self.ref_member(r, &join(p, "record"));
         }
@@ -428,6 +474,24 @@ impl Cx {
                     "page_size must be 1..=200",
                 );
             }
+        }
+    }
+
+    /// In a site context the form reference must name a binding of the site.
+    fn site_binding(&mut self, v: Option<&Value>, path: &str) {
+        let Context::Site { bindings } = &self.context else {
+            return;
+        };
+        let name = match v.and_then(Value::as_str).and_then(parse_form_ref) {
+            Some(FormRef::Bind(n) | FormRef::Key(n)) => n,
+            None => return,
+        };
+        if !bindings.contains(&name) {
+            self.push(
+                path,
+                ErrorCode::BindingMissing,
+                "data source does not resolve to a binding of the site",
+            );
         }
     }
 
@@ -512,6 +576,21 @@ impl Cx {
                     ErrorCode::SlotNodeNotAllowed,
                     "action kind not allowed in this slot",
                 );
+            }
+        }
+        if matches!(self.context, Context::Site { .. }) {
+            match &action {
+                Action::Invoke { .. } => self.push(
+                    &join(p, "kind"),
+                    ErrorCode::ActionNotAllowedOnSite,
+                    "invoke is not allowed in a site layout",
+                ),
+                Action::Navigate { to } if !matches!(to, crate::model::NavTarget::Route(_)) => self.push(
+                    &join(p, "to"),
+                    ErrorCode::ActionNotAllowedOnSite,
+                    "only route navigation is allowed in a site layout",
+                ),
+                _ => {}
             }
         }
         if let Some(c) = m.get("confirm") {
