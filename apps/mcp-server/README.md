@@ -443,6 +443,15 @@ forms, their records and events; form records and their events; scenario templat
 by identifier; and Flow objects, their history and schema, Collection records and the workspace
 navigator. `resources/read` reads one with the caller's credential.
 
+A failed read is answered with a JSON-RPC error; `data.uri` is the requested text, unchanged:
+
+| Failure | Modern era | Legacy era |
+|---|---|---|
+| Unknown URI, or an object the API does not know | `-32602` "Resource not found" | `-32002` "Resource not found" |
+| Refused by the project agent policy, by the API (`403`), or for a connected application | `-32602` "Resource access refused", `data.reason` `policy`, `forbidden` or `not_available_to_connected_applications` | the same |
+| An id inside the URI is not valid | `-32602` with the validation text | the same |
+| The API rejected the credential, or failed | `-32603` | the same |
+
 ## Tools
 
 <!-- BEGIN GENERATED: tool-table (sylvode-skillgen; do not edit) -->

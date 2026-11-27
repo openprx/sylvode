@@ -365,7 +365,7 @@ async fn the_static_resources_are_the_embedded_generated_files() -> TestResult {
         ("sylvode://guides/workflows", guides::RECIPES_MD),
     ] {
         let response = server
-            .handle_resources_read(Some(json!(1)), Some(json!({ "uri": uri })))
+            .handle_resources_read(Some(json!(1)), Some(json!({ "uri": uri })), &crate::era::Era::Legacy)
             .await;
         let value = serde_json::to_value(&response)?;
         assert_eq!(
@@ -380,10 +380,13 @@ async fn the_static_resources_are_the_embedded_generated_files() -> TestResult {
     }
     for gone in ["sylvode://skills/sylvode-mcp/missing"] {
         let response = server
-            .handle_resources_read(Some(json!(1)), Some(json!({ "uri": gone })))
+            .handle_resources_read(Some(json!(1)), Some(json!({ "uri": gone })), &crate::era::Era::Legacy)
             .await;
         let body = serde_json::to_string(&response)?;
-        assert!(body.contains("Unknown resource URI"), "{gone}: {body}");
+        assert!(
+            body.contains("Resource not found") && body.contains("-32002"),
+            "{gone}: {body}"
+        );
     }
     Ok(())
 }
@@ -1889,10 +1892,13 @@ async fn the_parked_project_resources_template_is_unknown() -> TestResult {
     );
     assert_eq!(resource_policy_subject(&uri)?, ResourceSubject::Ungoverned);
     let response = server
-        .handle_resources_read(Some(json!(1)), Some(json!({ "uri": uri })))
+        .handle_resources_read(Some(json!(1)), Some(json!({ "uri": uri })), &crate::era::Era::Legacy)
         .await;
     let body = serde_json::to_string(&response)?;
-    assert!(body.contains("Unknown resource URI"), "{uri} -> {body}");
+    assert!(
+        body.contains("Resource not found") && body.contains("-32002"),
+        "{uri} -> {body}"
+    );
     Ok(())
 }
 
@@ -1916,10 +1922,13 @@ async fn traversal_shaped_resource_uris_reach_no_backend() -> TestResult {
             "{uri} was classified as a governed read"
         );
         let response = server
-            .handle_resources_read(Some(json!(1)), Some(json!({ "uri": uri })))
+            .handle_resources_read(Some(json!(1)), Some(json!({ "uri": uri })), &crate::era::Era::Legacy)
             .await;
         let body = serde_json::to_string(&response)?;
-        assert!(body.contains("Unknown resource URI"), "{uri} -> {body}");
+        assert!(
+            body.contains("Resource not found") && body.contains("-32002"),
+            "{uri} -> {body}"
+        );
     }
     Ok(())
 }
@@ -1932,7 +1941,11 @@ async fn static_guides_are_served_without_consulting_any_policy() -> TestResult 
     // Base URL points at a port nothing listens on: any API call would fail the read.
     let server = server("http://127.0.0.1:1".to_string())?;
     let response = server
-        .handle_resources_read(Some(json!(1)), Some(json!({ "uri": "sylvode://guides/workflows" })))
+        .handle_resources_read(
+            Some(json!(1)),
+            Some(json!({ "uri": "sylvode://guides/workflows" })),
+            &crate::era::Era::Legacy,
+        )
         .await;
     let body = serde_json::to_string(&response)?;
     assert!(body.contains("Common workflows"), "{body}");
@@ -2260,5 +2273,254 @@ mod protocol_eras {
         assert_eq!(result["capabilities"], json!({"tools": {}}));
         assert!(result.get("instructions").is_none());
         Ok(())
+    }
+}
+
+// ---- Resource errors (M3) -------------------------------------------------------------------
+
+#[allow(clippy::indexing_slicing)]
+mod resource_errors {
+    use super::*;
+    use crate::era::Era;
+    use crate::oauth::DelegatedGrant;
+    use axum::extract::Path;
+
+    fn modern_era() -> Era {
+        Era::Modern {
+            version: "2026-07-28",
+            client_info: None,
+            client_capabilities: json!({}),
+        }
+    }
+
+    /// A stand-in API answering every request with the envelope `{code, message}`.
+    async fn api_answering(
+        code: i64,
+        message: &'static str,
+    ) -> Result<super::super::McpServer, Box<dyn std::error::Error>> {
+        let router = Router::new().fallback(get(move || async move {
+            Json(json!({"code": code, "message": message, "data": null}))
+        }));
+        Ok(server(crate::client::test_api::spawn(router).await?)?)
+    }
+
+    async fn read(server: &super::super::McpServer, uri: &str, era: &Era) -> Result<Value, Box<dyn std::error::Error>> {
+        let response = server
+            .handle_resources_read(Some(json!(1)), Some(json!({ "uri": uri })), era)
+            .await;
+        Ok(serde_json::to_value(&response)?)
+    }
+
+    /// The error object of a read answer: `(code, message, data)`.
+    fn error_of(answer: &Value) -> Result<(i64, String, Value), Box<dyn std::error::Error>> {
+        let error = answer.get("error").ok_or_else(|| format!("no error in {answer}"))?;
+        Ok((
+            error["code"].as_i64().ok_or("no code")?,
+            error["message"].as_str().ok_or("no message")?.to_string(),
+            error.get("data").cloned().unwrap_or(Value::Null),
+        ))
+    }
+
+    #[tokio::test]
+    async fn an_unknown_uri_shape_is_not_found_in_both_eras() -> TestResult {
+        let server = server("http://127.0.0.1:1".to_string())?;
+        let uri = "sylvode://nope/some-thing";
+        let (code, message, data) = error_of(&read(&server, uri, &modern_era()).await?)?;
+        assert_eq!((code, message.as_str()), (-32602, "Resource not found"));
+        assert_eq!(data, json!({"uri": uri}));
+        let (code, message, data) = error_of(&read(&server, uri, &Era::Legacy).await?)?;
+        assert_eq!((code, message.as_str()), (-32002, "Resource not found"));
+        assert_eq!(data, json!({"uri": uri}));
+        assert!(!message.contains("nope"), "the message must not carry the URI");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_api_not_found_is_not_found_in_both_eras_and_the_connection_stays_usable() -> TestResult {
+        let server = api_answering(404, "no such issue").await?;
+        for (era, expected) in [(modern_era(), -32602), (Era::Legacy, -32002)] {
+            // An issue read first resolves the owner for the policy; either lookup is a 404.
+            let (code, message, data) = error_of(&read(&server, "sylvode://issues/NOPE-999999", &era).await?)?;
+            assert_eq!(code, expected);
+            assert_eq!(message, "Resource not found");
+            assert_eq!(data, json!({"uri": "sylvode://issues/NOPE-999999"}));
+            // An ungoverned read reaches its own arm and is mapped the same way.
+            let (code, ..) = error_of(&read(&server, "sylvode://scenario-templates/missing", &era).await?)?;
+            assert_eq!(code, expected);
+        }
+        // The same server keeps answering.
+        let guide = read(&server, "sylvode://guides/workflows", &Era::Legacy).await?;
+        assert!(guide.pointer("/result/contents/0/text").is_some());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_forbidden_answer_is_a_refusal_with_a_reason() -> TestResult {
+        let server = api_answering(403, "this bot may not do this in this project").await?;
+        for era in [modern_era(), Era::Legacy] {
+            let (code, message, data) = error_of(&read(&server, "sylvode://scenario-templates", &era).await?)?;
+            assert_eq!((code, message.as_str()), (-32602, "Resource access refused"));
+            assert_eq!(
+                data,
+                json!({"uri": "sylvode://scenario-templates", "reason": "forbidden"})
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_policy_refusal_is_a_refusal_with_the_policy_reason() -> TestResult {
+        let router = Router::new().route(
+            "/api/v1/projects/{id}/agent-policy",
+            get(|Path(_id): Path<String>| async {
+                Json(json!({"code": 0, "data": {"mcp": {"tool_registry": {"enabled_tools": ["forms.get"]}}}}))
+            }),
+        );
+        let server = server(crate::client::test_api::spawn(router).await?)?;
+        let uri = format!("sylvode://projects/{PROJECT}/issues");
+        for era in [modern_era(), Era::Legacy] {
+            let (code, message, data) = error_of(&read(&server, &uri, &era).await?)?;
+            assert_eq!((code, message.as_str()), (-32602, "Resource access refused"));
+            assert_eq!(data, json!({"uri": uri, "reason": "policy"}));
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_delegated_caller_is_refused_every_resource_but_the_guides() -> TestResult {
+        let delegated = super::super::McpServer::new_delegated(
+            crate::client::test_api::client("http://127.0.0.1:1".to_string())?,
+            DelegatedGrant {
+                scopes: api::oauth::scopes::ScopeSet::all(),
+                workspace_id: uuid::Uuid::from_u128(1),
+                projects: None,
+            },
+        );
+        for era in [modern_era(), Era::Legacy] {
+            let (code, message, data) = error_of(&read(&delegated, "sylvode://scenario-templates", &era).await?)?;
+            assert_eq!((code, message.as_str()), (-32602, "Resource access refused"));
+            assert_eq!(
+                data,
+                json!({"uri": "sylvode://scenario-templates", "reason": "not_available_to_connected_applications"})
+            );
+        }
+        let guide = read(&delegated, "sylvode://guides/workflows", &modern_era()).await?;
+        assert!(guide.pointer("/result/contents/0/text").is_some());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_invalid_id_inside_a_uri_keeps_the_validation_text() -> TestResult {
+        let server = server("http://127.0.0.1:1".to_string())?;
+        for era in [modern_era(), Era::Legacy] {
+            let (code, message, _) = error_of(&read(&server, "sylvode://projects/not-a-uuid/issues", &era).await?)?;
+            assert_eq!(code, -32602);
+            assert!(message.contains("is not a canonical UUID"), "{message}");
+            let (code, message, _) = error_of(&read(&server, "sylvode://issues/bad%20id", &era).await?)?;
+            assert_eq!(code, -32602);
+            assert!(
+                message.contains("not a work item identifier") || message.contains("Invalid"),
+                "{message}"
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_unauthorized_or_failing_backend_is_an_internal_error_with_the_existing_text() -> TestResult {
+        for (code, message) in [(401, "bad token"), (500, "database is down")] {
+            let server = api_answering(code, message).await?;
+            for era in [modern_era(), Era::Legacy] {
+                let (rpc_code, text, data) = error_of(&read(&server, "sylvode://scenario-templates", &era).await?)?;
+                assert_eq!(rpc_code, -32603, "{code}");
+                assert!(text.starts_with("Failed to read scenario templates: "), "{text}");
+                assert!(data.is_null());
+            }
+        }
+        // A transport failure is internal too.
+        let down = server("http://127.0.0.1:1".to_string())?;
+        let (code, ..) = error_of(&read(&down, "sylvode://scenario-templates", &modern_era()).await?)?;
+        assert_eq!(code, -32603);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_successful_read_never_has_an_empty_contents_array() -> TestResult {
+        let router = Router::new().fallback(get(|| async { Json(json!({"code": 0, "data": []})) }));
+        let server = server(crate::client::test_api::spawn(router).await?)?;
+        for uri in [
+            "sylvode://skills/sylvode-mcp",
+            "sylvode://scenario-templates",
+            "sylvode://scenario-templates/software-delivery",
+        ] {
+            for era in [modern_era(), Era::Legacy] {
+                let answer = read(&server, uri, &era).await?;
+                let contents = answer
+                    .pointer("/result/contents")
+                    .and_then(Value::as_array)
+                    .ok_or("no contents")?;
+                assert_eq!(contents.len(), 1, "{uri}");
+                assert_eq!(contents[0]["uri"], uri);
+                assert!(contents[0]["text"].is_string());
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_mapping_table_holds_for_both_eras() {
+        use super::super::ResourceError;
+        let rows = [
+            (ResourceError::NotFound, true, -32602, "Resource not found"),
+            (ResourceError::NotFound, false, -32002, "Resource not found"),
+            (
+                ResourceError::Refused("policy"),
+                true,
+                -32602,
+                "Resource access refused",
+            ),
+            (
+                ResourceError::Refused("forbidden"),
+                false,
+                -32602,
+                "Resource access refused",
+            ),
+            (ResourceError::Invalid("bad id".to_string()), true, -32602, "bad id"),
+            (ResourceError::Backend("boom".to_string()), false, -32603, "boom"),
+        ];
+        for (error, modern, code, message) in rows {
+            let mapped = error.into_rpc_error("sylvode://x", modern);
+            assert_eq!((i64::from(mapped.code), mapped.message.as_str()), (code, message));
+        }
+    }
+
+    #[test]
+    fn policy_failures_are_classified_by_what_they_say() {
+        use super::super::ResourceError;
+        let class = |text: &str| ResourceError::from_policy(text.to_string());
+        assert_eq!(
+            class("Failed to load project agent policy for tools/call: API error 404 from /p: gone"),
+            ResourceError::NotFound
+        );
+        assert_eq!(
+            class("Failed to resolve: API error 403 from /p: no"),
+            ResourceError::Refused("forbidden")
+        );
+        assert_eq!(
+            class("Tool 'forms.get' is disabled by project agent policy for project p"),
+            ResourceError::Refused("policy")
+        );
+        assert!(matches!(
+            class("Failed to load project agent policy for tools/call: API error 500 from /p: x"),
+            ResourceError::Backend(_)
+        ));
+        assert!(matches!(
+            class("Failed to load project agent policy for tools/call: API error 401 from /p: x"),
+            ResourceError::Backend(_)
+        ));
+        assert!(matches!(
+            class("Failed to load project agent policy for tools/call: Request failed: refused"),
+            ResourceError::Backend(_)
+        ));
     }
 }

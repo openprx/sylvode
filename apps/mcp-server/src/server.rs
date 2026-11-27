@@ -1,4 +1,6 @@
-use crate::client::{ListRecordsQuery, ListWorkItemsQuery, OpenPrClient};
+use crate::client::{
+    ApiErrorClass, ListRecordsQuery, ListWorkItemsQuery, OpenPrClient, classify_api_error, is_backend_failure,
+};
 use crate::era::{self, CachePolicy, CacheScope, Era};
 use crate::guides;
 use crate::oauth::{DelegatedGrant, ToolRefusal, gate_tool_call, is_static_guide_resource};
@@ -9,14 +11,6 @@ use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-
-/// A `resources/read` answer holding one Markdown text.
-fn markdown_resource(id: Option<Value>, uri: &str, text: &str) -> JsonRpcResponse {
-    JsonRpcResponse::success(
-        id,
-        json!({ "contents": [{ "uri": uri, "mimeType": "text/markdown", "text": text }] }),
-    )
-}
 
 /// How a single `tools/call` is bound to a project agent policy.
 ///
@@ -758,7 +752,7 @@ impl McpServer {
             "tools/call" => self.handle_call_tool(req.id, req.params).await,
             "resources/list" => self.handle_resources_list(req.id),
             "resources/templates/list" => self.handle_resources_templates_list(req.id),
-            "resources/read" => self.handle_resources_read(req.id, req.params).await,
+            "resources/read" => self.handle_resources_read(req.id, req.params, era).await,
             _ => JsonRpcResponse::error(
                 req.id,
                 JsonRpcError::method_not_found(format!("Unknown method: {}", req.method)),
@@ -1742,10 +1736,13 @@ impl McpServer {
     /// rejection and the ownership cache are therefore the tool path's, not a second
     /// implementation that could drift away from it: `sylvode://forms/{id}/records` is
     /// authorized by exactly the decision `form_records.list` would have made.
-    async fn enforce_resource_read_policy(&self, uri: &str) -> Result<(), String> {
-        match resource_policy_subject(uri)? {
+    async fn enforce_resource_read_policy(&self, uri: &str) -> Result<(), ResourceError> {
+        match resource_policy_subject(uri).map_err(ResourceError::Invalid)? {
             ResourceSubject::Ungoverned => Ok(()),
-            ResourceSubject::Tool { tool, args } => self.enforce_project_tool_policy(tool, &args).await,
+            ResourceSubject::Tool { tool, args } => self
+                .enforce_project_tool_policy(tool, &args)
+                .await
+                .map_err(ResourceError::from_policy),
         }
     }
 
@@ -2018,7 +2015,9 @@ impl McpServer {
         JsonRpcResponse::success(id, json!({ "resourceTemplates": templates }))
     }
 
-    async fn handle_resources_read(&self, id: Option<Value>, params: Option<Value>) -> JsonRpcResponse {
+    /// `resources/read`: the answer is the contents of [`Self::read_resource`], or the JSON-RPC
+    /// error its failure maps to in the caller's era.
+    async fn handle_resources_read(&self, id: Option<Value>, params: Option<Value>, era: &Era) -> JsonRpcResponse {
         let requested_uri = match params
             .as_ref()
             .and_then(|value| value.get("uri"))
@@ -2029,464 +2028,310 @@ impl McpServer {
                 return JsonRpcResponse::error(id, JsonRpcError::invalid_params("Missing required field: uri"));
             }
         };
-        let uri = requested_uri;
+        match self.read_resource(&requested_uri).await {
+            Ok(read) => JsonRpcResponse::success(
+                id,
+                json!({ "contents": [{ "uri": requested_uri, "mimeType": read.mime_type, "text": read.text }] }),
+            ),
+            Err(error) => JsonRpcResponse::error(id, error.into_rpc_error(&requested_uri, era.is_modern())),
+        }
+    }
 
-        if self.delegated.is_some() && !is_static_guide_resource(&uri) {
+    /// Reads one resource: the delegated gate, the project agent policy, then the arm of the URI.
+    ///
+    /// `uri` is the text the client sent; it is never normalised.
+    async fn read_resource(&self, uri: &str) -> Result<ResourceRead, ResourceError> {
+        if self.delegated.is_some() && !is_static_guide_resource(uri) {
             tracing::warn!(
-                uri = %sanitize_for_error(&uri),
+                uri = %sanitize_for_error(uri),
                 "Refusing resources/read: the resource is not available to connected applications"
             );
-            return JsonRpcResponse::error(
-                id,
-                JsonRpcError::invalid_params("resource not available to connected applications"),
-            );
+            return Err(ResourceError::Refused(REFUSED_NOT_AVAILABLE));
         }
 
         // `resources/read` serves the same project owned payloads `tools/call` does, so it
         // is gated by the same project agent policy. Without this the resource door is a
         // complete bypass of every capability an administrator disabled on the tool door.
-        if let Err(error) = self.enforce_resource_read_policy(&uri).await {
+        if let Err(error) = self.enforce_resource_read_policy(uri).await {
             tracing::warn!(
-                uri = %sanitize_for_error(&uri),
+                uri = %sanitize_for_error(uri),
                 "Refusing resources/read: the project agent policy does not authorize it"
             );
-            return JsonRpcResponse::error(id, JsonRpcError::invalid_params(error));
+            return Err(error);
         }
 
-        match uri.as_str() {
-            "sylvode://skills/sylvode-mcp" => return markdown_resource(id, &uri, guides::SKILL_MD),
-            "sylvode://skills/sylvode-mcp/tools" => return markdown_resource(id, &uri, guides::TOOLS_MD),
-            "sylvode://guides/workflows" => return markdown_resource(id, &uri, guides::RECIPES_MD),
+        match uri {
+            "sylvode://skills/sylvode-mcp" => return Ok(ResourceRead::markdown(guides::SKILL_MD)),
+            "sylvode://skills/sylvode-mcp/tools" => return Ok(ResourceRead::markdown(guides::TOOLS_MD)),
+            "sylvode://guides/workflows" => return Ok(ResourceRead::markdown(guides::RECIPES_MD)),
             "sylvode://scenario-templates" => {
-                return match self.client.list_scenario_templates(None, None).await {
-                    Ok(templates) => JsonRpcResponse::success(
-                        id,
-                        json!({
-                            "contents": [{
-                                "uri": uri,
-                                "mimeType": "application/json",
-                                "text": templates.to_string()
-                            }]
-                        }),
-                    ),
-                    Err(error) => JsonRpcResponse::error(
-                        id,
-                        JsonRpcError::internal_error(format!("Failed to read scenario templates: {error}")),
-                    ),
-                };
+                return ResourceRead::from_api(
+                    self.client.list_scenario_templates(None, None).await,
+                    "Failed to read scenario templates",
+                );
             }
             _ => {}
         }
 
-        if let Some((object_id, query)) = parse_flow_object_resource_uri(&uri, "/history") {
-            return match self.client.get_flow_object_history(object_id, query).await {
-                Ok(history) => resource_read_success(id, &uri, "application/json", &history.to_string()),
-                Err(error) => JsonRpcResponse::error(
-                    id,
-                    JsonRpcError::internal_error(format!("Failed to read Flow object history resource: {error}")),
-                ),
-            };
+        if let Some((object_id, query)) = parse_flow_object_resource_uri(uri, "/history") {
+            return ResourceRead::from_api(
+                self.client.get_flow_object_history(object_id, query).await,
+                "Failed to read Flow object history resource",
+            );
         }
 
-        if let Some((object_id, query)) = parse_flow_object_resource_uri(&uri, "/schema") {
-            return match self
-                .client
-                .get::<Value>(&format!("/api/v1/flow/objects/{object_id}/schema{query}"))
-                .await
-            {
-                Ok(schema) => resource_read_success(id, &uri, "application/json", &schema.to_string()),
-                Err(error) => JsonRpcResponse::error(
-                    id,
-                    JsonRpcError::internal_error(format!("Failed to read Flow object schema resource: {error}")),
-                ),
-            };
+        if let Some((object_id, query)) = parse_flow_object_resource_uri(uri, "/schema") {
+            return ResourceRead::from_api(
+                self.client
+                    .get::<Value>(&format!("/api/v1/flow/objects/{object_id}/schema{query}"))
+                    .await,
+                "Failed to read Flow object schema resource",
+            );
         }
 
-        if let Some((object_id, query)) = parse_flow_object_resource_uri(&uri, "") {
-            return match self.client.get_flow_object(object_id, query).await {
-                Ok(object) => resource_read_success(id, &uri, "application/json", &object.to_string()),
-                Err(error) => JsonRpcResponse::error(
-                    id,
-                    JsonRpcError::internal_error(format!("Failed to read Flow object resource: {error}")),
-                ),
-            };
+        if let Some((object_id, query)) = parse_flow_object_resource_uri(uri, "") {
+            return ResourceRead::from_api(
+                self.client.get_flow_object(object_id, query).await,
+                "Failed to read Flow object resource",
+            );
         }
 
-        if let Some((collection_id, query)) = parse_collection_records_resource_uri(&uri) {
-            return match self
-                .client
-                .get::<Value>(&format!("/api/v1/flow/collections/{collection_id}/records{query}"))
-                .await
-            {
-                Ok(records) => resource_read_success(id, &uri, "application/json", &records.to_string()),
-                Err(error) => JsonRpcResponse::error(
-                    id,
-                    JsonRpcError::internal_error(format!("Failed to read Flow Collection records resource: {error}")),
-                ),
-            };
+        if let Some((collection_id, query)) = parse_collection_records_resource_uri(uri) {
+            return ResourceRead::from_api(
+                self.client
+                    .get::<Value>(&format!("/api/v1/flow/collections/{collection_id}/records{query}"))
+                    .await,
+                "Failed to read Flow Collection records resource",
+            );
         }
 
-        if let Some((workspace_id, query)) = parse_navigator_resource_uri(&uri) {
-            return match self
-                .client
-                .get::<Value>(&format!("/api/v1/workspaces/{workspace_id}/flow/navigator{query}"))
-                .await
-            {
-                Ok(navigator) => resource_read_success(id, &uri, "application/json", &navigator.to_string()),
-                Err(error) => JsonRpcResponse::error(
-                    id,
-                    JsonRpcError::internal_error(format!("Failed to read Flow navigator resource: {error}")),
-                ),
-            };
+        if let Some((workspace_id, query)) = parse_navigator_resource_uri(uri) {
+            return ResourceRead::from_api(
+                self.client
+                    .get::<Value>(&format!("/api/v1/workspaces/{workspace_id}/flow/navigator{query}"))
+                    .await,
+                "Failed to read Flow navigator resource",
+            );
         }
 
-        if let Some(key) = parse_scenario_template_uri(&uri) {
-            return match self.client.get_scenario_template(&key).await {
-                Ok(template) => JsonRpcResponse::success(
-                    id,
-                    json!({
-                        "contents": [{
-                            "uri": uri,
-                            "mimeType": "application/json",
-                            "text": template.to_string()
-                        }]
-                    }),
-                ),
-                Err(error) => JsonRpcResponse::error(
-                    id,
-                    JsonRpcError::internal_error(format!("Failed to read scenario template: {error}")),
-                ),
-            };
+        if let Some(key) = parse_scenario_template_uri(uri) {
+            return ResourceRead::from_api(
+                self.client.get_scenario_template(&key).await,
+                "Failed to read scenario template",
+            );
         }
 
-        if let Some(project_id) = parse_project_resource_uri(&uri, "/issues") {
-            return match self
-                .client
-                .list_work_items(
-                    project_id,
-                    &ListWorkItemsQuery {
-                        page: Some(1),
-                        per_page: Some(50),
-                        ..ListWorkItemsQuery::default()
-                    },
-                )
-                .await
-            {
-                Ok(issues) => JsonRpcResponse::success(
-                    id,
-                    json!({
-                        "contents": [{
-                            "uri": uri,
-                            "mimeType": "application/json",
-                            "text": issues.to_string()
-                        }]
-                    }),
-                ),
-                Err(error) => JsonRpcResponse::error(
-                    id,
-                    JsonRpcError::internal_error(format!("Failed to read project issues resource: {error}")),
-                ),
-            };
+        if let Some(project_id) = parse_project_resource_uri(uri, "/issues") {
+            return ResourceRead::from_api(
+                self.client
+                    .list_work_items(
+                        project_id,
+                        &ListWorkItemsQuery {
+                            page: Some(1),
+                            per_page: Some(50),
+                            ..ListWorkItemsQuery::default()
+                        },
+                    )
+                    .await,
+                "Failed to read project issues resource",
+            );
         }
 
-        if let Some(project_id) = parse_project_resource_uri(&uri, "/forms") {
-            return match self.client.list_forms(project_id, None, None).await {
-                Ok(forms) => JsonRpcResponse::success(
-                    id,
-                    json!({
-                        "contents": [{
-                            "uri": uri,
-                            "mimeType": "application/json",
-                            "text": forms.to_string()
-                        }]
-                    }),
-                ),
-                Err(error) => JsonRpcResponse::error(
-                    id,
-                    JsonRpcError::internal_error(format!("Failed to read project forms resource: {error}")),
-                ),
-            };
+        if let Some(project_id) = parse_project_resource_uri(uri, "/forms") {
+            return ResourceRead::from_api(
+                self.client.list_forms(project_id, None, None).await,
+                "Failed to read project forms resource",
+            );
         }
 
-        if let Some(form_id) = parse_form_resource_uri(&uri, "") {
-            return match self.client.get_form(form_id).await {
-                Ok(form) => JsonRpcResponse::success(
-                    id,
-                    json!({
-                        "contents": [{
-                            "uri": uri,
-                            "mimeType": "application/json",
-                            "text": form.to_string()
-                        }]
-                    }),
-                ),
-                Err(error) => JsonRpcResponse::error(
-                    id,
-                    JsonRpcError::internal_error(format!("Failed to read form resource: {error}")),
-                ),
-            };
+        if let Some(form_id) = parse_form_resource_uri(uri, "") {
+            return ResourceRead::from_api(self.client.get_form(form_id).await, "Failed to read form resource");
         }
 
-        if let Some(form_id) = parse_form_resource_uri(&uri, "/records") {
-            return match self
-                .client
-                .list_form_records(form_id, &ListRecordsQuery::default())
-                .await
-            {
-                Ok(records) => JsonRpcResponse::success(
-                    id,
-                    json!({
-                        "contents": [{
-                            "uri": uri,
-                            "mimeType": "application/json",
-                            "text": records.to_string()
-                        }]
-                    }),
-                ),
-                Err(error) => JsonRpcResponse::error(
-                    id,
-                    JsonRpcError::internal_error(format!("Failed to read form records resource: {error}")),
-                ),
-            };
+        if let Some(form_id) = parse_form_resource_uri(uri, "/records") {
+            return ResourceRead::from_api(
+                self.client
+                    .list_form_records(form_id, &ListRecordsQuery::default())
+                    .await,
+                "Failed to read form records resource",
+            );
         }
 
-        if let Some(form_id) = parse_form_resource_uri(&uri, "/events") {
-            return match self.client.list_form_events(form_id, None, None, None).await {
-                Ok(events) => JsonRpcResponse::success(
-                    id,
-                    json!({
-                        "contents": [{
-                            "uri": uri,
-                            "mimeType": "application/json",
-                            "text": events.to_string()
-                        }]
-                    }),
-                ),
-                Err(error) => JsonRpcResponse::error(
-                    id,
-                    JsonRpcError::internal_error(format!("Failed to read form events resource: {error}")),
-                ),
-            };
+        if let Some(form_id) = parse_form_resource_uri(uri, "/events") {
+            return ResourceRead::from_api(
+                self.client.list_form_events(form_id, None, None, None).await,
+                "Failed to read form events resource",
+            );
         }
 
-        if let Some(record_id) = parse_form_record_resource_uri(&uri, "") {
-            return match self.client.get_form_record(record_id).await {
-                Ok(record) => JsonRpcResponse::success(
-                    id,
-                    json!({
-                        "contents": [{
-                            "uri": uri,
-                            "mimeType": "application/json",
-                            "text": record.to_string()
-                        }]
-                    }),
-                ),
-                Err(error) => JsonRpcResponse::error(
-                    id,
-                    JsonRpcError::internal_error(format!("Failed to read form record resource: {error}")),
-                ),
-            };
+        if let Some(record_id) = parse_form_record_resource_uri(uri, "") {
+            return ResourceRead::from_api(
+                self.client.get_form_record(record_id).await,
+                "Failed to read form record resource",
+            );
         }
 
-        if let Some(record_id) = parse_form_record_resource_uri(&uri, "/events") {
-            return match self.client.list_form_record_events(record_id, None, None, None).await {
-                Ok(events) => JsonRpcResponse::success(
-                    id,
-                    json!({
-                        "contents": [{
-                            "uri": uri,
-                            "mimeType": "application/json",
-                            "text": events.to_string()
-                        }]
-                    }),
-                ),
-                Err(error) => JsonRpcResponse::error(
-                    id,
-                    JsonRpcError::internal_error(format!("Failed to read form record events resource: {error}")),
-                ),
-            };
+        if let Some(record_id) = parse_form_record_resource_uri(uri, "/events") {
+            return ResourceRead::from_api(
+                self.client.list_form_record_events(record_id, None, None, None).await,
+                "Failed to read form record events resource",
+            );
         }
 
-        if let Some(project_id) = parse_project_resource_uri(&uri, "/context") {
-            return match self.client.get_project_context(project_id).await {
-                Ok(context) => JsonRpcResponse::success(
-                    id,
-                    json!({
-                        "contents": [{
-                            "uri": uri,
-                            "mimeType": "application/json",
-                            "text": context.to_string()
-                        }]
-                    }),
-                ),
-                Err(error) => JsonRpcResponse::error(
-                    id,
-                    JsonRpcError::internal_error(format!("Failed to read project context: {error}")),
-                ),
-            };
+        if let Some(project_id) = parse_project_resource_uri(uri, "/context") {
+            return ResourceRead::from_api(
+                self.client.get_project_context(project_id).await,
+                "Failed to read project context",
+            );
         }
 
-        if let Some(project_id) = parse_project_resource_uri(&uri, "/governance") {
-            return match self.client.get_project_governance_context(project_id).await {
-                Ok(governance) => JsonRpcResponse::success(
-                    id,
-                    json!({
-                        "contents": [{
-                            "uri": uri,
-                            "mimeType": "application/json",
-                            "text": governance.to_string()
-                        }]
-                    }),
-                ),
-                Err(error) => JsonRpcResponse::error(
-                    id,
-                    JsonRpcError::internal_error(format!("Failed to read project governance: {error}")),
-                ),
-            };
+        if let Some(project_id) = parse_project_resource_uri(uri, "/governance") {
+            return ResourceRead::from_api(
+                self.client.get_project_governance_context(project_id).await,
+                "Failed to read project governance",
+            );
         }
 
-        if let Some(project_id) = parse_project_resource_uri(&uri, "/agent-policy") {
-            return match self.client.get_project_agent_policy(project_id).await {
-                Ok(policy) => JsonRpcResponse::success(
-                    id,
-                    json!({
-                        "contents": [{
-                            "uri": uri,
-                            "mimeType": "application/json",
-                            "text": policy.to_string()
-                        }]
-                    }),
-                ),
-                Err(error) => JsonRpcResponse::error(
-                    id,
-                    JsonRpcError::internal_error(format!("Failed to read project agent policy: {error}")),
-                ),
-            };
+        if let Some(project_id) = parse_project_resource_uri(uri, "/agent-policy") {
+            return ResourceRead::from_api(
+                self.client.get_project_agent_policy(project_id).await,
+                "Failed to read project agent policy",
+            );
         }
 
-        if let Some(project_id) = parse_project_resource_uri(&uri, "/release-readiness") {
-            return match self.client.get_project_release_readiness(project_id).await {
-                Ok(readiness) => JsonRpcResponse::success(
-                    id,
-                    json!({
-                        "contents": [{
-                            "uri": uri,
-                            "mimeType": "application/json",
-                            "text": readiness.to_string()
-                        }]
-                    }),
-                ),
-                Err(error) => JsonRpcResponse::error(
-                    id,
-                    JsonRpcError::internal_error(format!("Failed to read project release readiness: {error}")),
-                ),
-            };
+        if let Some(project_id) = parse_project_resource_uri(uri, "/release-readiness") {
+            return ResourceRead::from_api(
+                self.client.get_project_release_readiness(project_id).await,
+                "Failed to read project release readiness",
+            );
         }
 
-        if let Some(project_id) = parse_project_resource_uri(&uri, "/type") {
-            return match self.client.get_project(project_id).await {
-                Ok(project) => JsonRpcResponse::success(
-                    id,
-                    json!({
-                        "contents": [{
-                            "uri": uri,
-                            "mimeType": "application/json",
-                            "text": project.to_string()
-                        }]
-                    }),
-                ),
-                Err(error) => JsonRpcResponse::error(
-                    id,
-                    JsonRpcError::internal_error(format!("Failed to read project type resource: {error}")),
-                ),
-            };
+        if let Some(project_id) = parse_project_resource_uri(uri, "/type") {
+            return ResourceRead::from_api(
+                self.client.get_project(project_id).await,
+                "Failed to read project type resource",
+            );
         }
 
         // PARKED(project-resources): restore with the six registrations and the resource template; see RUNNER-WORK-PACKAGES-STAGES-3-6.md P3.2
-        // if let Some(project_id) = parse_project_resource_uri(&uri, "/resources") {
-        //     return match self.client.list_project_resources(project_id).await {
-        //         Ok(resources) => JsonRpcResponse::success(
-        //             id,
-        //             json!({
-        //                 "contents": [{
-        //                     "uri": uri,
-        //                     "mimeType": "application/json",
-        //                     "text": resources.to_string()
-        //                 }]
-        //             }),
-        //         ),
-        //         Err(error) => JsonRpcResponse::error(
-        //             id,
-        //             JsonRpcError::internal_error(format!("Failed to read project resources: {error}")),
-        //         ),
-        //     };
+        // if let Some(project_id) = parse_project_resource_uri(uri, "/resources") {
+        //     return ResourceRead::from_api(
+        //         self.client.list_project_resources(project_id).await,
+        //         "Failed to read project resources",
+        //     );
         // }
 
-        if let Some(project_id) = parse_project_resource_uri(&uri, "/recent-decisions") {
-            return match self.client.get_project_governance_context(project_id).await {
-                Ok(governance) => {
-                    let recent_decisions = governance
-                        .get("data")
-                        .and_then(|data| data.get("recent_decisions"))
-                        .cloned()
-                        .unwrap_or_else(|| json!([]));
-                    JsonRpcResponse::success(
-                        id,
-                        json!({
-                            "contents": [{
-                                "uri": uri,
-                                "mimeType": "application/json",
-                                "text": recent_decisions.to_string()
-                            }]
-                        }),
-                    )
-                }
-                Err(error) => JsonRpcResponse::error(
-                    id,
-                    JsonRpcError::internal_error(format!("Failed to read project recent decisions: {error}")),
-                ),
-            };
-        }
-
-        if let Some(project_id) = parse_project_resource_uri(&uri, "/sprints") {
-            return match self.client.list_sprints(project_id).await {
-                Ok(sprints) => JsonRpcResponse::success(
-                    id,
-                    json!({
-                        "contents": [{
-                            "uri": uri,
-                            "mimeType": "application/json",
-                            "text": sprints.to_string()
-                        }]
+        if let Some(project_id) = parse_project_resource_uri(uri, "/recent-decisions") {
+            return ResourceRead::from_api(
+                self.client
+                    .get_project_governance_context(project_id)
+                    .await
+                    .map(|governance| {
+                        governance
+                            .get("data")
+                            .and_then(|data| data.get("recent_decisions"))
+                            .cloned()
+                            .unwrap_or_else(|| json!([]))
                     }),
-                ),
-                Err(error) => JsonRpcResponse::error(
-                    id,
-                    JsonRpcError::internal_error(format!("Failed to read project sprints resource: {error}")),
-                ),
-            };
+                "Failed to read project recent decisions",
+            );
         }
 
-        if let Some(identifier) = parse_issue_identifier_uri(&uri) {
-            return match self.client.get_work_item_by_identifier(&identifier).await {
-                Ok(issue) => JsonRpcResponse::success(
-                    id,
-                    json!({
-                        "contents": [{
-                            "uri": uri,
-                            "mimeType": "application/json",
-                            "text": issue.to_string()
-                        }]
-                    }),
-                ),
-                Err(error) => JsonRpcResponse::error(
-                    id,
-                    JsonRpcError::internal_error(format!("Failed to read issue resource: {error}")),
-                ),
-            };
+        if let Some(project_id) = parse_project_resource_uri(uri, "/sprints") {
+            return ResourceRead::from_api(
+                self.client.list_sprints(project_id).await,
+                "Failed to read project sprints resource",
+            );
         }
 
-        JsonRpcResponse::error(id, JsonRpcError::invalid_params(format!("Unknown resource URI: {uri}")))
+        if let Some(identifier) = parse_issue_identifier_uri(uri) {
+            return ResourceRead::from_api(
+                self.client.get_work_item_by_identifier(&identifier).await,
+                "Failed to read issue resource",
+            );
+        }
+
+        Err(ResourceError::NotFound)
+    }
+}
+
+/// `data.reason` of a refusal for a delegated caller that asks for anything but a static guide.
+const REFUSED_NOT_AVAILABLE: &str = "not_available_to_connected_applications";
+
+/// The text of one resource, as `resources/read` answers it. A read always has exactly one
+/// content block, so a successful answer never carries an empty `contents` array.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResourceRead {
+    mime_type: &'static str,
+    text: String,
+}
+
+impl ResourceRead {
+    fn markdown(text: &str) -> Self {
+        Self {
+            mime_type: "text/markdown",
+            text: text.to_string(),
+        }
+    }
+
+    /// The JSON payload of an API read, or the failure mapped to the error of a resource read.
+    /// `context` names the read in the message of a backend failure.
+    fn from_api(result: Result<impl std::fmt::Display, String>, context: &str) -> Result<Self, ResourceError> {
+        result
+            .map(|payload| Self {
+                mime_type: "application/json",
+                text: payload.to_string(),
+            })
+            .map_err(|error| ResourceError::from_backend(context, &error))
+    }
+}
+
+/// Why one `resources/read` failed, before the era decides how to say it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ResourceError {
+    /// No such resource: a URI shape this server does not serve, or an object the API does not
+    /// know (or will not show).
+    NotFound,
+    /// The caller may not read it; the reason is `data.reason` of the answer.
+    Refused(&'static str),
+    /// An id inside the URI is not valid; the text names the field.
+    Invalid(String),
+    /// The backend failed; the text is the message of a `-32603` answer.
+    Backend(String),
+}
+
+impl ResourceError {
+    /// A failure of an API read: a missing object is not found, a refusal is a refusal, anything
+    /// else is a backend failure that keeps its message.
+    fn from_backend(context: &str, error: &str) -> Self {
+        match classify_api_error(error) {
+            ApiErrorClass::NotFound => Self::NotFound,
+            ApiErrorClass::Forbidden => Self::Refused("forbidden"),
+            ApiErrorClass::Unauthorized | ApiErrorClass::Other => Self::Backend(format!("{context}: {error}")),
+        }
+    }
+
+    /// A failure of the policy check. A lookup the API failed is classified like a read; text
+    /// that is no API failure is the policy's own refusal.
+    fn from_policy(error: String) -> Self {
+        match classify_api_error(&error) {
+            ApiErrorClass::NotFound => Self::NotFound,
+            ApiErrorClass::Forbidden => Self::Refused("forbidden"),
+            ApiErrorClass::Unauthorized | ApiErrorClass::Other if is_backend_failure(&error) => Self::Backend(error),
+            ApiErrorClass::Unauthorized | ApiErrorClass::Other => Self::Refused("policy"),
+        }
+    }
+
+    /// The JSON-RPC error of this failure for the requested `uri`. Messages never carry the URI
+    /// text; `data.uri` does, unchanged.
+    fn into_rpc_error(self, uri: &str, modern: bool) -> JsonRpcError {
+        match self {
+            Self::NotFound if modern => JsonRpcError::resource_not_found(uri),
+            Self::NotFound => JsonRpcError::resource_not_found_legacy(uri),
+            Self::Refused(reason) => JsonRpcError::resource_refused(uri, reason),
+            Self::Invalid(message) => JsonRpcError::invalid_params(message),
+            Self::Backend(message) => JsonRpcError::internal_error(message),
+        }
     }
 }
 
@@ -2564,10 +2409,6 @@ fn set_structured_content(result: &mut Value) {
     if let (Some(structured), Some(fields)) = (structured, result.as_object_mut()) {
         fields.insert("structuredContent".to_string(), structured);
     }
-}
-
-fn resource_read_success(id: Option<Value>, uri: &str, mime_type: &str, text: &str) -> JsonRpcResponse {
-    JsonRpcResponse::success(id, json!({"contents":[{"uri":uri,"mimeType":mime_type,"text":text}]}))
 }
 
 /// `sylvode://projects/{project_id}/<suffix>` -> the tool whose project agent policy
