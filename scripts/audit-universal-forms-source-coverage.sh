@@ -175,7 +175,7 @@ contains "API build generates the migration registry from migrations/" "apps/api
 
 printf '\nBackend behavior coverage:\n'
 contains "decimal normalization uses rust_decimal" "apps/api/src/forms/decimal.rs" "rust_decimal"
-contains "record values reject amount JSON number" "apps/api/src/forms/values.rs" "must be a decimal string"
+contains "record values reject amount JSON number" "apps/api/src/forms/types/numeric.rs" "if raw.is_number()"
 contains "forms projection writes decimal index" "apps/api/src/forms/projections.rs" "value_decimal"
 contains "form route writes business events" "apps/api/src/routes/form.rs" "business_events"
 contains "business event helper writes the event ledger" "apps/api/src/events/mod.rs" "INSERT INTO business_events"
