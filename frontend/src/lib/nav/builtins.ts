@@ -14,6 +14,7 @@ export const WORKSPACE_BUILTINS: Record<string, BuiltinInfo> = {
 	'home.my_work': { labelKey: 'shell.column.home.myWork', glyph: 'list-checks' },
 	'home.recent': { labelKey: 'shell.column.home.recent', glyph: 'clock' },
 	'workspace.milestones': { labelKey: 'milestones.title', glyph: 'flag' },
+	'workspace.market': { labelKey: 'market.navTitle', glyph: 'puzzle' },
 	'workspace.flow': { labelKey: 'shell.destinations.flow', glyph: 'workflow' },
 	governance: { labelKey: 'shell.destinations.governance', glyph: 'landmark' }
 };
@@ -43,6 +44,8 @@ export function workspaceBuiltinHref(page: string, workspaceId: string): string 
 			return '/my-work';
 		case 'workspace.milestones':
 			return `/workspace/${enc(workspaceId)}/milestones`;
+		case 'workspace.market':
+			return `/workspace/${enc(workspaceId)}/market`;
 		case 'governance':
 			return '/governance';
 		default:

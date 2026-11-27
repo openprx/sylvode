@@ -46,6 +46,7 @@ pub const WORKSPACE_BUILTINS: &[&str] = &[
     "home.my_work",
     "home.recent",
     "workspace.milestones",
+    "workspace.market",
     "workspace.flow",
     "governance",
 ];
@@ -414,6 +415,7 @@ pub fn defaults(scope: NavScope, project_type: Option<&str>) -> NavDoc {
                     builtin_entry("overview", "home.overview"),
                     builtin_entry("notifications", "home.notifications"),
                     builtin_entry("my_work", "home.my_work"),
+                    builtin_entry("market", "workspace.market"),
                 ],
             ),
             section("recent", vec![builtin_entry("recent_items", "home.recent")]),

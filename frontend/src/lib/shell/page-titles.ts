@@ -59,6 +59,7 @@ const RULES: readonly TitleRule[] = [
 	rule(/^\/workspace\/[^/]+\/webhooks$/, 'pageTitle.workspaceWebhooks'),
 	rule(/^\/workspace\/[^/]+\/connections$/, 'pageTitle.workspaceConnections'),
 	rule(/^\/workspace\/[^/]+\/workflows$/, 'pageTitle.workspaceWorkflows'),
+	rule(/^\/workspace\/[^/]+\/market$/, 'market.marketTitle'),
 	rule(/^\/workspace\/[^/]+\/milestones$/, 'milestones.pageTitle.list'),
 	rule(/^\/workspace\/[^/]+\/milestones\/[^/]+$/, 'milestones.pageTitle.detail'),
 	rule(/^\/workspace\/[^/]+\/projects\/[^/]+\/issues\/[^/]+$/, 'pageTitle.issueDetail'),
