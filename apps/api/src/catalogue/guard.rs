@@ -160,4 +160,16 @@ mod tests {
     async fn a_known_path_with_an_uncatalogued_method_is_405() {
         assert_eq!(call(Method::POST, "/health").await.0, StatusCode::METHOD_NOT_ALLOWED);
     }
+
+    #[test]
+    fn the_decision_for_a_known_path_with_an_uncatalogued_method_is_405() {
+        use super::{Verdict, verdict};
+        // `/api/v1/forms/schema/validate` is catalogued for POST only.
+        let path = "/api/v1/forms/schema/validate";
+        assert_eq!(verdict("POST", path), Verdict::Pass);
+        for method in ["GET", "PUT", "PATCH", "DELETE"] {
+            assert_eq!(verdict(method, path), Verdict::MethodNotAllowed, "{method}");
+        }
+        assert_eq!(verdict("GET", "/api/v1/nothing-registered"), Verdict::Unclassified);
+    }
 }
