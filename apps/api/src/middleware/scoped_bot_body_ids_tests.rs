@@ -237,6 +237,27 @@ const ACCOUNTED: &[(&str, &str, Account)] = &[
         "issue_id",
         Open("audit F7: a bot that authored an approved proposal can link an issue of any project of the workspace"),
     ),
+    // Layout and placement creation: the handler resolves the scope and requires write in its project.
+    ("CreateLayoutRequest", "scope_id", Checked("layouts/access.rs")),
+    ("CreatePlacementRequest", "scope_id", Checked("layouts/access.rs")),
+    ("CreatePlacementRequest", "layout_id", Checked("layouts/access.rs")),
+    (
+        "CreatePlacementRequest",
+        "slot_id",
+        Exempt("a slot name of the fixed catalogue, not an object of any project"),
+    ),
+    // Layout validator (layouts/handlers.rs): the scope is resolved and read-checked by the handler.
+    ("ValidateRequest", "scope_id", Checked("layouts/access.rs")),
+    (
+        "ValidateRequest",
+        "site_id",
+        Exempt("site layouts are refused until sites exist; the handler reads no site"),
+    ),
+    (
+        "ValidateRequest",
+        "slot_id",
+        Exempt("a slot name of the fixed catalogue, not an object of any project"),
+    ),
     (
         "PackageImportPreviewRequest",
         "artifact_id",

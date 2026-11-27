@@ -39,7 +39,7 @@ mod tests {
             class_counts(ROUTES),
             BTreeMap::from([
                 ("filtered", 1),
-                ("no project", 9),
+                ("no project", 10),
                 ("project-resolved", 1),
                 ("refused", 1)
             ]),
