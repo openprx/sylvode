@@ -1,0 +1,29 @@
+# Guest plugins for the extension host. A workspace of its own: the product workspace never builds
+# these crates. Build with `./build.sh`, which writes the components to `dist/`.
+[workspace]
+resolver = "2"
+members = [
+  "service-desk/action",
+  "service-desk/rule",
+  "bad-fixtures/endless-loop",
+  "bad-fixtures/memory-growth",
+  "bad-fixtures/host-calls",
+]
+
+[workspace.package]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+version = "0.1.0"
+publish = false
+
+[workspace.dependencies]
+wit-bindgen = { version = "0.51.0", default-features = false, features = ["macros", "realloc"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = false

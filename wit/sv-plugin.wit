@@ -1,0 +1,81 @@
+package sv:plugin@4.0.0;
+
+interface types {
+  /// Canonical JSON text (RFC 8785 is not required from the guest; the host re-parses).
+  type json = string;
+  /// Typed failure of a host call; never carries an input value or a handler message.
+  variant call-error {
+    denied(string),          // 401/403: refusal code (catalogue code, or "forbidden")
+    not-found,               // 404
+    invalid(string),         // 400/422: error_code, or "bad_request"
+    conflict(string),        // 409: error_code, or "conflict"
+    limit(string),           // 413/429 and host limits: "host_call_limit", "payload_too_large", ...
+    unavailable,             // 5xx, timeout, draining
+  }
+  enum principal-kind { user, bot, installation }
+  record action-error { code: string }        // [a-z0-9_]{1,64}
+}
+
+interface ctx {
+  use types.{principal-kind};
+  record invocation {
+    principal-kind: principal-kind, actor: string, workspace: string, project: option<string>,
+    installation: string, generation: u32, action: string, locale: string, request-id: string,
+  }
+  current: func() -> invocation;
+}
+
+interface records {
+  use types.{json, call-error};
+  get: func(record-id: string) -> result<json, call-error>;                        // forms.records.read
+  query: func(form-id: string, query: list<tuple<string, string>>) -> result<json, call-error>; // forms.records.read/list
+  create: func(form-id: string, values: json, title: option<string>) -> result<json, call-error>; // forms.records.create
+  update: func(record-id: string, values: json, expected-updated-at: option<string>) -> result<json, call-error>; // forms.records.update
+}
+
+interface catalogue {
+  use types.{json, call-error};
+  /// request = {"path": {name: value}, "query": {name: value}, "body": json|null}; returns the envelope `data`.
+  call: func(op: string, request: json) -> result<json, call-error>;
+}
+
+interface log {
+  enum log-level { debug, info, warn, error }
+  emit: func(level: log-level, message: string);
+}
+
+interface clock {
+  now-ms: func() -> u64;
+}
+
+interface rule-types {
+  use types.{json};
+  enum stage { normalize, validate, transform }
+  record rule-input { stage: stage, field-key: string, field-type: string, value: json,
+                      deps: list<tuple<string, json>>, config: json }
+  variant rule-outcome { keep, replace(json) }
+  record rule-violation { code: string }       // [a-z0-9_]{1,64}; host namespaces it
+}
+
+world field-rule {
+  use rule-types.{rule-input, rule-outcome, rule-violation};
+  export apply: func(input: rule-input) -> result<rule-outcome, rule-violation>;
+}
+
+world action {
+  import ctx; import records; import catalogue; import log; import clock;
+  use types.{json, action-error};
+  export run: func(action: string, input: json) -> result<json, action-error>;
+}
+
+world provider {                                // declared only; not linked in the MVP
+  include action;
+  use types.{json as query-json, action-error as data-error};
+  export data: func(name: string, query: query-json) -> result<query-json, data-error>;
+}
+
+world job {                                     // declared only; not linked in the MVP
+  include action;
+  use types.{json as event-json, action-error as event-error};
+  export on-event: func(event: event-json) -> result<_, event-error>;
+}
