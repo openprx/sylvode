@@ -315,6 +315,7 @@ POST /api/v1/forms/{form_id}/validate Project Table("project_forms","form_id") f
 POST /api/v1/forms/{form_id}/views Project Table("project_forms","form_id") false
 POST /api/v1/impact-reviews/{id}/participants Project Table("impact_reviews","id") false
 POST /api/v1/inbound-sources/{id}/rotate Admin - false
+POST /api/v1/installations/{installation_id}/generations Admin - false
 POST /api/v1/issues/{issue_id}/comments Project Issue("issue_id") true
 POST /api/v1/issues/{issue_id}/labels/batch Project Issue("issue_id") false
 POST /api/v1/issues/{issue_id}/labels/{label_id} Project Issue("issue_id") false
@@ -364,6 +365,8 @@ POST /api/v1/workflows/{workflow_id}/states Admin - false
 POST /api/v1/workspaces Admin - false
 POST /api/v1/workspaces/{workspace_id}/bots Admin - false
 POST /api/v1/workspaces/{workspace_id}/import/project Admin - false
+POST /api/v1/workspaces/{workspace_id}/installations Admin - false
+POST /api/v1/workspaces/{workspace_id}/installations/preview Admin - false
 POST /api/v1/workspaces/{workspace_id}/labels Admin - false
 POST /api/v1/workspaces/{workspace_id}/members Admin - false
 POST /api/v1/workspaces/{workspace_id}/milestones Refused - false

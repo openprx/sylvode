@@ -20,13 +20,15 @@ use axum::{
 use platform::app::AppState;
 use serde::Deserialize;
 use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
 use tower::ServiceExt;
 use uuid::Uuid;
 
 use super::InternalCall;
 use super::host::limits::CALL_BODY_MAX;
+use super::install::live::{self, LoadError};
 use super::resource::{canonical_uuid, primary_param, resolve_resource};
-use crate::catalogue::{Entry, Exposure, Method, Principal, Refusal, allowed_pre, allowed_target, by_op};
+use crate::catalogue::{Entry, Exposure, Method, Principal, Refusal, RefusalCode, allowed_pre, allowed_target, by_op};
 
 static ROUTER: OnceLock<Router> = OnceLock::new();
 
@@ -51,6 +53,9 @@ pub enum CallError {
     Limit(String),
     /// 5xx, a timeout, or the router is not installed.
     Unavailable,
+    /// The invocation must stop: the installation was disabled or revoked, its approver is gone, or
+    /// the invoking user's session ended. The guest does not get to handle this one.
+    Ended(RefusalCode),
 }
 
 impl CallError {
@@ -61,6 +66,7 @@ impl CallError {
             Self::Denied(code) | Self::Invalid(code) | Self::Conflict(code) | Self::Limit(code) => code,
             Self::NotFound => "not_found",
             Self::Unavailable => "unavailable",
+            Self::Ended(code) => code.as_str(),
         }
     }
 }
@@ -71,12 +77,24 @@ impl From<Refusal> for CallError {
     }
 }
 
+/// How a call finds out that its installation is still what it was when the invocation began.
+#[derive(Clone, Copy, Debug)]
+pub struct Live {
+    /// The approving administrator of a non-interactive call (an installation principal); `None`
+    /// for a call made on behalf of the invoking user.
+    pub approver: Option<Uuid>,
+}
+
 /// What a host call needs to know about the invocation it belongs to.
 #[derive(Clone)]
 pub struct CallEnv {
     pub state: AppState,
-    /// A plugin principal, with the grants of this invocation.
+    /// A plugin principal, with the grants of this invocation when it began.
     pub principal: Arc<Principal>,
+    /// When set, every call loads the installation, its grants, the invoking user's session and (for
+    /// an installation principal) the approver again, and uses what it finds instead of
+    /// [`Self::principal`]. Production invocations always set it.
+    pub live: Option<Live>,
     pub actor: Uuid,
     pub session_version: i64,
     pub installation_id: Uuid,
@@ -99,10 +117,21 @@ pub struct CallRequest {
 /// The body keys a guest may not set: they carry provenance the host and the handlers own.
 const STRIPPED_BODY_KEYS: [&str; 3] = ["source", "metadata", "idempotency_key"];
 
-/// The operations whose request body has an `idempotency_key`. The host sets
-/// `ext:<invocation>:<call index>` on them, so a create the guest retries after a timeout is not
-/// stored twice (contract C1 §4.2, N-3).
-const IDEMPOTENT_OPS: [&str; 2] = ["forms.records.create", "forms.records.update"];
+/// The operations whose request body has an `idempotency_key`, and whether a repeat of the same
+/// call within one invocation is the same call.
+///
+/// The host never forwards a guest's key (the handlers look keys up workspace-wide). It derives its
+/// own, `ext:` and 32 hex characters of SHA-256 over the invocation, the installation, the operation,
+/// the target and one of:
+///
+/// * a token the guest put in the body's `idempotency_key` (1-64 characters of `[A-Za-z0-9_.:-]`):
+///   a retry with the same token is the same call, and two creates that must be distinct carry
+///   distinct tokens;
+/// * for a create without a token, the digest of the cleaned body: a guest that retries a create
+///   after a timeout sends the same body and gets the record the first attempt stored;
+/// * for an update without a token, the call index: updates are repeatable by nature and a guest may
+///   set a value, change it and set it again, so only a token makes two updates one.
+const IDEMPOTENT_OPS: [(&str, bool); 2] = [("forms.records.create", true), ("forms.records.update", false)];
 
 /// Runs the operation `op` for the invocation `env`.
 ///
@@ -128,7 +157,8 @@ pub async fn call(
     }
     let request: CallRequest =
         serde_json::from_str(request).map_err(|_| CallError::Invalid("bad_request".to_string()))?;
-    allowed_pre(&env.principal, entry)?;
+    let principal = fresh_principal(env).await?;
+    allowed_pre(&principal, entry)?;
     let params = path_params(entry, &request.path)?;
     let resource = resolve_resource(&env.state.db, entry, &params)
         .await
@@ -136,10 +166,10 @@ pub async fn call(
     let Some(resource) = resource else {
         return Err(CallError::Denied("capability_scope_mismatch".to_string()));
     };
-    allowed_target(&env.principal, entry, &resource)?;
+    allowed_target(&principal, entry, &resource)?;
     let internal = InternalCall {
         op: entry.op,
-        principal: Arc::clone(&env.principal),
+        principal,
         actor: env.actor,
         session_version: env.session_version,
         installation_id: env.installation_id,
@@ -161,6 +191,52 @@ pub async fn call(
         .await
         .map_err(|_| CallError::Limit("payload_too_large".to_string()))?;
     map_envelope(&bytes)
+}
+
+/// The principal for one call. A live call reads the installation, its grants and the invoking
+/// user's session from the database again, so a disable, a revoke, a changed grant, a logout or a
+/// lost approver takes effect at the next call. Anything that is no longer as it was ends the
+/// invocation ([`CallError::Ended`]).
+async fn fresh_principal(env: &CallEnv) -> Result<Arc<Principal>, CallError> {
+    let Some(binding) = env.live else {
+        return Ok(Arc::clone(&env.principal));
+    };
+    let db = &env.state.db;
+    let unavailable = |_: LoadError| CallError::Unavailable;
+    let loaded = match live::load(db, env.installation_id).await {
+        Ok(loaded) => loaded,
+        Err(LoadError::Refused(code)) => return Err(CallError::Ended(code)),
+        Err(error) => return Err(unavailable(error)),
+    };
+    if loaded.view.generation != env.generation {
+        return Err(CallError::Ended(RefusalCode::InstallationNotActive));
+    }
+    match live::actor_session(db, env.actor).await.map_err(unavailable)? {
+        Some(version) if version == env.session_version => {}
+        _ => return Err(CallError::Ended(RefusalCode::PluginSessionEnded)),
+    }
+    if let Some(approver) = binding.approver {
+        if !live::approver_is_admin(db, loaded.view.workspace_id, approver)
+            .await
+            .map_err(unavailable)?
+        {
+            live::disable_for_lost_approver(db, env.installation_id)
+                .await
+                .map_err(unavailable)?;
+            return Err(CallError::Ended(RefusalCode::InstallationApproverLost));
+        }
+    }
+    Ok(Arc::new(match &*env.principal {
+        Principal::Plugin { invoker, .. } => Principal::Plugin {
+            invoker: invoker.clone(),
+            installation: loaded.view,
+        },
+        Principal::Installation { approver_user_id, .. } => Principal::Installation {
+            installation: loaded.view,
+            approver_user_id: *approver_user_id,
+        },
+        other => other.clone(),
+    }))
 }
 
 /// Aborts the wrapped task when dropped, so a router call never outlives its invocation.
@@ -222,6 +298,37 @@ fn encode(value: &str, out: &mut String) {
     }
 }
 
+/// The idempotency key the host sends for a call; see [`IDEMPOTENT_OPS`].
+fn host_key(
+    internal: &InternalCall,
+    entry: &Entry,
+    params: &[(String, String)],
+    call_index: u32,
+    body: &Map<String, Value>,
+    token: Option<&str>,
+    by_body: bool,
+) -> String {
+    let mut hasher = Sha256::new();
+    let mut field = |label: &str, value: &[u8]| {
+        hasher.update(label.as_bytes());
+        hasher.update([0]);
+        hasher.update(value);
+        hasher.update([0]);
+    };
+    field("invocation", internal.request_id.as_bytes());
+    field("installation", internal.installation_id.as_bytes());
+    field("op", entry.op.as_bytes());
+    for (name, value) in params {
+        field(name, value.as_bytes());
+    }
+    match token {
+        Some(token) => field("token", token.as_bytes()),
+        None if by_body => field("body", &serde_json::to_vec(body).unwrap_or_default()),
+        None => field("call", &call_index.to_be_bytes()),
+    }
+    format!("ext:{}", hex::encode(&hasher.finalize()[..16]))
+}
+
 fn build_request(
     internal: InternalCall,
     call_index: u32,
@@ -258,11 +365,14 @@ fn build_request(
                 .filter(|(key, _)| !STRIPPED_BODY_KEYS.contains(&key.as_str()))
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect();
-            if IDEMPOTENT_OPS.contains(&entry.op) {
-                cleaned.insert(
-                    "idempotency_key".to_string(),
-                    Value::String(format!("ext:{}:{call_index}", internal.request_id)),
-                );
+            if let Some((_, by_body)) = IDEMPOTENT_OPS.iter().find(|(op, _)| *op == entry.op) {
+                let token = match object.get("idempotency_key") {
+                    None | Some(Value::Null) => None,
+                    Some(Value::String(token)) if plain_value(token) && token.len() <= 64 => Some(token.as_str()),
+                    Some(_) => return Err(bad()),
+                };
+                let key = host_key(&internal, entry, params, call_index, &cleaned, token, *by_body);
+                cleaned.insert("idempotency_key".to_string(), Value::String(key));
             }
             Some(serde_json::to_vec(&Value::Object(cleaned)).map_err(|_| bad())?)
         }
@@ -432,15 +542,80 @@ mod tests {
         .await;
         assert_eq!(parts.method, axum::http::Method::PATCH);
         assert_eq!(parts.uri.path(), format!("/api/v1/form-records/{id}"));
-        assert_eq!(
-            body,
-            json!({"values": {"a": 1}, "idempotency_key": format!("ext:{}:7", Uuid::from_u128(9))})
-        );
+        // The guest's key and provenance are gone; the host's key is `ext:` and 32 hex characters.
+        let key = body["idempotency_key"].as_str().expect("a host key");
+        assert!(key.starts_with("ext:") && key.len() == 36 && key[4..].bytes().all(|b| b.is_ascii_hexdigit()));
+        assert_eq!(body["values"], json!({"a": 1}));
+        assert_eq!(body.as_object().map(serde_json::Map::len), Some(2));
         let names: Vec<&str> = parts.headers.keys().map(axum::http::HeaderName::as_str).collect();
         assert_eq!(names, vec!["content-type"]);
         assert!(parts.extensions.get::<InternalCall>().is_some());
         let peer = parts.extensions.get::<ConnectInfo<SocketAddr>>().expect("peer");
         assert_eq!(peer.0, SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)));
+    }
+
+    /// The key a call carries.
+    async fn key_of(op: &'static str, call_index: u32, body: serde_json::Value, param: (&str, &str)) -> String {
+        let entry = by_op(op).expect("entry");
+        let params = vec![(param.0.to_string(), param.1.to_string())];
+        let request: CallRequest = serde_json::from_value(json!({"body": body})).expect("request");
+        let http = build_request(internal(op), call_index, entry, &request, &params).expect("built");
+        let bytes = to_bytes(http.into_body(), 1 << 20).await.expect("body");
+        let body: Value = serde_json::from_slice(&bytes).expect("json");
+        body["idempotency_key"].as_str().expect("a key").to_string()
+    }
+
+    /// A create the guest retries after a timeout is the same call whatever the call index; a create
+    /// with other values, or another token, is not. An update is the same call only with a token.
+    #[tokio::test]
+    async fn the_host_key_makes_a_retried_create_one_call() {
+        let form = "0b1d2f3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f";
+        let create = |n, body| key_of("forms.records.create", n, body, ("form_id", form));
+        let first = create(1, json!({"values": {"a": 1}})).await;
+        assert_eq!(
+            first,
+            create(5, json!({"values": {"a": 1}})).await,
+            "a retry is the same call"
+        );
+        assert_ne!(
+            first,
+            create(2, json!({"values": {"a": 2}})).await,
+            "other values are another call"
+        );
+        let token_a = create(1, json!({"values": {"a": 1}, "idempotency_key": "one"})).await;
+        assert_eq!(
+            token_a,
+            create(9, json!({"values": {"a": 1}, "idempotency_key": "one"})).await
+        );
+        assert_ne!(
+            token_a,
+            create(1, json!({"values": {"a": 1}, "idempotency_key": "two"})).await
+        );
+        assert_ne!(token_a, first, "a token replaces the body in the derivation");
+
+        let record = "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
+        let update = |n, body| key_of("forms.records.update", n, body, ("record_id", record));
+        let first = update(1, json!({"values": {"a": 1}})).await;
+        assert_ne!(
+            first,
+            update(2, json!({"values": {"a": 1}})).await,
+            "a repeated update is a new call"
+        );
+        let token = json!({"values": {"a": 1}, "idempotency_key": "set-a"});
+        assert_eq!(update(1, token.clone()).await, update(7, token).await);
+    }
+
+    /// A key that is not a plain short token is refused rather than forwarded.
+    #[test]
+    fn a_guest_key_that_is_not_a_plain_token_is_refused() {
+        let form = "0b1d2f3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f";
+        let entry = by_op("forms.records.create").expect("entry");
+        let params = vec![("form_id".to_string(), form.to_string())];
+        for bad in [json!("a b"), json!("x".repeat(65)), json!(7)] {
+            let request: CallRequest =
+                serde_json::from_value(json!({"body": {"values": {}, "idempotency_key": bad}})).expect("request");
+            assert!(build_request(internal("forms.records.create"), 1, entry, &request, &params).is_err());
+        }
     }
 
     #[tokio::test]

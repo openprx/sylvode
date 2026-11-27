@@ -8,7 +8,8 @@
 //! No database transaction is ever open while a guest runs: the host holds no transaction, and every
 //! host call is one ordinary request to the router, which opens and closes its own (AUD-L1.1-F1).
 //!
-//! Installations and stored grants are the next batch; the caller passes the [`GrantSet`].
+//! The caller passes a principal whose installation view holds the requested ids and the grants;
+//! each host call loads them again, so a revoke or a narrowed grant applies at the next call.
 
 pub mod bindings;
 pub mod engine;
@@ -28,6 +29,7 @@ use serde_json::Value;
 pub use error::HostError;
 pub use limits::World;
 pub use log::InvocationRecord;
+pub use run::verify_component;
 
 use crate::catalogue::{Grant, Principal};
 
@@ -50,7 +52,7 @@ pub struct Invocation {
 /// Runs `component` once.
 ///
 /// * `principal` must be a plugin or an installation principal; its installation's `requested` and
-///   `grants` are replaced by `grants`.
+///   `grants` are what the guest may use, and every host call loads them again.
 /// * `world` picks the export and the limits; a component built for the other world is refused
 ///   `plugin_world_mismatch`.
 /// * `entry` is the action name, or the rule stage of a field rule (`^[a-z0-9_.-]{1,64}$`).
@@ -66,7 +68,6 @@ pub async fn invoke(
     world: World,
     entry: &str,
     input: &str,
-    grants: &GrantSet,
 ) -> Invocation {
-    run::invoke(state, principal, component, world, entry, input, grants).await
+    run::invoke(state, principal, component, world, entry, input).await
 }

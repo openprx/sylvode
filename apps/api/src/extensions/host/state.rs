@@ -118,6 +118,11 @@ impl HostState {
             return Ok(Err(types::CallError::Unavailable));
         };
         let outcome = dispatch::call(env, self.host_calls, op, request, remaining).await;
+        // A disabled installation, a lost approver or an ended session stops the invocation: the
+        // guest does not get a result it could handle and carry on with.
+        if let Err(CallError::Ended(code)) = outcome {
+            return Err(wasmtime::Error::new(HostError::new(code)));
+        }
         Ok(match outcome {
             Ok(data) => match serde_json::to_string(&data) {
                 Ok(text) if text.len() <= CALL_BODY_MAX => Ok(text),
@@ -141,7 +146,7 @@ fn to_wit(error: CallError) -> types::CallError {
         CallError::Invalid(code) => types::CallError::Invalid(code),
         CallError::Conflict(code) => types::CallError::Conflict(code),
         CallError::Limit(code) => types::CallError::Limit(code),
-        CallError::Unavailable => types::CallError::Unavailable,
+        CallError::Unavailable | CallError::Ended(_) => types::CallError::Unavailable,
     }
 }
 

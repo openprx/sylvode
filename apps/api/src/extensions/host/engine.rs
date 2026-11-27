@@ -11,7 +11,7 @@ use wasmtime::component::Component;
 use wasmtime::{Config, Engine};
 
 use super::error::HostError;
-use super::limits::{COMPILE_CACHE_ENTRIES, COMPILE_CONCURRENCY, COMPILE_TIMEOUT};
+use super::limits::{COMPILE_CACHE_BYTES, COMPILE_CACHE_ENTRIES, COMPILE_CONCURRENCY, COMPILE_TIMEOUT};
 use crate::catalogue::RefusalCode;
 
 /// One tick of the epoch clock; a deadline is a number of ticks.
@@ -69,19 +69,50 @@ pub fn engine() -> Result<&'static Engine, HostError> {
 
 type Cell = Arc<OnceCell<Component>>;
 
-/// Compiled components by the SHA-256 of their bytes; at most [`COMPILE_CACHE_ENTRIES`]. In memory
-/// only: loading compiled artefacts is `unsafe` and the workspace denies `unsafe`, so a restart
-/// recompiles.
+struct Slot {
+    cell: Cell,
+    /// The size of the component's bytes, which stands for the size of its compiled code.
+    bytes: usize,
+}
+
+struct Entries {
+    lru: LruCache<[u8; 32], Slot>,
+    bytes: usize,
+}
+
+impl Entries {
+    /// Drops least recently used entries until both bounds hold; the newest entry always stays.
+    fn trim(&mut self, max_entries: usize, max_bytes: usize) {
+        while self.lru.len() > 1 && (self.lru.len() > max_entries || self.bytes > max_bytes) {
+            let Some((_, slot)) = self.lru.remove_lru() else {
+                break;
+            };
+            self.bytes = self.bytes.saturating_sub(slot.bytes);
+        }
+    }
+}
+
+/// Compiled components by the SHA-256 of their bytes; at most [`COMPILE_CACHE_ENTRIES`] entries and
+/// [`COMPILE_CACHE_BYTES`] of component bytes (compiled code is several times the size of the
+/// component, so the byte bound is what keeps memory in check). In memory only: loading compiled
+/// artefacts is `unsafe` and the workspace denies `unsafe`, so a restart recompiles.
 pub struct CompileCache {
-    entries: Mutex<LruCache<[u8; 32], Cell>>,
+    entries: Mutex<Entries>,
+    max_entries: usize,
+    max_bytes: usize,
     compiling: Arc<Semaphore>,
 }
 
 impl CompileCache {
     #[must_use]
-    pub fn new(entries: usize, concurrency: usize) -> Self {
+    pub fn new(entries: usize, max_bytes: usize, concurrency: usize) -> Self {
         Self {
-            entries: Mutex::new(LruCache::new(entries)),
+            entries: Mutex::new(Entries {
+                lru: LruCache::new_unbounded(),
+                bytes: 0,
+            }),
+            max_entries: entries,
+            max_bytes,
             compiling: Arc::new(Semaphore::new(concurrency)),
         }
     }
@@ -97,11 +128,19 @@ impl CompileCache {
         let digest: [u8; 32] = Sha256::digest(bytes).into();
         let cell = {
             let mut entries = self.entries.lock();
-            if let Some(cell) = entries.get(&digest) {
-                Arc::clone(cell)
+            if let Some(slot) = entries.lru.get(&digest) {
+                Arc::clone(&slot.cell)
             } else {
                 let cell = Cell::default();
-                entries.insert(digest, Arc::clone(&cell));
+                entries.lru.insert(
+                    digest,
+                    Slot {
+                        cell: Arc::clone(&cell),
+                        bytes: bytes.len(),
+                    },
+                );
+                entries.bytes = entries.bytes.saturating_add(bytes.len());
+                entries.trim(self.max_entries, self.max_bytes);
                 cell
             }
         };
@@ -129,21 +168,29 @@ impl CompileCache {
             .cloned();
         if compiled.is_err() {
             // A failed compile is not cached; the next call tries again.
-            self.entries.lock().remove(&digest);
+            let mut entries = self.entries.lock();
+            if let Some(slot) = entries.lru.remove(&digest) {
+                entries.bytes = entries.bytes.saturating_sub(slot.bytes);
+            }
         }
         compiled
     }
 
     #[cfg(test)]
     pub fn len(&self) -> usize {
-        self.entries.lock().len()
+        self.entries.lock().lru.len()
+    }
+
+    #[cfg(test)]
+    pub fn held_bytes(&self) -> usize {
+        self.entries.lock().bytes
     }
 }
 
 /// The compile cache of this process.
 pub fn compile_cache() -> &'static CompileCache {
     static CACHE: LazyLock<CompileCache> =
-        LazyLock::new(|| CompileCache::new(COMPILE_CACHE_ENTRIES, COMPILE_CONCURRENCY));
+        LazyLock::new(|| CompileCache::new(COMPILE_CACHE_ENTRIES, COMPILE_CACHE_BYTES, COMPILE_CONCURRENCY));
     &CACHE
 }
 
@@ -164,7 +211,7 @@ mod tests {
 
     #[tokio::test]
     async fn bytes_that_are_not_a_component_are_refused_and_not_cached() {
-        let cache = CompileCache::new(4, 2);
+        let cache = CompileCache::new(4, 1 << 20, 2);
         let error = cache
             .get(engine().expect("engine"), b"not wasm")
             .await
@@ -173,9 +220,28 @@ mod tests {
         assert_eq!(cache.len(), 0);
     }
 
+    /// The cache holds at most its byte budget (the newest entry always stays) and its byte count
+    /// follows the entries it keeps.
+    #[tokio::test]
+    async fn the_cache_is_bounded_by_bytes() {
+        let engine = engine().expect("engine");
+        let small = wat::parse_str("(component)").expect("wat");
+        let other = wat::parse_str("(component (core module))").expect("wat");
+        // Room for one of the two only.
+        let cache = CompileCache::new(8, small.len().max(other.len()), 2);
+        cache.get(engine, &small).await.expect("small");
+        cache.get(engine, &other).await.expect("other");
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.held_bytes(), other.len());
+        // The evicted one compiles again and evicts the other.
+        cache.get(engine, &small).await.expect("small again");
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.held_bytes(), small.len());
+    }
+
     #[tokio::test]
     async fn a_component_compiles_once_and_is_served_from_the_cache() {
-        let cache = CompileCache::new(4, 2);
+        let cache = CompileCache::new(4, 1 << 20, 2);
         let engine = engine().expect("engine");
         let bytes = wat::parse_str("(component)").expect("wat");
         cache.get(engine, &bytes).await.expect("first");

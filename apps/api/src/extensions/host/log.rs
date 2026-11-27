@@ -4,11 +4,13 @@
 //! Digests are `hmac-sha256` under a key derived from the server's signing secret, so a digest of a
 //! low-entropy input cannot be brute-forced without the server's secret.
 //!
-//! The table `extension_invocations` arrives with migration 0138 (installations); until then the
-//! record is written to `tracing` (target `sv::extensions`) and returned to the caller of
-//! [`super::invoke`].
+//! The record is written to `extension_invocations` (migration 0138; readable by the workspace's
+//! owners and admins, deleted after 30 days) and to `tracing` (target `sv::extensions`), and returned
+//! to the caller of [`super::invoke`].
 
+use platform::app::AppState;
 use ring::{hkdf, hmac};
+use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -95,6 +97,83 @@ pub fn emit(record: &InvocationRecord) {
         host_denials = record.host_denials,
         "extension invocation"
     );
+}
+
+/// How long invocation rows are kept.
+pub const RETENTION_DAYS: i64 = 30;
+
+/// Writes the record to `extension_invocations`. A failure is logged and does not change the result
+/// of the invocation. A record without an installation (a refusal before one was known) is not stored.
+pub async fn store(state: &AppState, record: &InvocationRecord) {
+    if record.installation_id.is_nil() {
+        return;
+    }
+    let size = |value: usize| i32::try_from(value).unwrap_or(i32::MAX);
+    let result = state
+        .db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO extension_invocations \
+               (id, workspace_id, installation_id, generation, world, entry, principal_kind, principal_id, \
+                input_digest, input_size, output_digest, output_size, outcome, error_code, duration_ms, \
+                fuel_used, host_calls, log_lines) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)",
+            vec![
+                record.id.into(),
+                record.workspace_id.into(),
+                record.installation_id.into(),
+                record.generation.into(),
+                record.world.to_string().into(),
+                record.entry.clone().into(),
+                record.principal_kind.to_string().into(),
+                record.principal_id.into(),
+                record.input_digest.clone().into(),
+                size(record.input_size).into(),
+                record.output_digest.clone().into(),
+                record.output_size.map(size).into(),
+                record.outcome.to_string().into(),
+                record.error_code.clone().into(),
+                i32::try_from(record.duration_ms).unwrap_or(i32::MAX).into(),
+                record.fuel_used.and_then(|fuel| i64::try_from(fuel).ok()).into(),
+                i32::try_from(record.host_calls).unwrap_or(i32::MAX).into(),
+                i32::try_from(record.log_lines).unwrap_or(i32::MAX).into(),
+            ],
+        ))
+        .await;
+    if let Err(error) = result {
+        tracing::warn!(target: "sv::extensions", invocation = %record.id, %error, "the invocation record was not stored");
+    }
+}
+
+/// Deletes the invocation rows older than [`RETENTION_DAYS`]; returns how many.
+///
+/// # Errors
+/// A database failure.
+pub async fn purge_old(state: &AppState) -> Result<u64, sea_orm::DbErr> {
+    let result = state
+        .db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "DELETE FROM extension_invocations WHERE created_at < now() - make_interval(days => $1::int)",
+            vec![RETENTION_DAYS.into()],
+        ))
+        .await?;
+    Ok(result.rows_affected())
+}
+
+/// Starts the task that deletes old invocation rows at start and then every 24 hours.
+pub fn spawn_retention(state: AppState) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(24 * 60 * 60));
+        loop {
+            tick.tick().await;
+            match purge_old(&state).await {
+                Ok(0) => {}
+                Ok(deleted) => tracing::info!(target: "sv::extensions", deleted, "old invocation records deleted"),
+                Err(error) => tracing::warn!(target: "sv::extensions", %error, "invocation records were not purged"),
+            }
+        }
+    });
 }
 
 #[cfg(test)]

@@ -103,6 +103,9 @@ async fn main() -> anyhow::Result<()> {
         db,
         flow_permission_cache: platform::app::FlowPermissionCacheSlot::default(),
     };
+    // Plugin field rules reach the form engine through this resolver; the invocation log keeps 30 days.
+    api::extensions::rules::register(state.clone()).await?;
+    api::extensions::host::log::spawn_retention(state.clone());
     api::flow::collab::fanout::spawn_listener(state.clone(), &api::flow::collab::runtime::runtime().registry);
     // Proposal settlement deliberately does not run here. It used to run both as an API
     // background task and inline on `GET /api/v1/proposals*`, which made a read request write

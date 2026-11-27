@@ -8,5 +8,6 @@ mod access;
 pub mod boot;
 pub mod handlers;
 mod keys;
+pub mod open;
 mod store;
 mod verify;

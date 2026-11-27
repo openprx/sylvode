@@ -155,6 +155,7 @@ mod tests {
             capability: "forms.records.read".to_string(),
             project,
             form,
+            plugin_ops_digest: String::new(),
         }
     }
 

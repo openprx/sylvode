@@ -49,6 +49,32 @@ pub enum RefusalCode {
     PluginFailed,
     /// Plugin host: the action is not one the plugin declares.
     PluginActionUnknown,
+    /// only a workspace owner or admin may manage installations.
+    InstallationAdminOnly,
+    /// the administrator who approved this installation is no longer an administrator.
+    InstallationApproverLost,
+    /// the installation is not active.
+    InstallationNotActive,
+    /// the installation was revoked.
+    InstallationRevoked,
+    /// the package's signing key was revoked.
+    InstallationPackageRevoked,
+    /// an upgrade must use a package with the same key.
+    InstallationPackageMismatch,
+    /// too many installation requests for this workspace.
+    InstallationRateLimited,
+    /// this package is already installed in this scope.
+    InstallationExists,
+    /// this generation is not the pending one.
+    InstallationGenerationStale,
+    /// a grant names a capability the package did not request.
+    GrantNotRequested,
+    /// a grant names a capability plugins cannot use.
+    GrantNotPluginExposed,
+    /// a grant selector is not valid for this installation.
+    GrantSelectorInvalid,
+    /// The invoking user's session ended (logout, password reset, deactivation) while the plugin ran.
+    PluginSessionEnded,
     /// The old plugin system accepts installs and updates from workspace owners and admins only.
     LegacyPluginAdminOnly,
     /// A `formula` patch names a key the caller may not write.
@@ -84,6 +110,19 @@ impl RefusalCode {
             Self::PluginGuestError => "plugin_guest_error",
             Self::PluginFailed => "plugin_failed",
             Self::PluginActionUnknown => "plugin_action_unknown",
+            Self::InstallationAdminOnly => "installation_admin_only",
+            Self::InstallationApproverLost => "installation_approver_lost",
+            Self::InstallationNotActive => "installation_not_active",
+            Self::InstallationRevoked => "installation_revoked",
+            Self::InstallationPackageRevoked => "installation_package_revoked",
+            Self::InstallationPackageMismatch => "installation_package_mismatch",
+            Self::InstallationRateLimited => "installation_rate_limited",
+            Self::InstallationExists => "installation_exists",
+            Self::InstallationGenerationStale => "installation_generation_stale",
+            Self::GrantNotRequested => "grant_not_requested",
+            Self::GrantNotPluginExposed => "grant_not_plugin_exposed",
+            Self::GrantSelectorInvalid => "grant_selector_invalid",
+            Self::PluginSessionEnded => "plugin_session_ended",
             Self::LegacyPluginAdminOnly => "legacy_plugin_admin_only",
             Self::LegacyPluginPatchDenied => "legacy_plugin_patch_denied",
             Self::LegacyPluginValidationFailed => "legacy_plugin_validation_failed",
@@ -96,6 +135,10 @@ impl RefusalCode {
     pub const fn status(self) -> i32 {
         match self {
             Self::LegacyPluginValidationFailed
+            | Self::InstallationPackageMismatch
+            | Self::GrantNotRequested
+            | Self::GrantNotPluginExposed
+            | Self::GrantSelectorInvalid
             | Self::PluginWitVersion
             | Self::PluginWorldMismatch
             | Self::PluginUnknownImport
@@ -107,7 +150,12 @@ impl RefusalCode {
             | Self::PluginGuestError
             | Self::PluginFailed => 422,
             Self::PluginComponentTooLarge | Self::PluginInputTooLarge | Self::PluginOutputTooLarge => 413,
-            Self::LegacyPluginBusy | Self::PluginConcurrencyLimit => 429,
+            Self::LegacyPluginBusy | Self::PluginConcurrencyLimit | Self::InstallationRateLimited => 429,
+            Self::InstallationNotActive
+            | Self::InstallationRevoked
+            | Self::InstallationPackageRevoked
+            | Self::InstallationExists
+            | Self::InstallationGenerationStale => 409,
             Self::PluginActionUnknown => 404,
             _ => 403,
         }
@@ -138,6 +186,21 @@ impl RefusalCode {
             Self::PluginGuestError => "the plugin reported an error",
             Self::PluginFailed => "the plugin failed",
             Self::PluginActionUnknown => "the plugin has no such action",
+            Self::InstallationAdminOnly => "only a workspace owner or admin may manage installations",
+            Self::InstallationApproverLost => {
+                "the administrator who approved this installation is no longer an administrator"
+            }
+            Self::InstallationNotActive => "the installation is not active",
+            Self::InstallationRevoked => "the installation was revoked",
+            Self::InstallationPackageRevoked => "the package's signing key was revoked",
+            Self::InstallationPackageMismatch => "an upgrade must use a package with the same key",
+            Self::InstallationRateLimited => "too many installation requests for this workspace",
+            Self::InstallationExists => "this package is already installed in this scope",
+            Self::InstallationGenerationStale => "this generation is not the pending one",
+            Self::GrantNotRequested => "a grant names a capability the package did not request",
+            Self::GrantNotPluginExposed => "a grant names a capability plugins cannot use",
+            Self::GrantSelectorInvalid => "a grant selector is not valid for this installation",
+            Self::PluginSessionEnded => "the session of the invoking user ended",
             Self::LegacyPluginAdminOnly => "only a workspace owner or admin may install or update a plugin",
             Self::LegacyPluginPatchDenied => "the plugin may not change this field",
             Self::LegacyPluginValidationFailed => "the plugin refused this value",

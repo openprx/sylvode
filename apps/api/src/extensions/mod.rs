@@ -30,7 +30,9 @@ use crate::error::ApiError;
 
 pub mod dispatch;
 pub mod host;
+pub mod install;
 pub mod resource;
+pub mod rules;
 
 /// What a handler may learn about a plugin call; set by the internal-call branch of the
 /// authentication middleware around the handler, and read through [`current`].

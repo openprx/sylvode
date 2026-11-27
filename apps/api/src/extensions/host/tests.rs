@@ -76,6 +76,7 @@ fn grants(ids: &[&str]) -> GrantSet {
                 capability: (*id).to_string(),
                 project: None,
                 form: None,
+                plugin_ops_digest: String::new(),
             })
             .collect(),
     }

@@ -18,6 +18,9 @@ pub struct Grant {
     pub capability: String,
     pub project: Option<Uuid>,
     pub form: Option<Uuid>,
+    /// The `plugin_ops_digest` of the capability id when the grant was approved. A grant whose
+    /// digest differs from the id's current one is not loaded (see `extensions::install::live`).
+    pub plugin_ops_digest: String,
 }
 
 /// An installation as the host loads it before every call.

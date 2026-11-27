@@ -88,8 +88,9 @@ pub const COMPILE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Invocations per user in the window (the invoke route, contract §5).
 pub const USER_RATE: usize = 30;
 pub const USER_RATE_WINDOW: Duration = Duration::from_secs(10);
-/// Components kept compiled.
+/// Components kept compiled, and the bytes of component they may add up to.
 pub const COMPILE_CACHE_ENTRIES: usize = 64;
+pub const COMPILE_CACHE_BYTES: usize = 128 * MIB;
 
 /// What a running invocation holds; released on drop.
 #[derive(Debug)]

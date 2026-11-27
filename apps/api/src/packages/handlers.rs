@@ -346,7 +346,15 @@ pub async fn revoke_publisher_key(
         .await?
         .ok_or_else(|| ApiError::not_found("publisher key not found"))?;
     let revoked = keys::revoke_key(&tx, &row).await?;
+    // Installations that run a package signed by this key stop (contract C3-7).
+    let stopped = crate::extensions::install::store::disable_for_revoked_key(&tx, row.id).await?;
     tx.commit().await?;
+    if !stopped.is_empty() {
+        tracing::info!(%workspace_id, count = stopped.len(), "installations disabled: their package key was revoked");
+        if let Err(error) = crate::extensions::rules::refresh(&state.db).await {
+            tracing::warn!(%error, "the plugin rule registry was not refreshed");
+        }
+    }
     tracing::info!(%workspace_id, key_id = %revoked.key_id, "publisher key revoked");
     Ok(ApiResponse::success(PublisherKey::from(&revoked)))
 }

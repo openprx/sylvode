@@ -15,11 +15,11 @@ use super::bindings::{action, rule};
 use super::engine::{compile_cache, deadline_ticks, engine};
 use super::error::{HostError, valid_guest_code};
 use super::limits::{World, gates};
-use super::log::{InvocationRecord, digest, digest_key, emit};
+use super::log::{InvocationRecord, digest, digest_key, emit, store};
 use super::state::{HostState, InvocationInfo};
 use super::{GrantSet, Invocation};
 use crate::catalogue::{Grant, InstallationView, Invoker, Principal, RefusalCode};
-use crate::extensions::dispatch::CallEnv;
+use crate::extensions::dispatch::{CallEnv, Live};
 
 /// The package of the interfaces a plugin may import.
 const IMPORT_PREFIX: &str = "sv:plugin/";
@@ -43,18 +43,20 @@ struct Who {
     generation: i32,
     workspace_id: Uuid,
     actor: Uuid,
+    /// The approving administrator when the call is non-interactive (an installation principal).
+    approver: Option<Uuid>,
 }
 
 fn who(principal: &Principal) -> Result<(Who, &InstallationView), HostError> {
-    let (installation, actor) = match principal {
+    let (installation, actor, approver) = match principal {
         Principal::Plugin {
             invoker: Invoker::User { user_id, .. },
             installation,
-        } => (installation, *user_id),
+        } => (installation, *user_id, None),
         Principal::Installation {
             installation,
             approver_user_id,
-        } => (installation, *approver_user_id),
+        } => (installation, *approver_user_id, Some(*approver_user_id)),
         _ => return Err(HostError::new(RefusalCode::CapabilityNotExposed)),
     };
     Ok((
@@ -63,11 +65,14 @@ fn who(principal: &Principal) -> Result<(Who, &InstallationView), HostError> {
             generation: installation.generation,
             workspace_id: installation.workspace_id,
             actor,
+            approver,
         },
         installation,
     ))
 }
 
+/// Runs `component` for an installation principal. Its requested ids and grants are the ones in the
+/// principal's installation view; every host call loads them again (see `dispatch::fresh_principal`).
 pub async fn invoke(
     state: &AppState,
     principal: &Principal,
@@ -75,13 +80,20 @@ pub async fn invoke(
     world: World,
     entry: &str,
     input: &str,
-    grants: &GrantSet,
 ) -> Invocation {
-    invoke_with(state, principal, component, world, entry, input, grants, None).await
+    let grants = match principal {
+        Principal::Plugin { installation, .. } | Principal::Installation { installation, .. } => GrantSet {
+            requested: installation.requested.clone(),
+            grants: installation.grants.clone(),
+        },
+        _ => GrantSet::default(),
+    };
+    invoke_with(state, principal, component, world, entry, input, &grants, None).await
 }
 
 /// [`invoke`] with the invoking user's `session_version` given instead of read from the database,
-/// for tests of the host without a database. `None` reads it.
+/// for tests of the host without a database: the calls of such a run do not load the installation
+/// again and nothing is written to the invocation log. `None` is the production path.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn invoke_with(
     state: &AppState,
@@ -157,6 +169,9 @@ pub(super) async fn invoke_with(
         last_denial: telemetry.last_denial,
     };
     emit(&record);
+    if session.is_none() {
+        store(state, &record).await;
+    }
     Invocation { result, record }
 }
 
@@ -238,6 +253,31 @@ fn check_shape(
     Ok(())
 }
 
+/// Checks a component of a package at install time (contract C1 §6): the size limit, that it
+/// compiles, exports the world's function and imports only interfaces of this host's package
+/// version that the world may have. Every interface of the world counts as allowed here; which of
+/// them an invocation links depends on the grants.
+///
+/// # Errors
+/// `plugin_component_too_large`, `plugin_invalid_component`, `plugin_world_mismatch`,
+/// `plugin_wit_version` or `plugin_unknown_import`.
+pub async fn verify_component(bytes: &[u8], world: World) -> Result<(), HostError> {
+    if bytes.len() > world.limits().component {
+        return Err(HostError::new(RefusalCode::PluginComponentTooLarge));
+    }
+    let engine = engine()?;
+    let component = compile_cache().get(engine, bytes).await?;
+    check_shape(
+        engine,
+        &component,
+        world,
+        Plan {
+            records: true,
+            catalogue: true,
+        },
+    )
+}
+
 async fn session_version(state: &AppState, actor: Uuid) -> Result<i64, HostError> {
     let failed = || HostError::new(RefusalCode::PluginFailed);
     let row = state
@@ -313,12 +353,21 @@ async fn execute(
             workspace_id: who.workspace_id,
             role: crate::entities::workspace_member::WorkspaceRole::Member,
         };
-        Some(Arc::new(CallEnv {
-            state: state.clone(),
-            principal: Arc::new(Principal::Plugin {
+        let live = (session.is_none()).then_some(Live { approver: who.approver });
+        let principal = match who.approver {
+            Some(approver_user_id) => Principal::Installation {
+                installation: view,
+                approver_user_id,
+            },
+            None => Principal::Plugin {
                 invoker,
                 installation: view,
-            }),
+            },
+        };
+        Some(Arc::new(CallEnv {
+            state: state.clone(),
+            principal: Arc::new(principal),
+            live,
             actor: who.actor,
             session_version: match session {
                 Some(version) => version,
