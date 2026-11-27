@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test, type APIRequestContext, type Page, type Request } from '@playwright/test';
+import { postWorkspaceFlowObject } from './flow-scope-support';
 
 /**
  * The Flow object page's right panel (`/workspace/{id}/flow/{objectId}`) against a real API +
@@ -138,20 +139,20 @@ test('object panel: share with dry-run consequences, relations, history diff and
 	const pageTitle = `Panel page ${runId}`;
 	const targetTitle = `Linked target ${runId}`;
 	const created = await unwrap<{ object: { id: string } }>(
-		await request.post(`/api/v1/workspaces/${workspace.id}/flow/objects`, {
+		await postWorkspaceFlowObject(request, workspace.id, {
 			headers: auth,
 			data: { object_type: 'page', title: pageTitle, idempotency_key: crypto.randomUUID() }
 		})
 	);
 	const target = await unwrap<{ object: { id: string } }>(
-		await request.post(`/api/v1/workspaces/${workspace.id}/flow/objects`, {
+		await postWorkspaceFlowObject(request, workspace.id, {
 			headers: auth,
 			data: { object_type: 'page', title: targetTitle, idempotency_key: crypto.randomUUID() }
 		})
 	);
 	const objectId = created.object.id;
 	await unwrap(
-		await request.post(`/api/v1/flow/objects/${objectId}/commands`, {
+		await request.post(`/api/v2/flow/objects/${objectId}/commands`, {
 			headers: auth,
 			data: {
 				command: {
@@ -164,7 +165,7 @@ test('object panel: share with dry-run consequences, relations, history diff and
 	);
 	const blockText = `Hello diff ${runId}`;
 	await unwrap(
-		await request.post(`/api/v1/flow/objects/${objectId}/commands`, {
+		await request.post(`/api/v2/flow/objects/${objectId}/commands`, {
 			headers: auth,
 			data: {
 				command: { type: 'insert_block', payload: { block_id: `blk-${runId}`, text: blockText } },
@@ -402,7 +403,7 @@ test('object panel: share with dry-run consequences, relations, history diff and
 		effective_level: string;
 	}>(await request.get(`/api/v2/flow/objects/${objectId}/grants`, { headers: memberAuth }));
 	expect(memberView).toMatchObject({ items: [], inherited: [], effective_level: 'view' });
-	const write = await request.post(`/api/v1/flow/objects/${objectId}/commands`, {
+	const write = await request.post(`/api/v2/flow/objects/${objectId}/commands`, {
 		headers: memberAuth,
 		data: {
 			command: { type: 'set_title', payload: { title: 'member edit' } },

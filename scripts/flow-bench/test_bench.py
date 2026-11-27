@@ -11,7 +11,7 @@ import bench
 
 def contention(retry_after_ms: int = 200, elapsed_ms: float = 2099.5) -> bench.ApiError:
     return bench.ApiError(
-        "POST /api/v1/flow/objects/x/commands HTTP 200 in 2099.5 ms: contention",
+        "POST /api/v2/flow/objects/x/commands HTTP 200 in 2099.5 ms: contention",
         envelope={
             "code": 409,
             "message": "server_draining",

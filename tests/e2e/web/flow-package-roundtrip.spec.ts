@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+import { flowScopePath, postWorkspaceFlowObject } from './flow-scope-support';
 
 /**
  * Workspace package round-trip (`/workspace/{id}/settings/flow/package`) against a real API +
@@ -201,7 +202,7 @@ test('export a workspace package, import it into another workspace with a projec
 	const titles = [`Round trip one ${runId}`, `Round trip two ${runId}`];
 	for (const [index, title] of titles.entries()) {
 		await unwrap(
-			await request.post(`/api/v1/workspaces/${workspaceA.id}/flow/objects`, {
+			await postWorkspaceFlowObject(request, workspaceA.id, {
 				headers: auth,
 				data: {
 					object_type: 'page',
@@ -307,7 +308,7 @@ test('export a workspace package, import it into another workspace with a projec
 	await expect(page.getByTestId('flow-import-report-count-created')).toHaveText('2');
 	const firstImportId = new URL(page.url()).pathname.split('/').pop() ?? '';
 	const firstReport = await unwrap<{ object_mapping: Record<string, string> }>(
-		await request.get(`/api/v1/workspaces/${workspaceB.id}/flow/imports/${firstImportId}`, {
+		await request.get(`${await flowScopePath(request, workspaceB.id, auth)}/imports/${firstImportId}`, {
 			headers: auth
 		})
 	);
@@ -316,14 +317,14 @@ test('export a workspace package, import it into another workspace with a projec
 	const listed = await unwrap<{
 		items: Array<{ title: string; object_type: string }>;
 	}>(
-		await request.get(`/api/v1/workspaces/${workspaceB.id}/flow/objects?object_type=page`, {
+		await request.get(`${await flowScopePath(request, workspaceB.id, auth)}/objects?object_type=page`, {
 			headers: auth
 		})
 	);
 	expect(listed.items.map((item) => item.title).sort()).toEqual([...titles].sort());
 	const inTarget = await unwrap<{ items: Array<{ title: string }> }>(
 		await request.get(
-			`/api/v1/workspaces/${workspaceB.id}/flow/objects?object_type=page&project_id=${targetProject.id}`,
+			`${await flowScopePath(request, workspaceB.id, auth)}/objects?object_type=page&project_id=${targetProject.id}`,
 			{ headers: auth }
 		)
 	);
@@ -383,7 +384,7 @@ test('export a workspace package, import it into another workspace with a projec
 	// The server refuses the held preview too: commit re-reads the lineage.
 	const refused = await envelope<null>(
 		await request.post(
-			`/api/v1/workspaces/${workspaceB.id}/flow/imports/${held.data.preview_id}/commit`,
+			`${await flowScopePath(request, workspaceB.id, auth)}/imports/${held.data.preview_id}/commit`,
 			{
 				headers: auth,
 				data: {
@@ -399,7 +400,7 @@ test('export a workspace package, import it into another workspace with a projec
 	expect(refused.code).toBe(403);
 	expect(refused.error_code).toBe('policy_rejected');
 	const afterRefusal = await unwrap<{ items: unknown[] }>(
-		await request.get(`/api/v1/workspaces/${workspaceB.id}/flow/objects?object_type=page`, {
+		await request.get(`${await flowScopePath(request, workspaceB.id, auth)}/objects?object_type=page`, {
 			headers: auth
 		})
 	);
@@ -422,7 +423,7 @@ test('export a workspace package, import it into another workspace with a projec
 	await expect(page.getByTestId('flow-import-report-count-reused')).toHaveText('2');
 	await expect(page.getByTestId('flow-import-report-count-created')).toHaveText('0');
 	const afterReuse = await unwrap<{ items: unknown[] }>(
-		await request.get(`/api/v1/workspaces/${workspaceB.id}/flow/objects?object_type=page`, {
+		await request.get(`${await flowScopePath(request, workspaceB.id, auth)}/objects?object_type=page`, {
 			headers: auth
 		})
 	);

@@ -180,7 +180,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                     json!({"format":render,"at_seq":at_seq,"include_history":false,"idempotency_key":idempotency_key});
                 let created = api_data(
                     client
-                        .post_structured::<Value, _>(&format!("/api/v1/flow/objects/{id}/exports"), &body)
+                        .post_structured::<Value, _>(&format!("/api/v2/flow/objects/{id}/exports"), &body)
                         .await,
                 )?;
                 if *wait {
@@ -190,7 +190,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                         .ok_or_else(|| CliError::usage("export response has no job_id"))?;
                     api_data(
                         client
-                            .get_structured::<Value>(&format!("/api/v1/flow/exports/{job_id}"))
+                            .get_structured::<Value>(&format!("/api/v2/flow/exports/{job_id}"))
                             .await,
                     )
                 } else {
@@ -243,7 +243,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                         }
                     }
                     (
-                        format!("/api/v1/flow/objects/{page}/commands"),
+                        format!("/api/v2/flow/objects/{page}/commands"),
                         flow_command("create_collection_embed", &initial_schema, idempotency_key),
                     )
                 } else {
@@ -252,7 +252,11 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                         schema_object.insert("title".to_string(), json!(title));
                         schema_object.insert("idempotency_key".to_string(), json!(idempotency_key));
                     }
-                    (format!("/api/v1/workspaces/{workspace}/flow/objects"), initial_schema)
+                    if let Some(schema_object) = initial_schema.as_object_mut() {
+                        let scope = workspace_scope(client, &workspace).await?;
+                        schema_object.insert("scope_id".to_string(), json!(scope));
+                    }
+                    ("/api/v2/flow/objects".to_string(), initial_schema)
                 };
                 if embed_page.is_none()
                     && let Some(object) = body.as_object_mut()
@@ -300,7 +304,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                 if let (Some(frontier), Some(object)) = (expected_frontier, body.as_object_mut()) {
                     object.insert("expected_frontier".to_string(), json!(frontier));
                 }
-                let path = format!("/api/v1/flow/objects/{id}/commands");
+                let path = format!("/api/v2/flow/objects/{id}/commands");
                 api_data(client.post_structured::<Value, _>(&path, &body).await)
             }
             ObjectsAction::Move {
@@ -327,7 +331,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                     }
                 }
                 let body = flow_command("move_object", &payload, idempotency_key);
-                let path = format!("/api/v1/flow/objects/{id}/commands");
+                let path = format!("/api/v2/flow/objects/{id}/commands");
                 api_data(client.post_structured::<Value, _>(&path, &body).await)
             }
             ObjectsAction::Reference {
@@ -348,7 +352,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                 if !display.is_object() {
                     return Err(CliError::usage("--display-file must contain a JSON object"));
                 }
-                let path = format!("/api/v1/flow/objects/{source}/references");
+                let path = format!("/api/v2/flow/objects/{source}/references");
                 api_data(
                     client
                         .post_structured::<Value, _>(
@@ -368,7 +372,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                 let source = checked_uuid("source", source)?;
                 let reference_id = checked_uuid("--reference", reference_id)?;
                 checked_idempotency_key(idempotency_key)?;
-                let path = format!("/api/v1/flow/objects/{source}/references/{reference_id}");
+                let path = format!("/api/v2/flow/objects/{source}/references/{reference_id}");
                 api_data(
                     client
                         .delete_structured_with_idempotency::<Value>(&path, idempotency_key)
@@ -391,7 +395,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                 api_data(
                     client
                         .post_structured::<Value, _>(
-                            "/api/v1/flow/conversions/preview",
+                            "/api/v2/flow/conversions/preview",
                             &json!({
                     "source_object_id":source,"source_frontier":source_frontier,
                     "target_type":target_type.replace('-', "_"),"mapping":mapping,"idempotency_key":idempotency_key}),
@@ -411,7 +415,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                 if !confirm {
                     return Err(CliError::usage("--confirm is required"));
                 }
-                api_data(client.post_structured::<Value, _>("/api/v1/flow/conversions", &json!({
+                api_data(client.post_structured::<Value, _>("/api/v2/flow/conversions", &json!({
                     "preview_id":preview_id,"source_frontier":source_frontier,"target_schema_version":target_schema_version,
                     "confirm":true,"idempotency_key":idempotency_key})).await)
             }
@@ -419,7 +423,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                 let job = checked_uuid("job", job)?;
                 api_data(
                     client
-                        .get_structured::<Value>(&format!("/api/v1/flow/conversions/{job}"))
+                        .get_structured::<Value>(&format!("/api/v2/flow/conversions/{job}"))
                         .await,
                 )
             }
@@ -436,7 +440,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                 api_data(
                     client
                         .post_structured::<Value, _>(
-                            &format!("/api/v1/flow/conversions/{job}/retry"),
+                            &format!("/api/v2/flow/conversions/{job}/retry"),
                             &json!({"confirm":true,"idempotency_key":idempotency_key}),
                         )
                         .await,
@@ -445,7 +449,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
             ObjectsAction::Grants(grants) => match &grants.action {
                 GrantsAction::Get { id } => {
                     let id = checked_uuid("object id", id)?;
-                    let path = format!("/api/v1/flow/objects/{id}/grants");
+                    let path = format!("/api/v2/flow/objects/{id}/grants");
                     api_data(client.get_structured::<Value>(&path).await)
                 }
                 GrantsAction::Set {
@@ -470,7 +474,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                         "dry_run": dry_run,
                         "idempotency_key": idempotency_key,
                     });
-                    let path = format!("/api/v1/flow/objects/{id}/grants");
+                    let path = format!("/api/v2/flow/objects/{id}/grants");
                     api_data(client.put_structured::<Value, _>(&path, &body).await)
                 }
             },
@@ -490,7 +494,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                         "dry_run": dry_run,
                         "idempotency_key": idempotency_key,
                     });
-                    let path = format!("/api/v1/flow/objects/{id}/inheritance");
+                    let path = format!("/api/v2/flow/objects/{id}/inheritance");
                     api_data(client.put_structured::<Value, _>(&path, &body).await)
                 }
             },
@@ -508,7 +512,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                     &json!({ "target_object_id": target, "relation_type": relation_type }),
                     idempotency_key,
                 );
-                let path = format!("/api/v1/flow/objects/{source}/commands");
+                let path = format!("/api/v2/flow/objects/{source}/commands");
                 api_data(client.post_structured::<Value, _>(&path, &body).await)
             }
             ObjectsAction::Unlink {
@@ -520,7 +524,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                 let relation_id = checked_uuid("--relation", relation_id)?;
                 checked_idempotency_key(idempotency_key)?;
                 let body = flow_command("unlink", &json!({ "relation_id": relation_id }), idempotency_key);
-                let path = format!("/api/v1/flow/objects/{source}/commands");
+                let path = format!("/api/v2/flow/objects/{source}/commands");
                 api_data(client.post_structured::<Value, _>(&path, &body).await)
             }
             ObjectsAction::Diff {
@@ -537,7 +541,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                 if let Some(render) = render {
                     query.push(format!("render={}", render.replace('-', "_")));
                 }
-                let path = format!("/api/v1/flow/objects/{id}/diff{}", query_suffix(&query));
+                let path = format!("/api/v2/flow/objects/{id}/diff{}", query_suffix(&query));
                 api_data(client.get_structured::<Value>(&path).await)
             }
             ObjectsAction::Relations {
@@ -559,7 +563,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                     query.push(format!("cursor={}", encode_query_component(cursor)));
                 }
                 append_limit(&mut query, *limit)?;
-                let path = format!("/api/v1/flow/objects/{id}/relations{}", query_suffix(&query));
+                let path = format!("/api/v2/flow/objects/{id}/relations{}", query_suffix(&query));
                 api_data(client.get_structured::<Value>(&path).await)
             }
             ObjectsAction::Search {
@@ -598,7 +602,8 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                     query.push(format!("cursor={}", encode_query_component(cursor)));
                 }
                 append_limit(&mut query, *limit)?;
-                let path = format!("/api/v1/workspaces/{workspace}/flow/search{}", query_suffix(&query));
+                let scope = workspace_scope(client, &workspace).await?;
+                let path = format!("/api/v2/flow/scopes/{scope}/search{}", query_suffix(&query));
                 api_data(client.get_structured::<Value>(&path).await)
             }
             ObjectsAction::Get { id, at_seq, render } => {
@@ -611,7 +616,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                     // clap's `value_parser` already restricted this to semantic-json|markdown.
                     query.push(format!("render={}", render.replace('-', "_")));
                 }
-                let path = format!("/api/v1/flow/objects/{id}{}", query_suffix(&query));
+                let path = format!("/api/v2/flow/objects/{id}{}", query_suffix(&query));
                 api_data(client.get_structured::<Value>(&path).await)
             }
             ObjectsAction::Query {
@@ -652,7 +657,8 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                     }
                     query.push(format!("limit={limit}"));
                 }
-                let path = format!("/api/v1/workspaces/{workspace}/flow/objects{}", query_suffix(&query));
+                let scope = workspace_scope(client, &workspace).await?;
+                let path = format!("/api/v2/flow/scopes/{scope}/objects{}", query_suffix(&query));
                 api_data(client.get_structured::<Value>(&path).await)
             }
             ObjectsAction::History { id, before_seq, limit } => {
@@ -667,7 +673,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                     }
                     query.push(format!("limit={limit}"));
                 }
-                let path = format!("/api/v1/flow/objects/{id}/history{}", query_suffix(&query));
+                let path = format!("/api/v2/flow/objects/{id}/history{}", query_suffix(&query));
                 api_data(client.get_structured::<Value>(&path).await)
             }
         },
@@ -676,7 +682,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                 let id = checked_uuid("collection id", id)?;
                 api_data(
                     client
-                        .get_structured::<Value>(&format!("/api/v1/flow/collections/{id}"))
+                        .get_structured::<Value>(&format!("/api/v2/flow/collections/{id}"))
                         .await,
                 )
             }
@@ -691,7 +697,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                 }
                 api_data(
                     client
-                        .post_structured::<Value, _>(&format!("/api/v1/flow/collections/{id}/query"), &body)
+                        .post_structured::<Value, _>(&format!("/api/v2/flow/collections/{id}/query"), &body)
                         .await,
                 )
             }
@@ -712,7 +718,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                             "--values-file must contain a JSON object keyed by field UUID",
                         ));
                     }
-                    api_data(client.post_structured::<Value, _>(&format!("/api/v1/flow/collections/{collection}/records"), &json!({"values_by_field_id": values, "body": body, "idempotency_key": idempotency_key})).await)
+                    api_data(client.post_structured::<Value, _>(&format!("/api/v2/flow/collections/{collection}/records"), &json!({"values_by_field_id": values, "body": body, "idempotency_key": idempotency_key})).await)
                 }
                 RecordsAction::Patch {
                     id,
@@ -730,7 +736,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                     }
                     let record = api_data(
                         client
-                            .get_structured::<Value>(&format!("/api/v1/flow/objects/{id}"))
+                            .get_structured::<Value>(&format!("/api/v2/flow/objects/{id}"))
                             .await,
                     )?;
                     let collection = record
@@ -741,7 +747,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                     api_data(
                         client
                             .post_structured::<Value, _>(
-                                &format!("/api/v1/flow/objects/{collection}/commands"),
+                                &format!("/api/v2/flow/objects/{collection}/commands"),
                                 &flow_command("record_patch", &payload, idempotency_key),
                             )
                             .await,
@@ -779,7 +785,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                 // metadata". Called through the generic client, not a named wrapper method —
                 // see `client.rs`'s Flow section doc comment for why.
                 // `id` is already a canonicalized UUID (`checked_uuid`), safe to interpolate.
-                let path = format!("/api/v1/flow/objects/{id}/collab?include_sizes=true");
+                let path = format!("/api/v2/flow/objects/{id}/collab?include_sizes=true");
                 api_data(client.get_structured::<Value>(&path).await)
             }
             CollabAction::Verify {
@@ -796,7 +802,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                     format!("/api/v1/admin/flow/documents/{id}/verify")
                 } else {
                     body.as_object_mut().map(|object| object.remove("dry_run"));
-                    format!("/api/v1/flow/objects/{id}/collab/verify")
+                    format!("/api/v2/flow/objects/{id}/collab/verify")
                 };
                 let envelope: Value = client
                     .post_structured(&path, &body)
@@ -823,10 +829,8 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                     query.push(format!("cursor={}", encode_query_component(cursor)));
                 }
                 append_limit(&mut query, *limit)?;
-                let path = format!(
-                    "/api/v1/workspaces/{workspace}/flow/projection-lag{}",
-                    query_suffix(&query)
-                );
+                let scope = workspace_scope(client, &workspace).await?;
+                let path = format!("/api/v2/flow/scopes/{scope}/projection-lag{}", query_suffix(&query));
                 api_data(client.get_structured::<Value>(&path).await)
             }
             CollabAction::Compact {
@@ -861,7 +865,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                 api_data(
                     client
                         .post_structured::<Value, _>(
-                            &format!("/api/v1/flow/objects/{id}/exports"),
+                            &format!("/api/v2/flow/objects/{id}/exports"),
                             &json!({"format":"package","include_history":true,"idempotency_key":idempotency_key}),
                         )
                         .await,
@@ -874,7 +878,8 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
             } => {
                 let workspace = checked_uuid("--workspace", workspace)?;
                 checked_idempotency_key(idempotency_key)?;
-                api_data(client.post_structured::<Value, _>(&format!("/api/v1/workspaces/{workspace}/flow/exports"), &json!({"format":"package","include_history":include_history,"idempotency_key":idempotency_key})).await)
+                let scope = workspace_scope(client, &workspace).await?;
+                api_data(client.post_structured::<Value, _>(&format!("/api/v2/flow/scopes/{scope}/exports"), &json!({"format":"package","include_history":include_history,"idempotency_key":idempotency_key})).await)
             }
             CollabAction::ImportPreview {
                 workspace,
@@ -884,7 +889,8 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
             } => {
                 let workspace = checked_uuid("--workspace", workspace)?;
                 checked_idempotency_key(idempotency_key)?;
-                let upload_path = format!("/api/v1/workspaces/{workspace}/flow/import-artifacts");
+                let scope = workspace_scope(client, &workspace).await?;
+                let upload_path = format!("/api/v2/flow/scopes/{scope}/import-artifacts");
                 let artifact = api_data(
                     client
                         .post_package_file_structured::<Value>(&upload_path, package_file, idempotency_key)
@@ -908,7 +914,7 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                     .and_then(Value::as_str)
                     .unwrap_or("reject_existing");
                 let include_history = mapping.get("include_history").and_then(Value::as_bool).unwrap_or(false);
-                api_data(client.post_structured::<Value, _>(&format!("/api/v1/workspaces/{workspace}/flow/imports/preview"), &json!({"artifact_id":artifact_id,"project_mapping":project_mapping,"external_reference_policy":external_policy,"conflict_policy":conflict_policy,"include_history":include_history,"idempotency_key":idempotency_key})).await)
+                api_data(client.post_structured::<Value, _>(&format!("/api/v2/flow/scopes/{scope}/imports/preview"), &json!({"artifact_id":artifact_id,"project_mapping":project_mapping,"external_reference_policy":external_policy,"conflict_policy":conflict_policy,"include_history":include_history,"idempotency_key":idempotency_key})).await)
             }
             CollabAction::ImportCommit {
                 workspace,
@@ -925,7 +931,8 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
                     return Err(CliError::usage("--confirm is required"));
                 }
                 checked_idempotency_key(idempotency_key)?;
-                api_data(client.post_structured::<Value, _>(&format!("/api/v1/workspaces/{workspace}/flow/imports/{import_id}/commit"), &json!({"package_sha256":package_hash,"mapping_hash":mapping_hash,"conflict_policy":conflict_policy.replace('-', "_"),"confirm":true,"idempotency_key":idempotency_key})).await)
+                let scope = workspace_scope(client, &workspace).await?;
+                api_data(client.post_structured::<Value, _>(&format!("/api/v2/flow/scopes/{scope}/imports/{import_id}/commit"), &json!({"package_sha256":package_hash,"mapping_hash":mapping_hash,"conflict_policy":conflict_policy.replace('-', "_"),"confirm":true,"idempotency_key":idempotency_key})).await)
             }
             CollabAction::ImportStatus {
                 workspace,
@@ -934,9 +941,10 @@ async fn dispatch(client: &OpenPrClient, command: &Commands) -> Result<Value, Cl
             } => {
                 let workspace = checked_uuid("--workspace", workspace)?;
                 let import_id = checked_uuid("--import", import_id)?;
+                let scope = workspace_scope(client, &workspace).await?;
                 api_data(
                     client
-                        .get_structured::<Value>(&format!("/api/v1/workspaces/{workspace}/flow/imports/{import_id}"))
+                        .get_structured::<Value>(&format!("/api/v2/flow/scopes/{scope}/imports/{import_id}"))
                         .await,
                 )
             }
@@ -1061,6 +1069,19 @@ fn append_limit(query: &mut Vec<String>, limit: Option<u64>) -> Result<(), CliEr
 /// envelope as tool output. `get_structured`/`put_structured::<Value>` deserialize the whole
 /// envelope on success, exactly like the String-returning `get`/`put` this replaces, so `data`
 /// still has to be pulled out here.
+/// The Flow scope bound to a workspace: the workspace commands address the Flow surface through it.
+async fn workspace_scope(client: &OpenPrClient, workspace: &str) -> Result<String, CliError> {
+    let data = api_data(
+        client
+            .get_structured::<Value>(&format!("/api/v2/flow/workspaces/{workspace}/scope"))
+            .await,
+    )?;
+    data.pointer("/scope/id")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| CliError::network("the workspace scope response carries no scope id"))
+}
+
 fn api_data(result: Result<Value, api_client::StructuredApiError>) -> Result<Value, CliError> {
     let envelope = result.map_err(CliError::from_structured)?;
     Ok(envelope.get("data").cloned().unwrap_or(Value::Null))

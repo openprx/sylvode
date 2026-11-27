@@ -364,7 +364,7 @@ await suite.checkAsync('the REST client carries error_code and details off the w
 				status: 200,
 				headers: { 'Content-Type': 'application/json' }
 			})) as typeof globalThis.fetch;
-		const result = await apiClient.post('/api/v1/flow/collab/tickets', {});
+		const result = await apiClient.post('/api/v2/flow/collab/tickets', {});
 		assertEqual(result.error_code, 'server_draining', 'ApiClient dropped the stable error code');
 		assertEqual(
 			parseServerDrainingReason(result.details),
@@ -392,7 +392,7 @@ await suite.checkAsync('a success envelope carries no error fields', async () =>
 				status: 200,
 				headers: { 'Content-Type': 'application/json' }
 			})) as typeof globalThis.fetch;
-		const result = await apiClient.get('/api/v1/flow/objects');
+		const result = await apiClient.get('/api/v2/flow/objects');
 		assertEqual(result.error_code, undefined, 'a success envelope must not invent an error code');
 		assertEqual(result.details, undefined, 'a success envelope must not invent details');
 		assertEqual(flowErrorFromEnvelope(result), null, 'a success envelope is not a Flow error');
@@ -489,7 +489,7 @@ async function connectedSession(
 				({
 					code: 0,
 					message: 'ok',
-					data: { websocket_url: '/api/v1/collab/ws?ticket=t', expires_at: '', ticket: 't' }
+					data: { websocket_url: '/api/v2/flow/collab/ws?ticket=t', expires_at: '', ticket: 't' }
 				} as never)
 		}
 	);

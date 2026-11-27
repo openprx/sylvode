@@ -6,6 +6,7 @@ import {
   type BrowserContext,
   type Page,
 } from "@playwright/test";
+import { postWorkspaceFlowObject } from './flow-scope-support';
 
 /**
  * Two people on one Flow Page against a real API + PostgreSQL + worker
@@ -170,7 +171,7 @@ test("multi-user: presence, offline outbox replay, and a view downgrade into the
     }),
   );
   const created = await unwrap<{ object: { id: string } }>(
-    await request.post(`/api/v1/workspaces/${workspace.id}/flow/objects`, {
+    await postWorkspaceFlowObject(request, workspace.id, {
       headers: auth,
       data: {
         object_type: "page",
@@ -241,7 +242,7 @@ test("multi-user: presence, offline outbox replay, and a view downgrade into the
     await pageB.keyboard.insertText(" x2");
     await expect(indicatorB).toHaveAttribute("data-pending", "2");
     await unwrap(
-      await request.put(`/api/v1/flow/objects/${objectId}/grants`, {
+      await request.put(`/api/v2/flow/objects/${objectId}/grants`, {
         headers: auth,
         data: {
           grants: [
@@ -258,7 +259,7 @@ test("multi-user: presence, offline outbox replay, and a view downgrade into the
       }),
     );
     await unwrap(
-      await request.put(`/api/v1/flow/objects/${objectId}/inheritance`, {
+      await request.put(`/api/v2/flow/objects/${objectId}/inheritance`, {
         headers: auth,
         data: {
           inherit_from_parent: false,
@@ -269,7 +270,7 @@ test("multi-user: presence, offline outbox replay, and a view downgrade into the
       }),
     );
     const grantsB = await unwrap<{ effective_level: string }>(
-      await request.get(`/api/v1/flow/objects/${objectId}/grants`, {
+      await request.get(`/api/v2/flow/objects/${objectId}/grants`, {
         headers: { Authorization: `Bearer ${memberLogin.tokens.access_token}` },
       }),
     );

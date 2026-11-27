@@ -74,6 +74,7 @@ import type {
 } from '../src/lib/api/flow';
 
 const WS = '11111111-1111-4111-8111-111111111111';
+const SCOPE = '99999999-9999-4999-8999-999999999999';
 const DOC = 'abcdef22-2222-4222-8222-22222222abcd';
 const OBJ = 'fedcba33-3333-4333-8333-33333333dcba';
 const NOW = Date.parse('2026-10-09T12:00:00Z');
@@ -193,7 +194,8 @@ await suite.checkAsync(
 				path: url.pathname + url.search,
 				body: init?.body ? JSON.parse(String(init.body)) : null
 			});
-			return new Response(JSON.stringify({ code: 0, message: 'ok', data: {} }), {
+			const data = url.pathname.endsWith('/scope') ? { scope: { id: SCOPE }, roots: [] } : {};
+			return new Response(JSON.stringify({ code: 0, message: 'ok', data }), {
 				headers: { 'Content-Type': 'application/json' }
 			});
 		}) as typeof fetch;
@@ -243,7 +245,12 @@ await suite.checkAsync(
 				},
 				{
 					method: 'GET',
-					path: `/api/v1/workspaces/${WS}/flow/projection-lag?cursor=c1&limit=20`,
+					path: `/api/v2/flow/workspaces/${WS}/scope`,
+					body: null
+				},
+				{
+					method: 'GET',
+					path: `/api/v2/flow/scopes/${SCOPE}/projection-lag?cursor=c1&limit=20`,
 					body: null
 				},
 				{

@@ -98,6 +98,28 @@ async fn send_structured(
     }
 }
 
+/// The Flow scope of a workspace: the workspace routes of the Flow surface hang off the scope bound to
+/// it, which the API resolves for the caller's own workspace only.
+pub(crate) async fn workspace_scope_id(
+    client: &OpenPrClient,
+    workspace_id: &str,
+) -> Result<String, StructuredApiError> {
+    let path = format!("/api/v2/flow/workspaces/{}/scope", encode_query_component(workspace_id));
+    let response = get_structured(client, &path).await?;
+    response
+        .pointer("/data/scope/id")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| StructuredApiError::transport(format!("Malformed response from {path}: no scope id")))
+}
+
+/// [`workspace_scope_id`] for a tool: a failure is the tool's answer.
+async fn scope_of(client: &OpenPrClient, workspace_id: &str) -> Result<String, CallToolResult> {
+    workspace_scope_id(client, workspace_id)
+        .await
+        .map_err(|error| respond_data(Err(error)))
+}
+
 pub(crate) async fn get_structured(client: &OpenPrClient, path: &str) -> Result<Value, StructuredApiError> {
     let url = format!("{}{path}", client.base_url);
     send_structured(client, client.client.get(&url), path).await
@@ -557,7 +579,7 @@ pub async fn reference_flow_object(client: &OpenPrClient, args: Value) -> CallTo
         return CallToolResult::error("target_id must be a UUID and idempotency_key must be non-empty".to_string());
     }
     let path = format!(
-        "/api/v1/flow/objects/{}/references",
+        "/api/v2/flow/objects/{}/references",
         encode_query_component(&input.object_id)
     );
     respond_data(
@@ -580,7 +602,7 @@ pub async fn unreference_flow_object(client: &OpenPrClient, args: Value) -> Call
         return result;
     }
     let path = format!(
-        "/api/v1/flow/objects/{}/references/{}",
+        "/api/v2/flow/objects/{}/references/{}",
         encode_query_component(&input.object_id),
         encode_query_component(&input.reference_id)
     );
@@ -598,7 +620,7 @@ pub async fn convert_preview(client: &OpenPrClient, args: Value) -> CallToolResu
     respond_data(
         post_structured(
             client,
-            "/api/v1/flow/conversions/preview",
+            "/api/v2/flow/conversions/preview",
             &serde_json::to_value(input).unwrap_or_default(),
         )
         .await,
@@ -619,7 +641,7 @@ pub async fn convert_commit(client: &OpenPrClient, args: Value) -> CallToolResul
     respond_data(
         post_structured(
             client,
-            "/api/v1/flow/conversions",
+            "/api/v2/flow/conversions",
             &serde_json::to_value(input).unwrap_or_default(),
         )
         .await,
@@ -634,7 +656,7 @@ pub async fn convert_status(client: &OpenPrClient, args: Value) -> CallToolResul
     respond_data(
         get_structured(
             client,
-            &format!("/api/v1/flow/conversions/{}", encode_query_component(&input.job_id)),
+            &format!("/api/v2/flow/conversions/{}", encode_query_component(&input.job_id)),
         )
         .await,
     )
@@ -652,7 +674,7 @@ pub async fn convert_retry(client: &OpenPrClient, args: Value) -> CallToolResult
         return result;
     }
     let path = format!(
-        "/api/v1/flow/conversions/{}/retry",
+        "/api/v2/flow/conversions/{}/retry",
         encode_query_component(&input.job_id)
     );
     respond_data(
@@ -691,7 +713,7 @@ pub async fn export_flow_object(client: &OpenPrClient, args: Value) -> CallToolR
     respond_data(
         post_structured(
             client,
-            &format!("/api/v1/flow/objects/{}/exports", encode_query_component(object_id)),
+            &format!("/api/v2/flow/objects/{}/exports", encode_query_component(object_id)),
             &body,
         )
         .await,
@@ -706,13 +728,14 @@ pub async fn export_flow_workspace(client: &OpenPrClient, args: Value) -> CallTo
     let mut body = without_fields(&args, &["workspace_id"]);
     body.as_object_mut()
         .map(|object| object.insert("format".to_string(), json!("package")));
+    let scope = match scope_of(client, workspace_id).await {
+        Ok(scope) => scope,
+        Err(result) => return result,
+    };
     respond_data(
         post_structured(
             client,
-            &format!(
-                "/api/v1/workspaces/{}/flow/exports",
-                encode_query_component(workspace_id)
-            ),
+            &format!("/api/v2/flow/scopes/{}/exports", encode_query_component(&scope)),
             &body,
         )
         .await,
@@ -729,9 +752,13 @@ pub async fn import_flow_artifact(client: &OpenPrClient, args: Value) -> CallToo
     if inline.is_some() == staged_source.is_some() {
         return CallToolResult::error("exactly one of package_base64 or staged_object is required".to_string());
     }
+    let scope = match scope_of(client, workspace_id).await {
+        Ok(scope) => scope,
+        Err(result) => return result,
+    };
     let path = format!(
-        "/api/v1/workspaces/{}/flow/import-artifacts",
-        encode_query_component(workspace_id)
+        "/api/v2/flow/scopes/{}/import-artifacts",
+        encode_query_component(&scope)
     );
     if let Some(package_base64) = inline {
         let idempotency_key = match required_string(&args, "idempotency_key") {
@@ -779,13 +806,14 @@ pub async fn import_flow_preview(client: &OpenPrClient, args: Value) -> CallTool
         Err(result) => return result,
     };
     let body = without_fields(&args, &["workspace_id"]);
+    let scope = match scope_of(client, workspace_id).await {
+        Ok(scope) => scope,
+        Err(result) => return result,
+    };
     respond_data(
         post_structured(
             client,
-            &format!(
-                "/api/v1/workspaces/{}/flow/imports/preview",
-                encode_query_component(workspace_id)
-            ),
+            &format!("/api/v2/flow/scopes/{}/imports/preview", encode_query_component(&scope)),
             &body,
         )
         .await,
@@ -802,12 +830,16 @@ pub async fn import_flow_commit(client: &OpenPrClient, args: Value) -> CallToolR
         Err(result) => return result,
     };
     let body = without_fields(&args, &["workspace_id", "import_id"]);
+    let scope = match scope_of(client, workspace_id).await {
+        Ok(scope) => scope,
+        Err(result) => return result,
+    };
     respond_data(
         post_structured(
             client,
             &format!(
-                "/api/v1/workspaces/{}/flow/imports/{}/commit",
-                encode_query_component(workspace_id),
+                "/api/v2/flow/scopes/{}/imports/{}/commit",
+                encode_query_component(&scope),
                 encode_query_component(import_id)
             ),
             &body,
@@ -825,12 +857,16 @@ pub async fn import_flow_status(client: &OpenPrClient, args: Value) -> CallToolR
         Ok(value) => value,
         Err(result) => return result,
     };
+    let scope = match scope_of(client, workspace_id).await {
+        Ok(scope) => scope,
+        Err(result) => return result,
+    };
     respond_data(
         get_structured(
             client,
             &format!(
-                "/api/v1/workspaces/{}/flow/imports/{}",
-                encode_query_component(workspace_id),
+                "/api/v2/flow/scopes/{}/imports/{}",
+                encode_query_component(&scope),
                 encode_query_component(import_id)
             ),
         )
@@ -896,7 +932,7 @@ pub async fn flow_integrity(client: &OpenPrClient, args: Value) -> CallToolResul
             post_structured(
                 client,
                 &format!(
-                    "/api/v1/flow/objects/{}/collab/verify",
+                    "/api/v2/flow/objects/{}/collab/verify",
                     encode_query_component(object_id)
                 ),
                 &json!({"deep":false,"idempotency_key":uuid::Uuid::new_v4().to_string()}),
@@ -918,7 +954,7 @@ pub async fn compact_flow_document(client: &OpenPrClient, args: Value) -> CallTo
     };
     let scope = get_structured(
         client,
-        &format!("/api/v1/flow/objects/{}/collab", encode_query_component(object_id)),
+        &format!("/api/v2/flow/objects/{}/collab", encode_query_component(object_id)),
     )
     .await;
     match scope {
@@ -988,7 +1024,7 @@ pub async fn repair_quarantine(client: &OpenPrClient, args: Value) -> CallToolRe
         (None, Some(object_id), Some(document_id)) => {
             let owner = get_structured(
                 client,
-                &format!("/api/v1/flow/objects/{}/collab", encode_query_component(object_id)),
+                &format!("/api/v2/flow/objects/{}/collab", encode_query_component(object_id)),
             )
             .await;
             match owner {
@@ -1066,7 +1102,7 @@ pub async fn get_flow_object(client: &OpenPrClient, args: Value) -> CallToolResu
     let suffix = query_suffix(&query);
 
     let path = format!(
-        "/api/v1/flow/objects/{}{suffix}",
+        "/api/v2/flow/objects/{}{suffix}",
         encode_query_component(&input.object_id)
     );
     respond_data(get_structured(client, &path).await)
@@ -1148,10 +1184,11 @@ pub async fn query_flow_objects(client: &OpenPrClient, args: Value) -> CallToolR
     }
     let suffix = query_suffix(&query);
 
-    let path = format!(
-        "/api/v1/workspaces/{}/flow/objects{suffix}",
-        encode_query_component(&input.workspace_id)
-    );
+    let scope = match scope_of(client, &input.workspace_id).await {
+        Ok(scope) => scope,
+        Err(result) => return result,
+    };
+    let path = format!("/api/v2/flow/scopes/{}/objects{suffix}", encode_query_component(&scope));
     respond_data(get_structured(client, &path).await)
 }
 
@@ -1205,7 +1242,7 @@ pub async fn get_flow_object_history(client: &OpenPrClient, args: Value) -> Call
     let suffix = query_suffix(&query);
 
     let path = format!(
-        "/api/v1/flow/objects/{}/history{suffix}",
+        "/api/v2/flow/objects/{}/history{suffix}",
         encode_query_component(&input.object_id)
     );
     respond_data(get_structured(client, &path).await)
@@ -1316,7 +1353,7 @@ pub async fn create_flow_object(client: &OpenPrClient, args: Value) -> CallToolR
             &input.idempotency_key,
             input.message.as_deref(),
         );
-        let path = format!("/api/v1/flow/objects/{}/commands", encode_query_component(page_id));
+        let path = format!("/api/v2/flow/objects/{}/commands", encode_query_component(page_id));
         return respond_data(post_structured(client, &path, &body).await);
     }
     let mut body = json!({
@@ -1337,11 +1374,14 @@ pub async fn create_flow_object(client: &OpenPrClient, args: Value) -> CallToolR
             object.insert("message".to_string(), json!(message));
         }
     }
-    let path = format!(
-        "/api/v1/workspaces/{}/flow/objects",
-        encode_query_component(&input.workspace_id)
-    );
-    respond_data(post_structured(client, &path, &body).await)
+    let scope = match scope_of(client, &input.workspace_id).await {
+        Ok(scope) => scope,
+        Err(result) => return result,
+    };
+    if let Some(object) = body.as_object_mut() {
+        object.insert("scope_id".to_string(), json!(scope));
+    }
+    respond_data(post_structured(client, "/api/v2/flow/objects", &body).await)
 }
 
 pub fn patch_flow_object_tool() -> ToolDefinition {
@@ -1395,7 +1435,7 @@ pub async fn patch_flow_object(client: &OpenPrClient, args: Value) -> CallToolRe
         object.insert("expected_frontier".to_string(), json!(frontier));
     }
     let path = format!(
-        "/api/v1/flow/objects/{}/commands",
+        "/api/v2/flow/objects/{}/commands",
         encode_query_component(&input.object_id)
     );
     respond_data(post_structured(client, &path, &body).await)
@@ -1464,7 +1504,7 @@ pub async fn move_flow_object(client: &OpenPrClient, args: Value) -> CallToolRes
         input.message.as_deref(),
     );
     let path = format!(
-        "/api/v1/flow/objects/{}/commands",
+        "/api/v2/flow/objects/{}/commands",
         encode_query_component(&input.object_id)
     );
     respond_data(post_structured(client, &path, &body).await)
@@ -1517,7 +1557,7 @@ pub async fn link_flow_objects(client: &OpenPrClient, args: Value) -> CallToolRe
     });
     let body = command_body("link", &payload, &input.idempotency_key, input.message.as_deref());
     let path = format!(
-        "/api/v1/flow/objects/{}/commands",
+        "/api/v2/flow/objects/{}/commands",
         encode_query_component(&input.source_object_id)
     );
     respond_data(post_structured(client, &path, &body).await)
@@ -1566,7 +1606,7 @@ pub async fn unlink_flow_objects(client: &OpenPrClient, args: Value) -> CallTool
         input.message.as_deref(),
     );
     let path = format!(
-        "/api/v1/flow/objects/{}/commands",
+        "/api/v2/flow/objects/{}/commands",
         encode_query_component(&input.source_object_id)
     );
     respond_data(post_structured(client, &path, &body).await)
@@ -1619,7 +1659,7 @@ pub async fn diff_flow_object(client: &OpenPrClient, args: Value) -> CallToolRes
         query.push(format!("render={render}"));
     }
     let path = format!(
-        "/api/v1/flow/objects/{}/diff{}",
+        "/api/v2/flow/objects/{}/diff{}",
         encode_query_component(&input.object_id),
         query_suffix(&query)
     );
@@ -1654,7 +1694,7 @@ pub async fn get_flow_object_grants(client: &OpenPrClient, args: Value) -> CallT
         Err(result) => return result,
     };
     let path = format!(
-        "/api/v1/flow/objects/{}/grants",
+        "/api/v2/flow/objects/{}/grants",
         encode_query_component(&input.object_id)
     );
     respond_data(get_structured(client, &path).await)
@@ -1756,7 +1796,7 @@ pub async fn set_flow_object_grants(client: &OpenPrClient, args: Value) -> CallT
         object.insert("message".to_string(), json!(message));
     }
     let path = format!(
-        "/api/v1/flow/objects/{}/grants",
+        "/api/v2/flow/objects/{}/grants",
         encode_query_component(&input.object_id)
     );
     respond_data(put_structured(client, &path, &body).await)
@@ -1827,7 +1867,7 @@ pub async fn set_flow_object_inheritance(client: &OpenPrClient, args: Value) -> 
         object.insert("initial_grants".to_string(), json!(grants));
     }
     let path = format!(
-        "/api/v1/flow/objects/{}/inheritance",
+        "/api/v2/flow/objects/{}/inheritance",
         encode_query_component(&input.object_id)
     );
     respond_data(put_structured(client, &path, &body).await)
@@ -1888,7 +1928,7 @@ pub async fn list_flow_object_relations(client: &OpenPrClient, args: Value) -> C
         query.push(format!("limit={limit}"));
     }
     let path = format!(
-        "/api/v1/flow/objects/{}/relations{}",
+        "/api/v2/flow/objects/{}/relations{}",
         encode_query_component(&input.object_id),
         query_suffix(&query)
     );
@@ -1969,9 +2009,13 @@ pub async fn search_flow_objects(client: &OpenPrClient, args: Value) -> CallTool
         }
         query.push(format!("limit={limit}"));
     }
+    let scope = match scope_of(client, &input.workspace_id).await {
+        Ok(scope) => scope,
+        Err(result) => return result,
+    };
     let path = format!(
-        "/api/v1/workspaces/{}/flow/search{}",
-        encode_query_component(&input.workspace_id),
+        "/api/v2/flow/scopes/{}/search{}",
+        encode_query_component(&scope),
         query_suffix(&query)
     );
     respond_data(get_structured(client, &path).await)
@@ -2024,9 +2068,13 @@ pub async fn get_flow_projection_lag(client: &OpenPrClient, args: Value) -> Call
         }
         query.push(format!("limit={limit}"));
     }
+    let scope = match scope_of(client, &input.workspace_id).await {
+        Ok(scope) => scope,
+        Err(result) => return result,
+    };
     let path = format!(
-        "/api/v1/workspaces/{}/flow/projection-lag{}",
-        encode_query_component(&input.workspace_id),
+        "/api/v2/flow/scopes/{}/projection-lag{}",
+        encode_query_component(&scope),
         query_suffix(&query)
     );
     respond_data(get_structured(client, &path).await)
@@ -2073,7 +2121,7 @@ pub async fn describe_collection(client: &OpenPrClient, args: Value) -> CallTool
     };
     let suffix = input.at_seq.map_or_else(String::new, |seq| format!("?at_seq={seq}"));
     let path = format!(
-        "/api/v1/flow/collections/{}{suffix}",
+        "/api/v2/flow/collections/{}{suffix}",
         encode_query_component(&input.collection_id)
     );
     respond_data(get_structured(client, &path).await)
@@ -2137,7 +2185,7 @@ pub async fn query_collection(client: &OpenPrClient, args: Value) -> CallToolRes
         return CallToolResult::error("limit must be between 1 and 100".to_string());
     }
     let path = format!(
-        "/api/v1/flow/collections/{}/query",
+        "/api/v2/flow/collections/{}/query",
         encode_query_component(&input.collection_id)
     );
     let mut body = serde_json::to_value(&input).unwrap_or_else(|_| json!({}));
@@ -2189,7 +2237,7 @@ pub async fn create_collection_record(client: &OpenPrClient, args: Value) -> Cal
         return result;
     }
     let path = format!(
-        "/api/v1/flow/collections/{}/records",
+        "/api/v2/flow/collections/{}/records",
         encode_query_component(&input.collection_id)
     );
     let body = json!({
@@ -2274,10 +2322,14 @@ mod tests {
     async fn every_v04_object_read_returns_rest_data_like_the_v05_tools() -> Result<(), Box<dyn std::error::Error>> {
         let response = || async { Json(json!({"code": 0, "message": "ok", "data": {"shape": "semantic-data"}})) };
         let router = Router::new()
-            .route("/api/v1/flow/objects/{object_id}", get(response))
-            .route("/api/v1/flow/objects/{object_id}/history", get(response))
-            .route("/api/v1/flow/objects/{object_id}/diff", get(response))
-            .route("/api/v1/workspaces/{workspace_id}/flow/objects", get(response));
+            .route("/api/v2/flow/objects/{object_id}", get(response))
+            .route("/api/v2/flow/objects/{object_id}/history", get(response))
+            .route("/api/v2/flow/objects/{object_id}/diff", get(response))
+            .route(
+                "/api/v2/flow/workspaces/{workspace_id}/scope",
+                get(|| async { Json(json!({"code": 0, "message": "ok", "data": {"scope": {"id": "scope"}}})) }),
+            )
+            .route("/api/v2/flow/scopes/{scope_id}/objects", get(response));
         let base_url = test_api::spawn(router).await?;
         let client = test_api::client(base_url)?;
         let calls = [
@@ -2305,7 +2357,7 @@ mod tests {
     #[tokio::test]
     async fn object_tools_fail_when_a_success_envelope_omits_data() -> Result<(), Box<dyn std::error::Error>> {
         let router = Router::new().route(
-            "/api/v1/flow/objects/{object_id}",
+            "/api/v2/flow/objects/{object_id}",
             get(|| async { Json(json!({"code": 0, "message": "ok"})) }),
         );
         let base_url = test_api::spawn(router).await?;
@@ -2342,7 +2394,7 @@ mod tests {
         let captured = Arc::new(Mutex::new(None));
         let router = Router::new()
             .route(
-                "/api/v1/flow/objects/{object_id}/commands",
+                "/api/v2/flow/objects/{object_id}/commands",
                 post(
                     |State(captured): State<Arc<Mutex<Option<serde_json::Value>>>>,
                      Json(body): Json<serde_json::Value>| async move {
@@ -2393,7 +2445,7 @@ mod tests {
         let captured = Arc::new(Mutex::new(None));
         let router = Router::new()
             .route(
-                "/api/v1/flow/objects/{object_id}/grants",
+                "/api/v2/flow/objects/{object_id}/grants",
                 put(
                     |State(captured): State<Arc<Mutex<Option<serde_json::Value>>>>,
                      Json(body): Json<serde_json::Value>| async move {
@@ -2441,7 +2493,7 @@ mod tests {
     #[tokio::test]
     async fn flow_server_draining_is_a_structured_mcp_business_error() -> Result<(), Box<dyn std::error::Error>> {
         let router = Router::new().route(
-            "/api/v1/flow/objects/{object_id}",
+            "/api/v2/flow/objects/{object_id}",
             get(|| async {
                 Json(json!({
                     "code": 409,
@@ -2472,7 +2524,7 @@ mod tests {
     async fn flow_authorization_churn_preserves_retry_hint_as_a_recoverable_mcp_error()
     -> Result<(), Box<dyn std::error::Error>> {
         let router = Router::new().route(
-            "/api/v1/flow/objects/{object_id}",
+            "/api/v2/flow/objects/{object_id}",
             get(|| async {
                 Json(json!({
                     "code": 409,
@@ -2502,7 +2554,7 @@ mod tests {
     async fn structured_flow_errors_do_not_relay_unauthenticated_backend_prose()
     -> Result<(), Box<dyn std::error::Error>> {
         let router = Router::new().route(
-            "/api/v1/flow/objects/{object_id}",
+            "/api/v2/flow/objects/{object_id}",
             get(|| async {
                 Json(json!({
                     "code": 401,

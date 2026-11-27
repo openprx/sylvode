@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext, type Page, type Request } from '@playwright/test';
+import { postWorkspaceFlowObject } from './flow-scope-support';
 
 /**
  * Page slash menu against a real API + PostgreSQL: the Collection embed and the Forms Bridge
@@ -179,7 +180,7 @@ async function setup(request: APIRequestContext): Promise<Fixture> {
 
 async function newPage(request: APIRequestContext, f: Fixture, title: string): Promise<string> {
 	const created = await unwrap<{ object: { id: string } }>(
-		await request.post(`/api/v1/workspaces/${f.workspaceId}/flow/objects`, {
+		await postWorkspaceFlowObject(request, f.workspaceId, {
 			headers: f.auth,
 			data: {
 				object_type: 'page',

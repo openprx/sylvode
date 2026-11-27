@@ -1715,13 +1715,14 @@ export const flowApi = {
 		);
 	},
 
-	getWorkspaceProjectionLag(
+	/** The workspace's projection lag, read through the Flow scope bound to the workspace. */
+	async getWorkspaceProjectionLag(
 		workspaceId: string,
 		query: { cursor?: string; limit?: number } = {}
 	): Promise<ApiResult<FlowProjectionLag>> {
-		return apiClient.get(
-			`/api/v1/workspaces/${workspaceId}/flow/projection-lag${buildQuery(query)}`
-		);
+		const home = await flowApi.getWorkspaceScope(workspaceId);
+		if (home.code !== 0 || !home.data) return { ...home, data: null };
+		return flowApi.getProjectionLag(home.data.scope.id, query);
 	},
 
 	getAdminHealth(workspaceId: string): Promise<ApiResult<FlowAdminHealth>> {
@@ -2152,13 +2153,14 @@ export const flowApi = {
 	): Promise<ApiResult<FlowTrashPage>> {
 		return apiClient.get<FlowTrashPage>(`/api/v2/flow/scopes/${scopeId}/trash${buildQuery(query)}`);
 	},
-	listWorkspaceTrash(
+	/** The workspace's archived objects, read through the Flow scope bound to the workspace. */
+	async listWorkspaceTrash(
 		workspaceId: string,
 		query: { cursor?: string; limit?: number } = {}
 	): Promise<ApiResult<FlowTrashPage>> {
-		return apiClient.get<FlowTrashPage>(
-			`/api/v1/workspaces/${workspaceId}/flow/trash${buildQuery(query)}`
-		);
+		const home = await flowApi.getWorkspaceScope(workspaceId);
+		if (home.code !== 0 || !home.data) return { ...home, data: null };
+		return flowApi.listTrash(home.data.scope.id, query);
 	},
 
 	purgeObject(objectId: string): Promise<ApiResult<{ deleted_id: string; deleted_count: number }>> {

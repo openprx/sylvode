@@ -103,7 +103,7 @@ pub fn definitions() -> Vec<ToolDefinition> {
                 {"required":["embed_page_id"],"properties":{"type":{"const":"collection"}},"not":{"anyOf":[{"required":["personal"]},{"required":["parent_id"]}]}}
             ]));
         }
-        ToolDefinition{annotations:None,name:(*name).into(),description:format!("Bounded Flow-only {name}: current semantic resources and typed commands. Global-user scopes use v2 authority; OPR retains real-workspace legacy rules. Package/history restoration and raw collaborative payloads are not advertised. Home is resolved only on an actual call."),input_schema:schema}
+        ToolDefinition{annotations:None,name:(*name).into(),description:format!("Bounded Flow-only {name}: current semantic resources and typed commands. Scopes use v2 authority; a workspace bot reaches workspace content only. Package/history restoration and raw collaborative payloads are not advertised. Home is resolved only on an actual call."),input_schema:schema}
     }).collect::<Vec<_>>();
     result.extend(super::flow_scope_existing::definitions());
     result
@@ -160,7 +160,7 @@ pub struct Request {
     pub method: reqwest::Method,
     pub idempotency_key: Option<String>,
     pub form_policy_args: Vec<Value>,
-    pub legacy_workspace_id: Option<String>,
+    pub workspace_id: Option<String>,
     pub object_type: Option<String>,
     pub record_context_supported: bool,
 }
@@ -232,14 +232,8 @@ pub(crate) async fn prepare_core(client: &OpenPrClient, name: &str, args: &Value
     {
         return Err(CallToolResult::error("render must be semantic_json or markdown"));
     }
-    let legacy = client.legacy_bot_token_shape();
-    let base = if legacy { "/api/v1/flow" } else { "/api/v2/flow" };
+    let base = "/api/v2/flow";
     if name == "flow.home" {
-        if legacy {
-            return Err(CallToolResult::error(
-                "Personal Flow requires the current global-user bearer; no bot-to-owner fallback exists",
-            ));
-        }
         if args.as_object().is_some_and(|value| !value.is_empty()) {
             return Err(CallToolResult::error(
                 "flow.home accepts no workspace/project or identity override",
@@ -253,7 +247,7 @@ pub(crate) async fn prepare_core(client: &OpenPrClient, name: &str, args: &Value
             method: reqwest::Method::GET,
             idempotency_key: None,
             form_policy_args: Vec::new(),
-            legacy_workspace_id: None,
+            workspace_id: None,
             object_type: None,
             record_context_supported: false,
         });
@@ -295,14 +289,9 @@ pub(crate) async fn prepare_core(client: &OpenPrClient, name: &str, args: &Value
         let resource = data(client, &format!("{base}/objects/{object}")).await?;
         let workspace = resource.get("workspace_id").and_then(Value::as_str).map(str::to_owned);
         let scope = resource.get("scope_id").and_then(Value::as_str).map(str::to_owned);
-        if !legacy && scope.is_none() {
+        if scope.is_none() {
             return Err(CallToolResult::error(
                 "Canonical Flow scope_id is missing from object response",
-            ));
-        }
-        if legacy && workspace.is_none() {
-            return Err(CallToolResult::error(
-                "OPR credentials require a genuine legacy workspace resource; no personal fallback",
             ));
         }
         let project = resource_project(&resource)?;
@@ -339,14 +328,7 @@ pub(crate) async fn prepare_core(client: &OpenPrClient, name: &str, args: &Value
                 "Choose exactly one of personal:true, scope_id, or real workspace_id",
             ));
         }
-        if legacy {
-            if scope.is_some() || personal {
-                return Err(CallToolResult::error(
-                    "OPR credentials support the legacy real-workspace adapter only; personal scope is not impersonated",
-                ));
-            }
-            (None, workspace, uuid(args, "project_id")?)
-        } else {
+        {
             let info = if personal {
                 data(client, "/api/v2/flow/home").await?
             } else if let Some(workspace) = workspace.as_deref() {
@@ -411,13 +393,7 @@ pub(crate) async fn prepare_core(client: &OpenPrClient, name: &str, args: &Value
             Some(value) => value,
             None => data(client, &format!("{base}/objects/{parent_id}")).await?,
         };
-        if legacy {
-            if parent.get("workspace_id").and_then(Value::as_str) != workspace.as_deref() {
-                return Err(CallToolResult::error(
-                    "Parent does not belong to the selected legacy workspace",
-                ));
-            }
-        } else if parent.get("scope_id").and_then(Value::as_str) != scope.as_deref() {
+        if parent.get("scope_id").and_then(Value::as_str) != scope.as_deref() {
             return Err(CallToolResult::error(
                 "Parent does not belong to the selected canonical scope",
             ));
@@ -496,14 +472,7 @@ pub(crate) async fn prepare_core(client: &OpenPrClient, name: &str, args: &Value
         ),
         "objects.query" | "objects.search" => {
             let tail = if name == "objects.query" { "objects" } else { "search" };
-            let path = if legacy {
-                format!(
-                    "/api/v1/workspaces/{}/flow/{tail}{suffix}",
-                    workspace.as_deref().unwrap_or_default()
-                )
-            } else {
-                format!("{base}/scopes/{}/{tail}{suffix}", scope.as_deref().unwrap_or_default())
-            };
+            let path = format!("{base}/scopes/{}/{tail}{suffix}", scope.as_deref().unwrap_or_default());
             (path, None)
         }
         "objects.create" => {
@@ -535,16 +504,8 @@ pub(crate) async fn prepare_core(client: &OpenPrClient, name: &str, args: &Value
             if let Some(project) = project.as_deref() {
                 set_field(&mut body, "project_id", json!(project));
             }
-            let path = if legacy {
-                format!(
-                    "/api/v1/workspaces/{}/flow/objects",
-                    workspace.as_deref().unwrap_or_default()
-                )
-            } else {
-                set_field(&mut body, "scope_id", json!(scope));
-                format!("{base}/objects")
-            };
-            (path, Some(body))
+            set_field(&mut body, "scope_id", json!(scope));
+            (format!("{base}/objects"), Some(body))
         }
         "collections.describe" => (
             format!("{base}/collections/{}{suffix}", object.unwrap_or_default()),
@@ -599,7 +560,7 @@ pub(crate) async fn prepare_core(client: &OpenPrClient, name: &str, args: &Value
                 ));
             }
             if resource_type.as_deref() == Some("record") && matches!(kind, "record_patch" | "record_archive") {
-                if !record_context_supported || legacy {
+                if !record_context_supported {
                     return Err(CallToolResult::error(
                         "Record-only typed commands require the current human Record-context service",
                     ));
@@ -724,7 +685,7 @@ pub(crate) async fn prepare_core(client: &OpenPrClient, name: &str, args: &Value
             .and_then(Value::as_str)
             .is_some_and(|kind| matches!(kind, "prepare_child_page" | "upload_body_asset"))
     {
-        if legacy || resource_type.as_deref() != Some("page") {
+        if resource_type.as_deref() != Some("page") {
             return Err(CallToolResult::error(
                 "Page preparation/uploads require a user JWT and actual Page source",
             ));
@@ -764,7 +725,7 @@ pub(crate) async fn prepare_core(client: &OpenPrClient, name: &str, args: &Value
         method,
         idempotency_key,
         form_policy_args: Vec::new(),
-        legacy_workspace_id: workspace,
+        workspace_id: workspace,
         object_type: resource_type,
         record_context_supported,
     })

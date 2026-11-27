@@ -41,6 +41,8 @@ use tokio::process::{Child, Command};
 type TestResult = Result<(), Box<dyn Error>>;
 
 const WORKSPACE: &str = "11111111-1111-4111-8111-111111111111";
+/// The Flow scope bound to [`WORKSPACE`].
+const SCOPE: &str = "66666666-6666-4666-8666-666666666667";
 const BOT_TOKEN: &str = "opr_flow_policy_bypass_e2e_token";
 const CALLER_TOKEN: &str = "opr_flow_policy_bypass_e2e_caller_token";
 
@@ -58,7 +60,11 @@ const PROJECTLESS_OBJECT: &str = "55555555-5555-4555-8555-555555555555";
 fn flow_router() -> Router {
     Router::new()
         .route(
-            "/api/v1/workspaces/{workspace_id}/flow/objects",
+            "/api/v2/flow/workspaces/{workspace_id}/scope",
+            get(|| async { Json(json!({"code": 0, "message": "ok", "data": {"scope": {"id": SCOPE}, "roots": []}})) }),
+        )
+        .route(
+            "/api/v2/flow/objects",
             post(|| async {
                 Json(json!({
                     "code": 0,
@@ -71,7 +77,7 @@ fn flow_router() -> Router {
             }),
         )
         .route(
-            "/api/v1/flow/objects/{object_id}",
+            "/api/v2/flow/objects/{object_id}",
             get(|Path(object_id): Path<String>| async move {
                 let (project_id, ok) = match object_id.as_str() {
                     OWNED_OBJECT => (Some(OWNING_PROJECT), true),
@@ -120,7 +126,7 @@ fn counted_forbidden_collab_route(counter: &Arc<AtomicUsize>) -> MethodRouter {
 fn flow_router_with_collab_endpoint_traps(counter: &Arc<AtomicUsize>) -> Router {
     flow_router()
         .route(
-            "/api/v1/workspaces/{workspace_id}/flow/projection-lag",
+            "/api/v2/flow/scopes/{scope_id}/projection-lag",
             get(|| async {
                 Json(json!({
                     "code": 0,
@@ -129,18 +135,18 @@ fn flow_router_with_collab_endpoint_traps(counter: &Arc<AtomicUsize>) -> Router 
                 }))
             }),
         )
-        .route("/api/v1/collab/tickets", counted_forbidden_collab_route(counter))
-        .route("/api/v1/collab/ws", counted_forbidden_collab_route(counter))
+        .route("/api/v2/flow/collab/tickets", counted_forbidden_collab_route(counter))
+        .route("/api/v2/flow/collab/ws", counted_forbidden_collab_route(counter))
         .route(
-            "/api/v1/flow/objects/{object_id}/collab",
+            "/api/v2/flow/objects/{object_id}/collab",
             counted_forbidden_collab_route(counter),
         )
         .route(
-            "/api/v1/flow/objects/{object_id}/collab/verify",
+            "/api/v2/flow/objects/{object_id}/collab/verify",
             counted_forbidden_collab_route(counter),
         )
         .route(
-            "/api/v1/flow/objects/{object_id}/bootstrap",
+            "/api/v2/flow/objects/{object_id}/bootstrap",
             counted_forbidden_collab_route(counter),
         )
 }
@@ -702,7 +708,7 @@ async fn source_policy_cannot_override_the_apis_target_side_denial() -> TestResu
     let counter = Arc::clone(&command_calls);
     let router = Router::new()
         .route(
-            "/api/v1/flow/objects/{object_id}",
+            "/api/v2/flow/objects/{object_id}",
             get(|| async {
                 Json(json!({
                     "code": 0,
@@ -720,7 +726,7 @@ async fn source_policy_cannot_override_the_apis_target_side_denial() -> TestResu
             }),
         )
         .route(
-            "/api/v1/flow/objects/{object_id}/commands",
+            "/api/v2/flow/objects/{object_id}/commands",
             post(move || {
                 let counter = Arc::clone(&counter);
                 async move {

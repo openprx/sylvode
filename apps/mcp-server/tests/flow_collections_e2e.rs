@@ -51,6 +51,8 @@ type TestResult = Result<(), Box<dyn Error>>;
 type Calls = Arc<tokio::sync::Mutex<Vec<CapturedCall>>>;
 
 const WORKSPACE: &str = "11111111-1111-4111-8111-111111111111";
+/// The Flow scope bound to [`WORKSPACE`].
+const SCOPE: &str = "66666666-6666-4666-8666-666666666667";
 const COLLECTION: &str = "22222222-2222-4222-8222-222222222222";
 const PAGE: &str = "33333333-3333-4333-8333-333333333333";
 const RECORD: &str = "44444444-4444-4444-8444-444444444444";
@@ -78,8 +80,10 @@ async fn capture(State(calls): State<Calls>, request: Request) -> Json<Value> {
         body,
     });
 
-    let data = if method == "GET" && uri == format!("/api/v1/flow/objects/{RECORD}") {
+    let data = if method == "GET" && uri == format!("/api/v2/flow/objects/{RECORD}") {
         json!({"id": RECORD, "parent_id": COLLECTION, "object_type": "record"})
+    } else if method == "GET" && uri == format!("/api/v2/flow/workspaces/{WORKSPACE}/scope") {
+        json!({"scope": {"id": SCOPE}, "roots": []})
     } else {
         json!({"accepted": true})
     };
@@ -249,10 +253,11 @@ async fn shipped_cli_covers_collection_create_describe_query_and_record_write_pa
     let calls = calls.lock().await.clone();
     assert_eq!(
         calls.len(),
-        7,
-        "record patch performs one ownership read and one command write"
+        8,
+        "a workspace create resolves the scope first; record patch performs one ownership read and one command write"
     );
     let [
+        scope_call,
         standalone,
         embedded,
         describe,
@@ -262,31 +267,33 @@ async fn shipped_cli_covers_collection_create_describe_query_and_record_write_pa
         patch_record,
     ] = calls.as_slice()
     else {
-        return Err("expected the seven captured Collection calls".into());
+        return Err("expected the eight captured Collection calls".into());
     };
-    assert_eq!(standalone.uri, format!("/api/v1/workspaces/{WORKSPACE}/flow/objects"));
+    assert_eq!(scope_call.uri, format!("/api/v2/flow/workspaces/{WORKSPACE}/scope"));
+    assert_eq!(standalone.uri, "/api/v2/flow/objects");
+    assert_eq!(standalone.body.pointer("/scope_id"), Some(&json!(SCOPE)));
     assert_eq!(
         standalone.body.pointer("/initial_fields/0/field_id"),
         Some(&json!(FIELD))
     );
-    assert_eq!(embedded.uri, format!("/api/v1/flow/objects/{PAGE}/commands"));
+    assert_eq!(embedded.uri, format!("/api/v2/flow/objects/{PAGE}/commands"));
     assert_eq!(
         embedded.body.pointer("/command/type"),
         Some(&json!("create_collection_embed"))
     );
-    assert_eq!(describe.uri, format!("/api/v1/flow/collections/{COLLECTION}"));
-    assert_eq!(query_call.uri, format!("/api/v1/flow/collections/{COLLECTION}/query"));
+    assert_eq!(describe.uri, format!("/api/v2/flow/collections/{COLLECTION}"));
+    assert_eq!(query_call.uri, format!("/api/v2/flow/collections/{COLLECTION}/query"));
     assert_eq!(query_call.body.pointer("/cursor"), Some(&json!("opaque-cursor")));
     assert_eq!(
         create_record.uri,
-        format!("/api/v1/flow/collections/{COLLECTION}/records")
+        format!("/api/v2/flow/collections/{COLLECTION}/records")
     );
     assert_eq!(
         create_record.body.pointer(&format!("/values_by_field_id/{FIELD}")),
         Some(&json!(42))
     );
-    assert_eq!(get_record.uri, format!("/api/v1/flow/objects/{RECORD}"));
-    assert_eq!(patch_record.uri, format!("/api/v1/flow/objects/{COLLECTION}/commands"));
+    assert_eq!(get_record.uri, format!("/api/v2/flow/objects/{RECORD}"));
+    assert_eq!(patch_record.uri, format!("/api/v2/flow/objects/{COLLECTION}/commands"));
     assert_eq!(patch_record.body.pointer("/command/type"), Some(&json!("record_patch")));
     Ok(())
 }
@@ -349,10 +356,11 @@ async fn mcp_cli_create_equivalence() -> TestResult {
     )?;
 
     let calls = calls.lock().await.clone();
-    assert_eq!(calls.len(), 2);
-    let [mcp_call, cli_call] = calls.as_slice() else {
-        return Err("expected one MCP and one CLI call".into());
+    assert_eq!(calls.len(), 4);
+    let [mcp_scope, mcp_call, cli_scope, cli_call] = calls.as_slice() else {
+        return Err("expected one scope resolution and one create for each of MCP and CLI".into());
     };
+    assert_eq!(mcp_scope, cli_scope);
     assert_eq!(
         mcp_call, cli_call,
         "MCP and shipped CLI must make the same REST request"
@@ -416,7 +424,7 @@ async fn mcp_objects_create_forwards_after_block_id_only_for_an_embed() -> TestR
         let [placed_call, appended_call] = calls.as_slice() else {
             return Err(format!("expected two embed calls, got {}", calls.len()).into());
         };
-        assert_eq!(placed_call.uri, format!("/api/v1/flow/objects/{PAGE}/commands"));
+        assert_eq!(placed_call.uri, format!("/api/v2/flow/objects/{PAGE}/commands"));
         assert_eq!(
             placed_call.body.pointer("/command"),
             Some(&json!({
@@ -776,7 +784,7 @@ async fn root_blocks(state: &AppState, document_id: Uuid) -> TestResultValue<Vec
 fn command_router(state: AppState) -> Router {
     Router::new()
         .route(
-            "/api/v1/flow/objects/{object_id}/commands",
+            "/api/v2/flow/objects/{object_id}/commands",
             post(post_flow_object_command),
         )
         .layer(middleware::from_fn_with_state(

@@ -31,6 +31,7 @@ const WORKSPACE: &str = "11111111-1111-4111-8111-111111111111";
 const OBJECT: &str = "22222222-2222-4222-8222-222222222222";
 const ARTIFACT: &str = "33333333-3333-4333-8333-333333333333";
 const IMPORT: &str = "44444444-4444-4444-8444-444444444444";
+const SCOPE: &str = "66666666-6666-4666-8666-666666666667";
 const PACKAGE_HASH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const MAPPING_HASH: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
@@ -51,9 +52,11 @@ async fn capture(State(calls): State<Calls>, request: Request) -> Json<Value> {
         content_type,
         body,
     });
-    let data = if uri.ends_with("/flow/import-artifacts") {
+    let data = if uri.ends_with("/scope") {
+        json!({"scope":{"id":SCOPE},"roots":[]})
+    } else if uri.ends_with("/import-artifacts") {
         json!({"artifact_id":ARTIFACT,"package_sha256":PACKAGE_HASH,"size":8})
-    } else if uri.ends_with("/flow/imports/preview") {
+    } else if uri.ends_with("/imports/preview") {
         json!({"preview_id":IMPORT,"package_sha256":PACKAGE_HASH,"mapping_hash":MAPPING_HASH})
     } else if uri.ends_with("/commit") || uri.ends_with(IMPORT) {
         json!({"import_id":IMPORT,"status":"completed"})
@@ -115,14 +118,18 @@ async fn package_tools_follow_artifact_preview_commit_status_with_exact_contract
     ];
     assert!(results.iter().all(|result| result.is_error.is_none()));
 
-    let calls = calls.lock().await.clone();
+    let mut calls = calls.lock().await.clone();
+    // Every workspace tool resolves the workspace's Flow scope first; the contract is judged on the rest.
+    let resolutions = calls.iter().filter(|call| call.uri.ends_with("/scope")).count();
+    assert_eq!(resolutions, 6, "one scope resolution per workspace tool");
+    calls.retain(|call| !call.uri.ends_with("/scope"));
     assert_eq!(calls.len(), 7);
     assert_eq!(
         (&calls[0].method, &calls[0].uri),
-        (&"POST".to_string(), &format!("/api/v1/flow/objects/{OBJECT}/exports"))
+        (&"POST".to_string(), &format!("/api/v2/flow/objects/{OBJECT}/exports"))
     );
     assert_eq!(calls[0].body["format"], "package");
-    assert_eq!(calls[1].uri, format!("/api/v1/workspaces/{WORKSPACE}/flow/exports"));
+    assert_eq!(calls[1].uri, format!("/api/v2/flow/scopes/{SCOPE}/exports"));
     assert_eq!(calls[1].body["format"], "package");
     assert!(calls[2].content_type.starts_with("multipart/form-data; boundary="));
     assert!(calls[2].body["raw_bytes"].as_u64().is_some_and(|size| size > 8));

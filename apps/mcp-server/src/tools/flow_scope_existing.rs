@@ -142,20 +142,16 @@ pub async fn prepare(client: &OpenPrClient, name: &str, args: &Value) -> Result<
         let selected = copied(args, &["personal", "scope_id", "workspace_id", "project_id"]);
         // Query's scope selector resolves identity lazily on this call, without tools/list side effects.
         let mut request = flow_scope::prepare_core(client, "objects.query", &selected).await?;
-        let prefix = if let Some(workspace) = request.legacy_workspace_id.as_deref() {
-            format!("/api/v1/workspaces/{workspace}/flow")
-        } else {
-            if args.get("project_id").is_some() {
-                return Err(CallToolResult::error("Personal navigation has no project partition"));
-            }
-            request
-                .path
-                .split('?')
-                .next()
-                .and_then(|path| path.strip_suffix("/objects"))
-                .ok_or_else(|| CallToolResult::error("Cannot resolve canonical scope path"))?
-                .to_owned()
-        };
+        if request.workspace_id.is_none() && args.get("project_id").is_some() {
+            return Err(CallToolResult::error("Personal navigation has no project partition"));
+        }
+        let prefix = request
+            .path
+            .split('?')
+            .next()
+            .and_then(|path| path.strip_suffix("/objects"))
+            .ok_or_else(|| CallToolResult::error("Cannot resolve canonical scope path"))?
+            .to_owned();
         request.path = query(
             &format!(
                 "{prefix}/{}",
@@ -396,7 +392,7 @@ pub async fn prepare_embed(client: &OpenPrClient, args: &Value) -> Result<Reques
 /// The existing schema tool's Record alternative never queries its parent Collection.
 pub async fn prepare_record_context(client: &OpenPrClient, args: &Value) -> Result<Request, CallToolResult> {
     flow_scope::validate_arguments("collections.describe", args)?;
-    if client.legacy_bot_token_shape() || args.get("collection_id").is_some() || args.get("at_seq").is_some() {
+    if args.get("collection_id").is_some() || args.get("at_seq").is_some() {
         return Err(CallToolResult::error(
             "Record-only context requires current human identity and record_id alone; no parent/history schema option",
         ));

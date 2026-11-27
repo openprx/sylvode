@@ -75,9 +75,10 @@ async fn handler(
         );
     }
     let resource_id = path.rsplit('/').next().unwrap_or_default();
-    let custom = state.resources.get(resource_id).filter(|_| {
-        path == format!("/api/v2/flow/objects/{resource_id}") || path == format!("/api/v1/flow/objects/{resource_id}")
-    });
+    let custom = state
+        .resources
+        .get(resource_id)
+        .filter(|_| path == format!("/api/v2/flow/objects/{resource_id}"));
     let data = if path.ends_with("/agent-policy") {
         state.enabled_tools.as_ref().map_or_else(
             || {
@@ -107,9 +108,7 @@ async fn handler(
         json!({"record":state.resources.get(OBJECT),"fields":state.fields,"values_by_field_id":{},"field_secrecy_enabled":false,"schema_revision":"opaque-record-schema"})
     } else if path.ends_with("/relations") {
         json!({"items":state.relations,"next_cursor":null})
-    } else if path == format!("/api/v2/flow/collections/{OBJECT}")
-        || path == format!("/api/v1/flow/collections/{OBJECT}")
-    {
+    } else if path == format!("/api/v2/flow/collections/{OBJECT}") {
         json!({"fields":state.fields})
     } else if path == "/api/v2/flow/home" {
         json!({"scope":{"id":scope,"kind":"personal"},"roots":[],"capabilities":{}})
@@ -118,13 +117,13 @@ async fn handler(
     } else if path == "/api/v2/flow/objects" && method == Method::POST {
         json!({"object":{"id":OBJECT,"scope_id":body.get("scope_id"),"project_id":null,"object_type":body.get("object_type")}})
     } else if path.ends_with(&format!("/objects/{OBJECT}")) {
-        if state.project || path.starts_with("/api/v1/") {
+        if state.project {
             json!({"id":OBJECT,"scope_id":SA,"workspace_id":WORKSPACE,"project_id":if state.project{json!(PROJECT)}else{Value::Null},"object_type":state.resource_type.as_deref().unwrap_or("page")})
         } else {
             json!({"id":OBJECT,"scope_id":scope,"project_id":null,"object_type":state.resource_type.as_deref().unwrap_or("page")})
         }
-    } else if path == format!("/api/v2/flow/objects/{SB}") || path == format!("/api/v1/flow/objects/{SB}") {
-        if state.project || path.starts_with("/api/v1/") {
+    } else if path == format!("/api/v2/flow/objects/{SB}") {
+        if state.project {
             json!({"id":SB,"scope_id":SA,"workspace_id":WORKSPACE,"project_id":if state.project{json!(PROJECT)}else{Value::Null},"object_type":"page"})
         } else {
             json!({"id":SB,"scope_id":scope,"project_id":null,"object_type":"page"})
@@ -252,7 +251,7 @@ async fn create_sends_real_scope_and_typed_command_keeps_backend_business_denial
     task.abort();
 }
 #[tokio::test]
-async fn ambiguous_selectors_and_opr_personal_calls_fail_before_home_lookup() {
+async fn ambiguous_selectors_fail_before_home_lookup() {
     let (client, state, task) = setup().await.expect("mock fixture");
     for args in [
         json!({"personal":true,"workspace_id":WORKSPACE}),
@@ -264,10 +263,6 @@ async fn ambiguous_selectors_and_opr_personal_calls_fail_before_home_lookup() {
             .await;
         assert_eq!(result.is_error, Some(true));
     }
-    let result = McpServer::new(client.acting_as(Secret::new("opr_fixture_only")), McpToolMode::Full)
-        .call_tool("objects.query", json!({"personal":true}))
-        .await;
-    assert_eq!(result.is_error, Some(true));
     assert!(state.lock().await.calls.is_empty());
     task.abort();
 }
@@ -387,7 +382,7 @@ fn cli_flow_entry_keeps_credentials_redacted_and_schema_listing_explicit() {
 }
 
 #[tokio::test]
-async fn opr_explicit_workspace_keeps_legacy_adapter_and_backend_write_denial() {
+async fn a_workspace_bot_uses_the_v2_surface_and_keeps_backend_write_denial() {
     let (client, state, task) = setup().await.expect("mock fixture");
     let server = McpServer::new(client.acting_as(Secret::new("opr_fixture_only")), McpToolMode::Full);
     let result = server
@@ -406,9 +401,14 @@ async fn opr_explicit_workspace_keeps_legacy_adapter_and_backend_write_denial() 
     assert!(
         calls
             .iter()
-            .all(|call| call.1 == format!("/api/v1/workspaces/{WORKSPACE}/flow/objects")
-                && call.2 == "Bearer opr_fixture_only")
+            .all(|call| call.1.starts_with("/api/v2/flow/") && call.2 == "Bearer opr_fixture_only")
     );
+    assert!(
+        calls
+            .iter()
+            .any(|call| call.1 == format!("/api/v2/flow/scopes/{SA}/objects"))
+    );
+    assert!(calls.iter().any(|call| call.1 == "/api/v2/flow/objects"));
     assert!(!calls.iter().any(|call| call.1.ends_with("/home")));
     task.abort();
 }
@@ -1283,13 +1283,19 @@ async fn personal_move_and_navigation_queries_use_canonical_handlers_without_leg
             .iter()
             .any(|call| call.1.starts_with(&format!("/api/v2/flow/scopes/{SA}/")))
     );
-    let legacy = server
+    let workspace = server
         .call_tool("collab.projection_lag", json!({"workspace_id":WORKSPACE,"limit":1}))
         .await;
-    assert_ne!(legacy.is_error, Some(true), "{}", text(&legacy));
+    assert_ne!(workspace.is_error, Some(true), "{}", text(&workspace));
     assert_eq!(
-        state.lock().await.calls.last().expect("actual legacy adapter").1,
-        format!("/api/v1/workspaces/{WORKSPACE}/flow/projection-lag")
+        state
+            .lock()
+            .await
+            .calls
+            .last()
+            .expect("a workspace projection lag call")
+            .1,
+        format!("/api/v2/flow/scopes/{SA}/projection-lag")
     );
     task.abort();
 }

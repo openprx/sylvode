@@ -4,6 +4,7 @@ import {
   type APIRequestContext,
   type Page,
 } from "@playwright/test";
+import { postWorkspaceFlowObject } from './flow-scope-support';
 
 /**
  * Daily editing on a Flow page: Markdown block triggers, inline bold, the link popover, and
@@ -110,7 +111,7 @@ test("editor: markdown heading, bold, and a link", async ({
     }),
   );
   const created = await unwrap<{ object: { id: string } }>(
-    await request.post(`/api/v1/workspaces/${workspace.id}/flow/objects`, {
+    await postWorkspaceFlowObject(request, workspace.id, {
       headers: auth,
       data: {
         object_type: "page",
@@ -189,7 +190,7 @@ test("navigator follows the list cursor past the first page", async ({
   const secondTitle = `Beta ${runId}`;
   for (const title of [firstTitle, secondTitle]) {
     await unwrap(
-      await request.post(`/api/v1/workspaces/${workspace.id}/flow/objects`, {
+      await postWorkspaceFlowObject(request, workspace.id, {
         headers: auth,
         data: {
           object_type: "page",
