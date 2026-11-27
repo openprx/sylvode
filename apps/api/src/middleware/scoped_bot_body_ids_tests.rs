@@ -259,7 +259,15 @@ const ACCOUNTED: &[(&str, &str, Account)] = &[
     (
         "ValidateRequest",
         "site_id",
-        Exempt("site layouts are refused until sites exist; the handler reads no site"),
+        Exempt("the handler resolves the site's project and requires read access to it (not_found otherwise)"),
+    ),
+    // Site pages (site/admin.rs, site/drafts.rs): the route's site is the resolved target.
+    (
+        "PageRequest",
+        "layout_id",
+        Exempt(
+            "check_page_layout requires an active user layout of the site's workspace at the site's scope or in the site's project or one of its forms (not_found otherwise); bot drafts are judged by the same check",
+        ),
     ),
     (
         "ValidateRequest",
