@@ -470,6 +470,15 @@ fn migration_escape_hatches_are_off_until_the_file_asks_for_them() {
 fn only_the_intended_routes_are_reachable_without_authentication() {
     /// Endpoints that must answer without a session, and why.
     const PUBLIC_ROUTES: &[&str] = &[
+        // Public site API: its own principal (visitor cookie, operator session) and layer stack
+        // (origin + X-SV-Site check, own CORS/CSP, body and rate limits); console credentials refused.
+        "/api/site/v1/{slug}/auth/logout",
+        "/api/site/v1/{slug}/auth/operator/login",
+        "/api/site/v1/{slug}/bindings/{binding}/fields",
+        "/api/site/v1/{slug}/bindings/{binding}/records",
+        "/api/site/v1/{slug}/bindings/{binding}/records/{id}",
+        "/api/site/v1/{slug}/manifest",
+        "/api/site/v1/{slug}/pages",
         // Signed, expiring download links; the handler verifies the HMAC itself.
         "/api/v1/uploads/signatures/{file_name}/download",
         "/api/v1/form-attachments/{attachment_id}/download",
