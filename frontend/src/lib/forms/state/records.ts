@@ -1,6 +1,7 @@
 import { describeResult } from '#lib/i18n/describe.js';
 import {
 	type FormField,
+	type FormFieldErrorItem,
 	type FormRecord,
 	type FormRelationTarget,
 	formsApi
@@ -19,6 +20,8 @@ import { fieldLabel, fieldType, optionArchived, optionDisabled } from '#lib/form
 import { translate } from '#lib/forms/i18n.js';
 import { defaultDraftValueForField, draftValueForField } from '#lib/forms/record-draft-values.js';
 import { isRecord, selectValue } from '#lib/forms/record-format.js';
+import { errorsByField, validationErrorsOf } from '#lib/forms/field-errors.js';
+import { recordHints, type RuleHint } from '#lib/forms/record-checks.js';
 import { FormsController } from '#lib/forms/state/controller.js';
 
 export class RecordsController extends FormsController {
@@ -54,10 +57,12 @@ export class RecordsController extends FormsController {
 		this.s.recordSubmitting = false;
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(describeResult(response));
+			this.showRefusal(response, (errors) => (this.s.recordFieldErrors = errors));
 
 			return;
 		}
+
+		this.s.recordFieldErrors = {};
 
 		if (!wasEditing) {
 			await this.createParentChildLinksFromRelationFields(response.data, values);
@@ -90,6 +95,54 @@ export class RecordsController extends FormsController {
 			this.fp.recordPanel.loadSelectedRecordComments(),
 			this.fp.loaders.loadPrintJobs()
 		]);
+	};
+
+	/**
+	 * Shows a refused save: a `validation_failed` refusal goes to the fields (`setErrors`) with a
+	 * localised summary; any other failure is the usual message.
+	 */
+	showRefusal = (
+		response: Parameters<typeof describeResult>[0] & { error_code?: string; details?: unknown },
+		setErrors: (errors: Record<string, FormFieldErrorItem[]>) => void
+	) => {
+		const errors = validationErrorsOf(response);
+
+		if (!errors) {
+			setErrors({});
+			toast.error(describeResult(response));
+
+			return;
+		}
+
+		setErrors(errorsByField(errors));
+		toast.error(translate('lowcode.forms.validationFailed', { values: { count: errors.length } }));
+	};
+
+	/**
+	 * Rule hints for a draft: the values a save would send (`buildValuesFromDraft` without the
+	 * required check), run through the client mirror of the server rules.
+	 */
+	draftHints = (
+		formFields: FormField[],
+		draft: Record<string, unknown>,
+		existingValues?: Record<string, unknown>
+	): Record<string, RuleHint[]> => {
+		const values: Record<string, unknown> = {};
+
+		for (const field of formFields) {
+			if (fieldHiddenByCondition(field, draft)) continue;
+
+			const value = recordValueFromDraftValue(field, draft[field.key], {
+				relationTarget: (relationField, recordId) =>
+					this.s.relationTargets[relationField.key]?.find((item) => item.record_id === recordId),
+				member: (userId) => this.s.workspaceMembers.find((item) => item.user_id === userId),
+				existingValue: existingValues?.[field.key]
+			});
+
+			if (value !== undefined) values[field.key] = value;
+		}
+
+		return recordHints(formFields, values, this.s.checkContext(), existingValues);
 	};
 
 	createParentChildLinksFromRelationFields = async (
@@ -230,6 +283,7 @@ export class RecordsController extends FormsController {
 		this.s.recordDraft = Object.fromEntries(
 			this.s.fields.map((field) => [field.key, draftValueForField(field, record)])
 		);
+		this.s.recordFieldErrors = {};
 		void this.fp.attachments.loadRecordAttachments(record.id);
 		this.fp.session.cleanFormsGroup('record');
 	};
@@ -306,6 +360,7 @@ export class RecordsController extends FormsController {
 
 		this.s.recordDraft = next;
 		this.s.recordTitle = '';
+		this.s.recordFieldErrors = {};
 		this.s.formsSessionRecordVersion = null;
 		this.fp.session.cleanFormsGroup('record');
 	};

@@ -3,6 +3,7 @@
 <script lang="ts">
 	import Button from '#lib/ui/button/Button.svelte';
 	import { X, Pencil } from '@lucide/svelte';
+	import FieldErrorList from '#lib/components/forms/FieldErrorList.svelte';
 	import { fieldInputHints } from '#lib/forms/field-rules.js';
 	import { inputValue, selectValue } from '#lib/forms/record-format.js';
 	import { fieldHiddenByCondition, fieldReadOnlyByCondition } from '#lib/forms/field-conditions.js';
@@ -44,6 +45,14 @@
 		clearSignatureCanvas,
 		setSignatureValue
 	} = fp.attachments;
+	const childHints = $derived.by(() => {
+		const editor = s.childEditor;
+		if (!editor) return {};
+		const existing = editor.recordId
+			? s.selectedRecordChildren.find((item) => item.record.id === editor.recordId)?.record.values
+			: undefined;
+		return fp.records.draftHints(childFieldsForForm(editor.childFormId), editor.draft, existing);
+	});
 </script>
 
 {#if s.childEditor}
@@ -317,6 +326,12 @@
 							oninput={(event) => updateChildDraftValue(childField.key, inputValue(event))}
 						/>
 					{/if}
+
+					<FieldErrorList
+						field={childField}
+						errors={s.childFieldErrors[childField.key]}
+						hints={childHints[childField.key]}
+					/>
 
 					{#if childField.help_text}
 						<span class="block text-xs text-fg-muted">{childField.help_text}</span>

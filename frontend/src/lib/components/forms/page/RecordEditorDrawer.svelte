@@ -25,6 +25,7 @@
 		optionGroup,
 		recordSelectOptions
 	} from '#lib/forms/field-options.js';
+	import FieldErrorList from '#lib/components/forms/FieldErrorList.svelte';
 	import { fieldInputHints } from '#lib/forms/field-rules.js';
 	import { inputValue, selectValue } from '#lib/forms/record-format.js';
 	import { getFormsPageContext } from '#lib/forms/state/context.js';
@@ -42,7 +43,9 @@
 		toggleDraftOption,
 		draftString,
 		optionDisabledForSingleDraft,
-		optionDisabledForMultiDraft
+		optionDisabledForMultiDraft,
+		draftHints,
+		editedRecordValues
 	} = fp.records;
 	const {
 		attachmentUrl,
@@ -59,6 +62,7 @@
 		setSignatureValue
 	} = fp.attachments;
 	const { memberFieldHidden, memberFieldLocked } = fp.permissions;
+	const hints = $derived(draftHints(s.fields, s.recordDraft, editedRecordValues()));
 </script>
 
 {#if s.selectedForm}
@@ -520,6 +524,12 @@
 								oninput={(event) => setDraftValue(field.key, inputValue(event))}
 							/>
 						{/if}
+
+						<FieldErrorList
+							{field}
+							errors={s.recordFieldErrors[field.key]}
+							hints={hints[field.key]}
+						/>
 
 						{#if field.help_text}
 							<span class="block text-xs text-fg-muted">{field.help_text}</span>

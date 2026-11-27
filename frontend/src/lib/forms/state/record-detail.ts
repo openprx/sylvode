@@ -122,6 +122,7 @@ export class RecordDetailController extends FormsController {
 
 		if (!childForm) return;
 
+		this.s.childFieldErrors = {};
 		this.s.childEditor = {
 			relationFieldKey: field.key,
 			childFormId: childForm.id,
@@ -147,6 +148,7 @@ export class RecordDetailController extends FormsController {
 
 		const childFields = parseFields(childForm.schema);
 
+		this.s.childFieldErrors = {};
 		this.s.childEditor = {
 			relationFieldKey: relationField.key,
 			childFormId: childForm.id,
@@ -209,10 +211,12 @@ export class RecordDetailController extends FormsController {
 		this.s.childSubmitting = false;
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(describeResult(response));
+			this.fp.records.showRefusal(response, (errors) => (this.s.childFieldErrors = errors));
 
 			return;
 		}
+
+		this.s.childFieldErrors = {};
 
 		if (!this.s.childEditor.recordId) {
 			const linkResponse = await formsApi.createRecordLink(this.s.selectedRecord.id, {
