@@ -151,19 +151,25 @@ pub async fn call(
     let router = ROUTER.get().ok_or(CallError::Unavailable)?;
     // The router runs on its own task: the host function is polled on the guest's fiber stack, which
     // is small, and the axum stack, the database driver and the handlers must not run on it.
-    let mut task = tokio::spawn(router.clone().oneshot(http));
-    let response = match tokio::time::timeout(timeout, &mut task).await {
+    // Dropping this future (timeout, client gone, shutdown) aborts the spawned call as well.
+    let mut task = AbortOnDrop(tokio::spawn(router.clone().oneshot(http)));
+    let response = match tokio::time::timeout(timeout, &mut task.0).await {
         Ok(Ok(Ok(response))) => response,
-        Err(_) => {
-            task.abort();
-            return Err(CallError::Unavailable);
-        }
         _ => return Err(CallError::Unavailable),
     };
     let bytes = to_bytes(response.into_body(), CALL_BODY_MAX + 4096)
         .await
         .map_err(|_| CallError::Limit("payload_too_large".to_string()))?;
     map_envelope(&bytes)
+}
+
+/// Aborts the wrapped task when dropped, so a router call never outlives its invocation.
+struct AbortOnDrop<T>(tokio::task::JoinHandle<T>);
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 /// The template's parameter names, in order.
