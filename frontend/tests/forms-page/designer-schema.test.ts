@@ -78,11 +78,11 @@ suite.check('parseFields normalises types, options and maps', () => {
 				amount: { currency: 'USD', scale: 3 },
 				placeholder: 'Pick',
 				help_text: 'Help',
-				default_value: 'open',
-				validation: { max_length: 5 },
+				default: { value: 'open' },
+				rules: { validate: [{ rule: 'max_length', value: 5 }] },
 				visibility: { list: false },
 				conditional: { hidden_when: { field: 'x', equals: '1' } },
-				policy: { read_only: true },
+				read_only: true,
 				formula: { op: 'sum' },
 				relation: { form_key: 'orders' },
 				attachment: { multiple: true }
@@ -102,11 +102,11 @@ suite.check('parseFields normalises types, options and maps', () => {
 	assertDeepEqual(field.amount, { currency: 'USD', scale: 3 }, 'amount');
 	assertEqual(field.placeholder, 'Pick', 'placeholder');
 	assertEqual(field.help_text, 'Help', 'help text');
-	assertEqual(field.default_value, 'open', 'default value');
-	assertDeepEqual(field.validation, { max_length: 5 }, 'validation');
+	assertDeepEqual(field.default, { value: 'open' }, 'default');
+	assertDeepEqual(field.rules, { validate: [{ rule: 'max_length', value: 5 }] }, 'rules');
 	assertDeepEqual(field.visibility, { list: false }, 'visibility');
 	assertDeepEqual(field.conditional, { hidden_when: { field: 'x', equals: '1' } }, 'conditional');
-	assertDeepEqual(field.policy, { read_only: true }, 'policy');
+	assertEqual(field.read_only, true, 'read_only');
 	assertDeepEqual(field.formula, { op: 'sum' }, 'formula');
 	assertDeepEqual(field.relation, { form_key: 'orders' }, 'relation');
 	assertDeepEqual(field.attachment, { multiple: true }, 'attachment');
@@ -121,8 +121,8 @@ suite.check('parseFields ignores members of the wrong shape and keeps other type
 				label: 4,
 				option_colors: 'x',
 				amount: 'x',
-				validation: [1],
-				policy: null
+				rules: [1],
+				default: null
 			},
 			{ key: 'b', type: 'multi_select' },
 			{ key: 'c', field_id: 9 }
@@ -133,8 +133,8 @@ suite.check('parseFields ignores members of the wrong shape and keeps other type
 	assertEqual(fields[0]?.label, undefined, 'non-string label dropped');
 	assertEqual(fields[0]?.option_colors, undefined, 'non-object colors dropped');
 	assertEqual(fields[0]?.amount, undefined, 'non-object amount dropped');
-	assertEqual(fields[0]?.validation, undefined, 'array validation dropped');
-	assertEqual(fields[0]?.policy, undefined, 'null policy dropped');
+	assertEqual(fields[0]?.rules, undefined, 'array rules dropped');
+	assertEqual(fields[0]?.default, undefined, 'null default dropped');
 	assertEqual(fields[1]?.type, 'multi_select', 'other types are kept');
 	assertEqual(fields[2]?.field_id, undefined, 'non-string field_id dropped');
 });
@@ -202,7 +202,7 @@ suite.check('normalizeTemplateSchema fixes legacy types and fills version and fi
 		}),
 		{
 			fields: [{ key: 'a', type: 'single_select' }, { key: 'b', type: 'text' }, 'raw', null],
-			version: 'openpr.form.schema.v1'
+			version: 'sv.form.schema.v2'
 		},
 		'select becomes single_select, non-objects are preserved, default version'
 	);
@@ -213,7 +213,7 @@ suite.check('normalizeTemplateSchema fixes legacy types and fills version and fi
 	);
 	assertEqual(
 		m.normalizeTemplateSchema({ version: 2 }).version,
-		'openpr.form.schema.v1',
+		'sv.form.schema.v2',
 		'non-string version replaced'
 	);
 	assertDeepEqual(
@@ -282,13 +282,13 @@ suite.check('fieldDraftsFromSchema converts a select field with options and cond
 				option_groups: { open: 'Active' },
 				placeholder: 'Pick',
 				help_text: 'Help',
-				default_value: 'open',
+				default: { value: 'open' },
 				visibility: { list: false },
 				conditional: {
 					hidden_when: { field: 'x', equals: '1' },
 					read_only_when: { logic: 'any', conditions: [{ field: 'y', equals: '2' }] }
 				},
-				policy: { read_only: true }
+				read_only: true
 			}
 		]
 	});
@@ -330,13 +330,25 @@ suite.check('fieldDraftsFromSchema converts amount, validation and default value
 				key: 'price',
 				type: 'amount',
 				amount: { currency: 'USD', scale: 4 },
-				default_value: 12.5,
-				validation: { min: 0, max: '100', pattern: '^a', max_length: 10 }
+				default: { value: 12.5 },
+				rules: {
+					validate: [
+						{ rule: 'min', value: '0' },
+						{ rule: 'max', value: '100' },
+						{ rule: 'pattern', value: '^(?:^a)$' },
+						{ rule: 'max_length', value: 10 }
+					]
+				}
 			},
-			{ key: 'flag', type: 'boolean', default_value: false },
-			{ key: 'meta', type: 'text', default_value: { a: 1 } },
-			{ key: 'none', type: 'text', default_value: null },
-			{ key: 'zero', type: 'integer', default_value: 0, validation: { min: 0 } }
+			{ key: 'flag', type: 'boolean', default: { value: false } },
+			{ key: 'meta', type: 'text', default: { value: { a: 1 } } },
+			{ key: 'none', type: 'text', default: { value: null } },
+			{
+				key: 'zero',
+				type: 'integer',
+				default: { value: 0 },
+				rules: { validate: [{ rule: 'min', value: 0 }] }
+			}
 		]
 	});
 	const price = drafts[0];

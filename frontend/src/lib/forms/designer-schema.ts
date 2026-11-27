@@ -10,8 +10,17 @@ import {
 import { translate } from '#lib/forms/i18n.js';
 import type { FieldDraft } from '#lib/forms/page-types.js';
 import { isRecord } from '#lib/forms/record-format.js';
+import {
+	FORM_SCHEMA_VERSION,
+	type FormFieldV2,
+	fieldDefaultValue,
+	fieldReadOnly,
+	fieldRuleValue,
+	ruleBoundText,
+	unanchoredPattern
+} from '#lib/forms/schema-v2.js';
 
-export function parseFields(schema: Record<string, unknown>): FormField[] {
+export function parseFields(schema: Record<string, unknown>): FormFieldV2[] {
 	const rawFields = Array.isArray(schema.fields) ? schema.fields : [];
 
 	return rawFields
@@ -66,10 +75,9 @@ export function parseFields(schema: Record<string, unknown>): FormField[] {
 				amount: isRecord(field.amount) ? (field.amount as FormField['amount']) : undefined,
 				placeholder: typeof field.placeholder === 'string' ? field.placeholder : undefined,
 				help_text: typeof field.help_text === 'string' ? field.help_text : undefined,
-				default_value: field.default_value,
-				validation: isRecord(field.validation)
-					? (field.validation as FormField['validation'])
-					: undefined,
+				read_only: field.read_only === true ? true : undefined,
+				default: isRecord(field.default) ? (field.default as FormFieldV2['default']) : undefined,
+				rules: isRecord(field.rules) ? (field.rules as FormFieldV2['rules']) : undefined,
 
 				visibility: isRecord(field.visibility)
 					? (field.visibility as FormField['visibility'])
@@ -78,7 +86,6 @@ export function parseFields(schema: Record<string, unknown>): FormField[] {
 				conditional: isRecord(field.conditional)
 					? (field.conditional as FormField['conditional'])
 					: undefined,
-				policy: isRecord(field.policy) ? (field.policy as FormField['policy']) : undefined,
 				formula: isRecord(field.formula) ? (field.formula as FormField['formula']) : undefined,
 				relation: isRecord(field.relation) ? (field.relation as FormField['relation']) : undefined,
 				attachment: isRecord(field.attachment)
@@ -87,6 +94,11 @@ export function parseFields(schema: Record<string, unknown>): FormField[] {
 			};
 		})
 		.filter((field) => field.key);
+}
+
+function draftDefaultText(value: unknown): string {
+	if (value === undefined || value === null) return '';
+	return typeof value === 'string' ? value : JSON.stringify(value);
 }
 
 export function blankFieldDraft(): FieldDraft {
@@ -153,7 +165,7 @@ export function normalizeTemplateSchema(schema: Record<string, unknown>): Record
 
 	return {
 		...schema,
-		version: typeof schema.version === 'string' ? schema.version : 'openpr.form.schema.v1',
+		version: typeof schema.version === 'string' ? schema.version : FORM_SCHEMA_VERSION,
 		fields
 	};
 }
@@ -188,30 +200,25 @@ export function fieldDraftsFromSchema(schema: Record<string, unknown>): FieldDra
 				scale: String(field.amount?.scale ?? 2),
 				placeholder: field.placeholder ?? '',
 				helpText: field.help_text ?? '',
-				defaultValue:
-					field.default_value === undefined || field.default_value === null
-						? ''
-						: typeof field.default_value === 'string'
-							? field.default_value
-							: JSON.stringify(field.default_value),
-				validationMin:
-					field.validation?.min === undefined || field.validation?.min === null
-						? ''
-						: String(field.validation.min),
-				validationMax:
-					field.validation?.max === undefined || field.validation?.max === null
-						? ''
-						: String(field.validation.max),
-				validationPattern: field.validation?.pattern ?? '',
-				validationMaxLength:
-					field.validation?.max_length === undefined || field.validation?.max_length === null
-						? ''
-						: String(field.validation.max_length),
+				defaultValue: draftDefaultText(fieldDefaultValue(field)),
+				validationMin: ruleBoundText(
+					(field.type ?? 'text') as FormFieldType,
+					fieldRuleValue(field, 'min')
+				),
+				validationMax: ruleBoundText(
+					(field.type ?? 'text') as FormFieldType,
+					fieldRuleValue(field, 'max')
+				),
+				validationPattern: (() => {
+					const pattern = fieldRuleValue(field, 'pattern');
+					return typeof pattern === 'string' ? unanchoredPattern(pattern) : '';
+				})(),
+				validationMaxLength: ruleBoundText('text', fieldRuleValue(field, 'max_length')),
 				listVisible: field.visibility?.list ?? true,
 				detailVisible: field.visibility?.detail ?? true,
 				conditionalHiddenWhenText: fieldConditionToText(field.conditional?.hidden_when),
 				conditionalReadOnlyWhenText: fieldConditionToText(field.conditional?.read_only_when),
-				readOnly: field.policy?.read_only ?? false,
+				readOnly: fieldReadOnly(field),
 				formulaOp: field.formula?.op ?? 'add',
 				formulaArgsText: formulaArgsToText(field.formula?.args),
 				formulaScale:

@@ -6,13 +6,18 @@
 import { Suite, assertDeepEqual, assertEqual, finish } from '../support/harness';
 import { installSvelteSsr } from '../support/svelte-ssr';
 import type { FormField, FormRecord } from '../../src/lib/api/forms';
+import type { FormFieldV2 } from '../../src/lib/forms/schema-v2';
 
 await installSvelteSsr();
 const m = await import('../../src/lib/forms/record-draft-values');
 
 const suite = new Suite('forms-page/record-draft-values');
 
-function field(key: string, type: FormField['type'], extra: Partial<FormField> = {}): FormField {
+function field(
+	key: string,
+	type: FormField['type'],
+	extra: Partial<FormFieldV2> = {}
+): FormFieldV2 {
 	return { key, type, ...extra };
 }
 
@@ -55,61 +60,61 @@ suite.check('defaultDraftValueForField uses the empty draft of each type without
 
 suite.check('defaultDraftValueForField converts a configured default value', () => {
 	assertEqual(
-		m.defaultDraftValueForField(field('a', 'text', { default_value: 'hello' })),
+		m.defaultDraftValueForField(field('a', 'text', { default: { value: 'hello' } })),
 		'hello',
 		'text'
 	);
 	assertEqual(
-		m.defaultDraftValueForField(field('a', 'number', { default_value: 5 })),
+		m.defaultDraftValueForField(field('a', 'number', { default: { value: 5 } })),
 		'5',
 		'number becomes text'
 	);
 	assertEqual(
-		m.defaultDraftValueForField(field('a', 'number', { default_value: 0 })),
+		m.defaultDraftValueForField(field('a', 'number', { default: { value: 0 } })),
 		'0',
 		'zero default'
 	);
 	assertEqual(
-		m.defaultDraftValueForField(field('a', 'text', { default_value: '' })),
+		m.defaultDraftValueForField(field('a', 'text', { default: { value: '' } })),
 		'',
 		'empty string default'
 	);
 	assertEqual(
-		m.defaultDraftValueForField(field('a', 'boolean', { default_value: true })),
+		m.defaultDraftValueForField(field('a', 'boolean', { default: { value: true } })),
 		true,
 		'true'
 	);
 	assertEqual(
-		m.defaultDraftValueForField(field('a', 'boolean', { default_value: false })),
+		m.defaultDraftValueForField(field('a', 'boolean', { default: { value: false } })),
 		false,
 		'false'
 	);
 	assertEqual(
 		m.defaultDraftValueForField(
-			field('a', 'relation', { default_value: { record_id: 'r1', title: 'T' } })
+			field('a', 'relation', { default: { value: { record_id: 'r1', title: 'T' } } })
 		),
 		'r1',
 		'relation'
 	);
 	assertDeepEqual(
 		m.defaultDraftValueForField(
-			field('a', 'multi_select', { options: ['x', 'y'], default_value: ['x', 'y'] })
+			field('a', 'multi_select', { options: ['x', 'y'], default: { value: ['x', 'y'] } })
 		),
 		['x', 'y'],
 		'multi select with options'
 	);
 	assertEqual(
-		m.defaultDraftValueForField(field('a', 'multi_select', { default_value: ['x', 'y'] })),
+		m.defaultDraftValueForField(field('a', 'multi_select', { default: { value: ['x', 'y'] } })),
 		'x, y',
 		'multi select without options'
 	);
 	assertEqual(
-		m.defaultDraftValueForField(field('a', 'text', { default_value: null })),
+		m.defaultDraftValueForField(field('a', 'text', { default: { value: null } })),
 		'',
 		'null default is ignored'
 	);
 	assertEqual(
-		m.defaultDraftValueForField(field('a', 'boolean', { default_value: null })),
+		m.defaultDraftValueForField(field('a', 'boolean', { default: { value: null } })),
 		false,
 		'null boolean default'
 	);
@@ -119,7 +124,7 @@ suite.check('defaultDraftForFields builds a draft keyed by field key', () => {
 	assertDeepEqual(m.defaultDraftForFields([]), {}, 'no fields');
 	assertDeepEqual(
 		m.defaultDraftForFields([
-			field('name', 'text', { default_value: 'N/A' }),
+			field('name', 'text', { default: { value: 'N/A' } }),
 			field('qty', 'integer'),
 			field('done', 'boolean'),
 			field('tags', 'multi_select', { options: ['x'] })

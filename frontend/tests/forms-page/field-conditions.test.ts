@@ -5,14 +5,15 @@
  */
 import { Suite, assert, assertDeepEqual, assertEqual, finish } from '../support/harness';
 import { installSvelteSsr } from '../support/svelte-ssr';
-import type { FormField, FormRecord } from '../../src/lib/api/forms';
+import type { FormRecord } from '../../src/lib/api/forms';
+import type { FormFieldV2 } from '../../src/lib/forms/schema-v2';
 
 await installSvelteSsr();
 const m = await import('../../src/lib/forms/field-conditions');
 
 const suite = new Suite('forms-page/field-conditions');
 
-function field(key: string, extra: Partial<FormField> = {}): FormField {
+function field(key: string, extra: Partial<FormFieldV2> = {}): FormFieldV2 {
 	return { key, type: 'text', ...extra };
 }
 
@@ -510,14 +511,14 @@ suite.check('fieldHiddenByCondition and fieldReadOnlyByCondition evaluate agains
 	);
 	assertEqual(m.fieldReadOnlyByCondition(readOnlyWhenDone, { status: 'open' }), false, 'editable');
 	assertEqual(
-		m.fieldReadOnlyByCondition(field('x', { policy: { read_only: true } }), {}),
+		m.fieldReadOnlyByCondition(field('x', { read_only: true }), {}),
 		true,
-		'policy read-only wins without any condition'
+		'read_only wins without any condition'
 	);
 	assertEqual(
-		m.fieldReadOnlyByCondition(field('x', { policy: { read_only: false } }), {}),
+		m.fieldReadOnlyByCondition(field('x', { read_only: false }), {}),
 		false,
-		'policy false'
+		'read_only false'
 	);
 });
 
@@ -542,9 +543,9 @@ suite.check('record level helpers read the record values', () => {
 		'editable for open record'
 	);
 	assertEqual(
-		m.recordFieldReadOnlyByCondition(field('x', { policy: { read_only: true } }), open),
+		m.recordFieldReadOnlyByCondition(field('x', { read_only: true }), open),
 		false,
-		'policy flag is not a record condition'
+		'read_only flag is not a record condition'
 	);
 });
 

@@ -13,6 +13,7 @@ import {
 import { translate } from '#lib/forms/i18n.js';
 import { isRecord } from '#lib/forms/record-format.js';
 import { FormsController } from '#lib/forms/state/controller.js';
+import { FORM_SCHEMA_VERSION } from '#lib/forms/schema-v2.js';
 
 export class CreateFormController extends FormsController {
 	handleCreateForm = async () => {
@@ -65,7 +66,7 @@ export class CreateFormController extends FormsController {
 			name: '',
 			description: '',
 			title_template: '{id}',
-			schemaText: JSON.stringify({ version: 'openpr.form.schema.v1', fields: [] }, null, 2)
+			schemaText: JSON.stringify({ version: FORM_SCHEMA_VERSION, fields: [] }, null, 2)
 		};
 
 		this.s.fieldDrafts = [blankFieldDraft()];

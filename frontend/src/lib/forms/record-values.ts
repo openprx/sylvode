@@ -329,7 +329,7 @@ export function recordValueFromDraftValue(
  * Payload entry for a field whose draft maps to no value. On update a stored
  * value is cleared with an explicit `null`; on create, or when nothing is
  * stored, the key is omitted (`undefined`) so the server keeps the stored
- * state or applies the field's `default_value`.
+ * state or applies the field's `default`.
  */
 export function clearedFieldPayload(editing: boolean, existingValue: unknown): null | undefined {
 	if (!editing) return undefined;

@@ -16,6 +16,7 @@ import type { FormAttachment, FormField, FormFieldType } from '#lib/api/forms.js
 import { safeImageUrl, safeLinkUrl } from '#lib/utils/safe-url.js';
 import { recordValueIsEmpty } from './detail-layout.js';
 import { richTextToPlainText } from './rich-text.js';
+import { fieldRuleValue } from './schema-v2.js';
 
 export interface FileItem {
 	name: string;
@@ -280,7 +281,7 @@ function boundedNumber(value: unknown): number | null {
 function ratingDisplay(field: FormField, value: unknown): FieldDisplay {
 	const number = boundedNumber(value);
 	if (number === null) return recordValueIsEmpty(value) ? EMPTY : fallback(value);
-	const maxSource = Number(field.validation?.max);
+	const maxSource = Number(fieldRuleValue(field, 'max'));
 	const max = Number.isInteger(maxSource) && maxSource >= 1 && maxSource <= 10 ? maxSource : 5;
 	return { kind: 'rating', value: Math.min(Math.max(Math.round(number), 0), max), max };
 }

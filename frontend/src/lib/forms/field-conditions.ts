@@ -5,6 +5,7 @@ import type {
 	FieldConditionOperator
 } from '#lib/forms/page-types.js';
 import { isRecord } from '#lib/forms/record-format.js';
+import { fieldReadOnly } from '#lib/forms/schema-v2.js';
 
 export function fieldHasConditionalHidden(field: FormField): boolean {
 	return Boolean(field.conditional?.hidden_when);
@@ -261,8 +262,5 @@ export function fieldReadOnlyByCondition(
 	field: FormField,
 	draft: Record<string, unknown>
 ): boolean {
-	return (
-		field.policy?.read_only === true ||
-		fieldConditionMatches(field.conditional?.read_only_when, draft)
-	);
+	return fieldReadOnly(field) || fieldConditionMatches(field.conditional?.read_only_when, draft);
 }

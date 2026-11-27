@@ -1,5 +1,6 @@
 import type { FormField, FormRecord } from '#lib/api/forms.js';
 import { draftValueFromRecordValue, emptyDraftValue } from '#lib/forms/record-values.js';
+import { fieldDefaultValue } from '#lib/forms/schema-v2.js';
 
 export function defaultDraftForFields(formFields: FormField[]): Record<string, unknown> {
 	return Object.fromEntries(
@@ -8,8 +9,9 @@ export function defaultDraftForFields(formFields: FormField[]): Record<string, u
 }
 
 export function defaultDraftValueForField(field: FormField): unknown {
-	if (field.default_value !== undefined && field.default_value !== null) {
-		return draftValueFromRecordValue(field, field.default_value);
+	const defaultValue = fieldDefaultValue(field);
+	if (defaultValue !== undefined && defaultValue !== null) {
+		return draftValueFromRecordValue(field, defaultValue);
 	}
 
 	return emptyDraftValue(field);

@@ -1,4 +1,5 @@
 import { writable, fromStore } from 'svelte/store';
+import { FORM_SCHEMA_VERSION } from '#lib/forms/schema-v2.js';
 import type { RecordPluginActionSurface } from '#lib/plugins/record-entries.js';
 import { type FormsDraftVersion, FormsRefreshLatch } from '#lib/workbench/forms-session.js';
 import type {
@@ -347,7 +348,7 @@ export class FormsPageState {
 		name: '',
 		description: '',
 		title_template: '{id}',
-		schemaText: JSON.stringify({ version: 'openpr.form.schema.v1', fields: [] }, null, 2)
+		schemaText: JSON.stringify({ version: FORM_SCHEMA_VERSION, fields: [] }, null, 2)
 	});
 
 	// owner: view-draft
