@@ -7,7 +7,7 @@
 //! # Where hints come from
 //!
 //! Database triggers (migration `0132`) call `pg_notify` after a domain row changed, on three
-//! channels: [`HINT_CHANNEL`] (a task, an issue or the tool set changed), [`ACCESS_CHANNEL`] (the
+//! channels: [`HINT_CHANNEL`] (a task, an issue, a draft or the tool set changed), [`ACCESS_CHANNEL`] (the
 //! projects a bot may read changed) and [`TOKEN_CHANNEL`] (a bot's token or state changed). A
 //! notification is delivered at commit, so a hint never precedes the state it announces. This
 //! module keeps one shared `LISTEN` connection per process and fans the parsed notifications out
@@ -65,7 +65,7 @@ use crate::routes::auth::{extract_bearer_token, extract_cookie_token};
 
 /// Path of the stream endpoint.
 pub const HINTS_PATH: &str = "/api/v1/bot/change-hints";
-/// A task, an issue or the tool set changed.
+/// A task, an issue, a draft or the tool set changed.
 pub const HINT_CHANNEL: &str = "sv_change_hint";
 /// The projects a bot may read changed.
 pub const ACCESS_CHANNEL: &str = "sv_bot_access_changed";
@@ -149,6 +149,8 @@ pub enum Hint {
     },
     /// A work item or one of its comments changed.
     Issue { id: Uuid, project: Uuid, workspace: Uuid },
+    /// An artefact draft was created or changed state.
+    Draft { id: Uuid, project: Uuid, workspace: Uuid },
     /// The tool set changed, for one project or (no project) for everyone.
     Tools {
         project: Option<Uuid>,
@@ -181,6 +183,11 @@ pub fn parse_hint(payload: &str) -> Option<Hint> {
             bot: raw.b?,
         }),
         "issue" => Some(Hint::Issue {
+            id: raw.id?,
+            project: raw.p?,
+            workspace: raw.w?,
+        }),
+        "draft" => Some(Hint::Draft {
             id: raw.id?,
             project: raw.p?,
             workspace: raw.w?,
@@ -233,6 +240,9 @@ fn frames_for(hint: Hint, bot_id: Uuid, workspace_id: Uuid, project_readable: im
         ],
         Hint::Issue { id, project, workspace } if workspace == workspace_id && project_readable(project) => {
             vec![frame("issue", &serde_json::json!({"id": id.to_string()}))]
+        }
+        Hint::Draft { id, project, workspace } if workspace == workspace_id && project_readable(project) => {
+            vec![frame("draft", &serde_json::json!({"id": id.to_string()}))]
         }
         Hint::Tools { project, workspace }
             if workspace.is_none_or(|w| w == workspace_id) && project.is_none_or(&project_readable) =>
@@ -721,7 +731,11 @@ impl HintStream {
 /// The project whose readability decides whether `hint` is delivered to a bot of `workspace_id`.
 fn project_to_check(hint: Hint, workspace_id: Uuid) -> Option<Uuid> {
     match hint {
-        Hint::Issue { project, workspace, .. } if workspace == workspace_id => Some(project),
+        Hint::Issue { project, workspace, .. } | Hint::Draft { project, workspace, .. }
+            if workspace == workspace_id =>
+        {
+            Some(project)
+        }
         Hint::Tools {
             project: Some(project),
             workspace,

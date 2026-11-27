@@ -56,6 +56,15 @@ fn the_payloads_the_triggers_write_parse() {
             workspace
         })
     );
+    let payload = format!(r#"{{"k":"draft","id":"{task}","p":"{project}","w":"{workspace}"}}"#);
+    assert_eq!(
+        parse_hint(&payload),
+        Some(Hint::Draft {
+            id: task,
+            project,
+            workspace
+        })
+    );
     assert_eq!(
         parse_hint(r#"{"k":"tools"}"#),
         Some(Hint::Tools {
@@ -131,6 +140,20 @@ fn an_issue_hint_needs_the_workspace_and_a_readable_project() {
     assert_eq!(frames, vec![format!("event: issue\ndata: {{\"id\":\"{item}\"}}\n\n")]);
     assert!(frames_for(hint(workspace, project), bot, workspace, |_| false).is_empty());
     assert!(frames_for(hint(workspace, project), bot, workspace, |p| p != project).is_empty());
+    assert!(frames_for(hint(id(), project), bot, workspace, |_| true).is_empty());
+}
+
+#[test]
+fn a_draft_hint_needs_the_workspace_and_a_readable_project() {
+    let (bot, workspace, project, draft) = (id(), id(), id(), id());
+    let hint = |workspace, project| Hint::Draft {
+        id: draft,
+        project,
+        workspace,
+    };
+    let frames = text(&frames_for(hint(workspace, project), bot, workspace, |p| p == project));
+    assert_eq!(frames, vec![format!("event: draft\ndata: {{\"id\":\"{draft}\"}}\n\n")]);
+    assert!(frames_for(hint(workspace, project), bot, workspace, |_| false).is_empty());
     assert!(frames_for(hint(id(), project), bot, workspace, |_| true).is_empty());
 }
 

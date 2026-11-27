@@ -12,5 +12,5 @@ until the owning batch adds the real migration. 0128 and 0129 are reserved by an
 | 0136 | form schema v2 (added: `0136_form_schema_v2.sql`) |
 | 0137 | sites |
 | 0138 | installations |
-| 0139 | drafts |
+| 0139 | drafts (added: `0139_artefact_drafts.sql`) |
 | 0140 | navigation (added: `0140_nav.sql`) |
