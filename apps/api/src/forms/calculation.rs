@@ -292,7 +292,7 @@ mod tests {
         let seeded = merge_values_for_calculation(schema, &payload, Some(existing))?;
         let calculated = evaluate_calculated_values(schema, seeded.clone())?;
         let overlaid = overlay_calculated_values(payload, &seeded, &calculated)?;
-        normalize_record_values_with_existing(schema, overlaid, Some(existing))
+        normalize_record_values_with_existing(schema, overlaid, Some(existing)).map_err(|errors| errors.summary())
     }
 
     #[test]

@@ -1,13 +1,20 @@
-// Public and framework-facing signatures remain stable during this behavior-neutral cleanup.
+//! Type normalisation of a record write.
+//!
+//! The merge with the stored values, conditional visibility, explicit clears, the required-field
+//! rule and each field type's own check through the descriptor registry. The rule stages run after
+//! this in [`super::rules`].
+
+// Public signatures take owned JSON like their callers hold it.
 #![allow(clippy::needless_pass_by_value)]
 
 use std::collections::BTreeSet;
 
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 
 use super::{
-    decimal::normalize_amount_decimal,
+    rules::{FieldError, FieldErrors, Stage},
     schema::{FormField, parse_fields},
+    types::{TypeError, field_type},
 };
 
 /// The outcome of normalizing a record write.
@@ -22,7 +29,7 @@ pub struct NormalizedValues {
     pub unmet_required_fields: Vec<String>,
 }
 
-pub fn normalize_record_values(schema: &Value, values: Value) -> Result<Value, String> {
+pub fn normalize_record_values(schema: &Value, values: Value) -> Result<Value, FieldErrors> {
     normalize_record_values_with_existing(schema, values, None)
 }
 
@@ -30,11 +37,21 @@ pub fn normalize_record_values_with_existing(
     schema: &Value,
     values: Value,
     existing_values: Option<&Value>,
-) -> Result<Value, String> {
+) -> Result<Value, FieldErrors> {
     normalize_record_values_report(schema, values, existing_values).map(|report| report.values)
 }
 
+/// A refusal of the write as a whole (not of one field): the value map is not an object or the
+/// stored schema cannot be parsed. Reported with an empty field key and the code `values_invalid`.
+fn whole_write_error(detail: &str) -> FieldErrors {
+    tracing::debug!(%detail, "record write refused as a whole");
+    FieldErrors::single(FieldError::new("", "", Stage::Normalize, "values_invalid"))
+}
+
 /// Normalizes a record write and reports required fields it had to carry over.
+///
+/// Every field error is collected (codes `type_mismatch`, `option_unsupported`, `option_disabled`,
+/// `option_archived`, `required`, `read_only`); values are never echoed.
 ///
 /// ## The required-field rule
 ///
@@ -67,14 +84,11 @@ pub fn normalize_record_values_report(
     schema: &Value,
     values: Value,
     existing_values: Option<&Value>,
-) -> Result<NormalizedValues, String> {
-    if !values.is_object() {
-        return Err("values must be a JSON object".to_string());
-    }
-    let fields = parse_fields(schema)?;
-    let input = values
-        .as_object()
-        .ok_or_else(|| "values must be a JSON object".to_string())?;
+) -> Result<NormalizedValues, FieldErrors> {
+    let Some(input) = values.as_object() else {
+        return Err(whole_write_error("values must be a JSON object"));
+    };
+    let fields = parse_fields(schema).map_err(|detail| whole_write_error(&detail))?;
 
     // Whole-map rebuild: fields the caller could not see (e.g. field-level `read:false`,
     // which is stripped from API responses before the client ever gets them) or simply
@@ -94,6 +108,7 @@ pub fn normalize_record_values_report(
     }
     let creating = existing_values.is_none();
     let mut unmet_required_fields = Vec::new();
+    let mut errors = FieldErrors::default();
 
     for field in &fields {
         // A field hidden by its `hidden_when` condition is not visible to the caller, so
@@ -122,277 +137,69 @@ pub fn normalize_record_values_report(
             // satisfy a required field just by being present.
             if required_checked_here && is_missing(normalized.get(&field.key)) {
                 if creating || caller_addressed_field {
-                    return Err(format!("field '{}' is required", field.key));
+                    errors.push(FieldError::new(
+                        &field.key,
+                        &field.field_id,
+                        Stage::Validate,
+                        "required",
+                    ));
+                } else {
+                    // Pre-existing gap this write did not touch: carried over so the record stays
+                    // repairable, reported so it is not mistaken for a satisfied constraint.
+                    unmet_required_fields.push(field.key.clone());
                 }
-                // Pre-existing gap this write did not touch: carried over so the record stays
-                // repairable, reported so it is not mistaken for a satisfied constraint.
-                unmet_required_fields.push(field.key.clone());
             }
             continue;
         }
         let Some(raw_value) = raw else {
             continue;
         };
-        let value = normalize_field_value(field, raw_value, existing_values.and_then(|item| item.get(&field.key)))?;
+        let value = match normalize_field_value(field, raw_value, existing_values.and_then(|item| item.get(&field.key)))
+        {
+            Ok(value) => value,
+            Err(error) => {
+                errors.push(FieldError::new(
+                    &field.key,
+                    &field.field_id,
+                    Stage::Normalize,
+                    error.code(),
+                ));
+                continue;
+            }
+        };
         if field_read_only_by_condition(field, input, existing_values)
             && let Some(existing) = existing_values.and_then(|item| item.get(&field.key))
             && existing != &value
         {
-            return Err(format!("field '{}' is read-only by condition", field.key));
+            errors.push(FieldError::new(
+                &field.key,
+                &field.field_id,
+                Stage::ReadOnly,
+                "read_only",
+            ));
+            continue;
         }
         normalized.insert(field.key.clone(), value);
     }
 
+    if !errors.is_empty() {
+        return Err(errors);
+    }
     Ok(NormalizedValues {
         values: Value::Object(normalized),
         unmet_required_fields,
     })
 }
 
-pub(crate) fn normalize_field_value(field: &FormField, raw: &Value, existing: Option<&Value>) -> Result<Value, String> {
-    match field.field_type.as_str() {
-        "text" | "textarea" | "rich_text" | "date" | "datetime" | "ai_summary" | "phone" | "address" | "scan"
-        | "signature" | "autonumber" => raw
-            .as_str()
-            .map(|value| json!(value))
-            .ok_or_else(|| format!("field '{}' must be a string", field.key)),
-        "email" => normalize_email(field, raw),
-        "location" => normalize_location(field, raw),
-        "single_select" => {
-            let Some(value) = raw.as_str() else {
-                return Err(format!("field '{}' must be a string", field.key));
-            };
-            if !field.options.is_empty() && !field.options.iter().any(|option| option == value) {
-                return Err(format!("field '{}' has an unsupported option", field.key));
-            }
-            ensure_option_write_allowed(field, value, existing)?;
-            Ok(json!(value))
-        }
-        "multi_select" => {
-            let Some(items) = raw.as_array() else {
-                return Err(format!("field '{}' must be an array", field.key));
-            };
-            let mut values = Vec::new();
-            for item in items {
-                let Some(value) = item.as_str() else {
-                    return Err(format!("field '{}' options must be strings", field.key));
-                };
-                if !field.options.is_empty() && !field.options.iter().any(|option| option == value) {
-                    return Err(format!("field '{}' has an unsupported option", field.key));
-                }
-                ensure_option_write_allowed(field, value, existing)?;
-                values.push(json!(value));
-            }
-            Ok(Value::Array(values))
-        }
-        "boolean" => raw
-            .as_bool()
-            .map(|value| json!(value))
-            .ok_or_else(|| format!("field '{}' must be a boolean", field.key)),
-        "integer" => normalize_integer(field, raw),
-        "number" => normalize_decimal_like(field, raw, "decimal"),
-        "amount" => normalize_amount(field, raw),
-        "rating" => normalize_bounded_integer(field, raw, 1, 5, "rating"),
-        "progress" => normalize_bounded_integer(field, raw, 0, 100, "progress"),
-        "member" => normalize_member(field, raw),
-        "attachment" | "image" | "relation" | "child_table" | "formula" => Ok(raw.clone()),
-        _ => Err(format!("unsupported field type: {}", field.field_type)),
-    }
-}
-
-fn ensure_option_write_allowed(field: &FormField, value: &str, existing: Option<&Value>) -> Result<(), String> {
-    if !field.option_disabled.iter().any(|option| option == value)
-        && !field.option_archived.iter().any(|option| option == value)
-    {
-        return Ok(());
-    }
-    let existed = match existing {
-        Some(Value::String(existing)) => existing == value,
-        Some(Value::Array(items)) => items.iter().any(|item| item.as_str() == Some(value)),
-        _ => false,
-    };
-    if existed {
-        return Ok(());
-    }
-    if field.option_archived.iter().any(|option| option == value) {
-        return Err(format!("field '{}' option '{}' is archived", field.key, value));
-    }
-    Err(format!("field '{}' option '{}' is disabled", field.key, value))
-}
-
-fn normalize_member(field: &FormField, raw: &Value) -> Result<Value, String> {
-    if let Some(user_id) = raw.as_str().map(str::trim).filter(|value| !value.is_empty()) {
-        return Ok(json!({ "user_id": user_id }));
-    }
-    let Some(object) = raw.as_object() else {
-        return Err(format!("field '{}' must be a member object", field.key));
-    };
-    let user_id = object
-        .get("user_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| format!("field '{}' member.user_id is required", field.key))?;
-    let mut value = Map::new();
-    value.insert("user_id".to_string(), json!(user_id));
-    for key in ["name", "email"] {
-        if let Some(item) = object.get(key).and_then(Value::as_str).map(str::trim)
-            && !item.is_empty()
-        {
-            value.insert(key.to_string(), json!(item));
-        }
-    }
-    Ok(Value::Object(value))
-}
-
-fn normalize_email(field: &FormField, raw: &Value) -> Result<Value, String> {
-    let value = raw
-        .as_str()
-        .ok_or_else(|| format!("field '{}' must be a string", field.key))?
-        .trim();
-    if !value.contains('@') || value.starts_with('@') || value.ends_with('@') {
-        return Err(format!("field '{}' must be an email address", field.key));
-    }
-    Ok(json!(value))
-}
-
-fn normalize_location(field: &FormField, raw: &Value) -> Result<Value, String> {
-    if let Some(value) = raw.as_str() {
-        return Ok(json!(value));
-    }
-    let Some(object) = raw.as_object() else {
-        return Err(format!("field '{}' must be a string or location object", field.key));
-    };
-    let lat = object
-        .get("lat")
-        .and_then(Value::as_f64)
-        .ok_or_else(|| format!("field '{}' location.lat must be a number", field.key))?;
-    let lng = object
-        .get("lng")
-        .and_then(Value::as_f64)
-        .ok_or_else(|| format!("field '{}' location.lng must be a number", field.key))?;
-    if !(-90.0..=90.0).contains(&lat) {
-        return Err(format!("field '{}' location.lat is out of range", field.key));
-    }
-    if !(-180.0..=180.0).contains(&lng) {
-        return Err(format!("field '{}' location.lng is out of range", field.key));
-    }
-    let mut value = Map::new();
-    value.insert("lat".to_string(), json!(lat));
-    value.insert("lng".to_string(), json!(lng));
-    if let Some(label) = object.get("label").and_then(Value::as_str).map(str::trim)
-        && !label.is_empty()
-    {
-        value.insert("label".to_string(), json!(label));
-    }
-    Ok(Value::Object(value))
-}
-
-fn normalize_integer(field: &FormField, raw: &Value) -> Result<Value, String> {
-    if let Some(value) = raw.get("value").and_then(Value::as_i64) {
-        return Ok(json!({ "type": "integer", "value": value }));
-    }
-    if let Some(value) = raw.as_i64() {
-        return Ok(json!({ "type": "integer", "value": value }));
-    }
-    if let Some(value) = raw.as_str() {
-        let parsed = value
-            .trim()
-            .parse::<i64>()
-            .map_err(|_| format!("field '{}' must be an integer", field.key))?;
-        return Ok(json!({ "type": "integer", "value": parsed }));
-    }
-    Err(format!("field '{}' must be an integer", field.key))
-}
-
-fn normalize_bounded_integer(
+/// The type check and canonical form of one value, through the field's descriptor.
+pub(crate) fn normalize_field_value(
     field: &FormField,
     raw: &Value,
-    min: i64,
-    max: i64,
-    value_type: &str,
-) -> Result<Value, String> {
-    let value = if let Some(value) = raw.get("value").and_then(Value::as_i64) {
-        value
-    } else if let Some(value) = raw.as_i64() {
-        value
-    } else if let Some(value) = raw.as_str() {
-        value
-            .trim()
-            .parse::<i64>()
-            .map_err(|_| format!("field '{}' must be an integer", field.key))?
-    } else {
-        return Err(format!("field '{}' must be an integer", field.key));
-    };
-    if value < min || value > max {
-        return Err(format!("field '{}' must be between {} and {}", field.key, min, max));
-    }
-    Ok(json!({ "type": value_type, "value": value }))
-}
-
-fn normalize_decimal_like(field: &FormField, raw: &Value, value_type: &str) -> Result<Value, String> {
-    if raw.is_number() {
-        return Err(format!(
-            "field '{}' must be a decimal string, not a JSON number",
-            field.key
-        ));
-    }
-    let decimal = if let Some(decimal) = raw.as_str() {
-        decimal
-    } else if let Some(decimal) = raw.get("decimal").and_then(Value::as_str) {
-        decimal
-    } else {
-        return Err(format!("field '{}' must be a decimal string", field.key));
-    };
-    let parsed = decimal
-        .trim()
-        .parse::<rust_decimal::Decimal>()
-        .map_err(|_| format!("field '{}' decimal is invalid", field.key))?;
-    Ok(json!({
-        "type": value_type,
-        "decimal": parsed.to_string()
-    }))
-}
-
-fn normalize_amount(field: &FormField, raw: &Value) -> Result<Value, String> {
-    if raw.is_number() {
-        return Err(format!(
-            "field '{}' must be a decimal string, not a JSON number",
-            field.key
-        ));
-    }
-    let config = field
-        .amount
-        .as_ref()
-        .ok_or_else(|| format!("field '{}' amount config is missing", field.key))?;
-    let (decimal, currency) = if let Some(value) = raw.as_str() {
-        (value, config.currency.as_str())
-    } else if let Some(object) = raw.as_object() {
-        let decimal = object
-            .get("decimal")
-            .and_then(Value::as_str)
-            .ok_or_else(|| format!("field '{}' amount.decimal is required", field.key))?;
-        let currency = object
-            .get("currency")
-            .and_then(Value::as_str)
-            .unwrap_or(&config.currency);
-        (decimal, currency)
-    } else {
-        return Err(format!(
-            "field '{}' must be an amount object or decimal string",
-            field.key
-        ));
-    };
-    if currency.to_ascii_uppercase() != config.currency {
-        return Err(format!("field '{}' currency mismatch", field.key));
-    }
-    let normalized = normalize_amount_decimal(decimal, config)?;
-    Ok(json!({
-        "type": "amount",
-        "decimal": normalized,
-        "currency": config.currency,
-        "scale": config.scale
-    }))
+    existing: Option<&Value>,
+) -> Result<Value, TypeError> {
+    field_type(&field.field_type)
+        .ok_or(TypeError::Mismatch)?
+        .normalize(field, raw, existing)
 }
 
 pub(crate) fn is_missing(value: Option<&Value>) -> bool {
@@ -540,6 +347,38 @@ mod tests {
         is_missing, normalize_record_values, normalize_record_values_report, normalize_record_values_with_existing,
     };
     use serde_json::json;
+
+    fn codes(errors: crate::forms::rules::FieldErrors) -> Vec<(String, String)> {
+        errors
+            .errors
+            .into_iter()
+            .map(|error| (error.key, error.code.into_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn option_errors_name_a_code_and_never_the_option() {
+        let schema = json!({
+            "fields": [{
+                "field_id": "fld_status",
+                "key": "status",
+                "type": "single_select",
+                "options": ["open", "secret_choice"],
+                "option_archived": ["secret_choice"]
+            }]
+        });
+        let errors = normalize_record_values(&schema, json!({"status": "secret_choice"})).expect_err("archived");
+        assert!(!format!("{errors:?}").contains("secret_choice\""));
+        assert_eq!(
+            codes(errors),
+            vec![("status".to_string(), "option_archived".to_string())]
+        );
+        let errors = normalize_record_values(&schema, json!({"status": "nope"})).expect_err("unsupported");
+        assert_eq!(
+            codes(errors),
+            vec![("status".to_string(), "option_unsupported".to_string())]
+        );
+    }
 
     #[test]
     fn normalizes_amount_values_without_json_numbers() {
@@ -1169,8 +1008,8 @@ mod tests {
     fn create_still_rejects_a_missing_required_field() {
         let schema = required_text_schema();
         assert_eq!(
-            normalize_record_values(&schema, json!({"note": "n"})).expect_err("create must be born valid"),
-            "field 'owner' is required"
+            codes(normalize_record_values(&schema, json!({"note": "n"})).expect_err("create must be born valid")),
+            vec![("owner".to_string(), "required".to_string())]
         );
     }
 
@@ -1181,9 +1020,11 @@ mod tests {
 
         for cleared in [json!({"owner": null}), json!({"owner": "  "})] {
             assert_eq!(
-                normalize_record_values_with_existing(&schema, cleared, Some(&existing))
-                    .expect_err("a caller may not empty a required field"),
-                "field 'owner' is required"
+                codes(
+                    normalize_record_values_with_existing(&schema, cleared, Some(&existing))
+                        .expect_err("a caller may not empty a required field")
+                ),
+                vec![("owner".to_string(), "required".to_string())]
             );
         }
     }

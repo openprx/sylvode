@@ -59,6 +59,8 @@ pub struct ImportRecordPreviewRow {
     pub title: Option<String>,
     pub normalized_values: Option<Value>,
     pub error: Option<String>,
+    /// The coded field errors of a refused row (contract C2 §9, with `row`).
+    pub errors: Vec<Value>,
 }
 
 #[derive(Debug, Serialize)]

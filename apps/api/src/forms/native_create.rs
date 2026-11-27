@@ -14,14 +14,14 @@ use uuid::Uuid;
 use crate::{
     error::ApiError,
     forms::{
-        field_rules::{apply_default_values, ensure_read_only_fields_untouched},
-        permissions::ensure_field_write_policy_allows,
+        permissions::{denied_read_field_keys, ensure_field_write_policy_allows},
         projections::refresh_record_projection,
-        schema::{ensure_schema_field_ids, normalize_key, validate_schema},
+        rules::{SchemaScope, apply_defaults, ensure_read_only_untouched, external::Writer},
+        schema::{ensure_schema_field_ids, ensure_valid_schema, normalize_key},
         signature_media::{
             annotate_signature_audit_entries, append_signature_audit_source, materialize_signature_values_with_audit,
         },
-        validation::validate_and_normalize_values,
+        validation::{caller, validate_create, write_context},
     },
     plugins::hooks::{run_event_handler_hooks, run_field_validator_hooks, run_formula_hooks},
     routes::form::{
@@ -59,7 +59,13 @@ pub async fn create_form_in_transaction(
         return Err(ApiError::BadRequest("name is required".to_string()));
     }
     let schema = ensure_schema_field_ids(req.schema).map_err(ApiError::BadRequest)?;
-    validate_schema(&schema).map_err(ApiError::BadRequest)?;
+    ensure_valid_schema(
+        &schema,
+        Some(SchemaScope {
+            workspace_id: req.workspace_id,
+            project_id: req.project_id,
+        }),
+    )?;
     let detail_layout = ensure_json_object(req.detail_layout, "detail_layout")?;
     let form_id = req.form_id.unwrap_or_else(Uuid::new_v4);
     let source = ensure_json_object(req.source, "source")?;
@@ -139,8 +145,9 @@ pub async fn create_record_in_transaction(
     }
 
     ensure_field_write_policy_allows(state, form.id, role, &req.values).await?;
-    ensure_read_only_fields_untouched(&form.schema, &req.values, None, &BTreeSet::new())?;
-    let with_defaults = apply_default_values(&form.schema, req.values)?;
+    ensure_read_only_untouched(&form.schema, &req.values, None, &BTreeSet::new())?;
+    let writer = writer_of_source(&req.source);
+    let (with_defaults, defaulted) = apply_defaults(&form.schema, req.values)?;
     let values_with_formula = run_formula_hooks(
         state,
         form.workspace_id,
@@ -156,7 +163,15 @@ pub async fn create_record_in_transaction(
     let source = ensure_json_object(req.source, "source")?;
     let calculated = calculate_values(state, form, None, values_with_formula).await?;
     let with_autonumber = apply_autonumber_values(tx, form, None, calculated).await?;
-    let normalized = validate_and_normalize_values(&form.schema, with_autonumber)?;
+    let denied_read_fields = denied_read_field_keys(state, form.id, role).await?;
+    let ctx = write_context(
+        form,
+        Some(record_id),
+        caller(actor_id, role, is_bot),
+        writer,
+        denied_read_fields,
+    );
+    let normalized = validate_create(&form.schema, &ctx, with_autonumber, &defaulted).await?;
     let signature_materialization = materialize_signature_values_with_audit(&form.schema, normalized).await?;
     let normalized = signature_materialization.values;
     ensure_record_objects_claimable(state, form.workspace_id, &normalized, None).await?;
@@ -225,6 +240,17 @@ pub async fn create_record_in_transaction(
         event_payload,
         was_created: true,
     })
+}
+
+/// The writer a create request names through its `source` (plugin rule calls are told who writes).
+fn writer_of_source(source: &Value) -> Writer {
+    if source.get("type").and_then(Value::as_str) == Some("flow_conversion") {
+        Writer::FlowConversion
+    } else if source.get("origin").and_then(Value::as_str) == Some("import") {
+        Writer::Import
+    } else {
+        Writer::Create
+    }
 }
 
 /// Runs native post-commit hooks only after the caller atomically commits its transaction.

@@ -34,7 +34,6 @@ use crate::{
         },
         calculation::{evaluate_calculated_values, merge_values_for_calculation, overlay_calculated_values},
         event_redaction::{redact_event_metadata, redact_event_payload, redact_event_source},
-        field_rules::{apply_default_values, carried_summary, ensure_read_only_fields_untouched},
         job_context::{add_form_job_worker_context, form_job_requester, form_job_worker_context},
         permissions::{
             append_record_scope_sql, denied_read_field_keys, ensure_field_read_policy_allows,
@@ -74,7 +73,12 @@ use crate::{
             normalize_relation_type, normalize_target_type, relation_target_config,
             validate_optional_parent_child_relation, validate_parent_child_relation,
         },
-        schema::{FormField, ensure_schema_field_ids, normalize_key, parse_fields, validate_schema},
+        rules::{
+            CarriedError, RulePolicy, SCHEMA_VERSION, SchemaScope, apply_defaults, carried_summary,
+            ensure_read_only_untouched,
+            external::{RuleCaller, Writer},
+        },
+        schema::{FormField, ensure_schema_field_ids, ensure_valid_schema, normalize_key, parse_fields},
         schema_insights::{
             SchemaInsightInput, find_schema_field, form_field_dependencies, form_field_usage, form_schema_summary,
         },
@@ -85,10 +89,7 @@ use crate::{
             signature_audit_source_for_reader, signature_lifecycle_summary, signature_workflow_verification_summary,
             verify_signature_audit_source,
         },
-        validation::{
-            validate_and_normalize_recalculated_values, validate_and_normalize_values,
-            validate_and_normalize_values_with_existing_report,
-        },
+        validation::{caller, validate_create_report, validate_recalculated, validate_update, write_context},
     },
     middleware::bot_auth::{BotAuthContext, require_workspace_access_from_auth},
     plugins::hooks::{run_event_handler_hooks, run_field_validator_hooks, run_formula_hooks},
@@ -417,6 +418,8 @@ pub struct ChildRecordResponse {
 pub struct ChildRecordMutationResponse {
     pub link: LinkResponse,
     pub record: RecordResponse,
+    /// Rule failures the parent's recalculation carried (stored as computed).
+    pub carried: Vec<CarriedError>,
 }
 
 #[derive(Debug, Serialize, FromQueryResult)]
@@ -461,6 +464,16 @@ pub struct RecalculatePreviewResponse {
     pub schema_version: i32,
     pub values: Value,
     pub normalized_values: Value,
+    /// Rule failures of server-written fields, reported instead of refused.
+    pub carried: Vec<CarriedError>,
+}
+
+/// A recalculated record and the rule failures its derived values carry.
+#[derive(Debug, Serialize)]
+pub struct RecalculatedRecordResponse {
+    #[serde(flatten)]
+    pub record: RecordResponse,
+    pub carried: Vec<CarriedError>,
 }
 
 #[derive(Debug, Serialize, FromQueryResult)]
@@ -670,7 +683,7 @@ pub async fn create_project_form(
             title_template: req.title_template,
             schema: req
                 .schema
-                .unwrap_or_else(|| json!({"version":"openpr.form.schema.v1","fields":[]})),
+                .unwrap_or_else(|| json!({"version":SCHEMA_VERSION,"fields":[]})),
             detail_layout: req.detail_layout.unwrap_or_else(|| json!({})),
             created_by: actor_id,
             source,
@@ -807,7 +820,13 @@ pub async fn create_project_form_from_template(
     let description = req
         .description
         .unwrap_or_else(|| format!("{} ({})", template.description, template.industry));
-    let schema = normalize_scenario_field_schema(template.field_schema)?;
+    let schema = normalize_scenario_field_schema(
+        template.field_schema,
+        Some(SchemaScope {
+            workspace_id,
+            project_id,
+        }),
+    )?;
     let title_template = req
         .title_template
         .as_deref()
@@ -930,7 +949,13 @@ pub async fn update_form(
     }
     if let Some(schema) = req.schema {
         let schema = ensure_schema_field_ids(schema).map_err(ApiError::BadRequest)?;
-        validate_schema(&schema).map_err(ApiError::BadRequest)?;
+        ensure_valid_schema(
+            &schema,
+            Some(SchemaScope {
+                workspace_id: form.workspace_id,
+                project_id: form.project_id,
+            }),
+        )?;
         changed_fields.push("schema");
         schema_changed = true;
         push_set!("schema", schema.into());
@@ -3425,18 +3450,36 @@ pub async fn preview_form_record_recalculation(
     Json(req): Json<RecalculatePreviewRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let form = find_form(&state, form_id).await?;
-    let (_, role, _) = require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "record.create").await?;
+    let (actor_id, role, is_bot) =
+        require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "record.create").await?;
     ensure_field_write_policy_allows(&state, form.id, &role, &req.values).await?;
-    ensure_read_only_fields_untouched(&form.schema, &req.values, None, &BTreeSet::new())?;
-    let with_defaults = apply_default_values(&form.schema, req.values)?;
+    ensure_read_only_untouched(&form.schema, &req.values, None, &BTreeSet::new())?;
+    let (with_defaults, defaulted) = apply_defaults(&form.schema, req.values)?;
     let calculated = calculate_values(&state, &form, None, with_defaults).await?;
-    let normalized = validate_and_normalize_values(&form.schema, calculated.clone())?;
+    let denied_read_fields = denied_read_field_keys(&state, form.id, &role).await?;
+    let ctx = write_context(
+        &form,
+        None,
+        caller(actor_id, &role, is_bot),
+        Writer::Preview,
+        denied_read_fields.clone(),
+    );
+    let output = validate_create_report(
+        &form.schema,
+        &ctx,
+        calculated.clone(),
+        &defaulted,
+        RulePolicy::CarryDerived,
+    )
+    .await?
+    .map_err(crate::forms::rules::FieldErrors::into_api_error)?;
     let read_policy = ReaderContext::new(&role).policy(&state.db, (&form).into()).await?;
     Ok(ApiResponse::success(RecalculatePreviewResponse {
         form_id,
         schema_version: form.schema_version,
         values: read_policy.values(calculated),
-        normalized_values: read_policy.values(normalized),
+        normalized_values: read_policy.values(output.values),
+        carried: CarriedError::for_reader(output.carried, None, &denied_read_fields),
     }))
 }
 
@@ -3513,15 +3556,17 @@ pub async fn recalculate_form_record(
     let tx = state.db.begin().await?;
     let calculated = calculate_values(&state, &form, Some(record_id), record.values.clone()).await?;
     let with_autonumber = apply_autonumber_values(&tx, &form, Some(&record.values), calculated).await?;
-    let recalculated = validate_and_normalize_recalculated_values(&form.schema, with_autonumber, &record.values)?;
-    if !recalculated.carried.is_empty() {
-        tracing::warn!(
-            form_id = %form.id,
-            record_id = %record_id,
-            carried = %carried_summary(&recalculated.carried),
-            "recalculated values carry field rule violations; stored as computed"
-        );
-    }
+    let denied_read_fields = denied_read_field_keys(&state, form.id, &role).await?;
+    let ctx = write_context(
+        &form,
+        Some(record_id),
+        caller(actor_id, &role, is_bot),
+        Writer::Recalculate,
+        denied_read_fields.clone(),
+    );
+    let recalculated = validate_recalculated(&form.schema, &ctx, with_autonumber, &record.values).await?;
+    let mut carried = CarriedError::for_reader(recalculated.carried, Some(record_id), &BTreeSet::new());
+    log_carried(form.id, &carried);
     let values = recalculated.values;
     let title = render_title(&form.title_template, record_id, &values);
 
@@ -3566,14 +3611,27 @@ pub async fn recalculate_form_record(
         event_payload,
     )
     .await?;
-    recalculate_parent_records_for_child(&state, record_id, updated_by).await?;
+    let parents = recalculate_parent_records_for_child(&state, record_id, updated_by).await?;
+    carried.retain(|item| !denied_read_fields.contains(&item.error.key));
+    carried.extend(parents_carried_for_reader(&state, parents, &role).await?);
 
     let record = find_record(&state, record_id).await?;
     let read_policy = ReaderContext::new(&role).policy(&state.db, (&form).into()).await?;
-    Ok(ApiResponse::success(filter_record_response_values(
-        record,
-        &read_policy,
-    )))
+    Ok(ApiResponse::success(RecalculatedRecordResponse {
+        record: filter_record_response_values(record, &read_policy),
+        carried,
+    }))
+}
+
+/// Logs carried rule failures by record, field key and code (never values).
+fn log_carried(form_id: Uuid, carried: &[CarriedError]) {
+    if !carried.is_empty() {
+        tracing::warn!(
+            form_id = %form_id,
+            carried = %carried_summary(carried),
+            "recalculated values carry field rule failures; stored as computed"
+        );
+    }
 }
 
 pub async fn list_form_events(
@@ -3715,7 +3773,7 @@ pub async fn update_form_record(
     let (actor_id, role, is_bot) =
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "record.update").await?;
     ensure_record_scope_allows_created_by(&state, form.id, &role, actor_id, record.created_by).await?;
-    let record = update_record_for_form(&state, &form, record, actor_id, &role, is_bot, req).await?;
+    let (record, _) = update_record_for_form(&state, &form, record, actor_id, &role, is_bot, req).await?;
     let read_policy = ReaderContext::new(&role).policy(&state.db, (&form).into()).await?;
     Ok(ApiResponse::success(filter_record_response_values(
         record,
@@ -3731,7 +3789,7 @@ async fn update_record_for_form(
     role: &str,
     is_bot: bool,
     req: UpdateRecordRequest,
-) -> Result<RecordResponse, ApiError> {
+) -> Result<(RecordResponse, Vec<RecalculatedParent>), ApiError> {
     update_record_for_form_internal(state, form, record, actor_id, role, is_bot, req, None).await
 }
 
@@ -3744,7 +3802,9 @@ pub(crate) async fn update_record_for_plugin(
     req: UpdateRecordRequest,
     plugin: &super::plugin_package::ApplyCommit,
 ) -> Result<RecordResponse, ApiError> {
-    update_record_for_form_internal(state, form, record, actor_id, role, false, req, Some(plugin)).await
+    update_record_for_form_internal(state, form, record, actor_id, role, false, req, Some(plugin))
+        .await
+        .map(|(record, _)| record)
 }
 
 async fn update_record_for_form_internal(
@@ -3756,11 +3816,11 @@ async fn update_record_for_form_internal(
     is_bot: bool,
     req: UpdateRecordRequest,
     plugin: Option<&super::plugin_package::ApplyCommit>,
-) -> Result<RecordResponse, ApiError> {
+) -> Result<(RecordResponse, Vec<RecalculatedParent>), ApiError> {
     let idempotency_key = normalize_optional_idempotency_key(req.idempotency_key)?;
     if let Some(record) = find_idempotent_record(state, form, idempotency_key.as_deref(), "form.record.updated").await?
     {
-        return Ok(record);
+        return Ok((record, Vec::new()));
     }
     if req
         .expected_updated_at
@@ -3784,7 +3844,7 @@ async fn update_record_for_form_internal(
         && !plugin.begin(state, &tx).await?
     {
         tx.commit().await?;
-        return Ok(record);
+        return Ok((record, Vec::new()));
     }
     // Schema validation and the record CAS observe one stable form revision. Designer UPDATEs
     // take the conflicting row lock; no parent/schema token is silently refreshed for a draft.
@@ -3810,7 +3870,7 @@ async fn update_record_for_form_internal(
         Some(values) => {
             ensure_field_write_policy_allows(state, form.id, role, &values).await?;
             let denied_read_fields = denied_read_field_keys(state, form.id, role).await?;
-            ensure_read_only_fields_untouched(&form.schema, &values, Some(&record.values), &denied_read_fields)?;
+            ensure_read_only_untouched(&form.schema, &values, Some(&record.values), &denied_read_fields)?;
             let submitted_denied = values
                 .as_object()
                 .map(|submitted| {
@@ -3835,12 +3895,15 @@ async fn update_record_for_form_internal(
                 calculate_values_with_existing(state, form, Some(record_id), Some(&record.values), values_with_formula)
                     .await?;
             let with_autonumber = apply_autonumber_values(&tx, form, Some(&record.values), calculated).await?;
-            let normalized = validate_and_normalize_values_with_existing_report(
-                &form.schema,
-                with_autonumber,
-                &record.values,
-                &submitted_denied,
-            )?;
+            let ctx = write_context(
+                form,
+                Some(record_id),
+                caller(actor_id, role, is_bot),
+                Writer::Update,
+                denied_read_fields,
+            );
+            let normalized =
+                validate_update(&form.schema, &ctx, with_autonumber, &record.values, &submitted_denied).await?;
             if !normalized.unmet_required_fields.is_empty() {
                 // Required fields that were already empty before this write. The update is allowed
                 // through so the record stays repairable, but the gap is recorded rather than
@@ -3954,9 +4017,9 @@ async fn update_record_for_form_internal(
         event_payload,
     )
     .await?;
-    recalculate_parent_records_for_child(state, record_id, updated_by).await?;
+    let parents = recalculate_parent_records_for_child(state, record_id, updated_by).await?;
 
-    find_record(state, record_id).await
+    Ok((find_record(state, record_id).await?, parents))
 }
 
 fn order_table_change_payload(
@@ -4504,7 +4567,7 @@ pub async fn create_child_record(
         },
     )
     .await?;
-    let link = create_parent_child_link(
+    let (link, parents) = create_parent_child_link(
         &state,
         &parent_record,
         &parent_form,
@@ -4519,9 +4582,11 @@ pub async fn create_child_record(
         .policy(&state.db, (&child_form).into())
         .await?;
 
+    let carried = parents_carried_for_reader(&state, parents, &child_role).await?;
     Ok(ApiResponse::success(ChildRecordMutationResponse {
         link,
         record: filter_record_response_values(child_record, &read_policy),
+        carried,
     }))
 }
 
@@ -4563,7 +4628,7 @@ pub async fn update_child_record(
         None => None,
     };
     let link = find_parent_child_link(&state, record_id, child_record_id, relation_key.as_deref()).await?;
-    let updated = update_record_for_form(
+    let (updated, parents) = update_record_for_form(
         &state,
         &child_form,
         child_record,
@@ -4584,9 +4649,11 @@ pub async fn update_child_record(
         .policy(&state.db, (&child_form).into())
         .await?;
 
+    let carried = parents_carried_for_reader(&state, parents, &child_role).await?;
     Ok(ApiResponse::success(ChildRecordMutationResponse {
         link,
         record: filter_record_response_values(updated, &read_policy),
+        carried,
     }))
 }
 
@@ -4638,6 +4705,7 @@ pub async fn archive_child_record(
     Ok(ApiResponse::success(ChildRecordMutationResponse {
         link,
         record: filter_record_response_values(archived, &read_policy),
+        carried: Vec::new(),
     }))
 }
 
@@ -4689,6 +4757,7 @@ pub async fn restore_child_record(
     Ok(ApiResponse::success(ChildRecordMutationResponse {
         link,
         record: filter_record_response_values(restored, &read_policy),
+        carried: Vec::new(),
     }))
 }
 
@@ -4735,7 +4804,7 @@ async fn create_parent_child_link(
     metadata: Value,
     actor_id: Uuid,
     is_bot: bool,
-) -> Result<LinkResponse, ApiError> {
+) -> Result<(LinkResponse, Vec<RecalculatedParent>), ApiError> {
     let link_id = Uuid::new_v4();
     let created_by = if is_bot { None } else { Some(actor_id) };
     let tx = state.db.begin().await?;
@@ -4776,24 +4845,14 @@ async fn create_parent_child_link(
     )
     .await?;
     tx.commit().await?;
-    recalculate_record_values(
+    let parent = recalculate_record_values(
         state,
         parent_record.id,
         created_by,
         "form.record.child_aggregate.updated",
     )
     .await?;
-    find_link(state, link_id).await
-}
-
-async fn calculate_and_normalize_values(
-    state: &AppState,
-    form: &FormResponse,
-    record_id: Option<Uuid>,
-    values: Value,
-) -> Result<Value, ApiError> {
-    let calculated = calculate_values(state, form, record_id, values).await?;
-    validate_and_normalize_values(&form.schema, calculated)
+    Ok((find_link(state, link_id).await?, vec![parent]))
 }
 
 pub(crate) async fn calculate_values(
@@ -4814,7 +4873,7 @@ pub(crate) async fn calculate_values(
 /// one: the field-level write policy is checked before this against the raw payload, autonumber
 /// still resolves its own carry-over from `existing_values`, and normalization still sees exactly
 /// the keys the caller mentioned plus the calculated fields.
-async fn calculate_values_with_existing(
+pub(crate) async fn calculate_values_with_existing(
     state: &AppState,
     form: &FormResponse,
     record_id: Option<Uuid>,
@@ -5199,11 +5258,36 @@ const RECALCULATE_PARENT_RECORDS_SQL: &str = r"
       AND parent.project_id = child.project_id
 ";
 
+/// The outcome of one parent recalculation: its form and the rule failures it carried.
+pub(crate) struct RecalculatedParent {
+    form_id: Uuid,
+    carried: Vec<CarriedError>,
+}
+
+/// The carried items of recalculated parents, without fields the reader may not read there.
+async fn parents_carried_for_reader(
+    state: &AppState,
+    parents: Vec<RecalculatedParent>,
+    role: &str,
+) -> Result<Vec<CarriedError>, ApiError> {
+    let mut carried = Vec::new();
+    for parent in parents.into_iter().filter(|parent| !parent.carried.is_empty()) {
+        let denied = denied_read_field_keys(state, parent.form_id, role).await?;
+        carried.extend(
+            parent
+                .carried
+                .into_iter()
+                .filter(|item| !denied.contains(&item.error.key)),
+        );
+    }
+    Ok(carried)
+}
+
 pub(crate) async fn recalculate_parent_records_for_child(
     state: &AppState,
     child_record_id: Uuid,
     actor_id: Option<Uuid>,
-) -> Result<(), ApiError> {
+) -> Result<Vec<RecalculatedParent>, ApiError> {
     let parents = ParentRecordRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         RECALCULATE_PARENT_RECORDS_SQL,
@@ -5211,16 +5295,19 @@ pub(crate) async fn recalculate_parent_records_for_child(
     ))
     .all(&state.db)
     .await?;
+    let mut recalculated = Vec::with_capacity(parents.len());
     for parent in parents {
-        recalculate_record_values(
-            state,
-            parent.source_record_id,
-            actor_id,
-            "form.record.child_aggregate.updated",
-        )
-        .await?;
+        recalculated.push(
+            recalculate_record_values(
+                state,
+                parent.source_record_id,
+                actor_id,
+                "form.record.child_aggregate.updated",
+            )
+            .await?,
+        );
     }
-    Ok(())
+    Ok(recalculated)
 }
 
 async fn recalculate_record_values(
@@ -5228,22 +5315,23 @@ async fn recalculate_record_values(
     record_id: Uuid,
     actor_id: Option<Uuid>,
     event_type: &str,
-) -> Result<(), ApiError> {
+) -> Result<RecalculatedParent, ApiError> {
     let record = find_record(state, record_id).await?;
     let form = find_form(state, record.form_id).await?;
     let source = json!({ "type": "system", "operation": event_type });
     let tx = state.db.begin().await?;
     let calculated = calculate_values(state, &form, Some(record_id), record.values.clone()).await?;
     let with_autonumber = apply_autonumber_values(&tx, &form, Some(&record.values), calculated).await?;
-    let recalculated = validate_and_normalize_recalculated_values(&form.schema, with_autonumber, &record.values)?;
-    if !recalculated.carried.is_empty() {
-        tracing::warn!(
-            form_id = %form.id,
-            record_id = %record_id,
-            carried = %carried_summary(&recalculated.carried),
-            "recalculated values carry field rule violations; stored as computed"
-        );
-    }
+    let ctx = write_context(
+        &form,
+        Some(record_id),
+        RuleCaller::system(),
+        Writer::Recalculate,
+        BTreeSet::new(),
+    );
+    let recalculated = validate_recalculated(&form.schema, &ctx, with_autonumber, &record.values).await?;
+    let carried = CarriedError::for_reader(recalculated.carried, Some(record_id), &BTreeSet::new());
+    log_carried(form.id, &carried);
     let values = recalculated.values;
     let title = render_title(&form.title_template, record_id, &values);
     tx.execute(Statement::from_sql_and_values(
@@ -5267,7 +5355,10 @@ async fn recalculate_record_values(
     let event_payload = json!({ "record_id": record_id, "values": values });
     insert_form_event(&tx, &form, Some(record_id), event_type, actor_id, source, event_payload).await?;
     tx.commit().await?;
-    Ok(())
+    Ok(RecalculatedParent {
+        form_id: form.id,
+        carried,
+    })
 }
 
 fn schema_insight_input(form: &FormResponse) -> SchemaInsightInput<'_> {
@@ -6144,18 +6235,48 @@ async fn preview_import_rows(
                 title: Some(read_policy.title(Uuid::new_v4(), title, &values)),
                 normalized_values: Some(read_policy.values(values)),
                 error: None,
+                errors: Vec::new(),
             },
             Err(error) => ImportRecordPreviewRow {
                 row_number,
                 valid: false,
                 title: row.title.clone(),
                 normalized_values: None,
-                error: Some(error),
+                errors: import_row_errors(&error, index),
+                error: Some(error.to_string()),
             },
         };
         previews.push(preview);
     }
     Ok(previews)
+}
+
+/// The field errors of a refused import row with `row` set (0-based); empty for other refusals.
+fn import_row_errors(error: &ApiError, row: usize) -> Vec<Value> {
+    let ApiError::Coded {
+        code: crate::forms::rules::VALIDATION_FAILED,
+        details: Some(details),
+        ..
+    } = error
+    else {
+        return Vec::new();
+    };
+    details
+        .get("errors")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| {
+                    let mut item = item.clone();
+                    if let Some(object) = item.as_object_mut() {
+                        object.insert("row".to_string(), json!(row));
+                    }
+                    item
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 async fn preview_import_row(
@@ -6165,20 +6286,13 @@ async fn preview_import_row(
     role: &str,
     is_bot: bool,
     row: &ImportRecordInput,
-) -> Result<(String, Value), String> {
-    ensure_field_write_policy_allows(state, form.id, role, &row.values)
-        .await
-        .map_err(|error| error.to_string())?;
-    ensure_read_only_fields_untouched(&form.schema, &row.values, None, &BTreeSet::new())
-        .map_err(|error| error.to_string())?;
-    let row_values = apply_default_values(&form.schema, row.values.clone()).map_err(|error| error.to_string())?;
-    let source = ensure_json_object(
-        row.source.clone().unwrap_or_else(
-            || json!({ "type": if is_bot { "bot" } else { "user" }, "actor_id": actor_id, "origin": "import_preview" }),
-        ),
-        "source",
-    )
-    .map_err(|error| error.to_string())?;
+) -> Result<(String, Value), ApiError> {
+    ensure_field_write_policy_allows(state, form.id, role, &row.values).await?;
+    ensure_read_only_untouched(&form.schema, &row.values, None, &BTreeSet::new())?;
+    if let Some(source) = row.source.clone() {
+        ensure_json_object(source, "source")?;
+    }
+    let (row_values, defaulted) = apply_defaults(&form.schema, row.values.clone())?;
     let values_with_formula = run_formula_hooks(
         state,
         form.workspace_id,
@@ -6188,11 +6302,20 @@ async fn preview_import_row(
         role,
         row_values,
     )
-    .await
-    .map_err(|error| error.to_string())?;
-    let calculated = calculate_and_normalize_values(state, form, None, values_with_formula)
-        .await
-        .map_err(|error| error.to_string())?;
+    .await?;
+    let calculated = calculate_values(state, form, None, values_with_formula).await?;
+    let denied_read_fields = denied_read_field_keys(state, form.id, role).await?;
+    let ctx = write_context(
+        form,
+        None,
+        caller(actor_id, role, is_bot),
+        Writer::Import,
+        denied_read_fields,
+    );
+    let calculated = validate_create_report(&form.schema, &ctx, calculated, &defaulted, RulePolicy::Refuse)
+        .await?
+        .map_err(crate::forms::rules::FieldErrors::into_api_error)?
+        .values;
     run_field_validator_hooks(
         state,
         form.workspace_id,
@@ -6202,8 +6325,7 @@ async fn preview_import_row(
         &form.schema,
         &calculated,
     )
-    .await
-    .map_err(|error| error.to_string())?;
+    .await?;
     let preview_id = Uuid::new_v4();
     let title = row
         .title
@@ -6211,7 +6333,6 @@ async fn preview_import_row(
         .filter(|value| !value.trim().is_empty())
         .map(crate::forms::read_policy::cap_title)
         .unwrap_or_else(|| render_title(&form.title_template, preview_id, &calculated));
-    let _ = source;
     Ok((title, calculated))
 }
 
@@ -6291,7 +6412,7 @@ fn filter_event_response_values(
     event
 }
 
-async fn ensure_project_actor(
+pub(crate) async fn ensure_project_actor(
     state: &AppState,
     claims: &JwtClaims,
     bot: Option<&BotAuthContext>,
@@ -7034,14 +7155,14 @@ fn default_form_key_from_template(template_key: &str) -> String {
         .to_string()
 }
 
-fn normalize_scenario_field_schema(schema: Value) -> Result<Value, ApiError> {
+fn normalize_scenario_field_schema(schema: Value, scope: Option<SchemaScope>) -> Result<Value, ApiError> {
     let mut schema = ensure_json_object(schema, "template field_schema")?;
     let object = schema
         .as_object_mut()
         .ok_or_else(|| ApiError::BadRequest("template field_schema must be a JSON object".to_string()))?;
     object
         .entry("version".to_string())
-        .or_insert_with(|| json!("openpr.form.schema.v1"));
+        .or_insert_with(|| json!(SCHEMA_VERSION));
     if let Some(fields) = object.get_mut("fields").and_then(Value::as_array_mut) {
         for field in fields {
             if let Some(field_object) = field.as_object_mut()
@@ -7052,7 +7173,7 @@ fn normalize_scenario_field_schema(schema: Value) -> Result<Value, ApiError> {
         }
     }
     let schema = ensure_schema_field_ids(schema).map_err(ApiError::BadRequest)?;
-    validate_schema(&schema).map_err(ApiError::BadRequest)?;
+    ensure_valid_schema(&schema, scope)?;
     Ok(schema)
 }
 
@@ -7830,15 +7951,18 @@ mod tests {
 
     #[test]
     fn normalizes_scenario_template_field_schema_for_form_use() {
-        let schema = normalize_scenario_field_schema(json!({
-            "fields": [
-                {"key": "name", "label": "Name", "type": "text", "required": true},
-                {"key": "status", "label": "Status", "type": "select", "options": ["open", "closed"]}
-            ]
-        }))
+        let schema = normalize_scenario_field_schema(
+            json!({
+                "fields": [
+                    {"key": "name", "label": "Name", "type": "text", "required": true},
+                    {"key": "status", "label": "Status", "type": "select", "options": ["open", "closed"]}
+                ]
+            }),
+            None,
+        )
         .unwrap();
 
-        assert_eq!(schema["version"], "openpr.form.schema.v1");
+        assert_eq!(schema["version"], "sv.form.schema.v2");
         assert_eq!(schema["fields"][1]["type"], "single_select");
         assert!(schema["fields"][0]["field_id"].as_str().is_some());
         assert_eq!(default_title_template_from_schema(&schema), "{name}");
@@ -7939,7 +8063,7 @@ mod tests {
             .expect("import file upload should succeed");
 
         let form = test_form_response(json!({
-            "version": "openpr.form.schema.v1",
+            "version": "sv.form.schema.v2",
             "fields": [
                 {"field_id": "fld_sku_name_001", "key": "sku_name", "label": "SKU", "type": "text"},
                 {"field_id": "fld_quantity_001", "key": "quantity", "label": "Quantity", "type": "number"}

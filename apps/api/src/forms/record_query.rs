@@ -7,7 +7,9 @@ use crate::{
     error::ApiError,
     forms::{
         read_policy::QueryReadGuard,
+        rules::ensure_queryable,
         schema::{FormField, normalize_key},
+        types::Outlet,
     },
 };
 
@@ -270,6 +272,7 @@ fn record_filter_expression_sql(
         RecordFilterExpressionConfig::Condition(filter) => {
             let field = find_schema_field(fields, &filter.field)?;
             guard.ensure_field_readable(&field.key)?;
+            ensure_queryable(field, Outlet::Filter)?;
             let op = normalize_filter_op(&filter.op)?;
             let filter_value = filter
                 .value
@@ -379,6 +382,7 @@ pub fn record_sort_sql(
 
     let field = find_schema_field(fields, raw_field)?;
     guard.ensure_field_readable(&field.key)?;
+    ensure_queryable(field, Outlet::Sort)?;
     let kind = indexed_value_kind(&field.field_type)
         .ok_or_else(|| ApiError::BadRequest("sort field is not queryable".to_string()))?;
     let join = format!(
