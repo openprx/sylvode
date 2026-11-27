@@ -525,3 +525,57 @@ fn parse_rule_input(input: &str) -> Result<rule::sv::plugin::rule_types::RuleInp
         config: parsed.config.to_string(),
     })
 }
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod epoch_tests {
+    use std::time::{Duration, Instant};
+
+    use wasmtime::Store;
+
+    use super::run_world;
+    use super::{Plan, World};
+    use crate::catalogue::RefusalCode;
+    use crate::extensions::host::engine::{compile_cache, deadline_ticks, engine};
+    use crate::extensions::host::state::{HostState, InvocationInfo};
+
+    const ENDLESS: &[u8] = include_bytes!("../../../../../examples/plugins/dist/bad-endless-loop.wasm");
+
+    /// The epoch deadline is its own limit: a guest that still has fuel is stopped by the clock, with
+    /// `plugin_deadline_exceeded` (the fuel limit is tested with the same fixture and the real budget).
+    #[tokio::test]
+    async fn the_epoch_deadline_stops_a_guest_that_still_has_fuel() {
+        let engine = engine().expect("engine");
+        let component = compile_cache().get(engine, ENDLESS).await.expect("component");
+        let limits = World::Action.limits();
+        let wall = Duration::from_millis(40);
+        let info = InvocationInfo {
+            actor: String::new(),
+            workspace: String::new(),
+            project: None,
+            installation: String::new(),
+            generation: 1,
+            action: "spin".to_string(),
+            request_id: String::new(),
+        };
+        let mut store = Store::new(engine, HostState::new(&limits, None, info, Instant::now() + wall));
+        store.limiter(HostState::limiter);
+        // More fuel than a 40 ms run can burn, so only the epoch can stop it.
+        store.set_fuel(u64::MAX / 2).expect("fuel");
+        store.set_epoch_deadline(deadline_ticks(wall));
+        store.epoch_deadline_trap();
+        let plan = Plan {
+            records: false,
+            catalogue: false,
+        };
+        let started = Instant::now();
+        let error = run_world(&mut store, &component, World::Action, plan, "spin", "{}")
+            .await
+            .expect_err("the guest never returns");
+        assert_eq!(error.code, RefusalCode::PluginDeadlineExceeded);
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "stopped by the clock, not by luck"
+        );
+    }
+}
