@@ -43,9 +43,10 @@ function mapActivity(raw: Record<string, unknown>, issueId: string): Activity {
 }
 
 export const activityApi = {
-	async list(issueId: string): Promise<ApiResult<ActivityList>> {
+	/** One page of the activity of a work item, newest first. */
+	async list(issueId: string, page = 1, perPage = 30): Promise<ApiResult<ActivityList>> {
 		const result = await apiClient.get<PaginatedData<Record<string, unknown>>>(
-			`/api/v1/issues/${issueId}/activities`
+			`/api/v1/issues/${issueId}/activities?page=${page}&per_page=${perPage}`
 		);
 		if (result.code !== 0 || !result.data) {
 			return {

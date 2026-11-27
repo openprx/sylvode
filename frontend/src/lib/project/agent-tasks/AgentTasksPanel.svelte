@@ -6,7 +6,6 @@
 	import Button from '../../ui/button/Button.svelte';
 	import StateBlock from '../../ui/state-block/StateBlock.svelte';
 	import TaskRow from './TaskRow.svelte';
-	import { orderTasks } from './status';
 
 	interface Props {
 		issueId: string;
@@ -18,23 +17,50 @@
 
 	let { issueId, names, refreshKey = 0 }: Props = $props();
 
+	/** Tasks shown at first and added by each "show more". */
+	const PAGE_SIZE = 5;
+
 	let tasks = $state<AiTask[]>([]);
+	let total = $state(0);
+	let nextPage = $state(2);
 	let loading = $state(true);
+	let loadingMore = $state(false);
 	let failed = $state(false);
 	let requestId = 0;
 
+	const remaining = $derived(Math.max(0, total - tasks.length));
+
+	/** Loads the newest page again and drops what was loaded beyond it. */
 	async function load(id: string) {
 		const mine = ++requestId;
 		loading = true;
-		const result = await aiTasksApi.listForIssue(id);
+		const result = await aiTasksApi.listForIssue(id, 1, PAGE_SIZE);
 		if (mine !== requestId) return;
 		if (result.code === 0 && result.data) {
-			tasks = orderTasks(result.data);
+			tasks = result.data.items;
+			total = result.data.total;
+			nextPage = 2;
 			failed = false;
 		} else {
 			failed = true;
 		}
 		loading = false;
+	}
+
+	async function loadMore() {
+		const mine = requestId;
+		loadingMore = true;
+		const result = await aiTasksApi.listForIssue(issueId, nextPage, PAGE_SIZE);
+		loadingMore = false;
+		if (mine !== requestId) return;
+		if (result.code === 0 && result.data) {
+			const known = new Set(tasks.map((task) => task.id));
+			tasks = [...tasks, ...result.data.items.filter((task) => !known.has(task.id))];
+			total = result.data.total;
+			nextPage += 1;
+		} else {
+			failed = true;
+		}
 	}
 
 	$effect(() => {
@@ -65,6 +91,11 @@
 					<TaskRow {task} {names} />
 				{/each}
 			</div>
+			{#if remaining > 0}
+				<Button size="sm" loading={loadingMore} onclick={loadMore}>
+					{$t('agentTasks.loadMore', { values: { count: remaining } })}
+				</Button>
+			{/if}
 		{/if}
 	</section>
 {/if}

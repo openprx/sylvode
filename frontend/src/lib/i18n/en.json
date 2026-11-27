@@ -222,6 +222,8 @@
 		"activity": "Activity",
 		"noComments": "No comments",
 		"noActivity": "No activity",
+		"loadMoreComments": "Load more comments ({count} left)",
+		"loadMoreActivity": "Load more activity ({count} left)",
 		"addComment": "Add comment (Markdown)",
 		"submitComment": "Submit comment",
 		"uploadImage": "Upload image/video",
@@ -529,7 +531,13 @@
 		"sprintChanged": "linked to sprint {name}",
 		"sprintRemoved": "removed sprint link",
 		"priorityChanged": "changed priority from {from} to {to}",
-		"commentDeletedWithPreview": "deleted comment: \"{preview}...\""
+		"commentDeletedWithPreview": "deleted comment: \"{preview}...\"",
+		"created": "created this work item",
+		"titleChanged": "changed the title from \"{from}\" to \"{to}\"",
+		"descriptionChanged": "edited the description",
+		"dueDateChanged": "changed the due date from {from} to {to}",
+		"dueDateSet": "set the due date to {to}",
+		"dueDateCleared": "removed the due date"
 	},
 	"toast": {
 		"uploadFail": "Upload failed. Please try again later",
