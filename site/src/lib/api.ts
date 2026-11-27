@@ -1,4 +1,8 @@
-/** Tiny typed fetch helper for the site API. No endpoints are defined yet. */
+/**
+ * Typed fetch helper for the site API. The site API answers with real HTTP status codes and the
+ * console envelope `{code, message, data, error_code?, details?}` (contract C3 section 6.6, C3-1):
+ * `request` returns `data` of a 2xx answer and throws `ApiError` otherwise.
+ */
 
 const DEFAULT_BASE = "/api/site/v1";
 
@@ -7,16 +11,34 @@ export const apiBase: string = (import.meta.env.VITE_SV_SITE_API ?? DEFAULT_BASE
   "",
 );
 
+export interface Envelope<T> {
+  code: number;
+  message?: string;
+  data: T;
+  error_code?: string;
+  details?: unknown;
+}
+
 export class ApiError extends Error {
   readonly status: number;
   readonly body: unknown;
+  /** Typed refusal code of the envelope (`validation_failed`, `operator_required`, ...). */
+  readonly errorCode: string | undefined;
+  readonly details: unknown;
 
   constructor(status: number, body: unknown) {
-    super(`request failed with status ${status}`);
+    const envelope = isEnvelope(body) ? body : undefined;
+    super(envelope?.message || `request failed with status ${status}`);
     this.name = "ApiError";
     this.status = status;
     this.body = body;
+    this.errorCode = envelope?.error_code;
+    this.details = envelope?.details;
   }
+}
+
+function isEnvelope(value: unknown): value is Partial<Envelope<unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export interface RequestOptions {
@@ -43,7 +65,10 @@ export async function request<T>(
   options: RequestOptions = {},
 ): Promise<T> {
   const headers: Record<string, string> = { accept: "application/json", ...options.headers };
-  const init: RequestInit = { method, headers, credentials: "same-origin" };
+  // The site API needs the visitor/operator cookies (possibly cross-origin) and, on every write,
+  // the marker header `X-SV-Site` (contract section 6.4).
+  if (method !== "GET") headers["x-sv-site"] = "1";
+  const init: RequestInit = { method, headers, credentials: "include" };
   if (options.signal) init.signal = options.signal;
   if (options.body !== undefined) {
     headers["content-type"] = "application/json";
@@ -51,8 +76,14 @@ export async function request<T>(
   }
   const response = await fetch(buildUrl(path, options.query), init);
   const text = await response.text();
-  const parsed: unknown = text ? JSON.parse(text) : undefined;
+  let parsed: unknown;
+  try {
+    parsed = text ? JSON.parse(text) : undefined;
+  } catch {
+    parsed = undefined;
+  }
   if (!response.ok) throw new ApiError(response.status, parsed);
+  if (isEnvelope(parsed) && "data" in parsed) return parsed.data as T;
   return parsed as T;
 }
 
