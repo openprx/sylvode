@@ -7,6 +7,9 @@ publish = false
 description = "Sylvode package format: manifest canonicalisation, signing and container"
 
 [dependencies]
+base64.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 ring.workspace = true
 semver.workspace = true
 serde_jcs.workspace = true
@@ -15,3 +18,7 @@ zip.workspace = true
 
 [lints]
 workspace = true
+
+[[bin]]
+name = "sv-pack"
+path = "src/bin/sv-pack.rs"

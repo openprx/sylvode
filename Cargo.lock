@@ -4561,9 +4561,12 @@ dependencies = [
 name = "sv-package"
 version = "0.5.0"
 dependencies = [
+ "base64 0.22.1",
  "ring",
  "semver",
+ "serde",
  "serde_jcs",
+ "serde_json",
  "sha2",
  "zip",
 ]

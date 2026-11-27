@@ -1,1 +1,26 @@
-//! Package format `sv.package.v1`: canonical manifest, Ed25519 signature and zip container. Scaffolding only; no logic yet.
+//! Package format `sv.package.v1`: manifest types, canonical bytes (RFC 8785) with a
+//! domain-separated Ed25519 signature, package digest, and the zip container with its guards.
+//!
+//! Flow for a consumer: [`unpack`] (structure, limits, file digests) then
+//! [`UnverifiedPackage::verify`] with the registry's key lookup, which yields a
+//! [`VerifiedPackage`]. Producers use [`pack`] (or the `sv-pack` command).
+
+mod container;
+mod error;
+mod manifest;
+mod sign;
+mod strict;
+
+pub use container::{
+    KeyLookup, Limits, MANIFEST_NAME, PackageData, SIGNATURE_NAME, UnverifiedPackage, VerifiedPackage, pack, unpack,
+    validate_entry_path,
+};
+pub use error::{ErrorCode, PackageError, Result};
+pub use manifest::{
+    Bind, Compat, ComponentEntry, FormEntry, Kind, LayoutEntry, Manifest, PageEntry, Publisher, SCHEMA_ID,
+};
+pub use sign::{
+    SIGNING_DOMAIN, canonical_bytes, generate_pkcs8, hex, key_id, keypair_from_pkcs8, package_digest, public_key,
+    sha256_digest, sign, verify,
+};
+pub use strict::parse_manifest;
