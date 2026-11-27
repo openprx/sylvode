@@ -23,9 +23,27 @@ const fn channel(principal: &Principal) -> Exposure {
 /// 3. a plugin or an installation needs the id in the generation's requested ids, a grant with
 ///    this id, a target in its own workspace, and a grant whose selector matches the target.
 ///
+/// This is [`allowed_pre`] followed by [`allowed_target`]. The host calls the two halves around the
+/// resolution of the target (see [`allowed_pre`]).
+///
 /// # Errors
 /// The [`Refusal`] of the first failed step.
 pub fn allowed(principal: &Principal, entry: &Entry, resource: &Resource) -> Result<(), Refusal> {
+    allowed_pre(principal, entry)?;
+    allowed_target(principal, entry, resource)
+}
+
+/// Steps 1 and 3a-3b: everything that can be decided without looking at the target.
+///
+/// A plugin host runs this **before** it resolves the target, so that a guest which is not allowed
+/// to use an id at all learns nothing from the target it names, and runs [`allowed_target`] on the
+/// resolved target only after this half passed. A target that cannot be resolved is then answered
+/// with the same refusal as a target outside the installation's workspace
+/// ([`RefusalCode::CapabilityScopeMismatch`]), so the answer never says whether an id exists.
+///
+/// # Errors
+/// The [`Refusal`] of the first failed step.
+pub fn allowed_pre(principal: &Principal, entry: &Entry) -> Result<(), Refusal> {
     let capability = entry.capability();
     let refuse = |code| Refusal::new(code, Some(capability));
     if !entry.exposure.contains(channel(principal)) {
@@ -35,29 +53,38 @@ pub fn allowed(principal: &Principal, entry: &Entry, resource: &Resource) -> Res
         Principal::User { .. } | Principal::Bot { .. } | Principal::Delegated { .. } => return Ok(()),
         Principal::Plugin { installation, .. } | Principal::Installation { installation, .. } => installation,
     };
-    check_installation(installation, capability, resource).map_err(refuse)
+    check_requested_and_granted(installation, capability).map_err(refuse)
 }
 
-/// The order matters: a plugin must not learn from the answer whether a target exists. Once the id
-/// is requested and granted somewhere, every mismatch of project or selector is `not_granted`;
-/// only a target outside the installation's workspace is a scope mismatch. A selector key the
-/// resource cannot supply never matches.
-fn check_installation(
-    installation: &InstallationView,
-    capability: &str,
-    resource: &Resource,
-) -> Result<(), RefusalCode> {
+/// Steps 3c-3d: the target against the installation's workspace, project and grant selectors.
+/// Only meaningful after [`allowed_pre`] passed; users, bots and delegated callers pass.
+///
+/// # Errors
+/// The [`Refusal`] of the first failed step.
+pub fn allowed_target(principal: &Principal, entry: &Entry, resource: &Resource) -> Result<(), Refusal> {
+    let capability = entry.capability();
+    let installation = match principal {
+        Principal::User { .. } | Principal::Bot { .. } | Principal::Delegated { .. } => return Ok(()),
+        Principal::Plugin { installation, .. } | Principal::Installation { installation, .. } => installation,
+    };
+    check_target(installation, capability, resource).map_err(|code| Refusal::new(code, Some(capability)))
+}
+
+fn check_requested_and_granted(installation: &InstallationView, capability: &str) -> Result<(), RefusalCode> {
     if !installation.requested.contains(capability) {
         return Err(RefusalCode::CapabilityNotRequested);
     }
-    let mut grants = installation
-        .grants
-        .iter()
-        .filter(|grant| grant.capability == capability)
-        .peekable();
-    if grants.peek().is_none() {
-        return Err(RefusalCode::CapabilityNotGranted);
+    if installation.grants.iter().any(|grant| grant.capability == capability) {
+        Ok(())
+    } else {
+        Err(RefusalCode::CapabilityNotGranted)
     }
+}
+
+/// A target outside the installation's workspace is a scope mismatch; every other mismatch of
+/// project or selector is `not_granted`, so a plugin learns nothing about objects outside its
+/// grants. A selector key the resource cannot supply never matches.
+fn check_target(installation: &InstallationView, capability: &str, resource: &Resource) -> Result<(), RefusalCode> {
     if resource.workspace_id != installation.workspace_id {
         return Err(RefusalCode::CapabilityScopeMismatch);
     }
@@ -65,10 +92,14 @@ fn check_installation(
         .project_id
         .is_none_or(|project| resource.project_id == Some(project));
     let matched = in_project
-        && grants.any(|grant| {
-            grant.project.is_none_or(|project| resource.project_id == Some(project))
-                && grant.form.is_none_or(|form| resource.form_id == Some(form))
-        });
+        && installation
+            .grants
+            .iter()
+            .filter(|grant| grant.capability == capability)
+            .any(|grant| {
+                grant.project.is_none_or(|project| resource.project_id == Some(project))
+                    && grant.form.is_none_or(|form| resource.form_id == Some(form))
+            });
     if matched {
         Ok(())
     } else {
@@ -82,7 +113,7 @@ mod tests {
 
     use uuid::Uuid;
 
-    use super::allowed;
+    use super::{allowed, allowed_pre, allowed_target};
     use crate::catalogue::principal::{Grant, InstallationView, Invoker, Principal, Resource};
     use crate::catalogue::refusal::RefusalCode;
     use crate::catalogue::types::dsl::*;
@@ -266,5 +297,64 @@ mod tests {
         // A workspace installation with an unselected grant reaches any project of the workspace.
         let any = plugin(installation(workspace, None, vec![grant(None, None)]));
         assert_eq!(code(allowed(&any, &PLUGIN_READ, &resource)), None);
+    }
+
+    /// The two halves of the check: the first needs no target, the second judges the resolved one,
+    /// and together they equal [`allowed`]. A host that resolves a target only after the first half
+    /// passed never lets a guest probe an id it may not use.
+    #[test]
+    fn the_check_splits_into_a_pre_resolution_and_a_target_half() {
+        let workspace = Uuid::from_u128(2);
+        let project = Uuid::from_u128(5);
+        let granted = plugin(installation(workspace, Some(project), vec![grant(Some(project), None)]));
+        assert_eq!(code(allowed_pre(&granted, &PLUGIN_READ)), None);
+        assert_eq!(
+            code(allowed_pre(&granted, &CONSOLE_ONLY)),
+            Some(RefusalCode::CapabilityNotExposed)
+        );
+        let mut unrequested = installation(workspace, Some(project), vec![grant(None, None)]);
+        unrequested.requested.clear();
+        assert_eq!(
+            code(allowed_pre(&plugin(unrequested), &PLUGIN_READ)),
+            Some(RefusalCode::CapabilityNotRequested)
+        );
+        assert_eq!(
+            code(allowed_pre(
+                &plugin(installation(workspace, None, vec![])),
+                &PLUGIN_READ
+            )),
+            Some(RefusalCode::CapabilityNotGranted)
+        );
+        // The first half passes whatever the target is; the second half is where it is judged.
+        let other_workspace = Resource {
+            workspace_id: Uuid::from_u128(7),
+            project_id: Some(project),
+            form_id: None,
+        };
+        let other_project = Resource {
+            workspace_id: workspace,
+            project_id: Some(Uuid::from_u128(8)),
+            form_id: None,
+        };
+        let inside = Resource {
+            workspace_id: workspace,
+            project_id: Some(project),
+            form_id: None,
+        };
+        assert_eq!(
+            code(allowed_target(&granted, &PLUGIN_READ, &other_workspace)),
+            Some(RefusalCode::CapabilityScopeMismatch)
+        );
+        assert_eq!(
+            code(allowed_target(&granted, &PLUGIN_READ, &other_project)),
+            Some(RefusalCode::CapabilityNotGranted)
+        );
+        assert_eq!(code(allowed_target(&granted, &PLUGIN_READ, &inside)), None);
+        for resource in [&other_workspace, &other_project, &inside] {
+            assert_eq!(
+                code(allowed(&granted, &PLUGIN_READ, resource)),
+                code(allowed_target(&granted, &PLUGIN_READ, resource))
+            );
+        }
     }
 }

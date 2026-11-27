@@ -17,6 +17,38 @@ pub enum RefusalCode {
     CapabilityNotRequested,
     /// No grant covers the id and the target.
     CapabilityNotGranted,
+    /// Plugin host: a plugin may not call the extension routes.
+    PluginReentry,
+    /// Plugin host: the component was built for another plugin interface version.
+    PluginWitVersion,
+    /// Plugin host: the component does not export the requested world.
+    PluginWorldMismatch,
+    /// Plugin host: the component imports something this host does not provide.
+    PluginUnknownImport,
+    /// Plugin host: the component is not a valid plugin component.
+    PluginInvalidComponent,
+    /// Plugin host: the component is larger than the limit.
+    PluginComponentTooLarge,
+    /// Plugin host: the input is larger than the limit.
+    PluginInputTooLarge,
+    /// Plugin host: the output is larger than the limit.
+    PluginOutputTooLarge,
+    /// Plugin host: the plugin ran past its time limit.
+    PluginDeadlineExceeded,
+    /// Plugin host: the plugin used up its compute budget.
+    PluginFuelExhausted,
+    /// Plugin host: the plugin asked for more memory than the limit.
+    PluginMemoryLimit,
+    /// Plugin host: the plugin made more host calls than the limit.
+    PluginHostCallLimit,
+    /// Plugin host: too many plugin runs at the same time.
+    PluginConcurrencyLimit,
+    /// Plugin host: the plugin reported an error.
+    PluginGuestError,
+    /// Plugin host: the plugin failed.
+    PluginFailed,
+    /// Plugin host: the action is not one the plugin declares.
+    PluginActionUnknown,
     /// The old plugin system accepts installs and updates from workspace owners and admins only.
     LegacyPluginAdminOnly,
     /// A `formula` patch names a key the caller may not write.
@@ -36,6 +68,22 @@ impl RefusalCode {
             Self::CapabilityScopeMismatch => "capability_scope_mismatch",
             Self::CapabilityNotRequested => "capability_not_requested",
             Self::CapabilityNotGranted => "capability_not_granted",
+            Self::PluginReentry => "plugin_reentry",
+            Self::PluginWitVersion => "plugin_wit_version",
+            Self::PluginWorldMismatch => "plugin_world_mismatch",
+            Self::PluginUnknownImport => "plugin_unknown_import",
+            Self::PluginInvalidComponent => "plugin_invalid_component",
+            Self::PluginComponentTooLarge => "plugin_component_too_large",
+            Self::PluginInputTooLarge => "plugin_input_too_large",
+            Self::PluginOutputTooLarge => "plugin_output_too_large",
+            Self::PluginDeadlineExceeded => "plugin_deadline_exceeded",
+            Self::PluginFuelExhausted => "plugin_fuel_exhausted",
+            Self::PluginMemoryLimit => "plugin_memory_limit",
+            Self::PluginHostCallLimit => "plugin_host_call_limit",
+            Self::PluginConcurrencyLimit => "plugin_concurrency_limit",
+            Self::PluginGuestError => "plugin_guest_error",
+            Self::PluginFailed => "plugin_failed",
+            Self::PluginActionUnknown => "plugin_action_unknown",
             Self::LegacyPluginAdminOnly => "legacy_plugin_admin_only",
             Self::LegacyPluginPatchDenied => "legacy_plugin_patch_denied",
             Self::LegacyPluginValidationFailed => "legacy_plugin_validation_failed",
@@ -47,8 +95,20 @@ impl RefusalCode {
     #[must_use]
     pub const fn status(self) -> i32 {
         match self {
-            Self::LegacyPluginValidationFailed => 422,
-            Self::LegacyPluginBusy => 429,
+            Self::LegacyPluginValidationFailed
+            | Self::PluginWitVersion
+            | Self::PluginWorldMismatch
+            | Self::PluginUnknownImport
+            | Self::PluginInvalidComponent
+            | Self::PluginDeadlineExceeded
+            | Self::PluginFuelExhausted
+            | Self::PluginMemoryLimit
+            | Self::PluginHostCallLimit
+            | Self::PluginGuestError
+            | Self::PluginFailed => 422,
+            Self::PluginComponentTooLarge | Self::PluginInputTooLarge | Self::PluginOutputTooLarge => 413,
+            Self::LegacyPluginBusy | Self::PluginConcurrencyLimit => 429,
+            Self::PluginActionUnknown => 404,
             _ => 403,
         }
     }
@@ -62,6 +122,22 @@ impl RefusalCode {
             Self::CapabilityScopeMismatch => "the target is outside the scope of this caller",
             Self::CapabilityNotRequested => "this operation was not requested",
             Self::CapabilityNotGranted => "this operation was not granted",
+            Self::PluginReentry => "a plugin may not call the extension routes",
+            Self::PluginWitVersion => "the component was built for another plugin interface version",
+            Self::PluginWorldMismatch => "the component does not export the requested world",
+            Self::PluginUnknownImport => "the component imports something this host does not provide",
+            Self::PluginInvalidComponent => "the component is not a valid plugin component",
+            Self::PluginComponentTooLarge => "the component is larger than the limit",
+            Self::PluginInputTooLarge => "the input is larger than the limit",
+            Self::PluginOutputTooLarge => "the output is larger than the limit",
+            Self::PluginDeadlineExceeded => "the plugin ran past its time limit",
+            Self::PluginFuelExhausted => "the plugin used up its compute budget",
+            Self::PluginMemoryLimit => "the plugin asked for more memory than the limit",
+            Self::PluginHostCallLimit => "the plugin made more host calls than the limit",
+            Self::PluginConcurrencyLimit => "too many plugin runs at the same time",
+            Self::PluginGuestError => "the plugin reported an error",
+            Self::PluginFailed => "the plugin failed",
+            Self::PluginActionUnknown => "the plugin has no such action",
             Self::LegacyPluginAdminOnly => "only a workspace owner or admin may install or update a plugin",
             Self::LegacyPluginPatchDenied => "the plugin may not change this field",
             Self::LegacyPluginValidationFailed => "the plugin refused this value",

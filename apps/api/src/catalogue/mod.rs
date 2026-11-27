@@ -23,7 +23,7 @@ pub mod uncatalogued;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-pub use check::allowed;
+pub use check::{allowed, allowed_pre, allowed_target};
 pub use principal::{Grant, InstallationView, Invoker, Principal, Resource};
 pub use refusal::{Refusal, RefusalCode};
 pub use types::{Entry, Exposure, Find, Method, Risk, Scope, SiteFind, Stability};
