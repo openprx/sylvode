@@ -236,7 +236,7 @@ async function api(route) {
 		return reply({ items: [], projects: [] });
 	}
 	// Endpoints the shared mock does not answer, unrelated to this check.
-	if (path === '/api/v1/scenario-templates') return reply(page_([]));
+	if (path.endsWith('/packages')) return reply(page_([]));
 	if (path.endsWith('/features/flow')) return reply({ enabled: false });
 	if (path === `/api/v1/projects/${projectId}/forms`) {
 		const upstream = await route.fetch();

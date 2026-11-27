@@ -1,15 +1,8 @@
 import { describeResult } from '#lib/i18n/describe.js';
 import { formsApi } from '#lib/api/forms.js';
-import type { ScenarioTemplate } from '#lib/api/projects.js';
+import { projectsApi, type TemplatePackage } from '#lib/api/projects.js';
 import { toast } from '#lib/stores/toast.js';
-import { scenarioTemplateDescription, scenarioTemplateName } from '#lib/utils/project-type-i18n.js';
 import { blankFieldDraft } from '#lib/forms/designer-schema.js';
-import {
-	fieldDraftsFromSchema,
-	normalizeTemplateSchema,
-	templateFormKey,
-	templateTitleTemplate
-} from '#lib/forms/designer-schema.js';
 import { translate } from '#lib/forms/i18n.js';
 import { isRecord } from '#lib/forms/record-format.js';
 import { FormsController } from '#lib/forms/state/controller.js';
@@ -73,42 +66,11 @@ export class CreateFormController extends FormsController {
 		this.s.showAdvancedSchema = false;
 	};
 
-	applyScenarioTemplate = (template: ScenarioTemplate) => {
-		const schema = normalizeTemplateSchema(template.field_schema);
+	/** Installs a form-template package into the project and opens its first form. */
+	installTemplatePackage = async (template: TemplatePackage) => {
+		this.s.installingTemplateKey = template.package_key;
 
-		this.s.formDraft = {
-			key: templateFormKey(template),
-			name: scenarioTemplateName(template, translate),
-			description: scenarioTemplateDescription(template, translate),
-			title_template: templateTitleTemplate(schema),
-			schemaText: JSON.stringify(schema, null, 2)
-		};
-
-		this.s.fieldDrafts = fieldDraftsFromSchema(schema);
-		this.s.showAdvancedSchema = false;
-		toast.success(translate('forms.templateApplied'));
-	};
-
-	uniqueTemplateKey = (template: ScenarioTemplate): string => {
-		const base = templateFormKey(template);
-
-		if (!this.s.forms.some((form) => form.key === base)) return base;
-
-		return `${base}_${Date.now().toString(36)}`;
-	};
-
-	installScenarioTemplate = async (template: ScenarioTemplate) => {
-		this.s.installingTemplateKey = template.key;
-
-		const schema = normalizeTemplateSchema(template.field_schema);
-
-		const response = await formsApi.createFromTemplate(this.s.projectId, {
-			template_key: template.key,
-			key: this.uniqueTemplateKey(template),
-			name: scenarioTemplateName(template, translate),
-			description: scenarioTemplateDescription(template, translate),
-			title_template: templateTitleTemplate(schema)
-		});
+		const response = await projectsApi.installTemplate(this.s.projectId, template.package_key);
 
 		this.s.installingTemplateKey = null;
 
@@ -118,13 +80,17 @@ export class CreateFormController extends FormsController {
 			return;
 		}
 
-		this.s.forms = [response.data, ...this.s.forms.filter((form) => form.id !== response.data?.id)];
+		await this.fp.loaders.loadForms();
 
 		this.s.showCreateForm = false;
 		toast.success(translate('forms.templateInstalled'));
-		await this.fp.session.openForm(response.data.id);
-		this.s.activeMode = 'design';
-		void this.fp.designer.loadDesignerSafety(response.data);
+
+		const first = response.data.forms[0];
+
+		if (first) {
+			await this.fp.session.openForm(first.form_id);
+			this.s.activeMode = 'design';
+		}
 	};
 
 	addFieldDraft = () => {

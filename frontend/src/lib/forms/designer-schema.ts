@@ -1,5 +1,4 @@
 import type { FormField, FormFieldType } from '#lib/api/forms.js';
-import type { ScenarioTemplate } from '#lib/api/projects.js';
 import { fieldConditionToText, parseFieldConditionText } from '#lib/forms/field-conditions.js';
 import {
 	fieldArchivedOptions,
@@ -100,35 +99,6 @@ export function blankFieldDraft(): FieldDraft {
 		attachmentRetentionDays: '',
 		attachmentSignedUrlTtlMinutes: '10'
 	};
-}
-
-export function normalizeTemplateSchema(schema: Record<string, unknown>): Record<string, unknown> {
-	const fields = Array.isArray(schema.fields)
-		? schema.fields.map((field) => {
-				if (!isRecord(field)) return field;
-
-				return {
-					...field,
-					type: field.type === 'select' ? 'single_select' : field.type
-				};
-			})
-		: [];
-
-	return {
-		...schema,
-		version: typeof schema.version === 'string' ? schema.version : FORM_SCHEMA_VERSION,
-		fields
-	};
-}
-
-export function templateFormKey(template: ScenarioTemplate): string {
-	return template.key.replace(/_default$/, '');
-}
-
-export function templateTitleTemplate(schema: Record<string, unknown>): string {
-	const field = parseFields(schema).find((item) => item.required) ?? parseFields(schema)[0];
-
-	return field ? `{${field.key}}` : '{id}';
 }
 
 export function fieldDraftsFromSchema(schema: Record<string, unknown>): FieldDraft[] {

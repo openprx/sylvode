@@ -31,7 +31,7 @@
 		openForm,
 		rememberFormsFocus
 	} = fp.session;
-	const { loadProject, loadScenarioTemplates, loadWorkspaceMembers, loadForms, loadRecords } =
+	const { loadProject, loadTemplatePackages, loadWorkspaceMembers, loadForms, loadRecords } =
 		fp.loaders;
 	const { handleGlobalKeydown } = fp.records;
 	const { restoreRecordDetailFromUrl, openRecordPanel } = fp.recordPanel;
@@ -62,12 +62,7 @@
 	});
 
 	onMount(async () => {
-		await Promise.all([
-			loadProject(),
-			loadForms(),
-			loadScenarioTemplates(),
-			loadWorkspaceMembers()
-		]);
+		await Promise.all([loadProject(), loadForms(), loadTemplatePackages(), loadWorkspaceMembers()]);
 
 		await restoreRecordDetailFromUrl();
 		s.loading = false;

@@ -299,7 +299,7 @@ location.replace('/workspace/${workspaceId}/projects?phase1_project_types_smoke=
 		return;
 	}
 
-	if (pathname === '/api/v1/scenario-templates') {
+	if (pathname.endsWith('/packages')) {
 		json(res, 200, apiResult(paginated([])));
 		return;
 	}

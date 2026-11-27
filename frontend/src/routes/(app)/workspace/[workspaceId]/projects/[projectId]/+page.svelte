@@ -18,16 +18,6 @@
 	import { toast } from '#lib/stores/toast.js';
 	import Button from '#lib/ui/button/Button.svelte';
 	import { requireRouteParam } from '#lib/utils/route-params.js';
-	import {
-		getProjectScenarioTemplate,
-		getScenarioFields,
-		templateArray
-	} from '#lib/utils/scenario-template.js';
-	import {
-		scenarioTemplateAudience,
-		scenarioTemplateIndustry,
-		scenarioTemplateName
-	} from '#lib/utils/project-type-i18n.js';
 
 	const workspaceId = requireRouteParam(page.params.workspaceId, 'workspaceId');
 	const projectId = requireRouteParam(page.params.projectId, 'projectId');
@@ -37,11 +27,6 @@
 	let loading = $state(true);
 	let exporting = $state(false);
 	let importing = $state(false);
-	const scenarioTemplate = $derived(getProjectScenarioTemplate(project));
-	const scenarioFields = $derived(getScenarioFields(scenarioTemplate));
-	const scenarioWorkflowStates = $derived(
-		templateArray(scenarioTemplate, 'workflow_template', 'states')
-	);
 
 	const workbench = getContext<TaskWorkbench | undefined>(WORKBENCH_CONTEXT);
 	const taskKey = `project:${projectId}`;
@@ -302,70 +287,6 @@
 			{workspaceId}
 			class="mb-8"
 		/>
-
-		{#if scenarioTemplate}
-			<div class="mb-8 rounded-card border border-line bg-raised p-6">
-				<div class="mb-5 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-					<div>
-						<p class="text-xs font-medium uppercase tracking-wide text-fg-muted">
-							{scenarioTemplateIndustry(scenarioTemplate.industry, $t)}
-						</p>
-						<h2 class="mt-1 text-lg font-semibold text-fg">
-							{scenarioTemplateName(scenarioTemplate, $t)}
-						</h2>
-						<p class="mt-1 text-sm text-fg-muted">
-							{scenarioTemplateAudience(scenarioTemplate.audience_label, scenarioTemplate.key, $t)}
-						</p>
-					</div>
-					<a
-						href={resolve('/(app)/workspace/[workspaceId]/projects/[projectId]/issues', {
-							workspaceId,
-							projectId
-						})}
-						class="inline-flex items-center justify-center rounded-control border border-line px-3 py-2 text-sm font-medium text-fg transition-colors hover:border-line-strong hover:bg-surface"
-					>
-						{$t('project.openScenarioWork')}
-					</a>
-				</div>
-
-				<div class="grid gap-3 md:grid-cols-3">
-					<div class="rounded-card bg-surface p-4">
-						<p class="text-xs font-medium uppercase text-fg-muted">
-							{$t('project.workflow')}
-						</p>
-						<p class="mt-2 text-2xl font-semibold text-fg">
-							{scenarioWorkflowStates.length}
-						</p>
-					</div>
-					<div class="rounded-card bg-surface p-4">
-						<p class="text-xs font-medium uppercase text-fg-muted">
-							{$t('project.fields')}
-						</p>
-						<p class="mt-2 text-2xl font-semibold text-fg">
-							{scenarioFields.length}
-						</p>
-					</div>
-				</div>
-
-				<div class="mt-5 grid gap-5">
-					<div>
-						<h3 class="mb-2 text-sm font-semibold text-fg">
-							{$t('project.scenarioFields')}
-						</h3>
-						<div class="space-y-2">
-							{#each scenarioFields.slice(0, 5) as field (field.key)}
-								<div
-									class="flex items-center justify-between rounded-control border border-line px-3 py-2 text-sm"
-								>
-									<span class="text-fg">{field.label}</span>
-									<span class="text-xs text-fg-muted">{field.type}</span>
-								</div>
-							{/each}
-						</div>
-					</div>
-				</div>
-			</div>
-		{/if}
 
 		<div class="rounded-card border border-line bg-raised p-6">
 			<h2 class="mb-4 text-lg font-semibold text-fg">

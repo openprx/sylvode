@@ -32,23 +32,22 @@ export interface ProjectType {
 	updated_at: string;
 }
 
-export interface ScenarioTemplate {
+export interface TemplatePackage {
 	id: string;
-	key: string;
-	workspace_id?: string | null;
-	name: string;
-	description: string;
-	industry: string;
-	project_type_key: string;
-	audience_label: string;
-	workflow_template: Record<string, unknown>;
-	field_schema: Record<string, unknown>;
-	resource_schema: Record<string, unknown>;
-	ai_roles: unknown[];
-	governance_policy: Record<string, unknown>;
-	sample_data: Record<string, unknown>;
-	created_at: string;
-	updated_at: string;
+	digest: string;
+	package_key: string;
+	version: string;
+	kind: string;
+	tier: string;
+	custom_code: boolean;
+	summary: Record<string, string> | null;
+}
+
+export interface TemplateInstallResult {
+	installation_id: string;
+	package_key: string;
+	version: string;
+	forms: { bind: string; form_id: string }[];
 }
 
 export interface ProjectAgentPolicy {
@@ -112,7 +111,8 @@ export const projectsApi = {
 			description?: string;
 			type_key?: string;
 			type_settings?: Record<string, unknown>;
-			scenario_template_key?: string;
+			/** Key of a built-in template package (owners and admins), for example `sv/contract-review`. */
+			template_package?: string;
 		}
 	): Promise<ApiResult<Project>> {
 		return apiClient.post<Project>(`/api/v1/workspaces/${workspaceId}/projects`, data);
@@ -164,20 +164,20 @@ export const projectsApi = {
 		return apiClient.patch<ProjectType>(`/api/v1/project-types/${key}`, data);
 	},
 
-	listScenarioTemplates(params?: {
-		project_type_key?: string;
-		industry?: string;
-	}): Promise<ApiResult<PaginatedData<ScenarioTemplate>>> {
-		const query = new URLSearchParams();
-		if (params?.project_type_key) query.append('project_type_key', params.project_type_key);
-		if (params?.industry) query.append('industry', params.industry);
-		const endpoint = query.size
-			? `/api/v1/scenario-templates?${query.toString()}`
-			: '/api/v1/scenario-templates';
-		return apiClient.get<PaginatedData<ScenarioTemplate>>(endpoint);
+	/** The built-in and private packages of kind form-template. */
+	listTemplatePackages(workspaceId: string): Promise<ApiResult<PaginatedData<TemplatePackage>>> {
+		return apiClient.get<PaginatedData<TemplatePackage>>(
+			`/api/v1/workspaces/${workspaceId}/packages?kind=form-template&per_page=200`
+		);
 	},
 
-	getScenarioTemplate(key: string): Promise<ApiResult<ScenarioTemplate>> {
-		return apiClient.get<ScenarioTemplate>(`/api/v1/scenario-templates/${key}`);
+	/** Installs a built-in template package into a project and approves it (owners and admins). */
+	installTemplate(
+		projectId: string,
+		packageKey: string
+	): Promise<ApiResult<TemplateInstallResult>> {
+		return apiClient.post<TemplateInstallResult>(`/api/v1/projects/${projectId}/template-install`, {
+			package_key: packageKey
+		});
 	}
 };

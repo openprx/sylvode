@@ -156,8 +156,6 @@
 		"forms": "Forms",
 		"formsDesc": "Custom fields, records, totals and linked business data.",
 		"connections": "Connections",
-		"scenarioFields": "Scenario Fields",
-		"openScenarioWork": "Open Work",
 		"connectionSetup": "Connection Setup",
 		"connection": "Connection",
 		"enabled": "Enabled",
@@ -193,6 +191,8 @@
 		"note": "Note",
 		"keyImmutable": "Project key ({key}) cannot be changed after creation",
 		"enterName": "Please enter project name",
+		"template": "Template",
+		"noTemplate": "No template",
 		"enterKey": "Please enter project key",
 		"keyValidation": "Project key must be 2-10 uppercase letters or numbers",
 		"createSuccess": "Project created",
@@ -269,8 +269,6 @@
 		"noMatched": "No matching issues",
 		"pagination": "Total {total}, page {current}/{pages}",
 		"titleRequired": "Title is required",
-		"scenarioFields": "Scenario Fields",
-		"scenarioFieldRequired": "{field} is required",
 		"selectPlaceholder": "Select...",
 		"updated": "Issue updated",
 		"statusUpdated": "Status updated",
@@ -1500,40 +1498,6 @@
 			"restaurant_ordering": "Restaurant ordering workflow for menu SKU, tables, orders, kitchen tickets, receipts, and daily revenue."
 		}
 	},
-	"scenarioTemplates": {
-		"industries": {
-			"software": "Software",
-			"legal": "Legal",
-			"delivery": "Delivery",
-			"operations": "Operations",
-			"quality": "Quality",
-			"restaurant": "Restaurant"
-		},
-		"systemNames": {
-			"code_delivery_default": "Code Delivery",
-			"contract_review_default": "Contract Review",
-			"customer_delivery_default": "Customer Delivery",
-			"equipment_maintenance_default": "Equipment Maintenance",
-			"quality_corrective_action_default": "Quality Corrective Action",
-			"restaurant_ordering_default": "Restaurant Ordering"
-		},
-		"systemDescriptions": {
-			"code_delivery_default": "AI-assisted software delivery covering code review, CI, release evidence, and automation.",
-			"contract_review_default": "Contract intake, risk analysis, legal review, approval, and archive.",
-			"customer_delivery_default": "Customer milestones, acceptance materials, risks, changes, and delivery governance.",
-			"equipment_maintenance_default": "Equipment faults, repair ownership, downtime impact, site materials, and inspection acceptance.",
-			"quality_corrective_action_default": "Quality issue intake, defect classification, root cause, corrective action, and recheck.",
-			"restaurant_ordering_default": "Menu SKU, tables, orders, kitchen printing, receipts, cashier flow, and daily revenue reporting."
-		},
-		"audiences": {
-			"code_delivery_default": "Software team",
-			"contract_review_default": "Legal team",
-			"customer_delivery_default": "Delivery team",
-			"equipment_maintenance_default": "Operations team",
-			"quality_corrective_action_default": "Quality team",
-			"restaurant_ordering_default": "Restaurant operator"
-		}
-	},
 	"connections": {
 		"title": "Operation Records",
 		"subtitle": "Metadata-only history of every authenticated MCP, CLI, and bot REST operation.",
@@ -1578,10 +1542,8 @@
 		"templateLibrary": "Template library",
 		"templateLibraryDescription": "Start from contract, equipment, quality, delivery, restaurant and other business templates; templates belong to universal forms, not project types.",
 		"refreshTemplates": "Refresh templates",
-		"applyTemplate": "Apply to draft",
 		"installTemplate": "Install",
 		"noTemplates": "No templates available.",
-		"templateApplied": "Template applied to the form draft",
 		"templateInstalled": "Template form installed",
 		"key": "Key",
 		"name": "Name",

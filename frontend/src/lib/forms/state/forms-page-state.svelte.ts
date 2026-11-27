@@ -24,7 +24,7 @@ import type {
 	FormField
 } from '#lib/api/forms.js';
 import type { WorkspaceMember } from '#lib/api/members.js';
-import type { Project, ScenarioTemplate } from '#lib/api/projects.js';
+import type { Project, TemplatePackage } from '#lib/api/projects.js';
 import type RecordGrid from '#lib/components/forms/RecordGrid.svelte';
 import type RecordSidePanel from '#lib/components/forms/RecordSidePanel.svelte';
 import {
@@ -120,7 +120,7 @@ export class FormsPageState {
 
 	// owner: loaders
 	project = $state<Project | null>(null);
-	scenarioTemplates = $state<ScenarioTemplate[]>([]);
+	templatePackages = $state<TemplatePackage[]>([]);
 	forms = $state<UniversalForm[]>([]);
 	formViews = $state<FormView[]>([]);
 

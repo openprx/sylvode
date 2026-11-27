@@ -156,8 +156,6 @@
 		"forms": "万能表单",
 		"formsDesc": "自定义字段、记录、汇总和关联业务数据。",
 		"connections": "连接",
-		"scenarioFields": "场景字段",
-		"openScenarioWork": "进入工作项",
 		"connectionSetup": "连接设置",
 		"connection": "连接",
 		"enabled": "已启用",
@@ -193,6 +191,8 @@
 		"note": "注意",
 		"keyImmutable": "项目标识（{key}）创建后不可修改",
 		"enterName": "请输入项目名称",
+		"template": "模板",
+		"noTemplate": "不使用模板",
 		"enterKey": "请输入项目标识",
 		"keyValidation": "项目标识必须是 2-10 位大写字母或数字",
 		"createSuccess": "项目创建成功",
@@ -269,8 +269,6 @@
 		"noMatched": "未匹配到工作项",
 		"pagination": "共 {total} 条，第 {current}/{pages} 页",
 		"titleRequired": "标题不能为空",
-		"scenarioFields": "场景字段",
-		"scenarioFieldRequired": "{field} 为必填项",
 		"selectPlaceholder": "请选择...",
 		"updated": "工作项已更新",
 		"statusUpdated": "状态已更新",
@@ -1500,40 +1498,6 @@
 			"restaurant_ordering": "面向菜单 SKU、桌台、订单、后厨票据、小票和营业报表的餐厅点餐流程。"
 		}
 	},
-	"scenarioTemplates": {
-		"industries": {
-			"software": "软件",
-			"legal": "法务",
-			"delivery": "交付",
-			"operations": "运营",
-			"quality": "质量",
-			"restaurant": "餐饮"
-		},
-		"systemNames": {
-			"code_delivery_default": "代码交付",
-			"contract_review_default": "合同评审",
-			"customer_delivery_default": "客户交付",
-			"equipment_maintenance_default": "设备维保",
-			"quality_corrective_action_default": "质量纠正措施",
-			"restaurant_ordering_default": "餐厅点餐"
-		},
-		"systemDescriptions": {
-			"code_delivery_default": "AI 辅助的软件交付，覆盖代码评审、CI、发布证据和自动化执行。",
-			"contract_review_default": "合同接收、风险分析、法务评审、审批和归档。",
-			"customer_delivery_default": "客户里程碑、验收材料、风险、变更和交付治理。",
-			"equipment_maintenance_default": "设备报修、维修派单、停机影响、现场材料和验收检查。",
-			"quality_corrective_action_default": "质量问题登记、缺陷分类、根因分析、纠正措施和复检。",
-			"restaurant_ordering_default": "菜单 SKU、桌台、订单、后厨打印、小票、收银和营业报表。"
-		},
-		"audiences": {
-			"code_delivery_default": "软件团队",
-			"contract_review_default": "法务团队",
-			"customer_delivery_default": "交付团队",
-			"equipment_maintenance_default": "运维团队",
-			"quality_corrective_action_default": "质量团队",
-			"restaurant_ordering_default": "餐厅经营者"
-		}
-	},
 	"connections": {
 		"title": "操作记录",
 		"subtitle": "记录所有已认证 MCP、CLI 与 Bot REST 操作的纯元数据历史。",
@@ -1578,10 +1542,8 @@
 		"templateLibrary": "模板库",
 		"templateLibraryDescription": "从合同、设备、质量、交付、餐厅等业务模板开始；模板属于万能表单，不属于项目类型。",
 		"refreshTemplates": "刷新模板",
-		"applyTemplate": "套用到草稿",
 		"installTemplate": "直接安装",
 		"noTemplates": "暂无可用模板。",
-		"templateApplied": "模板已套用到表单草稿",
 		"templateInstalled": "模板表单已安装",
 		"key": "标识",
 		"name": "名称",

@@ -5,7 +5,6 @@
  */
 import { Suite, assert, assertDeepEqual, assertEqual, finish } from '../support/harness';
 import { installSvelteSsr } from '../support/svelte-ssr';
-import type { ScenarioTemplate } from '../../src/lib/api/projects';
 
 await installSvelteSsr();
 const m = await import('../../src/lib/forms/designer-schema');
@@ -20,26 +19,6 @@ function throwsMessage(body: () => unknown): string {
 		return error instanceof Error ? error.message : String(error);
 	}
 	throw new Error('expected the call to throw');
-}
-
-function template(key: string): ScenarioTemplate {
-	return {
-		id: 't1',
-		key,
-		name: 'Template',
-		description: '',
-		industry: 'retail',
-		project_type_key: 'forms',
-		audience_label: '',
-		workflow_template: {},
-		field_schema: {},
-		resource_schema: {},
-		ai_roles: [],
-		governance_policy: {},
-		sample_data: {},
-		created_at: '2026-01-01T00:00:00Z',
-		updated_at: '2026-01-01T00:00:00Z'
-	};
 }
 
 suite.check('parseFields returns nothing for a missing or malformed field list', () => {
@@ -196,67 +175,6 @@ suite.check('blankFieldDraft returns the documented defaults as a fresh object',
 	const first = m.blankFieldDraft();
 	first.key = 'changed';
 	assertEqual(m.blankFieldDraft().key, '', 'each call returns a new object');
-});
-
-suite.check('normalizeTemplateSchema fixes legacy types and fills version and fields', () => {
-	assertDeepEqual(
-		m.normalizeTemplateSchema({
-			fields: [{ key: 'a', type: 'select' }, { key: 'b', type: 'text' }, 'raw', null]
-		}),
-		{
-			fields: [{ key: 'a', type: 'single_select' }, { key: 'b', type: 'text' }, 'raw', null],
-			version: 'sv.form.schema.v2'
-		},
-		'select becomes single_select, non-objects are preserved, default version'
-	);
-	assertDeepEqual(
-		m.normalizeTemplateSchema({ version: 'custom.v2', extra: true }),
-		{ version: 'custom.v2', extra: true, fields: [] },
-		'string version and extra members survive, missing fields become []'
-	);
-	assertEqual(
-		m.normalizeTemplateSchema({ version: 2 }).version,
-		'sv.form.schema.v2',
-		'non-string version replaced'
-	);
-	assertDeepEqual(
-		m.normalizeTemplateSchema({ fields: 'x' }).fields,
-		[],
-		'non-array fields become []'
-	);
-});
-
-suite.check('templateFormKey strips one trailing _default', () => {
-	assertEqual(m.templateFormKey(template('order_default')), 'order', 'suffix removed');
-	assertEqual(m.templateFormKey(template('order')), 'order', 'no suffix');
-	assertEqual(
-		m.templateFormKey(template('a_default_default')),
-		'a_default',
-		'only the last suffix'
-	);
-	assertEqual(m.templateFormKey(template('default_order')), 'default_order', 'prefix untouched');
-	assertEqual(
-		m.templateFormKey(template('order_defaults')),
-		'order_defaults',
-		'longer word untouched'
-	);
-});
-
-suite.check('templateTitleTemplate prefers the first required field', () => {
-	assertEqual(
-		m.templateTitleTemplate({
-			fields: [{ key: 'a' }, { key: 'b', required: true }, { key: 'c', required: true }]
-		}),
-		'{b}',
-		'first required'
-	);
-	assertEqual(
-		m.templateTitleTemplate({ fields: [{ key: 'a' }, { key: 'b' }] }),
-		'{a}',
-		'first field'
-	);
-	assertEqual(m.templateTitleTemplate({ fields: [] }), '{id}', 'no fields');
-	assertEqual(m.templateTitleTemplate({}), '{id}', 'no schema fields');
 });
 
 suite.check('fieldDraftsFromSchema returns one blank draft for an empty schema', () => {

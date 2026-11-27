@@ -12,8 +12,6 @@
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-		"smoke:project-template": "node scripts/smoke-project-template-wizard.mjs",
-		"smoke:template-work-items": "node scripts/smoke-template-work-items.mjs",
 		"smoke:forms-record-list": "node scripts/smoke-forms-record-list.mjs",
 		"smoke:forms-page-interactions": "node scripts/smoke-forms-page-interactions.mjs",
 		"smoke:plugin-creator-review": "node scripts/smoke-plugin-creator-review.mjs",

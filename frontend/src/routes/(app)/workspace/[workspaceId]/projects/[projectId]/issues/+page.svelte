@@ -7,7 +7,6 @@
 	import { locale, t } from 'svelte-i18n';
 	import { page } from '$app/state';
 	import { membersApi, type WorkspaceMember } from '#lib/api/members.js';
-	import { projectsApi, type Project } from '#lib/api/projects.js';
 	import { issuesApi, type Issue, type IssuePriority, type IssueStatus } from '#lib/api/issues.js';
 	import { workflowsApi, type WorkflowStateDef } from '#lib/api/workflows.js';
 	import { labelsApi, type Label } from '#lib/api/labels.js';
@@ -21,13 +20,11 @@
 	import Avatar from '#lib/components/Avatar.svelte';
 	import BotIcon from '#lib/components/BotIcon.svelte';
 	import IssueCreateModal from '#lib/components/IssueCreateModal.svelte';
-	import { getProjectScenarioTemplate } from '#lib/utils/scenario-template.js';
 
 	const workspaceId = $derived(requireRouteParam(page.params.workspaceId, 'workspaceId'));
 	const projectId = $derived(requireRouteParam(page.params.projectId, 'projectId'));
 
 	let issues = $state<Issue[]>([]);
-	let project = $state<Project | null>(null);
 	let sprints = $state<Sprint[]>([]);
 	let milestones = $state<Milestone[]>([]);
 	// `all`, `none` (items in no milestone) or a milestone id.
@@ -64,7 +61,6 @@
 		document.addEventListener('click', handleDocumentClick);
 		void (async () => {
 			await Promise.all([
-				loadProject(),
 				loadWorkflow(),
 				loadSprints(),
 				loadMilestones(),
@@ -78,15 +74,6 @@
 			document.removeEventListener('click', handleDocumentClick);
 		};
 	});
-
-	async function loadProject() {
-		const response = await projectsApi.get(projectId);
-		if (response.code === 0 && response.data) {
-			project = response.data;
-		}
-	}
-
-	const scenarioTemplate = $derived(getProjectScenarioTemplate(project));
 
 	async function loadIssues(pageToLoad: number = currentPage) {
 		loading = true;
@@ -730,6 +717,5 @@
 		workflowStates[0]?.key ||
 		'backlog') as IssueStatus}
 	{workflowStates}
-	{scenarioTemplate}
 	onCreated={handleIssueCreated}
 />

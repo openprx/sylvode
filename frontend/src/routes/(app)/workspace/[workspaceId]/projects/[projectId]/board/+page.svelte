@@ -7,7 +7,6 @@
 	import { t } from 'svelte-i18n';
 	import { workflowStateLabel } from '#lib/utils/workflow-state.js';
 	import { page } from '$app/state';
-	import { projectsApi, type Project } from '#lib/api/projects.js';
 	import { membersApi, type WorkspaceMember } from '#lib/api/members.js';
 	import { issuesApi, type Issue, type IssuePriority, type IssueStatus } from '#lib/api/issues.js';
 	import { workflowsApi, type WorkflowStateDef } from '#lib/api/workflows.js';
@@ -20,13 +19,11 @@
 	import Avatar from '#lib/components/Avatar.svelte';
 	import BotIcon from '#lib/components/BotIcon.svelte';
 	import IssueCreateModal from '#lib/components/IssueCreateModal.svelte';
-	import { getProjectScenarioTemplate } from '#lib/utils/scenario-template.js';
 
 	const workspaceId = $derived(requireRouteParam(page.params.workspaceId, 'workspaceId'));
 	const projectId = $derived(requireRouteParam(page.params.projectId, 'projectId'));
 
 	let workflowStates = $state<WorkflowStateDef[]>([]);
-	let project = $state<Project | null>(null);
 	const columns = $derived.by(() => workflowStates.map((state) => state.key as IssueStatus));
 
 	function getColumnName(status: IssueStatus): string {
@@ -54,17 +51,8 @@
 	let dropTargetStatus = $state<IssueStatus | null>(null);
 
 	onMount(async () => {
-		await Promise.all([loadProject(), loadWorkflow(), loadIssues(), loadSprints()]);
+		await Promise.all([loadWorkflow(), loadIssues(), loadSprints()]);
 	});
-
-	async function loadProject() {
-		const response = await projectsApi.get(projectId);
-		if (response.code === 0 && response.data) {
-			project = response.data;
-		}
-	}
-
-	const scenarioTemplate = $derived(getProjectScenarioTemplate(project));
 
 	async function loadWorkflow() {
 		const response = await workflowsApi.getEffectiveByProject(projectId);
@@ -556,6 +544,5 @@
 		'backlog') as IssueStatus}
 	initialSprintId={sprintFilterId}
 	{workflowStates}
-	{scenarioTemplate}
 	onCreated={handleDetailedCreated}
 />

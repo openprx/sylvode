@@ -712,19 +712,6 @@ export const formsApi = {
 		return apiClient.post<UniversalForm>(`/api/v1/projects/${projectId}/forms`, data);
 	},
 
-	createFromTemplate(
-		projectId: string,
-		data: {
-			template_key: string;
-			key?: string;
-			name?: string;
-			description?: string;
-			title_template?: string;
-		}
-	): Promise<ApiResult<UniversalForm>> {
-		return apiClient.post<UniversalForm>(`/api/v1/projects/${projectId}/forms/from-template`, data);
-	},
-
 	duplicate(
 		formId: string,
 		data: {

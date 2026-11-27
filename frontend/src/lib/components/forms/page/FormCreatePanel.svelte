@@ -6,22 +6,22 @@
 	import Button from '#lib/ui/button/Button.svelte';
 	import { fieldTypeOptions } from '#lib/forms/page-constants.js';
 	import { getFormsPageContext } from '#lib/forms/state/context.js';
-	import {
-		scenarioTemplateDescription,
-		scenarioTemplateIndustry,
-		scenarioTemplateName
-	} from '#lib/utils/project-type-i18n.js';
+	import { locale } from 'svelte-i18n';
 
 	const fp = getFormsPageContext();
 	const s = fp.state;
-	const { loadScenarioTemplates } = fp.loaders;
-	const {
-		handleCreateForm,
-		applyScenarioTemplate,
-		installScenarioTemplate,
-		addFieldDraft,
-		removeFieldDraft
-	} = fp.createForm;
+	const { loadTemplatePackages } = fp.loaders;
+	const { handleCreateForm, installTemplatePackage, addFieldDraft, removeFieldDraft } =
+		fp.createForm;
+
+	function packageSummary(
+		summary: Record<string, string> | null,
+		language: string | null | undefined
+	) {
+		if (!summary) return '';
+
+		return summary[(language ?? 'en').slice(0, 2)] ?? summary.en ?? '';
+	}
 	const { buildSchemaFromDrafts } = fp.designer;
 </script>
 
@@ -54,47 +54,36 @@
 				size="sm"
 				variant="secondary"
 				loading={s.templatesLoading}
-				onclick={loadScenarioTemplates}
+				onclick={loadTemplatePackages}
 			>
 				<RefreshCw class="mr-2 h-4 w-4" aria-hidden="true" />
 				{$t('forms.refreshTemplates')}
 			</Button>
 		</div>
 
-		{#if s.scenarioTemplates.length > 0}
+		{#if s.templatePackages.length > 0}
 			<div class="mt-3 grid gap-2 lg:grid-cols-3">
-				{#each s.scenarioTemplates as template (template.id)}
+				{#each s.templatePackages as template (template.id)}
 					<div class="rounded-card border border-line bg-raised p-3">
-						<div class="flex items-start justify-between gap-3">
-							<div class="min-w-0">
-								<div class="flex flex-wrap items-center gap-2">
-									<h4 class="truncate text-sm font-semibold text-fg">
-										{scenarioTemplateName(template, $t)}
-									</h4>
+						<div class="min-w-0">
+							<h4 class="truncate font-mono text-sm font-semibold text-fg">
+								{template.package_key}
+							</h4>
 
-									<span class="rounded bg-surface px-1.5 py-0.5 text-[11px] text-fg-muted"
-										>{scenarioTemplateIndustry(template.industry, $t)}</span
-									>
-								</div>
+							<p class="mt-1 line-clamp-3 text-xs text-fg-muted">
+								{packageSummary(template.summary, $locale)}
+							</p>
 
-								<p class="mt-1 line-clamp-2 text-xs text-fg-muted">
-									{scenarioTemplateDescription(template, $t)}
-								</p>
-
-								<p class="mt-2 font-mono text-[11px] text-fg-muted">{template.key}</p>
-							</div>
+							<p class="mt-2 font-mono text-[11px] text-fg-muted">{template.version}</p>
 						</div>
 
 						<div class="mt-3 flex flex-wrap justify-end gap-2">
-							<Button size="sm" variant="secondary" onclick={() => applyScenarioTemplate(template)}
-								>{$t('forms.applyTemplate')}</Button
-							>
-
 							<Button
 								variant="primary"
 								size="sm"
-								loading={s.installingTemplateKey === template.key}
-								onclick={() => installScenarioTemplate(template)}
+								disabled={template.custom_code}
+								loading={s.installingTemplateKey === template.package_key}
+								onclick={() => installTemplatePackage(template)}
 							>
 								<Plus class="mr-2 h-4 w-4" aria-hidden="true" />
 								{$t('forms.installTemplate')}

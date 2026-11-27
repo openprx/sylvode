@@ -7,7 +7,12 @@
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
 	import { page } from '$app/state';
-	import { projectsApi, type Project, type ProjectType } from '#lib/api/projects.js';
+	import {
+		projectsApi,
+		type Project,
+		type ProjectType,
+		type TemplatePackage
+	} from '#lib/api/projects.js';
 	import { workspacesApi, type Workspace } from '#lib/api/workspaces.js';
 	import { workflowsApi, type WorkflowSummary } from '#lib/api/workflows.js';
 	import { toast } from '#lib/stores/toast.js';
@@ -26,6 +31,7 @@
 	let workspace = $state<Workspace | null>(null);
 	let projects = $state<Project[]>([]);
 	let projectTypes = $state<ProjectType[]>([]);
+	let templatePackages = $state<TemplatePackage[]>([]);
 	let filteredProjects = $state<Project[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
@@ -37,7 +43,8 @@
 		name: '',
 		key: '',
 		description: '',
-		type_key: 'code_project'
+		type_key: 'code_project',
+		template_package: ''
 	});
 	let creating = $state(false);
 
@@ -190,6 +197,13 @@
 			}
 		}
 
+		const templateResponse = await projectsApi.listTemplatePackages(workspaceId);
+		if (templateResponse.code === 0 && templateResponse.data) {
+			templatePackages = (templateResponse.data.items ?? []).filter(
+				(item) => item.tier === 'builtin' && !item.custom_code
+			);
+		}
+
 		loading = false;
 	}
 
@@ -229,7 +243,8 @@
 			description: '',
 			type_key: projectTypes.some((item) => item.key === 'code_project')
 				? 'code_project'
-				: (projectTypes[0]?.key ?? 'code_project')
+				: (projectTypes[0]?.key ?? 'code_project'),
+			template_package: ''
 		};
 		showCreateModal = true;
 	}
@@ -260,7 +275,9 @@
 			name: createForm.name.trim(),
 			key: createForm.key.toUpperCase(),
 			description: createForm.description.trim() || undefined,
-			type_key: createForm.type_key || 'code_project'
+			// A template package brings its own project type; the server rejects a mismatch.
+			type_key: createForm.template_package ? undefined : createForm.type_key || 'code_project',
+			template_package: createForm.template_package || undefined
 		});
 
 		if (response.code !== 0) {
@@ -647,6 +664,25 @@
 				rows="3"></textarea>
 			<p class="text-xs text-fg-muted text-right">{createForm.description.length}/350</p>
 		</div>
+		{#if templatePackages.length > 0}
+			<div class="space-y-1">
+				<label class="block text-sm font-medium text-fg" for="create-project-template"
+					>{$t('project.template')}</label
+				>
+				<select
+					id="create-project-template"
+					class="block w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
+					bind:value={createForm.template_package}
+				>
+					<option value="">{$t('project.noTemplate')}</option>
+					{#each templatePackages as item (item.id)}
+						<option value={item.package_key}>
+							{item.package_key} - {item.summary?.en ?? ''}
+						</option>
+					{/each}
+				</select>
+			</div>
+		{/if}
 	</form>
 
 	{#snippet footer()}

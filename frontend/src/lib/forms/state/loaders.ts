@@ -20,21 +20,21 @@ export class LoadersController extends FormsController {
 		}
 	};
 
-	loadScenarioTemplates = async () => {
+	loadTemplatePackages = async () => {
 		this.s.templatesLoading = true;
 
-		const response = await projectsApi.listScenarioTemplates({ project_type_key: 'custom_form' });
+		const response = await projectsApi.listTemplatePackages(this.s.workspaceId);
 
 		this.s.templatesLoading = false;
 
 		if (response.code !== 0) {
 			toast.error(describeResult(response));
-			this.s.scenarioTemplates = [];
+			this.s.templatePackages = [];
 
 			return;
 		}
 
-		this.s.scenarioTemplates = response.data?.items ?? [];
+		this.s.templatePackages = response.data?.items ?? [];
 	};
 
 	loadWorkspaceMembers = async () => {
