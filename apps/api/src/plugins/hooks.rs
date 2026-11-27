@@ -17,7 +17,9 @@ use crate::{
         limits,
         manifest::{PluginHook, PluginRuntimePolicy, parse_manifest},
         redact,
-        runtime::{PluginInvocationStatus, PluginRuntimeError, PluginRuntimeOutput, invoke_wasm_plugin},
+        runtime::{
+            PluginFailureKind, PluginInvocationStatus, PluginRuntimeError, PluginRuntimeOutput, invoke_wasm_plugin,
+        },
     },
 };
 
@@ -299,9 +301,16 @@ async fn run_and_record_hook(
 ) -> Result<HookRun, ApiError> {
     let state = state.clone();
     let plugin = Arc::clone(plugin);
-    let permit = limits::try_acquire(plugin.id)?;
     tokio::spawn(async move {
-        let _permit = permit;
+        let Some(_permit) = hook_slot(plugin.id, hook_kind, limits::HOOK_WAIT).await? else {
+            tracing::warn!(plugin_id = %plugin.id, "event handler skipped: the plugin is busy");
+            return Ok(Err(PluginRuntimeError {
+                kind: PluginFailureKind::Failed,
+                message: "plugin busy".to_string(),
+                duration_ms: 0,
+                fuel_consumed: None,
+            }));
+        };
         match invoke_wasm_plugin(wasm_bytes, input.clone(), limits::clamp(runtime)).await {
             Ok(output) => {
                 let refused = rejection(&output.output);
@@ -319,6 +328,21 @@ async fn run_and_record_hook(
         tracing::error!(hook_kind, error = %err, "plugin hook task failed");
         ApiError::Internal
     })?
+}
+
+/// The slot of one hook run, taken inside the hook's task. A full gate refuses a formula or
+/// validator hook (it runs before the commit), and answers `None` for an event handler, which runs
+/// after the commit and must never fail its caller.
+async fn hook_slot(
+    plugin_id: Uuid,
+    hook_kind: &str,
+    wait: std::time::Duration,
+) -> Result<Option<tokio::sync::OwnedSemaphorePermit>, ApiError> {
+    match limits::acquire_hook(plugin_id, wait).await {
+        Ok(permit) => Ok(Some(permit)),
+        Err(_) if hook_kind == "event_handler" => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 /// For hooks whose output never refuses anything.
@@ -612,6 +636,40 @@ mod tests {
 
     /// A formula hook that declares its field may write that field only; one that declares none
     /// is left to the write policy.
+    /// With every hook slot taken, an event handler is skipped (the caller still succeeds) and a
+    /// formula hook is refused `legacy_plugin_busy`.
+    #[tokio::test]
+    async fn a_busy_plugin_skips_event_handlers_and_refuses_pre_commit_hooks() {
+        let plugin = uuid::Uuid::new_v4();
+        let wait = std::time::Duration::from_millis(10);
+        let mut held = Vec::new();
+        for _ in 0..crate::plugins::limits::MAX_CONCURRENT_PER_PLUGIN {
+            held.push(
+                super::hook_slot(plugin, "formula", wait)
+                    .await
+                    .expect("a slot")
+                    .expect("a permit"),
+            );
+        }
+        assert!(matches!(
+            super::hook_slot(plugin, "event_handler", wait).await,
+            Ok(None)
+        ));
+        assert!(matches!(
+            super::hook_slot(plugin, "formula", wait).await,
+            Err(crate::error::ApiError::Coded {
+                code: "legacy_plugin_busy",
+                status: 429,
+                ..
+            })
+        ));
+        drop(held);
+        assert!(matches!(
+            super::hook_slot(plugin, "event_handler", wait).await,
+            Ok(Some(_))
+        ));
+    }
+
     #[test]
     fn a_patch_stays_within_the_hooks_own_field() {
         assert!(patch_within_hook_field(Some("total"), &json!({"total": "1"})));

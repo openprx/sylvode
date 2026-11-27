@@ -44,7 +44,7 @@ pub fn document(filter: Option<Exposure>) -> Result<Value, serde_json::Error> {
             "resource": resource,
             "verb": verb,
             "risk": risk.as_str(),
-            "name_key": format!("catalogue.{id}"),
+            "label_key": format!("cap.{id}"),
             "operations": operations.iter().map(|entry| json!({
                 "op": entry.op,
                 "method": entry.method.as_str(),

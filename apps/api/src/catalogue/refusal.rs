@@ -23,6 +23,8 @@ pub enum RefusalCode {
     LegacyPluginPatchDenied,
     /// A validator hook refused the value.
     LegacyPluginValidationFailed,
+    /// Too many concurrent runs of one old-system plugin.
+    LegacyPluginBusy,
 }
 
 impl RefusalCode {
@@ -37,6 +39,7 @@ impl RefusalCode {
             Self::LegacyPluginAdminOnly => "legacy_plugin_admin_only",
             Self::LegacyPluginPatchDenied => "legacy_plugin_patch_denied",
             Self::LegacyPluginValidationFailed => "legacy_plugin_validation_failed",
+            Self::LegacyPluginBusy => "legacy_plugin_busy",
         }
     }
 
@@ -45,6 +48,7 @@ impl RefusalCode {
     pub const fn status(self) -> i32 {
         match self {
             Self::LegacyPluginValidationFailed => 422,
+            Self::LegacyPluginBusy => 429,
             _ => 403,
         }
     }
@@ -61,6 +65,7 @@ impl RefusalCode {
             Self::LegacyPluginAdminOnly => "only a workspace owner or admin may install or update a plugin",
             Self::LegacyPluginPatchDenied => "the plugin may not change this field",
             Self::LegacyPluginValidationFailed => "the plugin refused this value",
+            Self::LegacyPluginBusy => "too many concurrent runs of this plugin",
         }
     }
 }

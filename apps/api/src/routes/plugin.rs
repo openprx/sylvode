@@ -265,12 +265,15 @@ pub async fn update_plugin(
     }
     let row = PluginResponse::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
+        // The admin who activates a plugin becomes its installer, so the trail names someone who
+        // could have activated it (a plugin disabled by migration 0133 kept a member's id).
         r"UPDATE plugins
-              SET status = $2, updated_at = now()
+              SET status = $2, updated_at = now(),
+                  installed_by = CASE WHEN $2 = 'active' THEN $3 ELSE installed_by END
             WHERE id = $1
             RETURNING id, workspace_id, project_id, key, name, version, description, manifest,
                       wasm_sha256, status, installed_by, created_at, updated_at",
-        vec![plugin_id.into(), status.into()],
+        vec![plugin_id.into(), status.into(), actor_id.into()],
     ))
     .one(&tx)
     .await?

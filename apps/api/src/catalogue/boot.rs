@@ -8,6 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement, TransactionTrait};
+use sha2::{Digest, Sha256};
 
 use super::coverage::{AuthKind, RouteFact, scan};
 use super::types::{Entry, Exposure, Method, Risk, Scope};
@@ -116,26 +117,43 @@ pub struct CapabilityId {
     pub id: &'static str,
     pub risk: Risk,
     pub plugin_exposed: bool,
+    /// SHA-256 of the sorted plugin-callable op keys of the id; `None` when it has none. A grant
+    /// made against another digest is not honoured until it is approved again.
+    pub plugin_ops_digest: Option<String>,
 }
 
 /// The distinct ids of the entries, sorted by id.
 #[must_use]
 pub fn capability_ids(entries: &[Entry]) -> Vec<CapabilityId> {
-    let mut ids: BTreeMap<&'static str, CapabilityId> = BTreeMap::new();
+    let mut ids: BTreeMap<&'static str, (CapabilityId, Vec<&'static str>)> = BTreeMap::new();
     for entry in entries {
         let plugin = entry.exposure.contains(Exposure::PLUGIN);
-        ids.entry(entry.capability())
-            .and_modify(|known| {
-                known.risk = known.risk.max(entry.risk);
-                known.plugin_exposed |= plugin;
-            })
-            .or_insert(CapabilityId {
-                id: entry.capability(),
-                risk: entry.risk,
-                plugin_exposed: plugin,
-            });
+        let (known, plugin_ops) = ids.entry(entry.capability()).or_insert_with(|| {
+            (
+                CapabilityId {
+                    id: entry.capability(),
+                    risk: entry.risk,
+                    plugin_exposed: false,
+                    plugin_ops_digest: None,
+                },
+                Vec::new(),
+            )
+        });
+        known.risk = known.risk.max(entry.risk);
+        if plugin {
+            known.plugin_exposed = true;
+            plugin_ops.push(entry.op);
+        }
     }
-    ids.into_values().collect()
+    ids.into_values()
+        .map(|(mut id, mut ops)| {
+            if !ops.is_empty() {
+                ops.sort_unstable();
+                id.plugin_ops_digest = Some(format!("sha256:{}", hex::encode(Sha256::digest(ops.join("\n")))));
+            }
+            id
+        })
+        .collect()
 }
 
 /// Every disagreement between the entries, the router and the OAuth allow-list, as one line each.
@@ -304,11 +322,14 @@ fn check_site(entries: &[Entry], found: &mut Vec<String>) {
 /// The advisory lock key of the id sync ("SVCATALG").
 const SYNC_LOCK_KEY: i64 = 0x5356_4341_5441_4C47;
 
-const UPSERT_IDS: &str = "INSERT INTO capability_ids (id, risk, plugin_exposed) \
-     SELECT * FROM UNNEST($1::text[], $2::text[], $3::bool[]) \
-     ON CONFLICT (id) DO UPDATE SET risk = EXCLUDED.risk, plugin_exposed = EXCLUDED.plugin_exposed, updated_at = now() \
+const UPSERT_IDS: &str = "INSERT INTO capability_ids (id, risk, plugin_exposed, plugin_ops_digest) \
+     SELECT id, risk, plugin_exposed, NULLIF(digest, '') \
+       FROM UNNEST($1::text[], $2::text[], $3::bool[], $4::text[]) AS t(id, risk, plugin_exposed, digest) \
+     ON CONFLICT (id) DO UPDATE SET risk = EXCLUDED.risk, plugin_exposed = EXCLUDED.plugin_exposed, \
+        plugin_ops_digest = EXCLUDED.plugin_ops_digest, updated_at = now() \
      WHERE capability_ids.risk IS DISTINCT FROM EXCLUDED.risk \
-        OR capability_ids.plugin_exposed IS DISTINCT FROM EXCLUDED.plugin_exposed";
+        OR capability_ids.plugin_exposed IS DISTINCT FROM EXCLUDED.plugin_exposed \
+        OR capability_ids.plugin_ops_digest IS DISTINCT FROM EXCLUDED.plugin_ops_digest";
 
 /// Check 8, in one transaction: upsert every code id; delete database ids absent from code that no
 /// grant references; a database id absent from code but referenced by `installation_grants` fails
@@ -318,6 +339,10 @@ async fn sync_ids(db: &DatabaseConnection, ids: &[CapabilityId]) -> Result<(), B
     let names: Vec<String> = ids.iter().map(|id| id.id.to_string()).collect();
     let risks: Vec<String> = ids.iter().map(|id| id.risk.as_str().to_string()).collect();
     let plugin: Vec<bool> = ids.iter().map(|id| id.plugin_exposed).collect();
+    let digests: Vec<String> = ids
+        .iter()
+        .map(|id| id.plugin_ops_digest.clone().unwrap_or_default())
+        .collect();
     let txn = db.begin().await?;
     // One sync at a time across replicas and against a concurrent approval.
     txn.execute(Statement::from_sql_and_values(
@@ -329,7 +354,7 @@ async fn sync_ids(db: &DatabaseConnection, ids: &[CapabilityId]) -> Result<(), B
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         UPSERT_IDS,
-        vec![names.clone().into(), risks.into(), plugin.into()],
+        vec![names.clone().into(), risks.into(), plugin.into(), digests.into()],
     ))
     .await?;
     let stale: Vec<String> = txn
@@ -587,5 +612,18 @@ mod tests {
             Some(("forms.records.read", true))
         );
         assert_eq!(ids.get(1).map(|id| id.risk), Some(Write));
+        // Only an id with plugin ops has a digest, and it changes with the op set.
+        assert!(
+            ids.first()
+                .is_some_and(|id| id.plugin_ops_digest.as_deref().is_some_and(|d| d.len() == 71))
+        );
+        assert_eq!(ids.get(1).and_then(|id| id.plugin_ops_digest.clone()), None);
+        let widened = [entries[0], entries[1].plugin(), entries[2]];
+        assert_ne!(
+            capability_ids(&widened)
+                .first()
+                .and_then(|id| id.plugin_ops_digest.clone()),
+            ids.first().and_then(|id| id.plugin_ops_digest.clone())
+        );
     }
 }

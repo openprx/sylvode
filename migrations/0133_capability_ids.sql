@@ -11,6 +11,9 @@ CREATE TABLE IF NOT EXISTS capability_ids (
                 CHECK (id ~ '^[a-z][a-z0-9_]{0,31}\.[a-z][a-z0-9_]{0,47}\.[a-z][a-z0-9_]{0,31}$'),
     risk        TEXT NOT NULL CHECK (risk IN ('read','write','destructive','admin','secret')),
     plugin_exposed BOOLEAN NOT NULL DEFAULT false,
+    -- SHA-256 of the sorted plugin-callable op keys of the id; a grant made against another digest is
+    -- not honoured until it is approved again.
+    plugin_ops_digest TEXT CHECK (plugin_ops_digest ~ '^sha256:[0-9a-f]{64}$'),
     first_seen_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
