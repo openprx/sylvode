@@ -13,7 +13,8 @@ import {
 	recordFieldHiddenByCondition,
 	recordFieldReadOnlyByCondition
 } from '#lib/forms/field-conditions.js';
-import { translate } from '#lib/forms/i18n.js';
+import { carriedSummary } from '#lib/forms/field-errors.js';
+import { currentLocale, translate } from '#lib/forms/i18n.js';
 import { FormsController } from '#lib/forms/state/controller.js';
 
 export class RecordPanelController extends FormsController {
@@ -110,6 +111,38 @@ export class RecordPanelController extends FormsController {
 		}
 
 		this.s.selectedRecordComments = response.data?.items ?? [];
+	};
+
+	/**
+	 * Recomputes the panel record's derived values. Rule failures the server carried (stored as
+	 * computed, never refused) are shown as one warning line.
+	 */
+	recalculatePanelRecord = async () => {
+		const recordId = this.s.panelRecordId;
+
+		if (!recordId) return;
+
+		const response = await formsApi.recalculateRecord(recordId);
+
+		if (response.code !== 0 || !response.data) {
+			toast.error(describeResult(response));
+
+			return;
+		}
+
+		const { carried, ...record } = response.data;
+
+		this.fp.records.replaceLocalRecord(record);
+
+		const summary = carriedSummary(
+			carried ?? [],
+			this.s.fields,
+			translate,
+			currentLocale() === 'en' ? 'en' : 'zh'
+		);
+
+		if (summary) toast.warning(summary);
+		else toast.info(translate('lowcode.forms.recalculated'));
 	};
 
 	reloadSelectedRecord = async () => {

@@ -103,6 +103,7 @@
 			onprev={() => stepRecordPanel(-1)}
 			onnext={() => stepRecordPanel(1)}
 			onedit={() => s.panelRecord && openRecordEditDrawer(s.panelRecord)}
+			onrecalculate={() => void fp.recordPanel.recalculatePanelRecord()}
 			ondelete={() => s.panelRecord && void handleDeleteRecord(s.panelRecord)}
 			onrestore={() => void handleRestoreLastDeletedRecord()}
 			onretry={() => s.panelRecordId && void openRecordPanel(s.panelRecordId, 'none')}

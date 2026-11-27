@@ -103,6 +103,8 @@
 		onmodechange?: (mode: PanelMode) => void;
 		/** Opens the full in-page record details (link and child record editing). */
 		onmoredetails?: () => void;
+		/** Recomputes the record's formulas and derived values on the server. */
+		onrecalculate?: () => void;
 		/**
 		 * Hosted in another application's frame: body only. The toolbar, the resize handle and the
 		 * floating and sheet modes are not rendered (the host owns header, close and navigation), and
@@ -154,6 +156,7 @@
 		onannounce,
 		onmodechange,
 		onmoredetails,
+		onrecalculate,
 		hosted = false
 	}: Props = $props();
 
@@ -650,6 +653,17 @@
 					><span class="h-4 w-4" aria-hidden="true"></span>{$t(
 						'forms.recordPanel.moreDetails'
 					)}</button
+				>
+			{/if}
+			{#if onrecalculate && canEdit && record && status === 'ready'}
+				<button
+					type="button"
+					role="menuitem"
+					tabindex="-1"
+					class={menuItem}
+					data-record-panel-recalculate
+					onclick={() => runMenu(() => onrecalculate?.())}
+					><RefreshCw class="h-4 w-4" aria-hidden="true" />{$t('lowcode.forms.recalculate')}</button
 				>
 			{/if}
 			{#if plugins.enabled && !appsOpen}
