@@ -144,6 +144,7 @@ fn the_adoption_cutoff_names_a_registered_migration() {
             "0134_packages.sql",
             "0135_layouts.sql",
             "0136_form_schema_v2.sql",
+            "0140_nav.sql",
         ],
         "everything past the cutoff re-runs on an adopted database and must be idempotent"
     );
