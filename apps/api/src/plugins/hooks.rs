@@ -23,6 +23,65 @@ use crate::{
     },
 };
 
+/// Hook slots taken before a write opens its transaction.
+///
+/// A formula or field-validator hook runs a guest while the write's transaction is open. Waiting for
+/// a free slot of a busy plugin inside that transaction would hold it open for up to
+/// [`limits::HOOK_WAIT`], so the write reserves a slot of every plugin that has such a hook first
+/// ([`HookSlots::reserve`], refused `legacy_plugin_busy` before anything is opened) and runs inside
+/// [`HookSlots::scope`]; the hooks of that task then use the reserved slot instead of waiting
+/// (AUD-L1.1-F1). A hook of a plugin without a reservation (a write path that does not reserve) takes
+/// its slot as before.
+#[derive(Clone, Default)]
+pub struct HookSlots {
+    held: Arc<std::collections::HashMap<Uuid, tokio::sync::OwnedSemaphorePermit>>,
+}
+
+tokio::task_local! {
+    static RESERVED: HookSlots;
+}
+
+impl HookSlots {
+    /// Reserves a slot of each active plugin of the project that has a `formula` or `field_validator`
+    /// hook.
+    ///
+    /// # Errors
+    /// `legacy_plugin_busy` (429) when a plugin has no free slot within the wait.
+    pub async fn reserve(state: &AppState, workspace_id: Uuid, project_id: Uuid) -> Result<Self, ApiError> {
+        let mut held = std::collections::HashMap::new();
+        for plugin in load_active_plugins(state, workspace_id, project_id).await? {
+            let before_commit = parse_manifest(&plugin.manifest).is_ok_and(|manifest| {
+                manifest
+                    .capabilities
+                    .hooks
+                    .iter()
+                    .any(|hook| hook.kind == "formula" || hook.kind == "field_validator")
+            });
+            if before_commit {
+                held.insert(plugin.id, limits::acquire_hook(plugin.id, limits::HOOK_WAIT).await?);
+            }
+        }
+        Ok(Self { held: Arc::new(held) })
+    }
+
+    /// Runs `future` with these slots available to the hooks it triggers.
+    pub async fn scope<F: std::future::Future>(self, future: F) -> F::Output {
+        RESERVED.scope(self, future).await
+    }
+
+    fn holds(&self, plugin_id: Uuid) -> bool {
+        self.held.contains_key(&plugin_id)
+    }
+}
+
+/// The reservation of the current task if it holds a slot of `plugin_id`.
+fn reserved_for(plugin_id: Uuid) -> Option<HookSlots> {
+    RESERVED
+        .try_with(Clone::clone)
+        .ok()
+        .filter(|slots| slots.holds(plugin_id))
+}
+
 #[derive(Debug, FromQueryResult)]
 struct PluginHookRow {
     id: Uuid,
@@ -301,16 +360,24 @@ async fn run_and_record_hook(
 ) -> Result<HookRun, ApiError> {
     let state = state.clone();
     let plugin = Arc::clone(plugin);
+    // The write's own reservation, if it made one; it stays held until this run is over.
+    let reserved = reserved_for(plugin.id);
     tokio::spawn(async move {
-        let Some(_permit) = hook_slot(plugin.id, hook_kind, limits::HOOK_WAIT).await? else {
-            tracing::warn!(plugin_id = %plugin.id, "event handler skipped: the plugin is busy");
-            return Ok(Err(PluginRuntimeError {
-                kind: PluginFailureKind::Failed,
-                message: "plugin busy".to_string(),
-                duration_ms: 0,
-                fuel_consumed: None,
-            }));
+        let permit = if reserved.is_some() {
+            None
+        } else {
+            let Some(permit) = hook_slot(plugin.id, hook_kind, limits::HOOK_WAIT).await? else {
+                tracing::warn!(plugin_id = %plugin.id, "event handler skipped: the plugin is busy");
+                return Ok(Err(PluginRuntimeError {
+                    kind: PluginFailureKind::Failed,
+                    message: "plugin busy".to_string(),
+                    duration_ms: 0,
+                    fuel_consumed: None,
+                }));
+            };
+            Some(permit)
         };
+        let _slot = (&reserved, &permit);
         match invoke_wasm_plugin(wasm_bytes, input.clone(), limits::clamp(runtime)).await {
             Ok(output) => {
                 let refused = rejection(&output.output);
@@ -595,11 +662,30 @@ async fn insert_invocation(
 #[cfg(test)]
 mod tests {
     use super::{
-        formula_patch_from_output, hook_matches_field, hook_matches_form, merge_patch, patch_within_hook_field,
-        validator_rejection_message,
+        HookSlots, formula_patch_from_output, hook_matches_field, hook_matches_form, merge_patch,
+        patch_within_hook_field, reserved_for, validator_rejection_message,
     };
-    use crate::plugins::manifest::PluginHook;
+    use crate::plugins::{limits, manifest::PluginHook};
     use serde_json::json;
+    use uuid::Uuid;
+
+    /// A reserved slot is visible to the hooks of the task that runs inside the scope, only for the
+    /// plugin it was reserved for, and not outside the scope.
+    #[tokio::test]
+    async fn a_reserved_slot_is_seen_only_inside_its_scope() {
+        let (reserved, other) = (Uuid::new_v4(), Uuid::new_v4());
+        let permit = limits::acquire_hook(reserved, std::time::Duration::from_millis(50))
+            .await
+            .expect("a free slot");
+        let slots = HookSlots {
+            held: std::sync::Arc::new(std::collections::HashMap::from([(reserved, permit)])),
+        };
+        assert!(reserved_for(reserved).is_none());
+        let seen = slots
+            .scope(async move { (reserved_for(reserved).is_some(), reserved_for(other).is_some()) })
+            .await;
+        assert_eq!(seen, (true, false));
+    }
 
     #[test]
     fn hook_matching_respects_optional_form_and_field_scope() {

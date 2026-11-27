@@ -3410,7 +3410,25 @@ pub async fn create_form_record(
     )))
 }
 
+/// Creates the record. The legacy plugin hook slots are taken before the transaction opens, so no
+/// hook waits for a slot while it is open (AUD-L1.1-F1).
 async fn create_record_for_form(
+    state: &AppState,
+    form: &FormResponse,
+    actor_id: Uuid,
+    role: &str,
+    is_bot: bool,
+    req: CreateRecordRequest,
+) -> Result<RecordResponse, ApiError> {
+    let slots = crate::plugins::hooks::HookSlots::reserve(state, form.workspace_id, form.project_id).await?;
+    slots
+        .scope(create_record_for_form_in_slots(
+            state, form, actor_id, role, is_bot, req,
+        ))
+        .await
+}
+
+async fn create_record_for_form_in_slots(
     state: &AppState,
     form: &FormResponse,
     actor_id: Uuid,
@@ -3799,7 +3817,13 @@ async fn update_record_for_form(
     if let Some(source) = &req.source {
         crate::forms::validation::ensure_no_site_origin(source)?;
     }
-    update_record_for_form_internal(state, form, record, actor_id, role, is_bot, req, None).await
+    // The legacy plugin hook slots are taken before the transaction opens (AUD-L1.1-F1).
+    let slots = crate::plugins::hooks::HookSlots::reserve(state, form.workspace_id, form.project_id).await?;
+    slots
+        .scope(update_record_for_form_internal(
+            state, form, record, actor_id, role, is_bot, req, None,
+        ))
+        .await
 }
 
 pub(crate) async fn update_record_for_plugin(
