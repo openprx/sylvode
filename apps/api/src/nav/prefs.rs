@@ -26,6 +26,9 @@ pub struct Prefs {
     pub unpinned: Vec<String>,
     #[serde(default)]
     pub collapsed: Vec<String>,
+    /// Sections the administrator collapsed by default that this person keeps open.
+    #[serde(default)]
+    pub expanded: Vec<String>,
 }
 
 impl Prefs {
@@ -66,6 +69,7 @@ pub fn parse(raw: &Value) -> Result<Prefs, NavError> {
     check_ids(&prefs.pinned, "/pinned")?;
     check_ids(&prefs.unpinned, "/unpinned")?;
     check_ids(&prefs.collapsed, "/collapsed")?;
+    check_ids(&prefs.expanded, "/expanded")?;
     if prefs.order.len() > MAX_IDS {
         return Err(NavError::invalid("/order", "too_large"));
     }

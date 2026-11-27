@@ -53,6 +53,8 @@ pub struct ResolvedEntry {
     pub pinned: bool,
     pub locked: bool,
     pub user_hidden: bool,
+    /// Index in its stored section after the person's order is applied (also when pinned).
+    pub position: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -122,6 +124,7 @@ fn admit(section: &Section, entry: &EntryDoc, input: &Inputs<'_>) -> Option<Reso
         pinned: entry.pinned,
         locked: entry.locked,
         user_hidden: false,
+        position: 0,
     })
 }
 
@@ -178,7 +181,9 @@ pub fn resolve(doc: &NavDoc, config_version: i32, customised: bool, input: &Inpu
             }
             shown.push(Item { entry: resolved });
         }
-        let collapsed = section.collapsed || prefs.is_some_and(|p| p.collapsed.contains(&section.id));
+        let collapsed = prefs.map_or(section.collapsed, |p| {
+            p.collapsed.contains(&section.id) || (section.collapsed && !p.expanded.contains(&section.id))
+        });
         sections.push((
             ResolvedSection {
                 id: section.id.clone(),
@@ -186,7 +191,14 @@ pub fn resolve(doc: &NavDoc, config_version: i32, customised: bool, input: &Inpu
                 collapsed,
                 entries: Vec::new(),
             },
-            reorder(shown, prefs.and_then(|p| p.order.get(&section.id))),
+            reorder(shown, prefs.and_then(|p| p.order.get(&section.id)))
+                .into_iter()
+                .enumerate()
+                .map(|(position, mut item)| {
+                    item.entry.position = position;
+                    item
+                })
+                .collect(),
         ));
     }
 
@@ -493,5 +505,42 @@ mod tests {
         );
         assert!(resolved.sections[0].collapsed);
         assert!(resolved.sections[0].entries[0].user_hidden);
+    }
+
+    #[test]
+    fn a_person_keeps_a_default_collapsed_section_open() {
+        let d = parse(
+            &json!({"schema": "sv.nav.v1", "scope": "project", "sections": [
+                {"id": "main", "collapsed": true, "entries": [entry("issues", "project.issues", json!({}))]}]}),
+            NavScope::Project,
+        )
+        .expect("valid");
+        let collapsed = |p: Option<&Prefs>| {
+            let refs = Refs::default();
+            let visible = HashSet::new();
+            resolve(
+                &d,
+                1,
+                true,
+                &Inputs {
+                    at: project_at(),
+                    project_type: None,
+                    viewer: MEMBER,
+                    refs: &refs,
+                    visible: &visible,
+                    prefs: p,
+                    include_user_hidden: false,
+                },
+            )
+            .sections[0]
+                .collapsed
+        };
+        assert!(collapsed(None));
+        assert!(!collapsed(Some(&prefs(
+            json!({"schema": "sv.nav.prefs.v1", "expanded": ["main"]})
+        ))));
+        assert!(collapsed(Some(&prefs(
+            json!({"schema": "sv.nav.prefs.v1", "expanded": ["main"], "collapsed": ["main"]})
+        ))));
     }
 }
