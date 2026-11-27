@@ -78,6 +78,11 @@ pub enum EventSurface {
     CliToolsCall,
     Worker,
     System,
+    /// A plugin action acting through the host (`extensions::current()`). Set by server code for the
+    /// events of a plugin call only: it is not a transport, no credential or client can declare it
+    /// (it is not in [`EventSurface::BOT_CREDENTIAL_SURFACES`]), and no Flow operation is
+    /// plugin-callable, so `collab_updates_origin_surface_check` does not list it.
+    Plugin,
 }
 
 impl EventSurface {
@@ -93,6 +98,7 @@ impl EventSurface {
             Self::CliToolsCall => "cli_tools_call",
             Self::Worker => "worker",
             Self::System => "system",
+            Self::Plugin => "plugin",
         }
     }
 
@@ -441,6 +447,10 @@ mod tests {
         for (surface, wire) in all {
             assert_eq!(surface.as_wire(), wire);
         }
+        // Not part of the frozen transport set and not accepted by the constraint; see the variant.
+        assert_eq!(EventSurface::Plugin.as_wire(), "plugin");
+        assert!(EventSurface::from_client_transport_label("plugin").is_none());
+        assert!(EventSurface::from_bot_credential_label("plugin").is_none());
     }
 
     #[test]

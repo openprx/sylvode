@@ -5,11 +5,10 @@
 //! * [`dispatch`]: a host call becomes an in-process request to the API router, so a plugin reaches
 //!   exactly the handlers a user reaches, under the same checks.
 //! * [`resource`]: resolves the target of an operation for the catalogue checker.
+//! * [`install`]: installations, grants, review and approval, the invoke route and the live view the
+//!   host loads before every host call. [`rules`]: plugin field rules for the form engine.
 //! * This file: the marker that tells handlers a request comes from a plugin ([`current`]), the
 //!   [`InternalCall`] request extension and its authentication ([`internal_claims`]).
-//!
-//! Installations and persistent grants arrive with the next batch; until then the caller of
-//! [`host::invoke`] passes the grants in.
 
 use std::sync::Arc;
 
@@ -54,6 +53,24 @@ tokio::task_local! {
 #[must_use]
 pub fn current() -> Option<PluginCall> {
     CURRENT.try_with(|call| *call).ok()
+}
+
+/// The `source` a handler stores for a write by `actor`: the plugin's provenance when the request is
+/// a plugin call (`{type: "plugin", surface: "plugin", installation, generation, actor}`), else the
+/// one of a person or a bot. The host strips any `source` a guest sends, so this is the only way a
+/// plugin source reaches a stored record or event (contract C1 §3, MF-4).
+#[must_use]
+pub fn provenance_source(is_bot: bool, actor_id: Uuid) -> serde_json::Value {
+    match current() {
+        Some(call) => serde_json::json!({
+            "type": "plugin",
+            "surface": crate::flow::event_origin::EventSurface::Plugin.as_wire(),
+            "installation": call.installation_id,
+            "generation": call.generation,
+            "actor": call.actor_id,
+        }),
+        None => serde_json::json!({ "type": if is_bot { "bot" } else { "user" }, "actor_id": actor_id }),
+    }
 }
 
 /// Runs `future` as a request of the plugin call `call`.
@@ -171,4 +188,40 @@ pub async fn handle_internal(
     let mut request = Request::from_parts(parts, body);
     request.extensions_mut().insert(claims);
     Ok(scope(call.marker(), next.run(request)).await)
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use serde_json::json;
+    use uuid::Uuid;
+
+    use super::{PluginCall, provenance_source, scope};
+
+    #[tokio::test]
+    async fn a_write_names_the_plugin_only_inside_a_plugin_call() {
+        let actor = Uuid::from_u128(7);
+        assert_eq!(
+            provenance_source(false, actor),
+            json!({"type": "user", "actor_id": actor})
+        );
+        assert_eq!(
+            provenance_source(true, actor),
+            json!({"type": "bot", "actor_id": actor})
+        );
+        let call = PluginCall {
+            installation_id: Uuid::from_u128(1),
+            generation: 3,
+            actor_kind: "user",
+            actor_id: actor,
+        };
+        let inside = scope(call, async { provenance_source(false, Uuid::from_u128(99)) }).await;
+        assert_eq!(
+            inside,
+            json!({
+                "type": "plugin", "surface": "plugin",
+                "installation": Uuid::from_u128(1), "generation": 3, "actor": actor,
+            })
+        );
+    }
 }

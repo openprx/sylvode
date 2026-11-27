@@ -3424,7 +3424,7 @@ async fn create_record_for_form(
     }
     let source = ensure_json_object(
         req.source
-            .unwrap_or_else(|| json!({ "type": if is_bot { "bot" } else { "user" }, "actor_id": actor_id })),
+            .unwrap_or_else(|| crate::extensions::provenance_source(is_bot, actor_id)),
         "source",
     )?;
     let tx = state.db.begin().await?;
@@ -3757,7 +3757,7 @@ pub async fn create_form_record_comment(
         Some(record_id),
         "form.record.comment.created",
         author_id,
-        json!({ "type": if is_bot { "bot" } else { "user" }, "actor_id": actor_id }),
+        crate::extensions::provenance_source(is_bot, actor_id),
         json!({ "record_id": record_id, "comment_id": comment_id, "body": body }),
     )
     .await?;
@@ -3862,7 +3862,7 @@ async fn update_record_for_form_internal(
     let updated_by = if is_bot { None } else { Some(actor_id) };
     let source = ensure_json_object(
         req.source
-            .unwrap_or_else(|| json!({ "type": if is_bot { "bot" } else { "user" }, "actor_id": actor_id })),
+            .unwrap_or_else(|| crate::extensions::provenance_source(is_bot, actor_id)),
         "source",
     )?;
     let previous_values = record.values.clone();
