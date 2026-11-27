@@ -454,6 +454,18 @@ enabled = false
 # dev_invoke_enabled = false
 
 # ---------------------------------------------------------------------------------------------
+# [site] — the public site API (`/api/site/v1`). Optional; both switches are off by default.
+#
+# same_origin_trial serves sites that have no `allowed_origin` setting under this server's own
+# origin (QA and intranet only); without it such a site is not reachable at all.
+# cookie_insecure drops the `Secure` flag of the site cookies and allows operator login over plain
+# HTTP; release builds refuse to start with it.
+# ---------------------------------------------------------------------------------------------
+[site]
+# same_origin_trial = false
+# cookie_insecure = false
+
+# ---------------------------------------------------------------------------------------------
 # [email] — notification e-mails over SMTP (plain text only). Optional; off by default.
 #
 # With enabled = false nothing is sent and the notification settings page says that e-mail is not

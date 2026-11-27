@@ -19,7 +19,7 @@ use std::sync::{Arc, OnceLock};
 
 use platform::config::{
     AiTasksConfig, ApiConfig, DEFAULT_STORAGE_DIR, EmailConfig, ExtensionsConfig, FlowConfig, InboundConfig, IpCidr,
-    OAuthConfig, OpenPrConfig, OutboundConfig, PackagesConfig, StorageBackend, StorageConfig,
+    OAuthConfig, OpenPrConfig, OutboundConfig, PackagesConfig, SiteConfig, StorageBackend, StorageConfig,
 };
 
 use crate::security::default_trusted_proxies;
@@ -46,6 +46,8 @@ pub struct RuntimeConfig {
     pub packages: PackagesConfig,
     /// `[extensions]`: settings of the plugin host.
     pub extensions: ExtensionsConfig,
+    /// `[site]`: the public site surface switches.
+    pub site: SiteConfig,
     /// `[server] public_url`: the origin this server is reached at, `None` when not configured.
     pub public_url: Option<String>,
 }
@@ -69,6 +71,7 @@ impl RuntimeConfig {
             email: config.email.clone(),
             packages: config.packages.clone(),
             extensions: config.extensions,
+            site: config.site,
             public_url: config.server.public_url.clone(),
         }
     }
@@ -101,6 +104,7 @@ impl RuntimeConfig {
             email: None,
             packages: PackagesConfig::default(),
             extensions: ExtensionsConfig::default(),
+            site: SiteConfig::default(),
             public_url: None,
         }
     }

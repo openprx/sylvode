@@ -52,6 +52,7 @@ mod oauth;
 mod packages;
 mod raw;
 mod secret;
+mod site;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -71,6 +72,7 @@ pub use oauth::{
 };
 pub use packages::PackagesConfig;
 pub use secret::{REDACTED, Secret};
+pub use site::SiteConfig;
 
 /// Where a binary looks for its configuration when no `--config` path is given.
 ///
@@ -236,6 +238,8 @@ pub struct OpenPrConfig {
     pub packages: PackagesConfig,
     /// `[extensions]`: settings of the plugin host.
     pub extensions: ExtensionsConfig,
+    /// `[site]`: the public site surface switches.
+    pub site: SiteConfig,
     /// `[email]`: `Some` only when `enabled = true`, with every value it needs validated.
     pub email: Option<EmailConfig>,
 }

@@ -24,6 +24,7 @@ use super::inbound::RawInbound;
 use super::oauth::{RawOAuth, UrlRole, validate_forward_secret, validate_url};
 use super::packages::RawPackages;
 use super::secret::Secret;
+use super::site::RawSite;
 use super::{
     AI_TASK_DELIVERY_CONCURRENCY_RANGE, AI_TASK_LANE_BATCH_RANGE, AI_TASK_LEASE_EXTENSION_RANGE_SECS,
     AI_TASK_MAX_CHAIN_DEPTH_RANGE, AI_TASK_MAX_PROCESSING_CEILING_SECS, AI_TASK_PER_RUNNER_CONCURRENCY_RANGE,
@@ -97,6 +98,7 @@ pub(super) struct RawConfig {
     packages: RawPackages,
     #[serde(default)]
     extensions: RawExtensions,
+    site: RawSite,
     #[serde(default)]
     email: RawEmail,
 }
@@ -288,6 +290,7 @@ impl RawConfig {
         let inbound = self.inbound.validate(&mut issues);
         let packages = self.packages.validate(&mut issues);
         let extensions = self.extensions.validate();
+        let site = self.site.validate(&mut issues);
         let email = self.email.validate(server.public_url.as_deref(), &mut issues);
         cross_check_oauth_and_mcp(oauth.as_ref(), &mcp, &mut issues);
 
@@ -320,6 +323,7 @@ impl RawConfig {
             inbound,
             packages,
             extensions,
+            site,
             email,
         })
     }
