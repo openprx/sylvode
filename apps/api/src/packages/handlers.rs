@@ -151,8 +151,10 @@ pub async fn upload_package(
 pub struct ListQuery {
     kind: Option<String>,
     q: Option<String>,
-    #[serde(flatten)]
-    page: PageQuery,
+    // Not `#[serde(flatten)]`: a flattened struct reads every query value as a string, so
+    // `per_page=200` would be refused as an invalid integer.
+    page: Option<i64>,
+    per_page: Option<i64>,
 }
 
 /// `GET /api/v1/workspaces/{w}/packages?kind=&q=&page=`: built-in packages and the workspace's own.
@@ -179,7 +181,11 @@ pub async fn list_packages(
             "q is limited to 100 characters",
         ));
     }
-    let paging = query.page.resolve(50, 200);
+    let paging = PageQuery {
+        page: query.page,
+        per_page: query.per_page,
+    }
+    .resolve(50, 200);
     let (rows, total) = store::list_visible(
         &state.db,
         workspace_id,
