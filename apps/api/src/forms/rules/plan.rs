@@ -45,10 +45,12 @@ pub struct SchemaScope {
     pub project_id: Uuid,
 }
 
-/// A field's `default`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// A field's `default`: a fixed value, or a CEL expression over `now` and `user` evaluated at
+/// create time.
+#[derive(Debug)]
 pub enum DefaultSpec {
     Value(Value),
+    Cel(sv_rules::Program),
 }
 
 /// One entry of `rules.normalize` or `rules.transform`.
@@ -610,15 +612,32 @@ fn parse_default(
         ));
         return None;
     };
-    if object.contains_key("cel") {
+    if let Some(source) = object.get("cel") {
         counters.cel += 1;
-        // CEL defaults need a CEL-to-JSON result conversion the rule crate does not expose yet.
-        issues.errors.push(SchemaIssue::new(
-            format!("{path}/cel"),
-            "default_invalid",
-            "CEL defaults are not available yet",
-        ));
-        return None;
+        let path = format!("{path}/cel");
+        if plan.ty.cel_type().is_none() {
+            issues.errors.push(SchemaIssue::new(
+                path,
+                "rule_not_allowed_for_type",
+                "this field type has no CEL mapping",
+            ));
+            return None;
+        }
+        let Some(source) = source.as_str() else {
+            issues.errors.push(SchemaIssue::new(
+                path,
+                "default_invalid",
+                "default.cel must be a string",
+            ));
+            return None;
+        };
+        return match sv_rules::compile(source, sv_rules::Env::Default) {
+            Ok(program) => Some(DefaultSpec::Cel(program)),
+            Err(error) => {
+                issues.errors.push(SchemaIssue::new(path, error.code, ""));
+                None
+            }
+        };
     }
     let Some(value) = object.get("value") else {
         issues.errors.push(SchemaIssue::new(

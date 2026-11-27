@@ -147,7 +147,7 @@ pub async fn create_record_in_transaction(
     ensure_field_write_policy_allows(state, form.id, role, &req.values).await?;
     ensure_read_only_untouched(&form.schema, &req.values, None, &BTreeSet::new())?;
     let writer = writer_of_source(&req.source);
-    let (with_defaults, defaulted) = apply_defaults(&form.schema, req.values)?;
+    let (with_defaults, defaulted) = apply_defaults(&form.schema, req.values, &caller(actor_id, role, is_bot))?;
     let values_with_formula = run_formula_hooks(
         state,
         form.workspace_id,

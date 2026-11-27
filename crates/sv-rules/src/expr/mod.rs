@@ -249,6 +249,15 @@ impl Program {
         }
     }
 
+    /// Evaluates the program to JSON (the `default` result). Strings, integers, booleans, `null`
+    /// and lists of those convert; a double, a map or any other value is `cel_error`.
+    ///
+    /// # Errors
+    /// As [`Program::eval`]; `cel_error` also when the result has no JSON form here.
+    pub fn eval_json(&self, vars: &Vars) -> Result<serde_json::Value, RuleEvalError> {
+        to_json(&self.eval(vars)?, 0)
+    }
+
     /// Evaluates a boolean program (the `field_rule` and `layout_when` `when` result).
     ///
     /// # Errors
@@ -259,6 +268,23 @@ impl Program {
             _ => Err(RuleEvalError::error()),
         }
     }
+}
+
+fn to_json(value: &cel::Value, depth: usize) -> Result<serde_json::Value, RuleEvalError> {
+    Ok(match value {
+        cel::Value::Null => serde_json::Value::Null,
+        cel::Value::Bool(b) => serde_json::Value::Bool(*b),
+        cel::Value::Int(i) => serde_json::Value::from(*i),
+        cel::Value::UInt(u) => serde_json::Value::from(*u),
+        cel::Value::String(s) => serde_json::Value::String(s.as_str().to_owned()),
+        cel::Value::List(items) if depth == 0 => serde_json::Value::Array(
+            items
+                .iter()
+                .map(|item| to_json(item, depth + 1))
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        _ => return Err(RuleEvalError::error()),
+    })
 }
 
 #[cfg(test)]
@@ -295,6 +321,20 @@ mod tests {
             verdict("value.matches('^[a-c]+$')", Env::FieldRule, &vars),
             "Bool(true)"
         );
+    }
+
+    #[test]
+    fn evaluates_defaults_to_json() {
+        let vars = Vars::new()
+            .with("now", json!(86_400))
+            .with("user", json!({"id": "u1", "role": "member"}));
+        let eval = |src: &str| {
+            compile(src, Env::Default).and_then(|p| p.eval_json(&vars).map_err(|e| RuleDefError::root(e.code)))
+        };
+        assert_eq!(eval("now + 60").ok(), Some(json!(86_460)));
+        assert_eq!(eval("user.id").ok(), Some(json!("u1")));
+        assert_eq!(eval("['a', 'b']").ok(), Some(json!(["a", "b"])));
+        assert_eq!(eval("{'a': 1}").err().map(|e| e.code), Some("cel_error"));
     }
 
     #[test]

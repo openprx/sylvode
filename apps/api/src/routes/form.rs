@@ -3454,7 +3454,7 @@ pub async fn preview_form_record_recalculation(
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "record.create").await?;
     ensure_field_write_policy_allows(&state, form.id, &role, &req.values).await?;
     ensure_read_only_untouched(&form.schema, &req.values, None, &BTreeSet::new())?;
-    let (with_defaults, defaulted) = apply_defaults(&form.schema, req.values)?;
+    let (with_defaults, defaulted) = apply_defaults(&form.schema, req.values, &caller(actor_id, &role, is_bot))?;
     let calculated = calculate_values(&state, &form, None, with_defaults).await?;
     let denied_read_fields = denied_read_field_keys(&state, form.id, &role).await?;
     let ctx = write_context(
@@ -6292,7 +6292,7 @@ async fn preview_import_row(
     if let Some(source) = row.source.clone() {
         ensure_json_object(source, "source")?;
     }
-    let (row_values, defaulted) = apply_defaults(&form.schema, row.values.clone())?;
+    let (row_values, defaulted) = apply_defaults(&form.schema, row.values.clone(), &caller(actor_id, role, is_bot))?;
     let values_with_formula = run_formula_hooks(
         state,
         form.workspace_id,

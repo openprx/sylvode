@@ -137,7 +137,7 @@ fn schema_rule_problems_are_reported_by_path() {
         {"field_id": "fld_f_000001", "key": "f", "type": "text",
          "rules": {"validate": [{"plugin": {"package": "acme/x", "rule": "y"}}]}},
         {"field_id": "fld_g_000001", "key": "g", "type": "integer", "mask": {"outlets": ["list"]}},
-        {"field_id": "fld_h_000001", "key": "h", "type": "text", "default": {"cel": "now"}}
+        {"field_id": "fld_h_000001", "key": "h", "type": "text", "default": {"cel": "value"}}
     ]));
     let found = issue_codes(&bad);
     for expected in [
@@ -149,7 +149,7 @@ fn schema_rule_problems_are_reported_by_path() {
         ("/fields/4/rules/validate/0/value", "rule_param_invalid"),
         ("/fields/5/rules/validate/0/plugin", "plugin_rule_unavailable"),
         ("/fields/6/mask", "rule_not_allowed_for_type"),
-        ("/fields/7/default/cel", "default_invalid"),
+        ("/fields/7/default/cel", "cel_unknown_variable"),
     ] {
         assert!(
             found.contains(&(expected.0.to_string(), expected.1)),
@@ -317,10 +317,10 @@ async fn a_stored_invalid_entry_is_skipped_on_write() {
 #[test]
 fn defaults_fill_absent_keys_only_and_read_only_binds_every_caller() {
     let schema = order_schema();
-    let (values, defaulted) = apply_defaults(&schema, json!({"qty": 2})).unwrap_or_default();
+    let (values, defaulted) = apply_defaults(&schema, json!({"qty": 2}), &ctx().caller).unwrap_or_default();
     assert_eq!(values["state"], "new");
     assert!(defaulted.contains("state"));
-    let (values, _) = apply_defaults(&schema, json!({"state": null})).unwrap_or_default();
+    let (values, _) = apply_defaults(&schema, json!({"state": null}), &ctx().caller).unwrap_or_default();
     assert_eq!(values["state"], Value::Null);
 
     let none = BTreeSet::new();
@@ -354,4 +354,17 @@ fn every_field_type_parses_through_the_registry() {
         ))
         .is_err()
     );
+}
+
+#[test]
+fn cel_defaults_are_evaluated_at_create() {
+    let schema = schema(json!([
+        {"field_id": "fld_owner_001", "key": "owner", "type": "text", "default": {"cel": "user.role + '-' + user.id"}},
+        {"field_id": "fld_when_0001", "key": "when", "type": "datetime", "default": {"cel": "now"}}
+    ]));
+    assert_eq!(issue_codes(&schema), Vec::new());
+    let (values, defaulted) = apply_defaults(&schema, json!({}), &ctx().caller).unwrap_or_default();
+    assert_eq!(values["owner"], format!("member-{}", Uuid::nil()));
+    assert!(values["when"].as_str().is_some_and(|text| text.ends_with('Z')));
+    assert_eq!(defaulted.len(), 2);
 }

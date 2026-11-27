@@ -129,7 +129,7 @@ pub async fn validate_form_record(
             calculate_values_with_existing(&state, &form_for_rules, req.record_id, Some(existing), req.values).await?;
         validate_update_report(&schema, &ctx, calculated, existing, &submitted_denied, true).await?
     } else {
-        let (with_defaults, defaulted) = apply_defaults(&schema, req.values)?;
+        let (with_defaults, defaulted) = apply_defaults(&schema, req.values, &caller(actor_id, &role, is_bot))?;
         let calculated = calculate_values(&state, &form_for_rules, None, with_defaults).await?;
         validate_create_report(&schema, &ctx, calculated, &defaulted, RulePolicy::Refuse).await?
     };

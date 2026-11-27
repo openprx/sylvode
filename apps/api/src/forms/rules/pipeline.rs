@@ -532,23 +532,59 @@ fn cel_user(caller: &RuleCaller) -> Value {
 }
 
 /// Fills absent keys with their field's default on create. An explicit `null` stays empty.
-/// Returns the values and the keys that were filled.
-pub fn apply_defaults(schema: &Value, values: Value) -> Result<(Value, BTreeSet<String>), ApiError> {
+/// A CEL default is evaluated with `now` and `user`; a failing one refuses the create with
+/// `default_invalid`. Returns the values and the keys that were filled.
+pub fn apply_defaults(
+    schema: &Value,
+    values: Value,
+    caller: &RuleCaller,
+) -> Result<(Value, BTreeSet<String>), ApiError> {
     let Value::Object(mut object) = values else {
         return Ok((values, BTreeSet::new()));
     };
     let plan = write_plan(schema).map_err(ApiError::BadRequest)?;
     let mut defaulted = BTreeSet::new();
+    let mut errors = FieldErrors::default();
+    let vars = Vars::new()
+        .with("now", json!(WriteContext::now_seconds()))
+        .with("user", cel_user(caller));
     for field in &plan.fields {
-        let Some(DefaultSpec::Value(default)) = &field.default else {
+        if object.contains_key(&field.field.key) {
             continue;
-        };
-        if !object.contains_key(&field.field.key) {
-            object.insert(field.field.key.clone(), default_input(field.ty, default));
-            defaulted.insert(field.field.key.clone());
         }
+        let input = match &field.default {
+            None => continue,
+            Some(DefaultSpec::Value(default)) => default_input(field.ty, default),
+            Some(DefaultSpec::Cel(program)) => {
+                match program.eval_json(&vars).map(|value| cel_default_input(field.ty, value)) {
+                    Ok(Some(value)) => value,
+                    Ok(None) | Err(_) => {
+                        errors.push(error(field, Stage::Default, "default_invalid"));
+                        continue;
+                    }
+                }
+            }
+        };
+        object.insert(field.field.key.clone(), input);
+        defaulted.insert(field.field.key.clone());
+    }
+    if !errors.is_empty() {
+        return Err(errors.into_api_error());
     }
     Ok((Value::Object(object), defaulted))
+}
+
+/// A CEL default result as type input: a timestamp field's Unix seconds become RFC 3339 text.
+fn cel_default_input(ty: &dyn FieldType, value: Value) -> Option<Value> {
+    if ty.cel_type() == Some(crate::forms::types::CelType::Timestamp) {
+        let seconds = value.as_i64()?;
+        let moment = time::OffsetDateTime::from_unix_timestamp(seconds).ok()?;
+        return moment
+            .format(&time::format_description::well_known::Rfc3339)
+            .ok()
+            .map(Value::String);
+    }
+    Some(value)
 }
 
 /// Decimal fields refuse JSON numbers from callers; a designer default may still be one.
