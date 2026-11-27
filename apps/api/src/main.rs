@@ -79,6 +79,7 @@ async fn main() -> anyhow::Result<()> {
     let db = connect_db(&config.database_runtime()?).await?;
     migrate::run_migrations(&db, config.migrations).await?;
     migrate::verify_governance_schema(&db).await?;
+    api::packages::boot::sync_builtin(&db, &config.packages).await?;
     let state = AppState {
         cfg: cfg.clone(),
         db,
