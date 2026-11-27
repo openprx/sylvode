@@ -19,8 +19,9 @@ use api::{
     },
     middleware::bot_auth::bot_or_user_auth_middleware,
     routes::flow::{
-        get_flow_export, get_flow_export_artifact, get_flow_import, post_flow_import_artifact, post_flow_import_commit,
-        post_flow_import_preview, post_flow_workspace_export,
+        get_flow_v2_export, get_flow_v2_export_artifact, get_flow_v2_import, get_flow_v2_workspace_scope,
+        post_flow_v2_import_artifact, post_flow_v2_import_commit, post_flow_v2_import_preview,
+        post_flow_v2_scope_export,
     },
 };
 use axum::{
@@ -228,26 +229,33 @@ async fn seed_source_graph(state: &AppState, workspace_id: Uuid, owner_id: Uuid)
 fn package_router(state: AppState) -> Router {
     Router::new()
         .route(
-            "/api/v1/workspaces/{workspace_id}/flow/exports",
-            post(post_flow_workspace_export),
-        )
-        .route("/api/v1/flow/exports/{job_id}", get(get_flow_export))
-        .route("/api/v1/flow/exports/{job_id}/artifact", get(get_flow_export_artifact))
-        .route(
-            "/api/v1/workspaces/{workspace_id}/flow/import-artifacts",
-            post(post_flow_import_artifact),
+            "/api/v2/flow/workspaces/{workspace_id}/scope",
+            get(get_flow_v2_workspace_scope),
         )
         .route(
-            "/api/v1/workspaces/{workspace_id}/flow/imports/preview",
-            post(post_flow_import_preview),
+            "/api/v2/flow/scopes/{scope_id}/exports",
+            post(post_flow_v2_scope_export),
+        )
+        .route("/api/v2/flow/exports/{job_id}", get(get_flow_v2_export))
+        .route(
+            "/api/v2/flow/exports/{job_id}/artifact",
+            get(get_flow_v2_export_artifact),
         )
         .route(
-            "/api/v1/workspaces/{workspace_id}/flow/imports/{import_id}/commit",
-            post(post_flow_import_commit),
+            "/api/v2/flow/scopes/{scope_id}/import-artifacts",
+            post(post_flow_v2_import_artifact),
         )
         .route(
-            "/api/v1/workspaces/{workspace_id}/flow/imports/{import_id}",
-            get(get_flow_import),
+            "/api/v2/flow/scopes/{scope_id}/imports/preview",
+            post(post_flow_v2_import_preview),
+        )
+        .route(
+            "/api/v2/flow/scopes/{scope_id}/imports/{import_id}/commit",
+            post(post_flow_v2_import_commit),
+        )
+        .route(
+            "/api/v2/flow/scopes/{scope_id}/imports/{import_id}",
+            get(get_flow_v2_import),
         )
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -368,7 +376,7 @@ async fn full_workspace_roundtrip_compares_every_document_graph_lineage_and_repo
     )?;
     let job_id = exported["job_id"].as_str().ok_or("export job id missing")?;
     let package = reqwest::Client::new()
-        .get(format!("http://{address}/api/v1/flow/exports/{job_id}/artifact"))
+        .get(format!("http://{address}/api/v2/flow/exports/{job_id}/artifact"))
         .bearer_auth(source_token)
         .header("x-sylvode-mcp-surface", TRANSPORT_LABEL_STDIO)
         .send()

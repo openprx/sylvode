@@ -332,7 +332,7 @@ def run_drive(args: argparse.Namespace) -> int:
     stopped = None
     started = time.monotonic()
     blocks = 0
-    url = f"{origin}/api/v1/flow/objects/{object_id}/commands"
+    url = f"{origin}/api/v2/flow/objects/{object_id}/commands"
     while blocks < top:
         if time.monotonic() - started > args.max_seconds:
             stopped = f"time budget of {args.max_seconds}s reached at {blocks} blocks"

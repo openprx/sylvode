@@ -163,19 +163,19 @@ pub static ACCESS_EXCEPTIONS: &[(&str, &str)] = &[];
 
 /// `Read` tools that issue a non-GET request, each with the endpoint and why it reads only.
 pub static POST_READ_ENDPOINTS: &[(&str, &str)] = &[
-    // POST /api/v1/flow/objects/{object_id}/collab/verify (the object_id shape): the shallow integrity
+    // POST /api/v2/flow/objects/{object_id}/collab/verify (the object_id shape): the shallow integrity
     // check of one object. The handler only reads (`verify_collab` writes no row, answers a dry-run
     // receipt with a random operation id and no audit event); the POST carries `deep: false` and an
     // idempotency key. Needs bot `write` permission only because the API gates by HTTP method.
     (
         "objects.integrity",
-        "POST /api/v1/flow/objects/{object_id}/collab/verify (shallow check, read-only handler)",
+        "POST /api/v2/flow/objects/{object_id}/collab/verify (shallow check, read-only handler)",
     ),
-    // POST /api/v1/flow/collections/{collection_id}/query: the filter, sort and group of the query
+    // POST /api/v2/flow/collections/{collection_id}/query: the filter, sort and group of the query
     // travel in the body; the endpoint only reads typed record projections.
     (
         "collections.query",
-        "POST /api/v1/flow/collections/{collection_id}/query (query body, projections only)",
+        "POST /api/v2/flow/collections/{collection_id}/query (query body, projections only)",
     ),
 ];
 
@@ -1850,9 +1850,17 @@ mod tests {
             api.clear();
             let _ = server.execute_tool_for_catalog_witness(name, arguments).await;
             let seen = api.seen();
-            let [request] = seen.as_slice() else {
+            // The workspace resolves to its Flow scope first; the read itself is the second request.
+            let [resolution, request] = seen.as_slice() else {
                 return Err(format!("{name} issued {seen:?}").into());
             };
+            assert_eq!(resolution.method, "GET", "{name}");
+            assert_eq!(
+                class_of(&resolution.method, &resolution.path),
+                Some(Class::NoProject),
+                "{name}: {}",
+                resolution.path
+            );
             assert_eq!(request.method, "GET", "{name}");
             assert_eq!(
                 class_of(&request.method, &request.path),

@@ -3082,7 +3082,7 @@ mod tests {
         use crate::error::REPEATED_FAILURE_CLOSE_STREAK;
         use crate::flow::collab::frame::{Frame, PROTOCOL_VERSION, RejectedCode, WriteState};
         use crate::flow::collab::limits::{UPDATE_BURST_MAX, WEBSOCKET_FRAME_BYTES_MAX};
-        use crate::routes::collab::{create_ticket, ws_upgrade};
+        use crate::routes::flow::{get_flow_v2_ws, post_flow_v2_ticket};
 
         const TEST_DATABASE_URL_ENV: &str = "OPENPR_TEST_DATABASE_URL";
         const TEST_ORIGIN: &str = "http://session-live-ws-test.local";
@@ -3262,13 +3262,13 @@ mod tests {
             let auth_state = state.clone();
             let app = Router::new()
                 .route(
-                    "/api/v1/collab/tickets",
-                    axum::routing::post(create_ticket).route_layer(axum_middleware::from_fn_with_state(
+                    "/api/v2/flow/collab/tickets",
+                    axum::routing::post(post_flow_v2_ticket).route_layer(axum_middleware::from_fn_with_state(
                         auth_state,
                         crate::middleware::bot_auth::bot_or_user_auth_middleware,
                     )),
                 )
-                .route("/api/v1/collab/ws", get(ws_upgrade))
+                .route("/api/v2/flow/collab/ws", get(get_flow_v2_ws))
                 .with_state(state);
 
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -3285,18 +3285,18 @@ mod tests {
         async fn issue_ticket(
             addr: SocketAddr,
             token: &str,
-            workspace_id: Uuid,
+            object_id: Uuid,
             document_id: Uuid,
             client_id: &str,
         ) -> String {
             let client = reqwest::Client::new();
             let response = client
-                .post(format!("http://{addr}/api/v1/collab/tickets"))
+                .post(format!("http://{addr}/api/v2/flow/collab/tickets"))
                 .bearer_auth(token)
                 .json(&serde_json::json!({
-                    "workspace_id": workspace_id,
+                    "object_id": object_id,
                     "document_id": document_id,
-                    "client_id": client_id,
+                    "client_id": wire_client(client_id),
                     "origin": TEST_ORIGIN,
                 }))
                 .send()
@@ -3309,8 +3309,20 @@ mod tests {
 
         type WsStream = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
+        /// A stable UUID for a readable client label: tickets bind a UUID client id. A label that is
+        /// already a UUID is kept.
+        fn wire_client(label: &str) -> String {
+            if Uuid::parse_str(label).is_ok() {
+                return label.to_string();
+            }
+            Uuid::new_v5(&Uuid::NAMESPACE_OID, label.as_bytes()).to_string()
+        }
+
         async fn connect(addr: SocketAddr, ticket: &str, client_id: &str) -> WsStream {
-            let url = format!("ws://{addr}/api/v1/collab/ws?ticket={ticket}&client_id={client_id}");
+            let url = format!(
+                "ws://{addr}/api/v2/flow/collab/ws?ticket={ticket}&client_id={}",
+                wire_client(client_id)
+            );
             let mut request = url.into_client_request().expect("builds a client request");
             request
                 .headers_mut()
@@ -3360,7 +3372,7 @@ mod tests {
                 &Frame::Hello {
                     protocol_version: PROTOCOL_VERSION,
                     capabilities: vec![],
-                    client_id: client_id.to_string(),
+                    client_id: wire_client(client_id),
                     session_id: Uuid::new_v4(),
                 },
             )
@@ -3431,11 +3443,11 @@ mod tests {
             let scratch = scratch_or_skip!("heartbeat-pong");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state).await;
             let client_id = "heartbeat-pong-client";
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
             let (mut ws, _) = open_session(addr, &ticket, client_id, document_id).await;
 
             send_frame(
@@ -3469,11 +3481,11 @@ mod tests {
             let scratch = scratch_or_skip!("drain-handshake");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state).await;
             let client_id = "drain-handshake-client";
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
             let guard = crate::flow::collab::runtime::runtime().begin_workspace_drain(workspace_id, 1_750);
 
             let mut ws = connect(addr, &ticket, client_id).await;
@@ -3482,7 +3494,7 @@ mod tests {
                 &Frame::Hello {
                     protocol_version: PROTOCOL_VERSION,
                     capabilities: vec![],
-                    client_id: client_id.to_string(),
+                    client_id: wire_client(client_id),
                     session_id: Uuid::new_v4(),
                 },
             )
@@ -3536,11 +3548,11 @@ mod tests {
             let scratch = scratch_or_skip!("authorization-churn-reopen");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state.clone()).await;
             let client_id = "authorization-churn-reopen-client";
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
 
             let current_epoch = crate::flow::collab::authz::read_epoch(&state.db, workspace_id)
                 .await
@@ -3560,7 +3572,7 @@ mod tests {
                 &Frame::Hello {
                     protocol_version: PROTOCOL_VERSION,
                     capabilities: vec![],
-                    client_id: client_id.to_string(),
+                    client_id: wire_client(client_id),
                     session_id: Uuid::new_v4(),
                 },
             )
@@ -3628,12 +3640,12 @@ mod tests {
             let scratch = scratch_or_skip!("frame-bytes");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state.clone()).await;
 
             let client_id = "frame-bytes-client";
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
             let (mut ws, head_seq_before) = open_session(addr, &ticket, client_id, document_id).await;
 
             const WEBSOCKET_FRAME_BYTES_MAX: usize = 131_072;
@@ -3663,15 +3675,15 @@ mod tests {
 
             // ---- plus one: an arbitrary 131,073-byte text message, rejected on length alone ----
             send_raw_text(&mut ws, "a".repeat(WEBSOCKET_FRAME_BYTES_MAX + 1)).await;
-            let rejected = recv_frame(&mut ws).await;
-            let Frame::Rejected { code, details, .. } = rejected else {
-                panic!("expected a rejected frame, got {rejected:?}");
-            };
-            assert_eq!(code, RejectedCode::LimitExceeded);
-            let details = details.expect("a limit_exceeded rejection must carry details");
-            assert_eq!(details["limit_kind"], "websocket_frame_bytes");
-            assert_eq!(details["limit"], WEBSOCKET_FRAME_BYTES_MAX as u64);
-            assert_eq!(details["observed"], (WEBSOCKET_FRAME_BYTES_MAX + 1) as u64);
+            // The scope-native upgrade caps the WebSocket message size at the same ceiling, so the
+            // transport itself ends the connection of a client that exceeds it: nothing is processed.
+            let ended = tokio::time::timeout(Duration::from_secs(30), ws.next())
+                .await
+                .expect("the connection ends before the timeout");
+            assert!(
+                matches!(ended, None | Some(Err(_) | Ok(TMessage::Close(_)))),
+                "an over-ceiling frame must end the connection, got {ended:?}"
+            );
 
             assert_eq!(
                 read_head_seq(&state, document_id).await,
@@ -3705,20 +3717,20 @@ mod tests {
             let scratch = scratch_or_skip!("presence-bytes");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state.clone()).await;
 
             let (mut sender, head_seq_before) = open_session(
                 addr,
-                &issue_ticket(addr, &token, workspace_id, document_id, "presence-bytes-sender").await,
+                &issue_ticket(addr, &token, object_id, document_id, "presence-bytes-sender").await,
                 "presence-bytes-sender",
                 document_id,
             )
             .await;
             let (mut observer, _) = open_session(
                 addr,
-                &issue_ticket(addr, &token, workspace_id, document_id, "presence-bytes-observer").await,
+                &issue_ticket(addr, &token, object_id, document_id, "presence-bytes-observer").await,
                 "presence-bytes-observer",
                 document_id,
             )
@@ -3812,20 +3824,20 @@ mod tests {
             let scratch = scratch_or_skip!("presence-ttl");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state.clone()).await;
 
             let (mut sender, head_seq_before) = open_session(
                 addr,
-                &issue_ticket(addr, &token, workspace_id, document_id, "presence-ttl-sender").await,
+                &issue_ticket(addr, &token, object_id, document_id, "presence-ttl-sender").await,
                 "presence-ttl-sender",
                 document_id,
             )
             .await;
             let (mut observer, _) = open_session(
                 addr,
-                &issue_ticket(addr, &token, workspace_id, document_id, "presence-ttl-observer").await,
+                &issue_ticket(addr, &token, object_id, document_id, "presence-ttl-observer").await,
                 "presence-ttl-observer",
                 document_id,
             )
@@ -3903,12 +3915,12 @@ mod tests {
             let scratch = scratch_or_skip!("reopen-attempt");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state.clone()).await;
 
             let client_id = "reopen-client";
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
             let (mut ws, head_seq_before) = open_session(addr, &ticket, client_id, document_id).await;
 
             let dispatch_before = count_event_dispatch(&state, document_id).await;
@@ -3976,12 +3988,12 @@ mod tests {
             let scratch = scratch_or_skip!("open-documents-kind");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state.clone()).await;
 
             let client_id = "open-documents-kind-client";
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
             let (mut ws, head_seq_before) = open_session(addr, &ticket, client_id, document_id).await;
             let dispatch_before = count_event_dispatch(&state, document_id).await;
 
@@ -4038,12 +4050,12 @@ mod tests {
             let scratch = scratch_or_skip!("frame-rate-kind");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state.clone()).await;
 
             let client_id = "frame-rate-kind-client";
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
             let (mut ws, head_seq_before) = open_session(addr, &ticket, client_id, document_id).await;
             let dispatch_before = count_event_dispatch(&state, document_id).await;
 
@@ -4122,12 +4134,12 @@ mod tests {
             let scratch = scratch_or_skip!("update-rate-kind");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state.clone()).await;
 
             let client_id = "update-rate-kind-client";
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
             let (mut ws, head_seq_before) = open_session(addr, &ticket, client_id, document_id).await;
             let dispatch_before = count_event_dispatch(&state, document_id).await;
 
@@ -4196,7 +4208,7 @@ mod tests {
             let scratch = scratch_or_skip!("user-connections-kind");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state.clone()).await;
 
@@ -4206,7 +4218,7 @@ mod tests {
             let mut open_sessions = Vec::new();
             for n in 0..CONNECTIONS_PER_USER_MAX {
                 let client_id = format!("user-connections-{n}");
-                let ticket = issue_ticket(addr, &token, workspace_id, document_id, &client_id).await;
+                let ticket = issue_ticket(addr, &token, object_id, document_id, &client_id).await;
                 let (ws, _) = open_session(addr, &ticket, &client_id, document_id).await;
                 open_sessions.push(ws);
             }
@@ -4215,7 +4227,7 @@ mod tests {
             // authorization and the connection slot are now reserved before document content is
             // sent, closing the stale-open disclosure window.
             let client_id = "user-connections-overflow";
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
             let (mut ws, _) = handshake(addr, &ticket, client_id, document_id, None, None).await;
 
             let rejected = recv_frame(&mut ws).await;
@@ -4273,7 +4285,7 @@ mod tests {
                 &Frame::Hello {
                     protocol_version: PROTOCOL_VERSION,
                     capabilities: vec![],
-                    client_id: client_id.to_string(),
+                    client_id: wire_client(client_id),
                     session_id: Uuid::new_v4(),
                 },
             )
@@ -4522,15 +4534,15 @@ mod tests {
             let scratch = scratch_or_skip!("presence-fanout");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state.clone()).await;
 
-            let ticket_a = issue_ticket(addr, &token, workspace_id, document_id, "fanout-a").await;
+            let ticket_a = issue_ticket(addr, &token, object_id, document_id, "fanout-a").await;
             let (mut a, _, _, a_session) = open_session_full(addr, &ticket_a, "fanout-a", document_id).await;
-            let ticket_b = issue_ticket(addr, &token, workspace_id, document_id, "fanout-b").await;
+            let ticket_b = issue_ticket(addr, &token, object_id, document_id, "fanout-b").await;
             let (mut b, _, _, _) = open_session_full(addr, &ticket_b, "fanout-b", document_id).await;
-            let ticket_c = issue_ticket(addr, &token, workspace_id, document_id, "fanout-c").await;
+            let ticket_c = issue_ticket(addr, &token, object_id, document_id, "fanout-c").await;
             let (mut c, _, _, _) = open_session_full(addr, &ticket_c, "fanout-c", document_id).await;
 
             send_frame(&mut a, &presence_frame(document_id, 7, None)).await;
@@ -4561,7 +4573,7 @@ mod tests {
             sync(&mut a).await;
 
             // A session joining now is handed the presence already on the document.
-            let ticket_d = issue_ticket(addr, &token, workspace_id, document_id, "fanout-d").await;
+            let ticket_d = issue_ticket(addr, &token, object_id, document_id, "fanout-d").await;
             let (mut d, d_session) = handshake(addr, &ticket_d, "fanout-d", document_id, None, None).await;
             assert!(matches!(recv_frame(&mut d).await, Frame::Snapshot { .. }));
             // A trailing `ping` bounds the wait: the join snapshot is written to the socket before
@@ -4616,14 +4628,13 @@ mod tests {
             let scratch = scratch_or_skip!("presence-actor");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let member_id = collab_member(&state, workspace_id).await;
             let addr = spawn_server(state.clone()).await;
 
-            let owner_ticket = issue_ticket(addr, &jwt_for(owner_id), workspace_id, document_id, "actor-owner").await;
+            let owner_ticket = issue_ticket(addr, &jwt_for(owner_id), object_id, document_id, "actor-owner").await;
             let (mut owner, _, _, _) = open_session_full(addr, &owner_ticket, "actor-owner", document_id).await;
-            let member_ticket =
-                issue_ticket(addr, &jwt_for(member_id), workspace_id, document_id, "actor-member").await;
+            let member_ticket = issue_ticket(addr, &jwt_for(member_id), object_id, document_id, "actor-member").await;
             let (mut member, _, _, member_session) =
                 open_session_full(addr, &member_ticket, "actor-member", document_id).await;
 
@@ -4650,7 +4661,7 @@ mod tests {
                 "the payload is relayed as is"
             );
 
-            let joiner_ticket = issue_ticket(addr, &jwt_for(owner_id), workspace_id, document_id, "actor-joiner").await;
+            let joiner_ticket = issue_ticket(addr, &jwt_for(owner_id), object_id, document_id, "actor-joiner").await;
             let (mut joiner, _) = handshake(addr, &joiner_ticket, "actor-joiner", document_id, None, None).await;
             let snapshot_presence = recv_raw_presence(&mut joiner).await;
             assert_eq!(
@@ -4675,11 +4686,11 @@ mod tests {
             let scratch = scratch_or_skip!("presence-inplace");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state.clone()).await;
 
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, "presence-inplace").await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, "presence-inplace").await;
             let (mut ws, _, _, _) = open_session_full(addr, &ticket, "presence-inplace", document_id).await;
 
             // Twenty reports exceed the per-connection entry limit (8). Each synchronization
@@ -4706,11 +4717,11 @@ mod tests {
             let scratch = scratch_or_skip!("presence-no-persist");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state.clone()).await;
 
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, "presence-no-persist").await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, "presence-no-persist").await;
             let (mut ws, _, _, _) = open_session_full(addr, &ticket, "presence-no-persist", document_id).await;
 
             let updates_before = count_collab_updates(&state, document_id).await;
@@ -4754,11 +4765,11 @@ mod tests {
             let scratch = scratch_or_skip!("presence-cleanup");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state.clone()).await;
 
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, "presence-cleanup").await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, "presence-cleanup").await;
             let (mut ws, _, _, _) = open_session_full(addr, &ticket, "presence-cleanup", document_id).await;
 
             // ---- TTL expiry ----
@@ -4804,11 +4815,11 @@ mod tests {
             let scratch = scratch_or_skip!("egress-dup-gap");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state.clone()).await;
 
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, "egress-dup-gap").await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, "egress-dup-gap").await;
             let (mut ws, head_seq, _, _) = open_session_full(addr, &ticket, "egress-dup-gap", document_id).await;
 
             let committed = commit_updates_offline(&state, document_id, workspace_id, owner_id, 3).await;
@@ -4892,11 +4903,11 @@ mod tests {
             let scratch = scratch_or_skip!("egress-unfillable");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state.clone()).await;
 
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, "egress-unfillable").await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, "egress-unfillable").await;
             let (mut ws, head_seq, _, _) = open_session_full(addr, &ticket, "egress-unfillable", document_id).await;
 
             let registry = live_registry();
@@ -4953,11 +4964,11 @@ mod tests {
             let scratch = scratch_or_skip!("inbound-reorder");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state.clone()).await;
 
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, "inbound-reorder").await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, "inbound-reorder").await;
             let (mut ws, head_seq, _, _) = open_session_full(addr, &ticket, "inbound-reorder", document_id).await;
             let generated = concurrent_update_frames(&state, document_id).await;
             let generated_ids = generated.each_ref().map(|frame| {
@@ -5015,17 +5026,17 @@ mod tests {
             let scratch = scratch_or_skip!("resume-replay");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state.clone()).await;
 
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, "resume-a").await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, "resume-a").await;
             let (first, head_seq, head_frontier, _) = open_session_full(addr, &ticket, "resume-a", document_id).await;
             drop(first);
 
             let committed = commit_updates_offline(&state, document_id, workspace_id, owner_id, 2).await;
 
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, "resume-b").await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, "resume-b").await;
             let (mut ws, _) = handshake(
                 addr,
                 &ticket,
@@ -5076,16 +5087,16 @@ mod tests {
             let scratch = scratch_or_skip!("resume-at-head-ack");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state.clone()).await;
 
-            let first_ticket = issue_ticket(addr, &token, workspace_id, document_id, "resume-head-a").await;
+            let first_ticket = issue_ticket(addr, &token, object_id, document_id, "resume-head-a").await;
             let (first, head_seq, head_frontier, _) =
                 open_session_full(addr, &first_ticket, "resume-head-a", document_id).await;
             drop(first);
 
-            let resume_ticket = issue_ticket(addr, &token, workspace_id, document_id, "resume-head-b").await;
+            let resume_ticket = issue_ticket(addr, &token, object_id, document_id, "resume-head-b").await;
             let (mut resumed, _) = handshake(
                 addr,
                 &resume_ticket,
@@ -5140,17 +5151,17 @@ mod tests {
             let scratch = scratch_or_skip!("resume-refused");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state.clone()).await;
 
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, "refused-a").await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, "refused-a").await;
             let (first, head_seq, head_frontier, _) = open_session_full(addr, &ticket, "refused-a", document_id).await;
             drop(first);
             commit_updates_offline(&state, document_id, workspace_id, owner_id, 2).await;
 
             // ---- stale frontier at a perfectly valid seq ----
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, "refused-b").await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, "refused-b").await;
             let (mut ws, _) = handshake(
                 addr,
                 &ticket,
@@ -5168,7 +5179,7 @@ mod tests {
             drop(ws);
 
             // ---- a seq no client can legitimately hold ----
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, "refused-c").await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, "refused-c").await;
             let (mut ws, _) = handshake(
                 addr,
                 &ticket,
@@ -5196,14 +5207,14 @@ mod tests {
             let scratch = scratch_or_skip!("ack-frontier");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state.clone()).await;
 
             // One committed update before connecting, so the snapshot head is provably >= 1 and a
             // *regressing* ack (`head_seq - 1`) is expressible.
             commit_updates_offline(&state, document_id, workspace_id, owner_id, 1).await;
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, "ack-frontier").await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, "ack-frontier").await;
             let (mut ws, head_seq, head_frontier, session_id) =
                 open_session_full(addr, &ticket, "ack-frontier", document_id).await;
             assert!(head_seq >= 1, "the fixture must leave at least one committed seq");
@@ -5355,7 +5366,7 @@ mod tests {
             let scratch = scratch_or_skip!("view-read-only-session");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let viewer_id = Uuid::new_v4();
             exec(
                 &state,
@@ -5379,11 +5390,10 @@ mod tests {
 
             let addr = spawn_server(state.clone()).await;
             let viewer_ticket =
-                issue_ticket(addr, &jwt_for(viewer_id), workspace_id, document_id, "readonly-viewer").await;
+                issue_ticket(addr, &jwt_for(viewer_id), object_id, document_id, "readonly-viewer").await;
             let (mut viewer, _, _, viewer_session) =
                 open_session_full(addr, &viewer_ticket, "readonly-viewer", document_id).await;
-            let owner_ticket =
-                issue_ticket(addr, &jwt_for(owner_id), workspace_id, document_id, "readonly-owner").await;
+            let owner_ticket = issue_ticket(addr, &jwt_for(owner_id), object_id, document_id, "readonly-owner").await;
             let (mut owner, _, _, owner_session) =
                 open_session_full(addr, &owner_ticket, "readonly-owner", document_id).await;
 
@@ -5596,13 +5606,13 @@ mod tests {
             let scratch = scratch_or_skip!("server-rejected-wire");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let member_id = seed_second_member(&state, workspace_id).await;
             let token = jwt_for(member_id);
             let addr = spawn_server(state.clone()).await;
 
             let client_id = "server-rejected-wire-client";
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
             let (mut ws, head_seq_before) = open_session(addr, &ticket, client_id, document_id).await;
             let dispatch_before = count_event_dispatch(&state, document_id).await;
 
@@ -5689,13 +5699,13 @@ mod tests {
             let scratch = scratch_or_skip!("server-rejected-streak");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let member_id = seed_second_member(&state, workspace_id).await;
             let token = jwt_for(member_id);
             let addr = spawn_server(state.clone()).await;
 
             let client_id = "server-rejected-streak-client";
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
             let (mut ws, head_seq_before) = open_session(addr, &ticket, client_id, document_id).await;
             delete_user(&state, member_id).await;
 
@@ -5760,13 +5770,13 @@ mod tests {
             let scratch = scratch_or_skip!("server-rejected-reset");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let member_id = seed_second_member(&state, workspace_id).await;
             let token = jwt_for(member_id);
             let addr = spawn_server(state.clone()).await;
 
             let client_id = "server-rejected-reset-client";
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
             let (mut ws, head_seq_before) = open_session(addr, &ticket, client_id, document_id).await;
 
             async fn refuse_twice(state: &AppState, ws: &mut WsStream, document_id: Uuid, phase: &str) {
@@ -5937,12 +5947,12 @@ mod tests {
             let scratch = scratch_or_skip!("server-rejected-ratelimit");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state.clone()).await;
 
             let client_id = "server-rejected-ratelimit-client";
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
             let (mut ws, head_seq_before) = open_session(addr, &ticket, client_id, document_id).await;
 
             // Built up front: constructing one costs a query plus a CRDT export, which is far more
@@ -6058,12 +6068,12 @@ mod tests {
             let scratch = scratch_or_skip!("server-rejected-schema");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state.clone()).await;
 
             let client_id = "server-rejected-schema-client";
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
             let (mut ws, head_seq_before) = open_session(addr, &ticket, client_id, document_id).await;
 
             // Built while the table still exists; the update itself is perfectly valid.
@@ -6139,12 +6149,12 @@ mod tests {
             let scratch = scratch_or_skip!("server-rejected-contention");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state.clone()).await;
 
             let client_id = "server-rejected-contention-client";
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
             let (mut ws, head_seq_before) = open_session(addr, &ticket, client_id, document_id).await;
 
             // A second, genuinely concurrent writer holds the row the epoch fence must read.
@@ -6263,11 +6273,11 @@ mod tests {
             let scratch = scratch_or_skip!("apply-busy-modes");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state.clone()).await;
             let client_id = "apply-busy-modes-client";
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
             let (mut ws, head_seq_before) = open_session(addr, &ticket, client_id, document_id).await;
 
             scripted_attempts::enable(
@@ -6335,11 +6345,11 @@ mod tests {
             let scratch = scratch_or_skip!("apply-busy-resend");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state.clone()).await;
             let client_id = "apply-busy-resend-client";
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
             let (mut ws, head_seq_before) = open_session(addr, &ticket, client_id, document_id).await;
 
             scripted_attempts::enable(document_id, vec![scripted_starved()]);
@@ -6382,11 +6392,11 @@ mod tests {
             let scratch = scratch_or_skip!("apply-busy-permanent");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state.clone()).await;
             let client_id = "apply-busy-permanent-client";
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
             let (mut ws, head_seq_before) = open_session(addr, &ticket, client_id, document_id).await;
 
             let bad_report = || WindowReport {
@@ -6478,11 +6488,11 @@ mod tests {
             let scratch = scratch_or_skip!("setup-backstop-open");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let token = jwt_for(owner_id);
             let addr = spawn_server(state.clone()).await;
             let client_id = "setup-backstop-open-client";
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+            let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
             let (mut ws, head_seq_before) = open_session(addr, &ticket, client_id, document_id).await;
 
             let setup_exhausted = || {
@@ -6662,9 +6672,9 @@ mod tests {
             collab_set_grant(&state, workspace_id, owner_id, object_id, member_id, "edit").await;
 
             let addr = spawn_server(state.clone()).await;
-            let owner_ticket = issue_ticket(addr, &jwt_for(owner_id), workspace_id, document_id, "b6-owner").await;
+            let owner_ticket = issue_ticket(addr, &jwt_for(owner_id), object_id, document_id, "b6-owner").await;
             let (mut owner, _, _, _) = open_session_full(addr, &owner_ticket, "b6-owner", document_id).await;
-            let member_ticket = issue_ticket(addr, &jwt_for(member_id), workspace_id, document_id, "b6-member").await;
+            let member_ticket = issue_ticket(addr, &jwt_for(member_id), object_id, document_id, "b6-member").await;
             let (mut member, _, _, _) = open_session_full(addr, &member_ticket, "b6-member", document_id).await;
 
             let first = next_update_frame(&state, document_id).await;
@@ -6731,7 +6741,7 @@ mod tests {
             )
             .await;
             let addr = spawn_server(state.clone()).await;
-            let ticket = issue_ticket(addr, &jwt_for(member_id), workspace_id, document_id, "upgrade-member").await;
+            let ticket = issue_ticket(addr, &jwt_for(member_id), object_id, document_id, "upgrade-member").await;
             let (mut member, _, _, _) = open_session_full(addr, &ticket, "upgrade-member", document_id).await;
 
             let refused = next_update_frame(&state, document_id).await;
@@ -6813,7 +6823,7 @@ mod tests {
             let addr = spawn_server(state.clone()).await;
             let mut sockets = Vec::new();
             for (member, label) in [(removed, "lost-removed"), (fenced, "lost-fenced")] {
-                let ticket = issue_ticket(addr, &jwt_for(member), workspace_id, document_id, label).await;
+                let ticket = issue_ticket(addr, &jwt_for(member), object_id, document_id, label).await;
                 let (mut ws, _, _, _) = open_session_full(addr, &ticket, label, document_id).await;
                 let update = next_update_frame(&state, document_id).await;
                 send_frame(&mut ws, &update).await;
@@ -6882,9 +6892,9 @@ mod tests {
             let scratch = scratch_or_skip!("surface-replay-answer");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let addr = spawn_server(state.clone()).await;
-            let ticket = issue_ticket(addr, &jwt_for(owner_id), workspace_id, document_id, "b6-replay").await;
+            let ticket = issue_ticket(addr, &jwt_for(owner_id), object_id, document_id, "b6-replay").await;
             let (mut first_ws, _, _, _) = open_session_full(addr, &ticket, "b6-replay", document_id).await;
             let update = next_update_frame(&state, document_id).await;
             let update_id = collab_update_id(&update);
@@ -6908,7 +6918,7 @@ mod tests {
                 "a replay on the committing connection is answered with the original receipt: {same_connection:?}"
             );
 
-            let ticket = issue_ticket(addr, &jwt_for(owner_id), workspace_id, document_id, "b6-replay").await;
+            let ticket = issue_ticket(addr, &jwt_for(owner_id), object_id, document_id, "b6-replay").await;
             let (mut second_ws, snapshot_head, _, _) = open_session_full(addr, &ticket, "b6-replay", document_id).await;
             assert!(
                 snapshot_head >= head_seq,
@@ -6936,12 +6946,12 @@ mod tests {
             let scratch = scratch_or_skip!("surface-rate-update-id");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             let addr = spawn_server(state.clone()).await;
 
             // update_rate: flood updates (wrong document id, so an admitted one is an ordinary
             // invalid_update) until one is refused by the limiter.
-            let ticket = issue_ticket(addr, &jwt_for(owner_id), workspace_id, document_id, "b6-update-rate").await;
+            let ticket = issue_ticket(addr, &jwt_for(owner_id), object_id, document_id, "b6-update-rate").await;
             let (mut ws, _) = open_session(addr, &ticket, "b6-update-rate", document_id).await;
             let mut limited = None;
             for n in 0..55u64 {
@@ -6977,7 +6987,7 @@ mod tests {
 
             // frame_rate: exhaust the frame budget with pings sent back to back, then send
             // updates; whatever answers them must carry their update_id.
-            let ticket = issue_ticket(addr, &jwt_for(owner_id), workspace_id, document_id, "b6-frame-rate").await;
+            let ticket = issue_ticket(addr, &jwt_for(owner_id), object_id, document_id, "b6-frame-rate").await;
             let (mut ws, _) = open_session(addr, &ticket, "b6-frame-rate", document_id).await;
             let mut texts = Vec::new();
             for n in 0..90 {
@@ -7045,7 +7055,7 @@ mod tests {
             let scratch = scratch_or_skip!("surface-causal");
             let state = state_for(scratch.db.clone());
             let (workspace_id, owner_id) = seed_workspace(&state).await;
-            let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+            let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
             #[derive(sea_orm::FromQueryResult)]
             struct SnapshotRow {
                 snapshot: Vec<u8>,
@@ -7066,7 +7076,7 @@ mod tests {
             let dependent = engine.export_from(&after_first).expect("dependent update exports");
 
             let addr = spawn_server(state.clone()).await;
-            let ticket = issue_ticket(addr, &jwt_for(owner_id), workspace_id, document_id, "b6-causal").await;
+            let ticket = issue_ticket(addr, &jwt_for(owner_id), object_id, document_id, "b6-causal").await;
             let (mut ws, head_before) = open_session(addr, &ticket, "b6-causal", document_id).await;
             let updates_before = count_collab_updates(&state, document_id).await;
             let update_id = Uuid::new_v4();

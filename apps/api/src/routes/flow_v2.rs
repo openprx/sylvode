@@ -22,13 +22,74 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+/// The human principal of a request. A workspace bot is refused: the caller is on a surface that only
+/// a person reaches (a personal scope, a collaboration ticket, a bootstrap).
 pub(super) fn user(claims: &JwtClaims, bot: Option<&Extension<BotAuthContext>>) -> Result<Uuid, ApiError> {
     if bot.is_some() {
         return Err(ApiError::unsupported_protocol(
-            "scope-native user operations do not accept workspace bot credentials; use the legacy adapter",
+            "this Flow operation does not accept workspace bot credentials",
         ));
     }
     Uuid::parse_str(&claims.sub).map_err(|_| ApiError::unauthenticated("invalid user identity"))
+}
+
+/// The human principal on the fallback path after a workspace branch: a bot that gets here named
+/// something that is not workspace content, and is told only that it is absent, so a personal object
+/// and a missing one answer alike.
+pub(super) fn user_or_absent(claims: &JwtClaims, bot: Option<&Extension<BotAuthContext>>) -> Result<Uuid, ApiError> {
+    if bot.is_some() {
+        return Err(ApiError::not_found("flow resource not found"));
+    }
+    user(claims, None)
+}
+
+/// What a request names, to find the workspace a bot is judged against.
+#[derive(Clone, Copy)]
+pub(super) enum Subject {
+    Object(Uuid),
+    Scope(Uuid),
+}
+
+/// The principal of a request on workspace-bound content.
+///
+/// A person is the user of the token. A workspace bot is accepted only on a target bound to a
+/// workspace: the bot's workspace and `flow_enabled` are checked with the same policy the workspace
+/// handlers use, and the actor is the bot's own user id, so events and audit name the bot. A personal
+/// scope is never reachable with a bot credential, and a target of another workspace is refused as
+/// absent when it names an object.
+pub(super) async fn principal(
+    state: &AppState,
+    claims: &JwtClaims,
+    bot: Option<&Extension<BotAuthContext>>,
+    subject: Subject,
+) -> Result<Uuid, ApiError> {
+    let Some(Extension(context)) = bot else {
+        return user(claims, None);
+    };
+    let workspace = match subject {
+        Subject::Object(object) => scope::identity(&state.db, object).await?.workspace_id,
+        Subject::Scope(scope_id) => scope::legacy_workspace(&state.db, scope_id).await?,
+    };
+    // A personal target and a missing one answer alike, and so does a target of another workspace.
+    let Some(workspace) = workspace else {
+        return Err(ApiError::not_found("flow resource not found"));
+    };
+    let mut extensions = axum::http::Extensions::new();
+    extensions.insert(claims.clone());
+    extensions.insert(context.clone());
+    let access = crate::flow::policy::require_flow_workspace_access(state, &extensions, workspace).await;
+    match access {
+        Err(err)
+            if matches!(
+                err.kind(),
+                crate::error::ApiErrorKind::Forbidden | crate::error::ApiErrorKind::NotFound
+            ) =>
+        {
+            Err(ApiError::not_found("flow resource not found"))
+        }
+        Err(err) => Err(err),
+        Ok((actor, _, _)) => Ok(actor),
+    }
 }
 pub async fn get_flow_v2_capabilities(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
     Ok(ApiResponse::success(scope::capabilities(&state.db).await?))
@@ -50,10 +111,18 @@ pub async fn get_flow_v2_workspace_scope(
     bot: Option<Extension<BotAuthContext>>,
     Path(workspace): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
+    let bot_id = bot.as_ref().map(|Extension(context)| context.bot_id);
     let extensions = super::build_auth_extensions(claims, bot);
     crate::flow::policy::require_flow_workspace_access(&state, &extensions, workspace).await?;
     let scope = scope::legacy_scope(&state.db, workspace).await?;
-    let roots = scope::roots(&state.db, scope.id).await?;
+    let mut roots = scope::roots(&state.db, scope.id).await?;
+    // A bot limited to some projects learns the roots of those projects only.
+    if let Some(bot_id) = bot_id {
+        let readable = crate::middleware::scoped_bot::readable_projects(&state.db, bot_id).await?;
+        if readable.ids().is_some() {
+            roots.retain(|root| root.project_id.is_some_and(|project| readable.allows(project)));
+        }
+    }
     Ok(ApiResponse::success(json!({"scope":scope,"roots":roots})))
 }
 pub async fn get_flow_v2_object(
@@ -63,7 +132,7 @@ pub async fn get_flow_v2_object(
     Path(object): Path<Uuid>,
     Query(params): Query<super::GetFlowObjectQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let user = user(&claims, bot.as_ref())?;
+    let user = principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?;
     let mut view = if let Some(seq) = params.at_seq {
         crate::flow::scope_history::object_at(&state, object, user, seq).await?
     } else {
@@ -99,7 +168,6 @@ pub async fn post_flow_v2_object(
     bot: Option<Extension<BotAuthContext>>,
     Json(input): Json<scope::CreateInput>,
 ) -> Result<Response, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
     if let Some(workspace) = scope::legacy_workspace(&state.db, input.scope_id).await? {
         let extensions = super::build_auth_extensions(claims, bot);
         let (actor, _, is_bot) =
@@ -140,6 +208,7 @@ pub async fn post_flow_v2_object(
         .await?;
         return Ok(ApiResponse::success(value).into_response());
     }
+    let actor = user(&claims, bot.as_ref())?;
     Ok(ApiResponse::success(scope::create_personal(&state.db, actor, input).await?).into_response())
 }
 #[derive(Default, Deserialize)]
@@ -195,7 +264,7 @@ pub async fn get_flow_v2_objects(
     if params.depth.is_some() {
         return Err(ApiError::invalid_update("depth applies only to navigator queries"));
     }
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = principal(&state, &claims, bot.as_ref(), Subject::Scope(scope_id)).await?;
     if params.unprojected && params.project_id.is_some() {
         return Err(ApiError::invalid_update(
             "project_id and unprojected are mutually exclusive",
@@ -261,7 +330,7 @@ pub async fn get_flow_v2_navigator(
             "navigator supports only project_id, depth and include_archived",
         ));
     }
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = principal(&state, &claims, bot.as_ref(), Subject::Scope(scope_id)).await?;
     accessible_scope(&state, scope_id, actor).await?;
     let roots = scope::roots(&state.db, scope_id).await?;
     let root = roots
@@ -356,7 +425,7 @@ pub async fn post_flow_v2_command(
     Path(object): Path<Uuid>,
     Json(mut req): Json<super::ExecuteFlowCommandRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?;
     let identity = scope::identity(&state.db, object).await?;
     req.command.payload = crate::flow::body_assets::normalize_command_payload(
         &state.db,
@@ -402,13 +471,13 @@ pub async fn post_flow_v2_command(
     }
     if let Some(workspace) = identity.workspace_id {
         let extensions = super::build_auth_extensions(claims, bot);
-        let (_, role, _) = crate::flow::policy::resolve_flow_principal(&state, &extensions, workspace).await?;
+        let (_, role, is_bot) = crate::flow::policy::resolve_flow_principal(&state, &extensions, workspace).await?;
         let result = crate::flow::command::execute_command(
             &state,
             crate::flow::command::ExecuteCommandInput {
                 object_id: object,
                 actor_id: actor,
-                principal_kind: "user".to_string(),
+                principal_kind: if is_bot { "bot" } else { "user" }.to_string(),
                 role,
                 command_type: req.command.command_type,
                 payload: req.command.payload,
@@ -604,7 +673,7 @@ pub struct ScopeTicketRequest {
     editor_model: u32,
     object_id: Uuid,
     document_id: Uuid,
-    client_id: String,
+    client_id: Uuid,
     origin: String,
     #[serde(default)]
     authorization_notifications: bool,
@@ -629,7 +698,7 @@ pub async fn post_flow_v2_ticket(
             user(&claims, bot.as_ref())?,
             req.object_id,
             req.document_id,
-            &req.client_id,
+            req.client_id,
             &req.origin,
             &state.cfg.collab_allowed_origins,
             req.authorization_notifications,
@@ -637,17 +706,28 @@ pub async fn post_flow_v2_ticket(
         .await?,
     ))
 }
+/// The upgrade query: the one-time ticket and the UUID the ticket was issued for.
+#[derive(Deserialize)]
+pub struct ScopeWsQuery {
+    ticket: String,
+    client_id: Uuid,
+}
 pub async fn get_flow_v2_ws(
     ws: axum::extract::ws::WebSocketUpgrade,
     State(state): State<AppState>,
-    Query(params): Query<crate::routes::collab::WsQuery>,
+    params: Result<Query<ScopeWsQuery>, axum::extract::rejection::QueryRejection>,
     headers: axum::http::HeaderMap,
 ) -> Response {
+    // A client id that is not a UUID cannot belong to any ticket: refuse it with the frame every
+    // other handshake failure uses.
+    let Ok(Query(params)) = params else {
+        return ApiError::unauthenticated("invalid ticket").into_response();
+    };
     let origin = headers
         .get(axum::http::header::ORIGIN)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    match crate::flow::scope_collab::consume(&state.db, &params.ticket, &params.client_id, origin).await {
+    match crate::flow::scope_collab::consume(&state.db, &params.ticket, params.client_id, origin).await {
         Ok(context) => ws
             .max_message_size(crate::flow::collab::limits::WEBSOCKET_FRAME_BYTES_MAX)
             .max_frame_size(crate::flow::collab::limits::WEBSOCKET_FRAME_BYTES_MAX)
@@ -673,7 +753,7 @@ pub async fn post_flow_v2_purge(
                 .into_response(),
         );
     }
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = user_or_absent(&claims, bot.as_ref())?;
     let default_key = format!("purge:{object}");
     let key = optional_intent(&headers)?.unwrap_or(&default_key);
     Ok(ApiResponse::success(crate::flow::scope_purge::purge(&state, object, actor, key).await?).into_response())
@@ -693,7 +773,7 @@ pub async fn post_flow_v2_restore_version(
                 .into_response(),
         );
     }
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = user_or_absent(&claims, bot.as_ref())?;
     Ok(ApiResponse::success(
         crate::flow::scope_history::restore_page(&state, object, actor, body.seq, &body.idempotency_key, body.message)
             .await?,
@@ -708,7 +788,7 @@ pub async fn get_flow_v2_diff(
     Path(object): Path<Uuid>,
     Query(params): Query<super::FlowObjectDiffQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?;
     scope::authorize(&state.db, object, actor, PermissionLevel::View).await?;
     let from = params
         .from_seq
@@ -729,7 +809,7 @@ pub async fn get_flow_v2_history(
     Path(object): Path<Uuid>,
     Query(query): Query<super::FlowObjectHistoryQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?;
     let proof = scope::authorize(&state.db, object, actor, PermissionLevel::View).await?;
     let rows = state.db.query_all(Statement::from_sql_and_values(DbBackend::Postgres,
         "SELECT seq,actor,origin,message,semantic_summary,created_at FROM (
@@ -766,7 +846,13 @@ pub async fn get_flow_v2_comments(
     bot: Option<Extension<BotAuthContext>>,
     Path(object): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let proof = scope::authorize(&state.db, object, user(&claims, bot.as_ref())?, PermissionLevel::View).await?;
+    let proof = scope::authorize(
+        &state.db,
+        object,
+        principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
+        PermissionLevel::View,
+    )
+    .await?;
     let comments = crate::flow::comments::list_comments(&state.db, object).await?;
     if !scope::proof_current(&state.db, &proof).await? {
         return Err(crate::flow::policy::authorization_read_unstable());
@@ -779,7 +865,7 @@ pub async fn get_flow_v2_grants(
     bot: Option<Extension<BotAuthContext>>,
     Path(object): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?;
     let proof = scope::authorize(&state.db, object, actor, PermissionLevel::View).await?;
     let rows=state.db.query_all(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT principal_kind,principal_id,level,granted_by,created_at FROM flow_object_grants WHERE object_id=$1 AND scope_id=$2 ORDER BY principal_kind,principal_id",vec![object.into(),proof.scope_id.into()])).await?;
     let mut grants = Vec::new();
@@ -814,7 +900,6 @@ pub async fn put_flow_v2_grants(
     Path(object): Path<Uuid>,
     Json(input): Json<super::SetGrantsRequest>,
 ) -> Result<Response, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
     if scope::identity(&state.db, object).await?.workspace_id.is_some() {
         return Ok(
             super::put_flow_object_grants(State(state), Extension(claims), bot, Path(object), Json(input))
@@ -822,6 +907,7 @@ pub async fn put_flow_v2_grants(
                 .into_response(),
         );
     }
+    let actor = user_or_absent(&claims, bot.as_ref())?;
     Ok(ApiResponse::success(
         crate::flow::scope_acl::mutate(
             &state.db,
@@ -846,7 +932,6 @@ pub async fn put_flow_v2_inheritance(
     Path(object): Path<Uuid>,
     Json(input): Json<super::SetInheritanceRequest>,
 ) -> Result<Response, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
     if scope::identity(&state.db, object).await?.workspace_id.is_some() {
         return Ok(
             super::put_flow_object_inheritance(State(state), Extension(claims), bot, Path(object), Json(input))
@@ -854,6 +939,7 @@ pub async fn put_flow_v2_inheritance(
                 .into_response(),
         );
     }
+    let actor = user_or_absent(&claims, bot.as_ref())?;
     Ok(ApiResponse::success(
         crate::flow::scope_acl::mutate(
             &state.db,
@@ -881,7 +967,7 @@ pub async fn get_flow_v2_search(
     Path(scope_id): Path<Uuid>,
     Query(query): Query<super::FlowSearchQuery>,
 ) -> Result<Response, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = principal(&state, &claims, bot.as_ref(), Subject::Scope(scope_id)).await?;
     let owner_scope = accessible_scope(&state, scope_id, actor).await?;
     let selectors =
         usize::from(query.project_id.is_some()) + usize::from(query.unprojected) + usize::from(query.all_visible);
@@ -1002,7 +1088,7 @@ pub async fn get_flow_v2_projection_lag(
     Path(scope_id): Path<Uuid>,
     Query(params): Query<crate::flow::scope_navigation_query::QueryParams>,
 ) -> Result<Response, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = principal(&state, &claims, bot.as_ref(), Subject::Scope(scope_id)).await?;
     if let Some(workspace) = scope::legacy_workspace(&state.db, scope_id).await? {
         return Ok(super::get_flow_projection_lag(
             State(state),
@@ -1031,7 +1117,7 @@ pub async fn get_flow_v2_trash(
     Path(scope_id): Path<Uuid>,
     Query(params): Query<crate::flow::scope_navigation_query::QueryParams>,
 ) -> Result<Response, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = principal(&state, &claims, bot.as_ref(), Subject::Scope(scope_id)).await?;
     if let Some(workspace) = scope::legacy_workspace(&state.db, scope_id).await? {
         return Ok(super::get_flow_trash(
             State(state),
@@ -1135,7 +1221,6 @@ pub async fn post_flow_v2_export(
             json!({"reason":"invalid_package_object_types"}),
         ));
     }
-    let actor = user(&claims, bot.as_ref())?;
     let identity = scope::identity(&state.db, object).await?;
     if identity.workspace_id.is_some() && identity.object_type != "record" {
         return Ok(
@@ -1144,6 +1229,7 @@ pub async fn post_flow_v2_export(
                 .into_response(),
         );
     }
+    let actor = principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?;
     Ok(ApiResponse::success(
         crate::flow::scope_export::create(
             &state.db,
@@ -1158,19 +1244,35 @@ pub async fn post_flow_v2_export(
     )
     .into_response())
 }
+/// The principal that reads a scope-native export job: a person, or the bot that made the job, judged
+/// against the object the job exports. A job of no object, or one a bot cannot see, is absent.
+async fn export_actor(
+    state: &AppState,
+    claims: &JwtClaims,
+    bot: Option<&Extension<BotAuthContext>>,
+    job: Uuid,
+) -> Result<Uuid, ApiError> {
+    if bot.is_none() {
+        return user(claims, None);
+    }
+    let object = crate::flow::scope_export::job_object(&state.db, job)
+        .await?
+        .ok_or_else(|| ApiError::not_found("export not found"))?;
+    principal(state, claims, bot, Subject::Object(object)).await
+}
 pub async fn get_flow_v2_export(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
     Path(job): Path<Uuid>,
 ) -> Result<Response, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
-    let row = crate::flow::scope_export::get(&state.db, job, actor).await?;
-    if !crate::flow::scope_export::uses_scoped_access(&row) {
+    if crate::flow::scope_export::is_workspace_job(&state.db, job).await? {
         return Ok(super::get_flow_export(State(state), Extension(claims), bot, Path(job))
             .await?
             .into_response());
     }
+    let actor = export_actor(&state, &claims, bot.as_ref(), job).await?;
+    let row = crate::flow::scope_export::get(&state.db, job, actor).await?;
     Ok(ApiResponse::success(crate::flow::scope_export::receipt(&row)).into_response())
 }
 pub async fn get_flow_v2_export_artifact(
@@ -1179,15 +1281,15 @@ pub async fn get_flow_v2_export_artifact(
     bot: Option<Extension<BotAuthContext>>,
     Path(job): Path<Uuid>,
 ) -> Result<Response, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
-    let row = crate::flow::scope_export::get(&state.db, job, actor).await?;
-    if !crate::flow::scope_export::uses_scoped_access(&row) {
+    if crate::flow::scope_export::is_workspace_job(&state.db, job).await? {
         return Ok(
             super::get_flow_export_artifact(State(state), Extension(claims), bot, Path(job))
                 .await?
                 .into_response(),
         );
     }
+    let actor = export_actor(&state, &claims, bot.as_ref(), job).await?;
+    crate::flow::scope_export::get(&state.db, job, actor).await?;
     let (bytes, hash, format) = crate::flow::scope_export::download(&state.db, job, actor).await?;
     let mut headers = axum::http::HeaderMap::new();
 
@@ -1232,7 +1334,8 @@ pub async fn post_flow_v2_reference(
         );
     }
     Ok(ApiResponse::success(
-        crate::flow::bridge::create_scope_reference(&state, user(&claims, bot.as_ref())?, object, input).await?,
+        crate::flow::bridge::create_scope_reference(&state, user_or_absent(&claims, bot.as_ref())?, object, input)
+            .await?,
     )
     .into_response())
 }
@@ -1256,8 +1359,14 @@ pub async fn delete_flow_v2_reference(
     }
     let key = optional_intent(&headers)?.ok_or_else(|| ApiError::invalid_update("Idempotency-Key is required"))?;
     Ok(ApiResponse::success(
-        crate::flow::bridge::remove_scope_reference(&state, user(&claims, bot.as_ref())?, object, reference, key)
-            .await?,
+        crate::flow::bridge::remove_scope_reference(
+            &state,
+            user_or_absent(&claims, bot.as_ref())?,
+            object,
+            reference,
+            key,
+        )
+        .await?,
     )
     .into_response())
 }
@@ -1269,7 +1378,12 @@ pub async fn get_flow_v2_references(
     Path(object): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
     Ok(ApiResponse::success(
-        crate::flow::bridge::list_scope_references(&state, user(&claims, bot.as_ref())?, object).await?,
+        crate::flow::bridge::list_scope_references(
+            &state,
+            principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
+            object,
+        )
+        .await?,
     ))
 }
 
@@ -1281,8 +1395,13 @@ pub async fn get_flow_v2_collection(
     Query(query): Query<super::DescribeCollectionQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     Ok(ApiResponse::success(
-        crate::flow::scope_collections::describe(&state, collection, user(&claims, bot.as_ref())?, query.at_seq)
-            .await?,
+        crate::flow::scope_collections::describe(
+            &state,
+            collection,
+            principal(&state, &claims, bot.as_ref(), Subject::Object(collection)).await?,
+            query.at_seq,
+        )
+        .await?,
     ))
 }
 pub async fn get_flow_v2_schema(
@@ -1292,7 +1411,7 @@ pub async fn get_flow_v2_schema(
     Path(object): Path<Uuid>,
     Query(query): Query<super::DescribeCollectionQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?;
     scope::authorize(&state.db, object, actor, PermissionLevel::View).await?;
     let collection = crate::flow::collections::owning_collection_id(&state.db, object)
         .await?
@@ -1308,7 +1427,7 @@ pub async fn get_flow_v2_records(
     Path(collection): Path<Uuid>,
     Query(params): Query<super::GetCollectionRecordsQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = principal(&state, &claims, bot.as_ref(), Subject::Object(collection)).await?;
     scope::authorize(&state.db, collection, actor, PermissionLevel::View).await?;
     let request = crate::flow::collections::RecordQueryPayload {
         filter: super::parse_json_query(params.filter, "filter")?,
@@ -1331,7 +1450,13 @@ pub async fn post_flow_v2_record_query(
     Json(request): Json<crate::flow::collections::RecordQueryPayload>,
 ) -> Result<impl IntoResponse, ApiError> {
     Ok(ApiResponse::success(
-        crate::flow::scope_collections::query(&state, collection, user(&claims, bot.as_ref())?, &request).await?,
+        crate::flow::scope_collections::query(
+            &state,
+            collection,
+            principal(&state, &claims, bot.as_ref(), Subject::Object(collection)).await?,
+            &request,
+        )
+        .await?,
     ))
 }
 pub async fn post_flow_v2_record(
@@ -1360,307 +1485,6 @@ pub async fn post_flow_v2_record(
     .into_response())
 }
 
-/// Bounded transport-only compatibility: the exact v1 router retains its domain services and
-/// authority checks. Scope resolution changes context, never ownership or event replay identity.
-#[derive(Clone)]
-pub struct LegacyFlowRouter(pub axum::Router);
-pub async fn flow_v2_legacy_adapter(
-    State(state): State<AppState>,
-    Extension(legacy): Extension<LegacyFlowRouter>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    request: axum::extract::Request,
-) -> Result<Response, ApiError> {
-    use tower::ServiceExt;
-    let actor = user(&claims, bot.as_ref())?;
-    let original = request.uri().clone();
-    let path = original.path();
-    let suffix = path
-        .strip_prefix("/api/v2/flow/")
-        .ok_or_else(|| ApiError::not_found("Flow route not found"))?;
-    let parts = suffix.split('/').collect::<Vec<_>>();
-    let target = if parts.first() == Some(&"scopes") {
-        let scope_id = parts
-            .get(1)
-            .and_then(|s| Uuid::parse_str(s).ok())
-            .ok_or_else(|| ApiError::invalid_update("invalid Flow scope"))?;
-        let Some(workspace) = scope::legacy_workspace(&state.db, scope_id).await? else {
-            accessible_scope(&state, scope_id, actor).await?;
-            return Err(ApiError::typed_with_details(
-                crate::error::ApiErrorKind::FeatureDisabled,
-                "this scope-native surface is not yet available",
-                json!({"reason":"scope_surface_not_ready"}),
-            ));
-        };
-        format!(
-            "/api/v1/workspaces/{workspace}/flow/{}",
-            parts.iter().skip(2).copied().collect::<Vec<_>>().join("/")
-        )
-    } else {
-        if matches!(parts.first(), Some(&"objects" | &"collections")) {
-            let object = parts
-                .get(1)
-                .and_then(|s| Uuid::parse_str(s).ok())
-                .ok_or_else(|| ApiError::invalid_update("invalid Flow object"))?;
-            let identity = scope::identity(&state.db, object).await?;
-            if identity.workspace_id.is_none() {
-                scope::authorize(&state.db, object, actor, PermissionLevel::View).await?;
-                return Err(ApiError::typed_with_details(
-                    crate::error::ApiErrorKind::FeatureDisabled,
-                    "this scope-native surface is not yet available",
-                    json!({"reason":"scope_surface_not_ready"}),
-                ));
-            }
-        }
-        format!("/api/v1/flow/{suffix}")
-    };
-    let target = if let Some(query) = original.query() {
-        format!("{target}?{query}")
-    } else {
-        target
-    };
-    let (mut request_parts, mut body) = request.into_parts();
-    // These v2 destination fields are semantic, not ignorable JSON extras. The legacy bridge
-    // supports its genuine source workspace only; explicitly map the matching project and reject
-    // cross-workspace intent until the scope-native conversion application service handles it.
-    if parts.as_slice() == ["conversions", "preview"] && request_parts.method == axum::http::Method::POST {
-        let bytes = axum::body::to_bytes(body, 200 * 1024 * 1024)
-            .await
-            .map_err(|_| ApiError::invalid_update("conversion request exceeds the HTTP body limit"))?;
-        let mut input: Value =
-            serde_json::from_slice(&bytes).map_err(|_| ApiError::invalid_update("invalid conversion JSON"))?;
-        let source = input
-            .get("source_object_id")
-            .and_then(Value::as_str)
-            .and_then(|id| Uuid::parse_str(id).ok())
-            .ok_or_else(|| ApiError::invalid_update("source_object_id required"))?;
-        let identity = scope::identity(&state.db, source).await?;
-        scope::authorize(&state.db, source, actor, PermissionLevel::View).await?;
-        let workspace = identity.workspace_id.ok_or_else(|| {
-            ApiError::typed_with_details(
-                crate::error::ApiErrorKind::FeatureDisabled,
-                "personal conversion is not yet available",
-                json!({"reason":"scope_surface_not_ready"}),
-            )
-        })?;
-        if input
-            .get("destination_workspace_id")
-            .and_then(Value::as_str)
-            .is_some_and(|id| id != workspace.to_string())
-        {
-            return Err(ApiError::unsupported_protocol(
-                "cross-workspace conversion requires the scope-native conversion service",
-            ));
-        }
-        if let Some(project) = input
-            .get("destination_project_id")
-            .and_then(Value::as_str)
-            .and_then(|id| Uuid::parse_str(id).ok())
-        {
-            if input.get("target_type").and_then(Value::as_str) == Some("form") {
-                if input
-                    .pointer("/mapping/target_project_id")
-                    .and_then(Value::as_str)
-                    .is_some_and(|id| id != project.to_string())
-                {
-                    return Err(ApiError::invalid_update(
-                        "destination project and mapping target project disagree",
-                    ));
-                }
-                input.field_mut("mapping")?["target_project_id"] = json!(project);
-            } else if let Some(form) = input
-                .pointer("/mapping/target_form_id")
-                .and_then(Value::as_str)
-                .and_then(|id| Uuid::parse_str(id).ok())
-            {
-                let matches = state
-                    .db
-                    .query_one(Statement::from_sql_and_values(
-                        DbBackend::Postgres,
-                        "SELECT project_id=$3 AS matches FROM project_forms WHERE id=$1 AND workspace_id=$2",
-                        vec![form.into(), workspace.into(), project.into()],
-                    ))
-                    .await?
-                    .and_then(|row| row.try_get::<bool>("", "matches").ok())
-                    .unwrap_or(false);
-                if !matches {
-                    return Err(ApiError::not_found("conversion target not found"));
-                }
-            }
-        }
-        if let Some(input) = input.as_object_mut() {
-            input.remove("destination_workspace_id");
-            input.remove("destination_project_id");
-        }
-        let bytes = serde_json::to_vec(&input).map_err(|_| ApiError::internal())?;
-        request_parts.headers.remove(axum::http::header::CONTENT_LENGTH);
-        body = axum::body::Body::from(bytes);
-    }
-
-    // Outer wildcard captures are private Axum extensions. Carrying them into another router
-    // appends a second Path parameter and corrupts extraction. Reestablish trusted context only;
-    // the inner exact v1 authentication middleware still validates the original credential.
-    let peer = request_parts
-        .extensions
-        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-        .copied();
-    request_parts.extensions = axum::http::Extensions::new();
-    request_parts.extensions.insert(claims);
-    if let Some(peer) = peer {
-        request_parts.extensions.insert(peer);
-    }
-    request_parts.uri = target
-        .parse()
-        .map_err(|_| ApiError::invalid_update("invalid legacy Flow route"))?;
-    let response = legacy
-        .0
-        .oneshot(axum::http::Request::from_parts(request_parts, body))
-        .await
-        .map_err(|_| ApiError::internal())?;
-    if !response
-        .headers()
-        .get(axum::http::header::CONTENT_TYPE)
-        .and_then(|h| h.to_str().ok())
-        .is_some_and(|h| h.starts_with("application/json"))
-    {
-        return Ok(response);
-    }
-    if matches!(legacy_response_shape(&parts), LegacyDtoShape::None) {
-        return Ok(response);
-    }
-    let (mut response_parts, body) = response.into_parts();
-    let bytes = axum::body::to_bytes(body, 16 * 1024 * 1024)
-        .await
-        .map_err(|_| ApiError::internal())?;
-    let Ok(mut value) = serde_json::from_slice::<Value>(&bytes) else {
-        return Ok(axum::http::Response::from_parts(
-            response_parts,
-            axum::body::Body::from(bytes),
-        ));
-    };
-    let shape = legacy_response_shape(&parts);
-    let positions = match shape {
-        LegacyDtoShape::AcceptedObject => vec!["/data/object".to_string()],
-        LegacyDtoShape::RecordQuery => value
-            .pointer("/data/items")
-            .and_then(Value::as_array)
-            .map(|items| (0..items.len()).map(|i| format!("/data/items/{i}/record")).collect())
-            .unwrap_or_default(),
-        LegacyDtoShape::None | LegacyDtoShape::ScopedMetadata => Vec::new(),
-    };
-    for pointer in positions {
-        let id = value
-            .pointer(&pointer)
-            .and_then(|v| v.get("id"))
-            .and_then(Value::as_str)
-            .and_then(|id| Uuid::parse_str(id).ok());
-        if let Some(id) = id
-            && let Ok(view) = scope::object_view(&state.db, id, actor).await
-            && let Some(slot) = value.pointer_mut(&pointer)
-        {
-            *slot = view;
-        }
-    }
-    if matches!(shape, LegacyDtoShape::ScopedMetadata)
-        && let Some(data) = value.get_mut("data").and_then(Value::as_object_mut)
-        && let Some(scope) = parts.get(1).and_then(|id| Uuid::parse_str(id).ok())
-    {
-        data.insert("target_scope_id".into(), json!(scope));
-    }
-    let bytes = serde_json::to_vec(&value).map_err(|_| ApiError::internal())?;
-    response_parts.headers.remove(axum::http::header::CONTENT_LENGTH);
-    Ok(axum::http::Response::from_parts(
-        response_parts,
-        axum::body::Body::from(bytes),
-    ))
-}
-
-#[derive(Clone, Copy)]
-enum LegacyDtoShape {
-    None,
-    AcceptedObject,
-    RecordQuery,
-    ScopedMetadata,
-}
-fn legacy_response_shape(parts: &[&str]) -> LegacyDtoShape {
-    match parts {
-        ["objects", _, "history", "restore"] | ["objects", _, "commands" | "schema"] | ["collections", _] => {
-            LegacyDtoShape::AcceptedObject
-        }
-        ["collections", _, "records" | "query"] => LegacyDtoShape::RecordQuery,
-        ["scopes", _, "imports", _] => LegacyDtoShape::ScopedMetadata,
-        _ => LegacyDtoShape::None,
-    }
-}
-
-#[cfg(test)]
-mod transport_adapter_tests {
-    use super::*;
-    use tower::ServiceExt;
-    #[tokio::test]
-    async fn inner_router_receives_only_its_own_path_capture() {
-        async fn inner(Path(job): Path<Uuid>) -> Json<Value> {
-            Json(json!({"job_id":job}))
-        }
-        let id = Uuid::new_v4();
-        let claims = JwtClaims {
-            sub: Uuid::new_v4().to_string(),
-            email: "adapter@example.test".into(),
-            token_type: platform::auth::TokenType::Access,
-            iat: 0,
-            exp: 0,
-            sv: 0,
-        };
-        let state = AppState {
-            db: sea_orm::DatabaseConnection::Disconnected,
-            cfg: platform::config::AppConfig {
-                app_name: "adapter".into(),
-                bind_addr: "127.0.0.1:0".into(),
-                database_url: platform::config::Secret::new("postgres://unused/unused"),
-                jwt_secret: platform::config::Secret::new("adapter-test-secret"),
-                jwt_access_ttl_seconds: 900,
-                jwt_refresh_ttl_seconds: 3600,
-                allow_insecure_cookies: false,
-                collab_allowed_origins: Vec::new(),
-            },
-            flow_permission_cache: platform::app::FlowPermissionCacheSlot::default(),
-        };
-        let legacy = axum::Router::new().route("/api/v1/flow/exports/{job_id}/artifact", axum::routing::get(inner));
-        let router = axum::Router::new()
-            .route(
-                "/api/v2/flow/{*legacy_path}",
-                axum::routing::get(flow_v2_legacy_adapter),
-            )
-            .layer(Extension(claims))
-            .layer(Extension(LegacyFlowRouter(legacy)))
-            .with_state(state);
-        let response = router
-            .oneshot(
-                axum::http::Request::builder()
-                    .uri(format!("/api/v2/flow/exports/{id}/artifact"))
-                    .body(axum::body::Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("response");
-        assert_eq!(response.status(), axum::http::StatusCode::OK);
-        let bytes = axum::body::to_bytes(response.into_body(), 1024).await.expect("body");
-        let body: Value = serde_json::from_slice(&bytes).expect("JSON");
-        assert_eq!(body.field("job_id").as_str(), Some(id.to_string().as_str()));
-    }
-    #[test]
-    fn opaque_semantic_json_is_not_a_dto_normalization_target() {
-        assert!(matches!(
-            legacy_response_shape(&["objects", "id", "comments"]),
-            LegacyDtoShape::None
-        ));
-        assert!(matches!(
-            legacy_response_shape(&["objects", "id", "relations"]),
-            LegacyDtoShape::None
-        ));
-    }
-}
-
 fn optional_intent(headers: &axum::http::HeaderMap) -> Result<Option<&str>, ApiError> {
     headers
         .get("Idempotency-Key")
@@ -1683,7 +1507,7 @@ pub async fn post_flow_v2_comment(
         crate::flow::scope_social::create_comment(
             &state.db,
             object,
-            user(&claims, bot.as_ref())?,
+            principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
             input,
             optional_intent(&headers)?,
         )
@@ -1712,7 +1536,7 @@ pub async fn patch_flow_v2_comment(
             &state.db,
             object,
             comment,
-            user(&claims, bot.as_ref())?,
+            principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
             &input.body,
             input.mentions,
             optional_intent(&headers)?,
@@ -1731,7 +1555,7 @@ pub async fn delete_flow_v2_comment(
         &state.db,
         object,
         comment,
-        user(&claims, bot.as_ref())?,
+        principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
         optional_intent(&headers)?,
     )
     .await?;
@@ -1750,7 +1574,7 @@ pub async fn resolve_flow_v2_comment(
             &state.db,
             object,
             comment,
-            user(&claims, bot.as_ref())?,
+            principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
             input.resolved,
             optional_intent(&headers)?,
         )
@@ -1774,7 +1598,7 @@ pub async fn put_flow_v2_appearance(
         crate::flow::scope_assets::set(
             &state.db,
             object,
-            user(&claims, bot.as_ref())?,
+            principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
             input,
             optional_intent(&headers)?,
         )
@@ -1793,7 +1617,7 @@ pub async fn post_flow_v2_asset(
         crate::flow::scope_assets::upload(
             &state.db,
             object,
-            user(&claims, bot.as_ref())?,
+            principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
             &input.data_base64,
             optional_intent(&headers)?,
         )
@@ -1806,7 +1630,13 @@ pub async fn get_flow_v2_asset(
     bot: Option<Extension<BotAuthContext>>,
     Path((object, asset)): Path<(Uuid, Uuid)>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let asset = crate::flow::scope_assets::read(&state.db, object, asset, user(&claims, bot.as_ref())?).await?;
+    let asset = crate::flow::scope_assets::read(
+        &state.db,
+        object,
+        asset,
+        principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
+    )
+    .await?;
     let mut headers = axum::http::HeaderMap::new();
     headers.insert(
         axum::http::header::CONTENT_TYPE,
@@ -1834,7 +1664,12 @@ pub async fn get_flow_v2_share_links(
     Path(object): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
     Ok(ApiResponse::success(
-        crate::flow::scope_shares::list(&state.db, object, user(&claims, bot.as_ref())?).await?,
+        crate::flow::scope_shares::list(
+            &state.db,
+            object,
+            principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
+        )
+        .await?,
     ))
 }
 pub async fn post_flow_v2_share_link(
@@ -1845,7 +1680,13 @@ pub async fn post_flow_v2_share_link(
     Json(input): Json<ScopeShareCreate>,
 ) -> Result<impl IntoResponse, ApiError> {
     Ok(ApiResponse::success(
-        crate::flow::scope_shares::create(&state.db, object, user(&claims, bot.as_ref())?, input.expires_at).await?,
+        crate::flow::scope_shares::create(
+            &state.db,
+            object,
+            principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
+            input.expires_at,
+        )
+        .await?,
     ))
 }
 pub async fn revoke_flow_v2_share_link(
@@ -1855,7 +1696,13 @@ pub async fn revoke_flow_v2_share_link(
     Path((object, link)): Path<(Uuid, Uuid)>,
 ) -> Result<impl IntoResponse, ApiError> {
     Ok(ApiResponse::success(
-        crate::flow::scope_shares::revoke(&state.db, object, link, user(&claims, bot.as_ref())?).await?,
+        crate::flow::scope_shares::revoke(
+            &state.db,
+            object,
+            link,
+            principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
+        )
+        .await?,
     ))
 }
 pub async fn get_flow_v2_public_share(
@@ -1903,8 +1750,13 @@ pub async fn get_flow_v2_mentions(
     Query(input): Query<ScopeMentionQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     Ok(ApiResponse::success(
-        crate::flow::scope_social::mention_candidates(&state.db, object, user(&claims, bot.as_ref())?, &input.q)
-            .await?,
+        crate::flow::scope_social::mention_candidates(
+            &state.db,
+            object,
+            principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
+            &input.q,
+        )
+        .await?,
     ))
 }
 
@@ -1951,7 +1803,7 @@ pub async fn get_flow_v2_relations(
         crate::flow::scope_relations::list(
             &state,
             object,
-            user(&claims, bot.as_ref())?,
+            principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
             crate::flow::relations::ListRelationsParams {
                 direction: crate::flow::relations::RelationDirection::parse(input.direction.as_deref())?,
                 relation_type: input.relation_type,
@@ -1980,7 +1832,7 @@ pub async fn post_flow_v2_import_artifact(
                 .into_response(),
         );
     }
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = user_or_absent(&claims, bot.as_ref())?;
     crate::flow::scope_import::require_destination(&state.db, scope_id, actor).await?;
     let multipart_key = optional_intent(request.headers())?.unwrap_or_default().to_string();
     let multipart = request
@@ -2110,7 +1962,7 @@ pub async fn post_flow_v2_import_preview(
         idempotency_key: input.idempotency_key,
     };
     Ok(ApiResponse::success(
-        crate::flow::scope_import::preview(&state.db, scope_id, user(&claims, bot.as_ref())?, input).await?,
+        crate::flow::scope_import::preview(&state.db, scope_id, user_or_absent(&claims, bot.as_ref())?, input).await?,
     )
     .into_response())
 }
@@ -2140,7 +1992,14 @@ pub async fn post_flow_v2_import_commit(
         idempotency_key: input.idempotency_key,
     };
     Ok(ApiResponse::success(
-        crate::flow::scope_import::commit(&state.db, scope_id, user(&claims, bot.as_ref())?, preview, input).await?,
+        crate::flow::scope_import::commit(
+            &state.db,
+            scope_id,
+            user_or_absent(&claims, bot.as_ref())?,
+            preview,
+            input,
+        )
+        .await?,
     )
     .into_response())
 }
@@ -2158,7 +2017,7 @@ pub async fn get_flow_v2_import(
         return Ok(ApiResponse::success(report).into_response());
     }
     Ok(ApiResponse::success(
-        crate::flow::scope_import::get(&state.db, scope_id, user(&claims, bot.as_ref())?, job).await?,
+        crate::flow::scope_import::get(&state.db, scope_id, user_or_absent(&claims, bot.as_ref())?, job).await?,
     )
     .into_response())
 }
@@ -2190,7 +2049,7 @@ pub async fn post_flow_v2_scope_export(
         crate::flow::scope_export::create_scope(
             &state.db,
             scope_id,
-            user(&claims, bot.as_ref())?,
+            user_or_absent(&claims, bot.as_ref())?,
             input.include_history,
             &input.idempotency_key,
             input.object_types,
@@ -2225,7 +2084,6 @@ pub async fn post_flow_v2_conversion_preview(
     bot: Option<Extension<BotAuthContext>>,
     Json(mut input): Json<Value>,
 ) -> Result<Response, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
     let object = input
         .field("source_object_id")
         .as_str()
@@ -2241,6 +2099,7 @@ pub async fn post_flow_v2_conversion_preview(
         .or(identity.workspace_id)
         .ok_or_else(|| ApiError::invalid_update("explicit destination_workspace_id required"))?;
     if identity.workspace_id != Some(destination) {
+        let actor = user_or_absent(&claims, bot.as_ref())?;
         *input.field_mut("destination_workspace_id")? = json!(destination);
         let request =
             serde_json::from_value(input).map_err(|_| ApiError::invalid_update("invalid scoped conversion preview"))?;
@@ -2300,11 +2159,15 @@ pub async fn post_flow_v2_conversion(
     bot: Option<Extension<BotAuthContext>>,
     Json(input): Json<crate::flow::bridge::ConversionCommitInput>,
 ) -> Result<Response, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
     let (_, scoped) = scope_conversion_identity(&state, input.preview_id, false).await?;
+    let actor = if scoped {
+        Some(user_or_absent(&claims, bot.as_ref())?)
+    } else {
+        None
+    };
     let extensions = super::build_auth_extensions(claims, bot);
     let origin = super::request_origin(&extensions);
-    let result = if scoped {
+    let result = if let Some(actor) = actor {
         crate::flow::bridge::commit_scope_conversion(&state, actor, input, origin).await?
     } else {
         crate::flow::bridge::commit_conversion(&state, &extensions, input, origin).await?
@@ -2317,10 +2180,14 @@ pub async fn get_flow_v2_conversion(
     bot: Option<Extension<BotAuthContext>>,
     Path(job): Path<Uuid>,
 ) -> Result<Response, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
     let (_, scoped) = scope_conversion_identity(&state, job, true).await?;
+    let actor = if scoped {
+        Some(user_or_absent(&claims, bot.as_ref())?)
+    } else {
+        None
+    };
     let extensions = super::build_auth_extensions(claims, bot);
-    let result = if scoped {
+    let result = if let Some(actor) = actor {
         crate::flow::bridge::scope_conversion_status(&state, actor, job).await?
     } else {
         crate::flow::bridge::conversion_status(&state, &extensions, job).await?
@@ -2334,11 +2201,15 @@ pub async fn post_flow_v2_conversion_retry(
     Path(job): Path<Uuid>,
     Json(input): Json<crate::flow::bridge::ConversionRetryInput>,
 ) -> Result<Response, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
     let (_, scoped) = scope_conversion_identity(&state, job, true).await?;
+    let actor = if scoped {
+        Some(user_or_absent(&claims, bot.as_ref())?)
+    } else {
+        None
+    };
     let extensions = super::build_auth_extensions(claims, bot);
     let origin = super::request_origin(&extensions);
-    let result = if scoped {
+    let result = if let Some(actor) = actor {
         crate::flow::bridge::retry_scope_conversion(&state, actor, job, input, origin).await?
     } else {
         crate::flow::bridge::retry_conversion(&state, &extensions, job, input, origin).await?
@@ -2351,11 +2222,11 @@ pub async fn get_flow_v2_conversion_owner(
     bot: Option<Extension<BotAuthContext>>,
     Path(id): Path<Uuid>,
 ) -> Result<Response, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
     let row=state.db.query_one(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT source_object_id,workspace_id,actor_id FROM flow_conversion_previews WHERE id=$1 UNION ALL SELECT source_object_id,workspace_id,actor_id FROM flow_conversion_jobs WHERE id=$1 LIMIT 1",vec![id.into()])).await?.ok_or_else(||ApiError::not_found("conversion not found"))?;
     let object = row.try_get("", "source_object_id")?;
     let identity = scope::identity(&state.db, object).await?;
     if identity.workspace_id != Some(row.try_get("", "workspace_id")?) {
+        let actor = user_or_absent(&claims, bot.as_ref())?;
         scope::authorize(&state.db, object, actor, PermissionLevel::View).await?;
         if actor != row.try_get::<Uuid>("", "actor_id")? {
             return Err(ApiError::not_found("conversion not found"));
@@ -2420,7 +2291,7 @@ pub async fn get_flow_v2_collab_diagnostics(
             "diagnostic DTO includes sizes; include_sizes must be true or omitted",
         ));
     }
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?;
     let proof = scope::authorize(&state.db, object, actor, PermissionLevel::View).await?;
     let row=state.db.query_one(Statement::from_sql_and_values(DbBackend::Postgres,
         "SELECT d.id,d.engine,d.format_version,d.snapshot_seq,d.head_seq,d.head_frontier,d.update_count,d.byte_count,p.document_seq AS projection_seq,(SELECT count(*) FROM flow_integrity_records i WHERE i.scope_id=o.scope_id AND i.subject_kind='collab_document' AND i.subject_id=d.id::text AND i.status='open') AS open_issues FROM flow_objects o JOIN collab_documents d ON d.object_id=o.id JOIN flow_object_projections p ON p.object_id=o.id WHERE o.id=$1",vec![object.into()])).await?.ok_or_else(||ApiError::not_found("Flow document not found"))?;
@@ -2858,4 +2729,46 @@ pub async fn get_flow_v2_block_share_placements(
         )
         .await?,
     ))
+}
+
+#[cfg(test)]
+mod collaboration_client_id_tests {
+    use super::{ScopeTicketRequest, ScopeWsQuery};
+    use axum::extract::Query;
+    use serde_json::json;
+    use uuid::Uuid;
+
+    fn ticket(client_id: &serde_json::Value) -> serde_json::Value {
+        json!({
+            "object_id": Uuid::new_v4(),
+            "document_id": Uuid::new_v4(),
+            "client_id": client_id,
+            "origin": "http://127.0.0.1:18097",
+        })
+    }
+
+    #[test]
+    fn the_ticket_request_takes_a_uuid_client_id_only() {
+        let accepted = serde_json::from_value::<ScopeTicketRequest>(ticket(&json!(Uuid::new_v4())));
+        assert!(accepted.is_ok());
+        for refused in [json!("e2e-client-1"), json!(""), json!("   "), json!(7), json!(null)] {
+            assert!(
+                serde_json::from_value::<ScopeTicketRequest>(ticket(&refused)).is_err(),
+                "{refused} was accepted as a client id"
+            );
+        }
+    }
+
+    #[test]
+    fn the_upgrade_query_takes_a_uuid_client_id_only() {
+        let uri = |client: &str| format!("http://x/api/v2/flow/collab/ws?ticket=t&client_id={client}").parse();
+        let good = Uuid::new_v4().to_string();
+        assert!(Query::<ScopeWsQuery>::try_from_uri(&uri(&good).expect("uri")).is_ok());
+        for refused in ["e2e-client-1", "", "not-a-uuid"] {
+            assert!(
+                Query::<ScopeWsQuery>::try_from_uri(&uri(refused).expect("uri")).is_err(),
+                "{refused:?} was accepted as a client id"
+            );
+        }
+    }
 }

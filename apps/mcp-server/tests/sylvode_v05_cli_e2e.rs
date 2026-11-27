@@ -20,6 +20,7 @@ const OBJECT: &str = "22222222-2222-4222-8222-222222222222";
 const OTHER: &str = "33333333-3333-4333-8333-333333333333";
 const THIRD: &str = "44444444-4444-4444-8444-444444444444";
 const TOKEN: &str = "opr_sylvode_v05_cli_e2e";
+const SCOPE: &str = "55555555-5555-4555-8555-555555555555";
 
 #[derive(Debug, Clone)]
 struct CapturedCall {
@@ -37,8 +38,11 @@ async fn capture(State(calls): State<Calls>, request: Request) -> Json<Value> {
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         .unwrap_or(Value::Null);
     let dry_run = body.get("dry_run").and_then(Value::as_bool) == Some(true);
+    let scope_resolution = uri.ends_with("/scope");
     calls.lock().await.push(CapturedCall { method, uri, body });
-    Json(if dry_run {
+    Json(if scope_resolution {
+        json!({ "code": 0, "data": { "scope": { "id": SCOPE }, "roots": [] } })
+    } else if dry_run {
         json!({ "code": 0, "data": { "applied": false, "permission_changes": { "affected": [] } } })
     } else {
         json!({ "code": 0, "data": { "accepted": true } })
@@ -265,7 +269,10 @@ async fn all_twelve_v05_lines_map_to_the_frozen_rest_shape() -> TestResult {
         assert_success(&run(&config, &args).await?, command)?;
     }
 
-    let calls = calls.lock().await.clone();
+    let mut calls = calls.lock().await.clone();
+    // The workspace commands (create, search, projection lag) resolve the workspace's Flow scope first.
+    assert_eq!(calls.iter().filter(|call| call.uri.ends_with("/scope")).count(), 3);
+    calls.retain(|call| !call.uri.ends_with("/scope"));
     assert_eq!(calls.len(), 12);
     let [
         create,
@@ -285,7 +292,8 @@ async fn all_twelve_v05_lines_map_to_the_frozen_rest_shape() -> TestResult {
         return Err(format!("expected twelve captured calls, got {}", calls.len()).into());
     };
     assert_eq!(create.method, "POST");
-    assert_eq!(create.uri, format!("/api/v1/workspaces/{WORKSPACE}/flow/objects"));
+    assert_eq!(create.uri, "/api/v2/flow/objects");
+    assert_eq!(json_at(&create.body, "/scope_id")?, SCOPE);
     assert_eq!(json_at(&create.body, "/parent_object_id")?, OTHER);
     assert_eq!(json_at(&patch.body, "/command/type")?, "semantic_patch");
     assert_eq!(json_at(&patch.body, "/expected_frontier")?, "source-frontier");

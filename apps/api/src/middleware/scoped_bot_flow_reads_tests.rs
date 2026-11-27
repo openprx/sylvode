@@ -11,14 +11,14 @@
 use std::collections::BTreeSet;
 
 use axum::{Router, middleware::from_fn_with_state, routing::get};
-use sea_orm::DatabaseConnection;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use serde_json::Value;
 use uuid::Uuid;
 
 use super::scoped_bot_tests::{Cast, call, cast, refused};
 use crate::middleware::bot_auth::bot_or_user_auth_middleware;
 use crate::routes::context::tenant_fixture::{exec, state_for};
-use crate::routes::flow::{get_flow_search, get_flow_trash, list_flow_objects};
+use crate::routes::flow::{get_flow_v2_objects, get_flow_v2_search, get_flow_v2_trash};
 use crate::scratch_or_skip;
 
 fn flow_router(db: &DatabaseConnection) -> Router {
@@ -26,16 +26,16 @@ fn flow_router(db: &DatabaseConnection) -> Router {
     let layer = || from_fn_with_state(state.clone(), bot_or_user_auth_middleware);
     Router::new()
         .route(
-            "/api/v1/workspaces/{workspace_id}/flow/objects",
-            get(list_flow_objects).route_layer(layer()),
+            "/api/v2/flow/scopes/{scope_id}/objects",
+            get(get_flow_v2_objects).route_layer(layer()),
         )
         .route(
-            "/api/v1/workspaces/{workspace_id}/flow/search",
-            get(get_flow_search).route_layer(layer()),
+            "/api/v2/flow/scopes/{scope_id}/search",
+            get(get_flow_v2_search).route_layer(layer()),
         )
         .route(
-            "/api/v1/workspaces/{workspace_id}/flow/trash",
-            get(get_flow_trash).route_layer(layer()),
+            "/api/v2/flow/scopes/{scope_id}/trash",
+            get(get_flow_v2_trash).route_layer(layer()),
         )
         .with_state(state)
 }
@@ -104,7 +104,8 @@ struct World {
     never: Seed,
     off: Seed,
     none: Seed,
-    workspace: Uuid,
+    /// The Flow scope of the workspace, which the routes under test hang off.
+    scope: Uuid,
 }
 
 fn ids(seed: &Seed) -> BTreeSet<String> {
@@ -143,6 +144,17 @@ async fn world(db: &DatabaseConnection, tag: &str) -> World {
     let never = place(db, workspace, Some(c.never), "bravo", 9).await;
     let off = place(db, workspace, Some(c.off), "charlie", 9).await;
     let none = place(db, workspace, None, "delta", 9).await;
+    let scope: Uuid = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT flow_ensure_legacy_scope($1) AS id",
+            vec![workspace.into()],
+        ))
+        .await
+        .expect("the scope query runs")
+        .expect("the scope query answers")
+        .try_get("", "id")
+        .expect("the scope id is a UUID");
     World {
         app: flow_router(db),
         c,
@@ -150,7 +162,7 @@ async fn world(db: &DatabaseConnection, tag: &str) -> World {
         never,
         off,
         none,
-        workspace,
+        scope,
     }
 }
 
@@ -175,7 +187,7 @@ async fn pages(w: &World, token: &str, route: &str, query: &str, key: &[&str]) -
     let mut bodies = Vec::new();
     let mut cursor: Option<String> = None;
     for _ in 0..20 {
-        let mut full = format!("/api/v1/workspaces/{}/flow/{route}?limit=1&{query}", w.workspace);
+        let mut full = format!("/api/v2/flow/scopes/{}/{route}?limit=1&{query}", w.scope);
         if let Some(cursor) = &cursor {
             full = format!("{full}&cursor={}", cursor.replace('+', "%2B"));
         }
@@ -264,7 +276,7 @@ async fn a_runner_bot_reads_the_flow_of_its_connected_project_only() {
     let (status, body) = call(
         &w.app,
         "GET",
-        &format!("/api/v1/workspaces/{}/flow/search?q=bravo&project_id={on}", w.workspace),
+        &format!("/api/v2/flow/scopes/{}/search?q=bravo&project_id={on}", w.scope),
         &token,
         None,
     )
@@ -293,11 +305,11 @@ async fn a_runner_bot_is_refused_without_a_connected_project() {
     let w = world(db, "fr2").await;
     let token = w.c.token.clone();
     let on = w.c.on;
-    let ws = w.workspace;
+    let scope = w.scope;
     let all_foreign = [&w.never, &w.off, &w.none, &w.on];
 
     for route in ["objects", "search", "trash"] {
-        let base = format!("/api/v1/workspaces/{ws}/flow/{route}");
+        let base = format!("/api/v2/flow/scopes/{scope}/{route}");
         let q = if route == "search" { "q=needle&" } else { "" };
         let upper = on.to_string().to_uppercase();
         for (what, query) in [
@@ -370,7 +382,7 @@ async fn a_runner_bot_is_refused_without_a_connected_project() {
     let (status, body) = call(
         &w.app,
         "GET",
-        &format!("/api/v1/workspaces/{ws}/flow/search?q=needle&project_id={on}&all_visible=true"),
+        &format!("/api/v2/flow/scopes/{scope}/search?q=needle&project_id={on}&all_visible=true"),
         &token,
         None,
     )
@@ -385,7 +397,7 @@ async fn a_runner_bot_is_refused_without_a_connected_project() {
         let (status, body) = call(
             &w.app,
             "GET",
-            &format!("/api/v1/workspaces/{other}/flow/{route}?{q}project_id={on}"),
+            &format!("/api/v2/flow/scopes/{other}/{route}?{q}project_id={on}"),
             &token,
             None,
         )
@@ -404,7 +416,7 @@ async fn an_ordinary_bot_reads_the_flow_as_before() {
     let db = &scratch.db;
     let w = world(db, "fr3").await;
     let token = w.c.plain_token.clone();
-    let ws = w.workspace;
+    let scope = w.scope;
     let get = |route: &'static str, query: String| {
         let app = w.app.clone();
         let token = token.clone();
@@ -412,7 +424,7 @@ async fn an_ordinary_bot_reads_the_flow_as_before() {
             let (status, body) = call(
                 &app,
                 "GET",
-                &format!("/api/v1/workspaces/{ws}/flow/{route}?{query}"),
+                &format!("/api/v2/flow/scopes/{scope}/{route}?{query}"),
                 &token,
                 None,
             )

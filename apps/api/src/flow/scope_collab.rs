@@ -74,7 +74,7 @@ pub async fn issue(
     user: Uuid,
     object: Uuid,
     document: Uuid,
-    client: &str,
+    client: Uuid,
     raw_origin: &str,
     allowed: &[String],
 ) -> Result<Value, ApiError> {
@@ -86,14 +86,12 @@ pub async fn issue_with_options(
     user: Uuid,
     object: Uuid,
     document: Uuid,
-    client: &str,
+    client: Uuid,
     raw_origin: &str,
     allowed: &[String],
     authorization_notifications: bool,
 ) -> Result<Value, ApiError> {
-    if client.trim().is_empty() || client.len() > 256 {
-        return Err(ApiError::invalid_update("client_id must contain1..256 bytes"));
-    }
+    let client = client.to_string();
     let origin =
         collab::origin::normalize(raw_origin).ok_or_else(|| ApiError::invalid_update("invalid collab origin"))?;
     if !collab::origin::is_allowed(&origin, allowed) {
@@ -125,11 +123,11 @@ pub async fn issue_with_options(
     rand::rngs::OsRng.fill_bytes(&mut secret);
     let ticket = URL_SAFE_NO_PAD.encode(secret);
 
-    let expiry=TicketExpiry::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,"INSERT INTO collab_tickets(ticket_hash,user_id,workspace_id,scope_id,authz_revision,document_id,client_id,origin,authorization_notifications,created_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,now(),now()+interval '60 seconds') RETURNING expires_at",vec![digest(&ticket).into(),user.into(),identity.workspace_id.into(),identity.scope_id.into(),proof.revision.into(),document.into(),client.trim().into(),origin.into(),authorization_notifications.into()])).one(&tx).await?.ok_or_else(ApiError::internal)?;
+    let expiry=TicketExpiry::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,"INSERT INTO collab_tickets(ticket_hash,user_id,workspace_id,scope_id,authz_revision,document_id,client_id,origin,authorization_notifications,created_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,now(),now()+interval '60 seconds') RETURNING expires_at",vec![digest(&ticket).into(),user.into(),identity.workspace_id.into(),identity.scope_id.into(),proof.revision.into(),document.into(),client.clone().into(),origin.into(),authorization_notifications.into()])).one(&tx).await?.ok_or_else(ApiError::internal)?;
     tx.commit().await?;
     let websocket_url = format!(
         "/api/v2/flow/collab/ws?ticket={ticket}&client_id={}",
-        percent_encode(client.trim())
+        percent_encode(&client)
     );
     Ok(
         json!({"ticket":ticket,"expires_at":expiry.expires_at.to_rfc3339(),"websocket_path":websocket_url,"websocket_url":websocket_url,"scope_id":identity.scope_id,"object_id":object,"document_id":document,"authz_revision":proof.revision,"limits":scope_write::limits(),"authorization_notifications":authorization_notifications}),
@@ -149,20 +147,31 @@ fn percent_encode(raw: &str) -> String {
 pub async fn consume(
     db: &DatabaseConnection,
     ticket: &str,
-    client: &str,
+    client: Uuid,
     origin: &str,
 ) -> Result<TicketContext, ApiError> {
+    let client = client.to_string();
     let normalized = collab::origin::normalize(origin).ok_or_else(|| ApiError::unauthenticated("invalid ticket"))?;
     let tx = db.begin().await?;
     let row=Document::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,"UPDATE collab_tickets t SET consumed_at=now() FROM collab_documents d WHERE t.ticket_hash=$1 AND t.client_id=$2 AND t.origin=$3 AND t.consumed_at IS NULL AND t.expires_at>now() AND t.document_id=d.id AND t.authz_revision IS NOT NULL RETURNING d.id,d.object_id,t.scope_id,t.workspace_id,t.authz_revision,t.user_id,t.client_id,t.authorization_notifications",vec![digest(ticket).into(),client.into(),normalized.into()])).one(&tx).await?.ok_or_else(||ApiError::unauthenticated("invalid ticket"))?;
-    let proof = scope::authorize(&tx, row.object_id, row.user_id, PermissionLevel::View).await?;
-    let scope_changed = proof.scope_id != row.scope_id;
-    let revision_changed = proof.revision != row.authz_revision;
-    if scope_changed || revision_changed {
-        return Err(ApiError::policy_rejected("ticket authorization changed"));
+    // The ticket is spent by the upgrade attempt whatever the outcome (`ADR-0007`): a refusal below commits
+    // the consumption, so a refused handshake cannot be replayed if the refusal is later lifted.
+    let admitted = async {
+        let proof = scope::authorize(&tx, row.object_id, row.user_id, PermissionLevel::View).await?;
+        let scope_changed = proof.scope_id != row.scope_id;
+        let revision_changed = proof.revision != row.authz_revision;
+        if scope_changed || revision_changed {
+            return Err(ApiError::policy_rejected("ticket authorization changed"));
+        }
+        scope::fence(&tx, &proof).await?;
+        super::scope_editor::require_admitted(db, row.object_id).await
     }
-    scope::fence(&tx, &proof).await?;
-    super::scope_editor::require_admitted(db, row.object_id).await?;
+    .await;
+    if let Err(refusal) = admitted {
+        // A transaction a failed statement aborted cannot commit; the refusal is the answer either way.
+        let _ = tx.commit().await;
+        return Err(refusal);
+    }
     tx.commit().await?;
     Ok(TicketContext {
         user_id: row.user_id,

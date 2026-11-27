@@ -1474,7 +1474,7 @@ fn enforce_move_subtree_nodes_max(total: i64) -> Result<(), ApiError> {
 // Entry point
 // ---------------------------------------------------------------------------------------------
 
-/// `POST /api/v1/flow/objects/{object_id}/commands` with `command.type = "move_object"`.
+/// `POST /api/v2/flow/objects/{object_id}/commands` with `command.type = "move_object"`.
 ///
 /// Called by `flow::command::execute_command_authorized`, which has already resolved the
 /// workspace, taken `checked_epoch` *before* reading permission, and verified `full_access` on the

@@ -116,50 +116,6 @@ pub async fn list_comments(db: &DatabaseConnection, object_id: Uuid) -> Result<F
     Ok(FlowCommentList { items, truncated })
 }
 
-pub async fn create_comment(
-    db: &DatabaseConnection,
-    workspace_id: Uuid,
-    object: Uuid,
-    actor: &CommentActor,
-    input: NewComment,
-) -> Result<FlowCommentView, ApiError> {
-    if super::scope::identity(db, object).await?.workspace_id != Some(workspace_id) {
-        return Err(ApiError::not_found("flow object not found"));
-    }
-    super::scope_social::create_comment(db, object, actor.user_id, input, None).await
-}
-pub async fn update_comment(
-    db: &DatabaseConnection,
-    workspace_id: Uuid,
-    object: Uuid,
-    comment: Uuid,
-    actor: &CommentActor,
-    body: &str,
-    mentions: Option<Vec<Uuid>>,
-) -> Result<FlowCommentView, ApiError> {
-    if super::scope::identity(db, object).await?.workspace_id != Some(workspace_id) {
-        return Err(ApiError::not_found("flow object not found"));
-    }
-    super::scope_social::update_comment(db, object, comment, actor.user_id, body, mentions, None).await
-}
-pub async fn delete_comment(
-    db: &DatabaseConnection,
-    object: Uuid,
-    comment: Uuid,
-    actor: &CommentActor,
-) -> Result<(), ApiError> {
-    super::scope_social::delete_comment(db, object, comment, actor.user_id, None).await
-}
-pub async fn set_resolved(
-    db: &DatabaseConnection,
-    object: Uuid,
-    comment: Uuid,
-    actor: &CommentActor,
-    resolved: bool,
-) -> Result<FlowCommentView, ApiError> {
-    super::scope_social::resolve_comment(db, object, comment, actor.user_id, resolved, None).await
-}
-
 pub(crate) async fn create_comment_on<C: ConnectionTrait>(
     db: &C,
     workspace_id: Option<Uuid>,
@@ -517,7 +473,6 @@ pub(crate) async fn decorate_people<C: ConnectionTrait>(db: &C, views: &mut [Flo
     Ok(())
 }
 
-const MENTION_CANDIDATE_CAP: i64 = 50;
 const MENTION_QUERY_CHARS_MAX: usize = 80;
 
 #[derive(Debug, Clone, Serialize)]
@@ -530,43 +485,6 @@ pub struct MentionCandidate {
 #[derive(Debug, Serialize)]
 pub struct MentionCandidateList {
     pub items: Vec<MentionCandidate>,
-}
-
-/// Workspace members, plus users who are not members but hold a grant on this page or an
-/// ancestor it still inherits from.
-///
-/// The scoped application service independently validates notification recipients; this list is only the picker.
-pub async fn list_mention_candidates(
-    db: &DatabaseConnection,
-    workspace_id: Uuid,
-    object_id: Uuid,
-    query: &str,
-) -> Result<MentionCandidateList, ApiError> {
-    let query = normalize_mention_query(query)?;
-    let members = candidate_rows(
-        db,
-        "SELECT u.id AS user_id, COALESCE(u.name, '') AS name, 'member' AS kind \
-         FROM workspace_members wm \
-         JOIN users u ON u.id = wm.user_id \
-         WHERE wm.workspace_id = $1 \
-           AND ($2 = '' OR strpos(lower(COALESCE(u.name, '')), lower($2)) > 0) \
-         ORDER BY name, u.id \
-         LIMIT $3",
-        vec![workspace_id.into(), query.clone().into(), MENTION_CANDIDATE_CAP.into()],
-    )
-    .await?;
-    let guests = guest_rows(db, workspace_id, object_id, &query, MENTION_CANDIDATE_CAP).await?;
-    let mut items = members;
-    for guest in guests {
-        if items.iter().any(|item| item.user_id == guest.user_id) {
-            continue;
-        }
-        items.push(guest);
-        if items.len() >= usize::try_from(MENTION_CANDIDATE_CAP).unwrap_or(50) {
-            break;
-        }
-    }
-    Ok(MentionCandidateList { items })
 }
 
 /// Users who are not members but hold a grant on this page or an ancestor it still inherits from,

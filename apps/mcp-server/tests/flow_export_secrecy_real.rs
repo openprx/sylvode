@@ -21,7 +21,7 @@ use api::{
         model::AcceptedChange,
     },
     middleware::bot_auth::bot_or_user_auth_middleware,
-    routes::flow::{get_flow_export, get_flow_export_artifact, get_flow_object, post_flow_object_export},
+    routes::flow::{get_flow_v2_export, get_flow_v2_export_artifact, get_flow_v2_object, post_flow_v2_export},
 };
 use axum::{
     Router, middleware,
@@ -208,13 +208,13 @@ async fn command(
 
 fn export_router(state: AppState) -> Router {
     Router::new()
-        .route("/api/v1/flow/objects/{object_id}", get(get_flow_object))
+        .route("/api/v2/flow/objects/{object_id}", get(get_flow_v2_object))
+        .route("/api/v2/flow/objects/{object_id}/exports", post(post_flow_v2_export))
+        .route("/api/v2/flow/exports/{job_id}", get(get_flow_v2_export))
         .route(
-            "/api/v1/flow/objects/{object_id}/exports",
-            post(post_flow_object_export),
+            "/api/v2/flow/exports/{job_id}/artifact",
+            get(get_flow_v2_export_artifact),
         )
-        .route("/api/v1/flow/exports/{job_id}", get(get_flow_export))
-        .route("/api/v1/flow/exports/{job_id}/artifact", get(get_flow_export_artifact))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             bot_or_user_auth_middleware,
@@ -300,7 +300,7 @@ async fn mcp_object_export_of_a_secret_record_is_redacted_and_its_package_refuse
     let receipt: Value = serde_json::from_str(result_text(&exported)?)?;
     let job_id = receipt["job_id"].as_str().ok_or("export job id missing")?;
     let artifact = reqwest::Client::new()
-        .get(format!("http://{address}/api/v1/flow/exports/{job_id}/artifact"))
+        .get(format!("http://{address}/api/v2/flow/exports/{job_id}/artifact"))
         .bearer_auth(BOT_TOKEN)
         .header("x-sylvode-mcp-surface", TRANSPORT_LABEL_STDIO)
         .send()

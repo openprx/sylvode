@@ -336,13 +336,6 @@ impl OpenPrClient {
     pub const fn is_flow_only(&self) -> bool {
         self.flow_only
     }
-    /// Routing syntax only; the API, never this prefix, authenticates or authorizes it.
-    pub(crate) fn legacy_bot_token_shape(&self) -> bool {
-        self.credential
-            .as_ref()
-            .is_some_and(|value| value.expose().starts_with("opr_"))
-    }
-
     /// The same client, speaking to the API as `credential` instead of as itself.
     ///
     /// This is how a per-request caller identity reaches every live registry tool without threading a
@@ -1768,23 +1761,35 @@ impl OpenPrClient {
 
     pub async fn get_flow_object(&self, object_id: &str, query: &str) -> Result<Value, String> {
         self.get(&format!(
-            "/api/v1/flow/objects/{}{query}",
+            "/api/v2/flow/objects/{}{query}",
             urlencoding::encode(object_id)
         ))
         .await
     }
 
+    /// The Flow scope bound to a workspace; the workspace routes of the Flow surface hang off it.
+    pub async fn flow_scope_id(&self, workspace_id: &str) -> Result<String, String> {
+        let path = format!("/api/v2/flow/workspaces/{}/scope", urlencoding::encode(workspace_id));
+        let envelope: Value = self.get(&path).await?;
+        envelope
+            .pointer("/data/scope/id")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| format!("Malformed response from {path}: no scope id"))
+    }
+
     pub async fn list_flow_objects(&self, workspace_id: &str, query: &str) -> Result<Value, String> {
+        let scope = self.flow_scope_id(workspace_id).await?;
         self.get(&format!(
-            "/api/v1/workspaces/{}/flow/objects{query}",
-            urlencoding::encode(workspace_id)
+            "/api/v2/flow/scopes/{}/objects{query}",
+            urlencoding::encode(&scope)
         ))
         .await
     }
 
     pub async fn get_flow_object_history(&self, object_id: &str, query: &str) -> Result<Value, String> {
         self.get(&format!(
-            "/api/v1/flow/objects/{}/history{query}",
+            "/api/v2/flow/objects/{}/history{query}",
             urlencoding::encode(object_id)
         ))
         .await
@@ -1800,7 +1805,7 @@ impl OpenPrClient {
 
     pub async fn list_flow_comments(&self, object_id: &str) -> Result<Value, String> {
         self.get(&format!(
-            "/api/v1/flow/objects/{}/comments",
+            "/api/v2/flow/objects/{}/comments",
             urlencoding::encode(object_id)
         ))
         .await
@@ -1808,7 +1813,7 @@ impl OpenPrClient {
 
     pub async fn create_flow_comment(&self, object_id: &str, body: &Value) -> Result<Value, String> {
         self.post(
-            &format!("/api/v1/flow/objects/{}/comments", urlencoding::encode(object_id)),
+            &format!("/api/v2/flow/objects/{}/comments", urlencoding::encode(object_id)),
             body,
         )
         .await
@@ -1817,7 +1822,7 @@ impl OpenPrClient {
     pub async fn update_flow_comment(&self, object_id: &str, comment_id: &str, body: &Value) -> Result<Value, String> {
         self.patch(
             &format!(
-                "/api/v1/flow/objects/{}/comments/{}",
+                "/api/v2/flow/objects/{}/comments/{}",
                 urlencoding::encode(object_id),
                 urlencoding::encode(comment_id)
             ),
@@ -1828,7 +1833,7 @@ impl OpenPrClient {
 
     pub async fn delete_flow_comment(&self, object_id: &str, comment_id: &str) -> Result<Value, String> {
         self.delete(&format!(
-            "/api/v1/flow/objects/{}/comments/{}",
+            "/api/v2/flow/objects/{}/comments/{}",
             urlencoding::encode(object_id),
             urlencoding::encode(comment_id)
         ))
@@ -1838,7 +1843,7 @@ impl OpenPrClient {
     pub async fn resolve_flow_comment(&self, object_id: &str, comment_id: &str, body: &Value) -> Result<Value, String> {
         self.post(
             &format!(
-                "/api/v1/flow/objects/{}/comments/{}/resolve",
+                "/api/v2/flow/objects/{}/comments/{}/resolve",
                 urlencoding::encode(object_id),
                 urlencoding::encode(comment_id)
             ),
@@ -1849,7 +1854,7 @@ impl OpenPrClient {
 
     pub async fn list_flow_share_links(&self, object_id: &str) -> Result<Value, String> {
         self.get(&format!(
-            "/api/v1/flow/objects/{}/share-links",
+            "/api/v2/flow/objects/{}/share-links",
             urlencoding::encode(object_id)
         ))
         .await
@@ -1857,7 +1862,7 @@ impl OpenPrClient {
 
     pub async fn create_flow_share_link(&self, object_id: &str, body: &Value) -> Result<Value, String> {
         self.post(
-            &format!("/api/v1/flow/objects/{}/share-links", urlencoding::encode(object_id)),
+            &format!("/api/v2/flow/objects/{}/share-links", urlencoding::encode(object_id)),
             body,
         )
         .await
@@ -1865,7 +1870,7 @@ impl OpenPrClient {
 
     pub async fn set_flow_appearance(&self, object_id: &str, body: &Value) -> Result<Value, String> {
         self.put(
-            &format!("/api/v1/flow/objects/{}/appearance", urlencoding::encode(object_id)),
+            &format!("/api/v2/flow/objects/{}/appearance", urlencoding::encode(object_id)),
             body,
         )
         .await
@@ -1874,7 +1879,7 @@ impl OpenPrClient {
     pub async fn upload_flow_appearance(&self, object_id: &str, body: &Value) -> Result<Value, String> {
         self.post(
             &format!(
-                "/api/v1/flow/objects/{}/appearance/assets",
+                "/api/v2/flow/objects/{}/appearance/assets",
                 urlencoding::encode(object_id)
             ),
             body,
@@ -1885,7 +1890,7 @@ impl OpenPrClient {
     pub async fn restore_flow_version(&self, object_id: &str, body: &Value) -> Result<Value, String> {
         self.post(
             &format!(
-                "/api/v1/flow/objects/{}/history/restore",
+                "/api/v2/flow/objects/{}/history/restore",
                 urlencoding::encode(object_id)
             ),
             body,
@@ -1915,16 +1920,17 @@ impl OpenPrClient {
         } else {
             format!("?{}", pairs.join("&"))
         };
+        let scope = self.flow_scope_id(workspace_id).await?;
         self.get(&format!(
-            "/api/v1/workspaces/{}/flow/trash{query}",
-            urlencoding::encode(workspace_id)
+            "/api/v2/flow/scopes/{}/trash{query}",
+            urlencoding::encode(&scope)
         ))
         .await
     }
 
     pub async fn purge_flow_object(&self, object_id: &str) -> Result<Value, String> {
         self.post(
-            &format!("/api/v1/flow/objects/{}/purge", urlencoding::encode(object_id)),
+            &format!("/api/v2/flow/objects/{}/purge", urlencoding::encode(object_id)),
             &json!({}),
         )
         .await
@@ -1936,7 +1942,7 @@ impl OpenPrClient {
             .map(|value| format!("?q={}", urlencoding::encode(value)))
             .unwrap_or_default();
         self.get(&format!(
-            "/api/v1/flow/objects/{}/mention-candidates{suffix}",
+            "/api/v2/flow/objects/{}/mention-candidates{suffix}",
             urlencoding::encode(object_id)
         ))
         .await
@@ -1945,7 +1951,7 @@ impl OpenPrClient {
     pub async fn revoke_flow_share_link(&self, object_id: &str, link_id: &str) -> Result<Value, String> {
         self.post(
             &format!(
-                "/api/v1/flow/objects/{}/share-links/{}/revoke",
+                "/api/v2/flow/objects/{}/share-links/{}/revoke",
                 urlencoding::encode(object_id),
                 urlencoding::encode(link_id)
             ),

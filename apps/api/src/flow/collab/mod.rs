@@ -96,12 +96,10 @@ mod tests {
             PermissionLevel::Edit,
             PermissionLevel::FullAccess,
         ] {
-            let ticket_admits = super::ticket::permission_admits_session(level);
             let open_admits = super::session::permission_admits_session(level);
             let revocation_disconnects = super::revocation::permission_requires_revocation(level);
-            assert_eq!(ticket_admits, open_admits, "ticket/open drifted at {level:?}");
             assert_eq!(
-                ticket_admits, !revocation_disconnects,
+                open_admits, !revocation_disconnects,
                 "admission/revocation drifted at {level:?}"
             );
         }

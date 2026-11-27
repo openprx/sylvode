@@ -478,16 +478,8 @@ fn only_the_intended_routes_are_reachable_without_authentication() {
         // WebSocket upgrade: authenticates via the one-time collab ticket the handler itself
         // consumes atomically (`ADR-0007`), never a Bearer/cookie token — a browser WebSocket
         // cannot set an `Authorization` header, so this route deliberately carries no
-        // `bot_or_user_auth_middleware` layer.
-        "/api/v1/collab/ws",
-        // Anonymous Flow page link. The handler hashes the token, checks expiry and
-        // revocation, returns only that page's sanitized text, and rate-limits by address.
-        "/api/v1/flow/public-shares/{token}",
-        // Icon or cover for that same link. The handler returns bytes only while the page's
-        // current appearance still references the asset.
-        "/api/v1/flow/public-shares/{token}/assets/{asset_id}",
-        // Scoped WebSocket upgrades consume an origin-bound, one-time ticket before
-        // revalidating scoped document access.
+        // `bot_or_user_auth_middleware` layer. The ticket is bound to a UUID client id and an
+        // origin, and the upgrade revalidates scoped document access.
         "/api/v2/flow/collab/ws",
         // Scoped public links authenticate against a hashed, unexpired, unrevoked token
         // and return only sanitized content or assets currently referenced by that Page.

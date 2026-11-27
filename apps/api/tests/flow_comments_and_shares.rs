@@ -13,9 +13,9 @@
 use std::net::{IpAddr, Ipv4Addr};
 
 use api::routes::flow::{
-    CommentPath, ShareClientIp, ShareLinkPath, TokenPath, delete_flow_comment, get_flow_comments,
-    get_public_flow_share, list_flow_share_links, patch_flow_comment, post_flow_comment, post_flow_share_link,
-    resolve_flow_comment, revoke_flow_share_link,
+    ShareClientIp, delete_flow_v2_comment, get_flow_v2_comments, get_flow_v2_public_share, get_flow_v2_share_links,
+    patch_flow_v2_comment, post_flow_v2_comment, post_flow_v2_share_link, resolve_flow_v2_comment,
+    revoke_flow_v2_share_link,
 };
 use axum::Json;
 use axum::body::to_bytes;
@@ -307,16 +307,17 @@ async fn comments_and_public_links_follow_object_permissions() {
         .await;
     }
 
-    let listed = into_json(get_flow_comments(State(state.clone()), claims(viewer), None, Path(page_id)).await).await;
+    let listed = into_json(get_flow_v2_comments(State(state.clone()), claims(viewer), None, Path(page_id)).await).await;
     assert_eq!(listed["code"], 0, "{listed}");
     assert_eq!(listed["data"]["items"].as_array().expect("items").len(), 0);
 
     let denied = into_json(
-        post_flow_comment(
+        post_flow_v2_comment(
             State(state.clone()),
             claims(viewer),
             None,
             Path(page_id),
+            axum::http::HeaderMap::new(),
             Json(body_json(json!({"body": "nope"}))),
         )
         .await,
@@ -325,11 +326,12 @@ async fn comments_and_public_links_follow_object_permissions() {
     assert_eq!(denied["error_code"], "not_found", "{denied}");
 
     let created = into_json(
-        post_flow_comment(
+        post_flow_v2_comment(
             State(state.clone()),
             claims(commenter),
             None,
             Path(page_id),
+            axum::http::HeaderMap::new(),
             Json(body_json(json!({"body": " hello ", "mentions": [editor, outsider]}))),
         )
         .await,
@@ -347,11 +349,12 @@ async fn comments_and_public_links_follow_object_permissions() {
     )
     .await;
     let typed = into_json(
-        post_flow_comment(
+        post_flow_v2_comment(
             State(state.clone()),
             claims(commenter),
             None,
             Path(page_id),
+            axum::http::HeaderMap::new(),
             Json(body_json(json!({"body": "over to @edith editor"}))),
         )
         .await,
@@ -366,11 +369,12 @@ async fn comments_and_public_links_follow_object_permissions() {
     assert_eq!(notification_count(db, editor).await, 2);
 
     let reply = into_json(
-        post_flow_comment(
+        post_flow_v2_comment(
             State(state.clone()),
             claims(commenter),
             None,
             Path(page_id),
+            axum::http::HeaderMap::new(),
             Json(body_json(json!({"body": "reply", "parent_id": comment_id}))),
         )
         .await,
@@ -380,11 +384,12 @@ async fn comments_and_public_links_follow_object_permissions() {
     assert_eq!(reply["data"]["parent_id"], comment_id);
 
     let edited = into_json(
-        patch_flow_comment(
+        patch_flow_v2_comment(
             State(state.clone()),
             claims(commenter),
             None,
-            Path(comment_path(&page_id, &comment_id)),
+            Path((page_id, Uuid::parse_str(&comment_id).expect("comment id"))),
+            axum::http::HeaderMap::new(),
             Json(body_json(json!({"body": "edited"}))),
         )
         .await,
@@ -393,11 +398,12 @@ async fn comments_and_public_links_follow_object_permissions() {
     assert_eq!(edited["data"]["body"], "edited", "{edited}");
 
     let editor_note = into_json(
-        post_flow_comment(
+        post_flow_v2_comment(
             State(state.clone()),
             claims(editor),
             None,
             Path(page_id),
+            axum::http::HeaderMap::new(),
             Json(body_json(json!({"body": "editor note"}))),
         )
         .await,
@@ -405,11 +411,12 @@ async fn comments_and_public_links_follow_object_permissions() {
     .await;
     let editor_comment = editor_note["data"]["id"].as_str().expect("editor comment").to_string();
     let cannot_edit = into_json(
-        patch_flow_comment(
+        patch_flow_v2_comment(
             State(state.clone()),
             claims(commenter),
             None,
-            Path(comment_path(&page_id, &editor_comment)),
+            Path((page_id, Uuid::parse_str(&editor_comment).expect("comment id"))),
+            axum::http::HeaderMap::new(),
             Json(body_json(json!({"body": "stolen"}))),
         )
         .await,
@@ -418,11 +425,12 @@ async fn comments_and_public_links_follow_object_permissions() {
     assert_eq!(cannot_edit["error_code"], "forbidden", "{cannot_edit}");
 
     let cannot_resolve = into_json(
-        resolve_flow_comment(
+        resolve_flow_v2_comment(
             State(state.clone()),
             claims(commenter),
             None,
-            Path(comment_path(&page_id, &editor_comment)),
+            Path((page_id, Uuid::parse_str(&editor_comment).expect("comment id"))),
+            axum::http::HeaderMap::new(),
             Json(body_json(json!({"resolved": true}))),
         )
         .await,
@@ -430,11 +438,12 @@ async fn comments_and_public_links_follow_object_permissions() {
     .await;
     assert_eq!(cannot_resolve["error_code"], "forbidden", "{cannot_resolve}");
     let resolved = into_json(
-        resolve_flow_comment(
+        resolve_flow_v2_comment(
             State(state.clone()),
             claims(editor),
             None,
-            Path(comment_path(&page_id, &editor_comment)),
+            Path((page_id, Uuid::parse_str(&editor_comment).expect("comment id"))),
+            axum::http::HeaderMap::new(),
             Json(body_json(json!({"resolved": true}))),
         )
         .await,
@@ -443,18 +452,19 @@ async fn comments_and_public_links_follow_object_permissions() {
     assert!(resolved["data"]["resolved_at"].is_string(), "{resolved}");
 
     let removed = into_json(
-        delete_flow_comment(
+        delete_flow_v2_comment(
             State(state.clone()),
             claims(commenter),
             None,
-            Path(comment_path(&page_id, &comment_id)),
+            Path((page_id, Uuid::parse_str(&comment_id).expect("comment id"))),
+            axum::http::HeaderMap::new(),
         )
         .await,
     )
     .await;
     assert_eq!(removed["code"], 0, "{removed}");
     let after_delete =
-        into_json(get_flow_comments(State(state.clone()), claims(viewer), None, Path(page_id)).await).await;
+        into_json(get_flow_v2_comments(State(state.clone()), claims(viewer), None, Path(page_id)).await).await;
     let visible = after_delete["data"]["items"].as_array().expect("items");
     assert!(
         visible
@@ -463,7 +473,7 @@ async fn comments_and_public_links_follow_object_permissions() {
     );
 
     let owner_denied_link = into_json(
-        post_flow_share_link(
+        post_flow_v2_share_link(
             State(state.clone()),
             claims(commenter),
             None,
@@ -476,7 +486,7 @@ async fn comments_and_public_links_follow_object_permissions() {
     assert_eq!(owner_denied_link["error_code"], "forbidden", "{owner_denied_link}");
 
     let link = into_json(
-        post_flow_share_link(
+        post_flow_v2_share_link(
             State(state.clone()),
             claims(owner),
             None,
@@ -490,14 +500,14 @@ async fn comments_and_public_links_follow_object_permissions() {
     let token = link["data"]["token"].as_str().expect("token").to_string();
     let link_id = link["data"]["link"]["id"].as_str().expect("link id").to_string();
     let listed_links =
-        into_json(list_flow_share_links(State(state.clone()), claims(owner), None, Path(page_id)).await).await;
+        into_json(get_flow_v2_share_links(State(state.clone()), claims(owner), None, Path(page_id)).await).await;
     let rendered = listed_links.to_string();
     assert!(!rendered.contains(&token), "list must not echo the raw token");
 
     let public = into_json(
-        get_public_flow_share(
+        get_flow_v2_public_share(
             State(state.clone()),
-            Path(token_path(&token)),
+            Path(token.clone()),
             ShareClientIp(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10))),
         )
         .await,
@@ -509,20 +519,20 @@ async fn comments_and_public_links_follow_object_permissions() {
     assert!(public.get("data").and_then(|data| data.get("workspace_id")).is_none());
 
     let revoked = into_json(
-        revoke_flow_share_link(
+        revoke_flow_v2_share_link(
             State(state.clone()),
             claims(owner),
             None,
-            Path(share_path(&page_id, &link_id)),
+            Path((page_id, Uuid::parse_str(&link_id).expect("link id"))),
         )
         .await,
     )
     .await;
     assert_eq!(revoked["code"], 0, "{revoked}");
     let gone = into_json(
-        get_public_flow_share(
+        get_flow_v2_public_share(
             State(state.clone()),
-            Path(token_path(&token)),
+            Path(token.clone()),
             ShareClientIp(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 11))),
         )
         .await,
@@ -531,7 +541,7 @@ async fn comments_and_public_links_follow_object_permissions() {
     assert_eq!(gone["error_code"], "not_found", "{gone}");
 
     let expiring = into_json(
-        post_flow_share_link(
+        post_flow_v2_share_link(
             State(state.clone()),
             claims(owner),
             None,
@@ -553,9 +563,9 @@ async fn comments_and_public_links_follow_object_permissions() {
     )
     .await;
     let expired = into_json(
-        get_public_flow_share(
+        get_flow_v2_public_share(
             State(state.clone()),
-            Path(token_path(&expiring_token)),
+            Path(expiring_token.clone()),
             ShareClientIp(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 12))),
         )
         .await,
@@ -565,7 +575,7 @@ async fn comments_and_public_links_follow_object_permissions() {
 
     let limited_ip = ShareClientIp(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 60)));
     let fresh = into_json(
-        post_flow_share_link(
+        post_flow_v2_share_link(
             State(state.clone()),
             claims(owner),
             None,
@@ -579,7 +589,7 @@ async fn comments_and_public_links_follow_object_permissions() {
     let mut limited = json!(null);
     for _ in 0..61 {
         limited =
-            into_json(get_public_flow_share(State(state.clone()), Path(token_path(&fresh_token)), limited_ip).await)
+            into_json(get_flow_v2_public_share(State(state.clone()), Path(fresh_token.clone()), limited_ip).await)
                 .await;
     }
     assert_eq!(limited["error_code"], "limit_exceeded", "{limited}");
@@ -589,26 +599,6 @@ async fn comments_and_public_links_follow_object_permissions() {
 
 fn body_json<T: for<'de> Deserialize<'de>>(value: Value) -> T {
     serde_json::from_value(value).expect("request json")
-}
-
-fn comment_path(object_id: &Uuid, comment_id: &str) -> CommentPath {
-    CommentPath {
-        object_id: *object_id,
-        comment_id: Uuid::parse_str(comment_id).expect("comment id"),
-    }
-}
-
-fn token_path(token: &str) -> TokenPath {
-    TokenPath {
-        token: token.to_string(),
-    }
-}
-
-fn share_path(object_id: &Uuid, link_id: &str) -> ShareLinkPath {
-    ShareLinkPath {
-        object_id: *object_id,
-        link_id: Uuid::parse_str(link_id).expect("link id"),
-    }
 }
 
 async fn notification_count(db: &DatabaseConnection, user_id: Uuid) -> i64 {

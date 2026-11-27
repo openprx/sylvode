@@ -116,8 +116,7 @@ use api::flow::collab::frame::{Frame, PROTOCOL_VERSION};
 use api::flow::event_origin::{CommandOrigin, EventSurface};
 use api::flow::projection;
 use api::middleware::bot_auth::bot_or_user_auth_middleware;
-use api::routes::collab::{create_ticket, ws_upgrade};
-use api::routes::flow::get_flow_object_bootstrap;
+use api::routes::flow::{get_flow_v2_bootstrap, get_flow_v2_ws, post_flow_v2_ticket};
 
 // ---------------------------------------------------------------------------------------------
 // Frozen targets. Every number here is transcribed from the contract repository; none is invented
@@ -526,16 +525,16 @@ async fn spawn_server(state: AppState) -> SocketAddr {
     let auth_state = state.clone();
     let app = Router::new()
         .route(
-            "/api/v1/collab/tickets",
-            post(create_ticket).route_layer(axum_middleware::from_fn_with_state(
+            "/api/v2/flow/collab/tickets",
+            post(post_flow_v2_ticket).route_layer(axum_middleware::from_fn_with_state(
                 auth_state.clone(),
                 bot_or_user_auth_middleware,
             )),
         )
-        .route("/api/v1/collab/ws", get(ws_upgrade))
+        .route("/api/v2/flow/collab/ws", get(get_flow_v2_ws))
         .route(
-            "/api/v1/flow/objects/{object_id}/bootstrap",
-            get(get_flow_object_bootstrap).route_layer(axum_middleware::from_fn_with_state(
+            "/api/v2/flow/objects/{object_id}/bootstrap",
+            get(get_flow_v2_bootstrap).route_layer(axum_middleware::from_fn_with_state(
                 auth_state,
                 bot_or_user_auth_middleware,
             )),
@@ -557,16 +556,25 @@ async fn spawn_server(state: AppState) -> SocketAddr {
 // WebSocket client plumbing
 // ---------------------------------------------------------------------------------------------
 
+/// A stable UUID for a readable client label: tickets bind a UUID client id. A label that is already a
+/// UUID is kept.
+fn wire_client(label: &str) -> String {
+    if Uuid::parse_str(label).is_ok() {
+        return label.to_string();
+    }
+    Uuid::new_v5(&Uuid::NAMESPACE_OID, label.as_bytes()).to_string()
+}
+
 type WsStream = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
-async fn issue_ticket(addr: SocketAddr, token: &str, workspace_id: Uuid, document_id: Uuid, client_id: &str) -> String {
+async fn issue_ticket(addr: SocketAddr, token: &str, object_id: Uuid, document_id: Uuid, client_id: &str) -> String {
     let response = reqwest::Client::new()
-        .post(format!("http://{addr}/api/v1/collab/tickets"))
+        .post(format!("http://{addr}/api/v2/flow/collab/tickets"))
         .bearer_auth(token)
         .json(&json!({
-            "workspace_id": workspace_id,
+            "object_id": object_id,
             "document_id": document_id,
-            "client_id": client_id,
+            "client_id": wire_client(client_id),
             "origin": TEST_ORIGIN,
         }))
         .send()
@@ -578,7 +586,10 @@ async fn issue_ticket(addr: SocketAddr, token: &str, workspace_id: Uuid, documen
 }
 
 async fn connect(addr: SocketAddr, ticket: &str, client_id: &str) -> WsStream {
-    let url = format!("ws://{addr}/api/v1/collab/ws?ticket={ticket}&client_id={client_id}");
+    let url = format!(
+        "ws://{addr}/api/v2/flow/collab/ws?ticket={ticket}&client_id={}",
+        wire_client(client_id)
+    );
     let mut request = url.into_client_request().expect("builds a client request");
     request
         .headers_mut()
@@ -617,7 +628,7 @@ async fn open_document(ws: &mut WsStream, document_id: Uuid, client_id: &str) ->
         &Frame::Hello {
             protocol_version: PROTOCOL_VERSION,
             capabilities: vec![],
-            client_id: client_id.to_string(),
+            client_id: wire_client(client_id),
             session_id: Uuid::new_v4(),
         },
     )
@@ -768,7 +779,7 @@ impl SurfaceObservation {
 
 async fn rest_bootstrap(addr: SocketAddr, token: &str, object_id: Uuid) -> SurfaceObservation {
     let response = reqwest::Client::new()
-        .get(format!("http://{addr}/api/v1/flow/objects/{object_id}/bootstrap"))
+        .get(format!("http://{addr}/api/v2/flow/objects/{object_id}/bootstrap"))
         .bearer_auth(token)
         .send()
         .await
@@ -1384,7 +1395,6 @@ struct LoadHarness {
     addr: SocketAddr,
     object_id: Uuid,
     document_id: Uuid,
-    workspace_id: Uuid,
     clients: Vec<ClientCredentials>,
     parity_token: String,
 }
@@ -1406,7 +1416,7 @@ impl LoadHarness {
         let ticket = issue_ticket(
             self.addr,
             &credentials.token,
-            self.workspace_id,
+            self.object_id,
             self.document_id,
             &credentials.client_id,
         )
@@ -1484,7 +1494,7 @@ impl LoadHarness {
 /// by the parity probes.
 async fn client_engine_from(addr: SocketAddr, token: &str, object_id: Uuid) -> LoroCollabEngine {
     let response = reqwest::Client::new()
-        .get(format!("http://{addr}/api/v1/flow/objects/{object_id}/bootstrap"))
+        .get(format!("http://{addr}/api/v2/flow/objects/{object_id}/bootstrap"))
         .bearer_auth(token)
         .send()
         .await
@@ -2069,7 +2079,6 @@ async fn ten_client_load_harness_round_trip_p95_and_lock_hold_p95() {
         addr,
         object_id,
         document_id,
-        workspace_id,
         clients: members
             .iter()
             .take(clients)
@@ -2093,7 +2102,7 @@ async fn ten_client_load_harness_round_trip_p95_and_lock_hold_p95() {
         let mut observations = Vec::new();
         for iteration in 0..12 {
             let client_id = format!("parity-probe-{iteration}");
-            let ticket = issue_ticket(parity_addr, &parity_token, workspace_id, document_id, &client_id).await;
+            let ticket = issue_ticket(parity_addr, &parity_token, object_id, document_id, &client_id).await;
             // Both surfaces are asked at the same instant, on purpose: `gate-commands.md` requires
             // the parity proof to hold *while* snapshot advancement and load are concurrent, not
             // only on a quiesced document.
@@ -2133,7 +2142,7 @@ async fn ten_client_load_harness_round_trip_p95_and_lock_hold_p95() {
     // an "always disagrees" bug cannot hide behind legitimate concurrent head movement.
     let (final_rest, final_ws) = tokio::join!(rest_bootstrap(addr, &harness.parity_token, object_id), async {
         let client_id = "parity-final";
-        let ticket = issue_ticket(addr, &harness.parity_token, workspace_id, document_id, client_id).await;
+        let ticket = issue_ticket(addr, &harness.parity_token, object_id, document_id, client_id).await;
         let mut ws = connect(addr, &ticket, client_id).await;
         let observation = open_document(&mut ws, document_id, client_id).await;
         let _ = ws.close(None).await;

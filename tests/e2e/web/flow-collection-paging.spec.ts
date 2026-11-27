@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+import { postWorkspaceFlowObject } from './flow-scope-support';
 
 // The Page-only product mode retires the table and Record renderer. The existing records
 // remain readable through the typed paging and record-specific schema APIs.
@@ -91,7 +92,7 @@ test('collection: typed records page by 50 and the collection and record routes 
 	);
 	const fieldId = crypto.randomUUID();
 	const collection = await unwrap<Accepted>(
-		await request.post(`/api/v1/workspaces/${workspace.id}/flow/objects`, {
+		await postWorkspaceFlowObject(request, workspace.id, {
 			headers: auth,
 			data: {
 				object_type: 'collection',
@@ -114,7 +115,7 @@ test('collection: typed records page by 50 and the collection and record routes 
 	const recordIds: string[] = [];
 	for (let i = 0; i < RECORDS; i += 1) {
 		const created = await unwrap<Accepted>(
-			await request.post(`/api/v1/flow/collections/${collectionId}/records`, {
+			await request.post(`/api/v2/flow/collections/${collectionId}/records`, {
 				headers: auth,
 				data: {
 					values_by_field_id: { [fieldId]: `Row ${String(i).padStart(2, '0')}` },
@@ -138,7 +139,7 @@ test('collection: typed records page by 50 and the collection and record routes 
 	await expect(page.getByTestId('record-panel')).toBeVisible();
 	expect(reads).not.toContain(`/api/v2/flow/objects/${collectionId}/bootstrap`);
 	type RecordsPage = { items: Array<{ record: { id: string } }>; next_cursor?: string | null };
-	const url = `/api/v1/flow/collections/${collectionId}/records`;
+	const url = `/api/v2/flow/collections/${collectionId}/records`;
 	const first = await unwrap<RecordsPage>(
 		await context.request.get(url, { headers: auth, params: { limit: '50' } })
 	);
@@ -156,7 +157,7 @@ test('collection: typed records page by 50 and the collection and record routes 
 		new Set(recordIds)
 	);
 	const schema = await unwrap<{ fields: Array<{ field_id: string }> }>(
-		await context.request.get(`/api/v1/flow/objects/${recordIds[3]}/schema`, { headers: auth })
+		await context.request.get(`/api/v2/flow/objects/${recordIds[3]}/schema`, { headers: auth })
 	);
 	expect(schema.fields.map(({ field_id }) => field_id)).toEqual([fieldId]);
 	await context.close();

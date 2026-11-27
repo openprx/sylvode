@@ -511,7 +511,7 @@ export class FakeCollabServer {
 			this.ticketRequests.push(JSON.parse(String(init?.body ?? '{}')));
 			return ok(
 				this.ticketResponse ?? {
-					websocket_url: '/api/v1/collab/ws?ticket=t',
+					websocket_url: '/api/v2/flow/collab/ws?ticket=t',
 					ticket: 't',
 					expires_at: ''
 				}
@@ -550,7 +550,7 @@ export class FakeCollabServer {
 				tail_updates: [],
 				head_frontier: this.frontier(),
 				limits: this.bootstrapLimits ?? limitsPayload(),
-				websocket_path: '/api/v1/collab/ws'
+				websocket_path: '/api/v2/flow/collab/ws'
 			});
 		}
 		if (method === 'GET' && path === `/api/v2/flow/objects/${OBJECT_ID}`) {

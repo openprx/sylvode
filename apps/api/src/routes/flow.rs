@@ -4,19 +4,19 @@
 //! which live in `routes::collab` — see `apps/api/src/flow/mod.rs`'s module docs.
 //!
 //! ```text
-//! POST /api/v1/workspaces/{workspace_id}/flow/objects
-//! GET  /api/v1/workspaces/{workspace_id}/flow/objects
-//! GET  /api/v1/flow/objects/{object_id}
-//! POST /api/v1/flow/objects/{object_id}/commands
-//! GET  /api/v1/flow/objects/{object_id}/relations
-//! GET  /api/v1/flow/objects/{object_id}/bootstrap
-//! GET  /api/v1/flow/objects/{object_id}/grants
-//! PUT  /api/v1/flow/objects/{object_id}/grants
-//! PUT  /api/v1/flow/objects/{object_id}/inheritance
-//! GET  /api/v1/flow/objects/{object_id}/history
-//! GET  /api/v1/flow/objects/{object_id}/diff
-//! GET  /api/v1/workspaces/{workspace_id}/flow/projection-lag
-//! GET  /api/v1/workspaces/{workspace_id}/flow/search
+//! POST /api/v2/flow/workspaces/{workspace_id}/objects
+//! GET  /api/v2/flow/workspaces/{workspace_id}/objects
+//! GET  /api/v2/flow/objects/{object_id}
+//! POST /api/v2/flow/objects/{object_id}/commands
+//! GET  /api/v2/flow/objects/{object_id}/relations
+//! GET  /api/v2/flow/objects/{object_id}/bootstrap
+//! GET  /api/v2/flow/objects/{object_id}/grants
+//! PUT  /api/v2/flow/objects/{object_id}/grants
+//! PUT  /api/v2/flow/objects/{object_id}/inheritance
+//! GET  /api/v2/flow/objects/{object_id}/history
+//! GET  /api/v2/flow/objects/{object_id}/diff
+//! GET  /api/v2/flow/workspaces/{workspace_id}/projection-lag
+//! GET  /api/v2/flow/workspaces/{workspace_id}/search
 //! GET  /api/v1/workspaces/{workspace_id}/features/flow
 //! PUT  /api/v1/workspaces/{workspace_id}/features/flow
 //! ```
@@ -36,15 +36,8 @@ pub use flow_record_context::get_flow_v2_record_context;
 mod flow_page;
 #[path = "flow_social.rs"]
 mod flow_social;
-pub use flow_page::{
-    get_flow_appearance_asset, get_flow_mention_candidates, get_flow_trash, get_public_flow_appearance_asset,
-    post_flow_appearance_asset, post_flow_purge, post_flow_restore_version, put_flow_appearance,
-};
-pub use flow_social::{
-    CommentPath, CreateCommentBody, CreateShareLinkBody, PatchCommentBody, ResolveCommentBody, ShareClientIp,
-    ShareLinkPath, TokenPath, delete_flow_comment, get_flow_comments, get_public_flow_share, list_flow_share_links,
-    patch_flow_comment, post_flow_comment, post_flow_share_link, resolve_flow_comment, revoke_flow_share_link,
-};
+pub use flow_page::{get_flow_trash, post_flow_purge, post_flow_restore_version};
+pub use flow_social::ShareClientIp;
 
 use axum::{
     Extension, Json,
@@ -64,13 +57,10 @@ use crate::middleware::bot_auth::{BotAuthContext, require_workspace_access};
 use crate::{
     error::ApiError,
     flow::{
-        collections::{self, RecordQueryPayload},
-        command::{CreateObjectInput, ExecuteCommandInput, SetFlowFeatureInput},
+        command::SetFlowFeatureInput,
         event_origin::{CommandOrigin, EventSource, EventSurface},
         grants::{self, Caller, GrantRequest, SetGrantsInput, SetInheritanceInput},
-        policy, query,
-        query::Render,
-        relations, search,
+        policy, query, search,
     },
     response::ApiResponse,
 };
@@ -305,7 +295,7 @@ pub async fn get_flow_export(
     if has_artifact {
         data.as_object_mut().ok_or_else(ApiError::internal)?.insert(
             "download_url".to_string(),
-            json!(format!("/api/v1/flow/exports/{job_id}/artifact")),
+            json!(format!("/api/v2/flow/exports/{job_id}/artifact")),
         );
     }
     Ok(ApiResponse::success(data))
@@ -564,19 +554,7 @@ pub async fn post_flow_import_commit(
     ))
 }
 
-pub async fn get_flow_import(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Path((workspace_id, import_id)): Path<(Uuid, Uuid)>,
-) -> Result<impl IntoResponse, ApiError> {
-    let (principal, _) = package_workspace_principal(&state, claims, bot, workspace_id).await?;
-    Ok(ApiResponse::success(
-        crate::flow::package_import::get_import_report(&state.db, workspace_id, import_id, &principal).await?,
-    ))
-}
-
-/// `POST /api/v1/flow/objects/{object_id}/references`.
+/// `POST /api/v2/flow/objects/{object_id}/references`.
 pub async fn post_flow_object_reference(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
@@ -591,20 +569,7 @@ pub async fn post_flow_object_reference(
     Ok(ApiResponse::success(receipt))
 }
 
-/// Request-time permission resolution for Reference cards and Embed views.
-pub async fn get_flow_object_references(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Path(object_id): Path<Uuid>,
-) -> Result<impl IntoResponse, ApiError> {
-    let extensions = build_auth_extensions(claims, bot);
-    Ok(ApiResponse::success(
-        crate::flow::bridge::list_references(&state, &extensions, object_id).await?,
-    ))
-}
-
-/// `DELETE /api/v1/flow/objects/{object_id}/references/{reference_id}`.
+/// `DELETE /api/v2/flow/objects/{object_id}/references/{reference_id}`.
 pub async fn delete_flow_object_reference(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
@@ -628,77 +593,6 @@ pub async fn delete_flow_object_reference(
     )
     .await?;
     Ok(ApiResponse::success(receipt))
-}
-
-/// Parses a conversion or job id taken from the path. A malformed id names nothing that exists,
-/// so it gets the same typed `not_found` as an unknown well-formed one instead of axum's
-/// plain-text path rejection, which carries no envelope and no `error_code`.
-fn conversion_path_id(raw: &str, what: &str) -> Result<Uuid, ApiError> {
-    Uuid::parse_str(raw).map_err(|_| ApiError::not_found(format!("{what} not found")))
-}
-
-pub async fn post_flow_conversion_preview(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Json(input): Json<crate::flow::bridge::ConversionPreviewInput>,
-) -> Result<impl IntoResponse, ApiError> {
-    let extensions = build_auth_extensions(claims, bot);
-    Ok(ApiResponse::success(
-        crate::flow::bridge::preview_conversion(&state, &extensions, input).await?,
-    ))
-}
-
-pub async fn post_flow_conversion(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Json(input): Json<crate::flow::bridge::ConversionCommitInput>,
-) -> Result<impl IntoResponse, ApiError> {
-    let extensions = build_auth_extensions(claims, bot);
-    Ok(ApiResponse::success(
-        crate::flow::bridge::commit_conversion(&state, &extensions, input, request_origin(&extensions)).await?,
-    ))
-}
-
-pub async fn get_flow_conversion(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Path(job_id): Path<String>,
-) -> Result<impl IntoResponse, ApiError> {
-    let job_id = conversion_path_id(&job_id, "conversion job")?;
-    let extensions = build_auth_extensions(claims, bot);
-    Ok(ApiResponse::success(
-        crate::flow::bridge::conversion_status(&state, &extensions, job_id).await?,
-    ))
-}
-
-pub async fn get_flow_conversion_owner(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Path(conversion_id): Path<String>,
-) -> Result<impl IntoResponse, ApiError> {
-    let conversion_id = conversion_path_id(&conversion_id, "conversion")?;
-    let extensions = build_auth_extensions(claims, bot);
-    Ok(ApiResponse::success(
-        crate::flow::bridge::conversion_owner(&state, &extensions, conversion_id).await?,
-    ))
-}
-
-pub async fn post_flow_conversion_retry(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Path(job_id): Path<String>,
-    Json(input): Json<crate::flow::bridge::ConversionRetryInput>,
-) -> Result<impl IntoResponse, ApiError> {
-    let job_id = conversion_path_id(&job_id, "conversion job")?;
-    let extensions = build_auth_extensions(claims, bot);
-    Ok(ApiResponse::success(
-        crate::flow::bridge::retry_conversion(&state, &extensions, job_id, input, request_origin(&extensions)).await?,
-    ))
 }
 
 /// The origin every write handler in this module stamps on the events its command produces.
@@ -1249,44 +1143,6 @@ pub struct CreateFlowObjectRequest {
     pub initial_view: Option<Value>,
 }
 
-/// `POST /api/v1/workspaces/{workspace_id}/flow/objects`
-pub async fn create_flow_object(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Path(workspace_id): Path<Uuid>,
-    Json(req): Json<CreateFlowObjectRequest>,
-) -> Result<impl IntoResponse, ApiError> {
-    let extensions = build_auth_extensions(claims, bot);
-    let (actor_id, _role, actor_is_bot) =
-        policy::require_flow_workspace_access(&state, &extensions, workspace_id).await?;
-
-    let input = CreateObjectInput {
-        workspace_id,
-        actor_id,
-        actor_is_bot,
-        object_type: req.object_type,
-        project_id: req.project_id,
-        parent_object_id: req.parent_object_id,
-        title: req.title,
-        idempotency_key: req.idempotency_key,
-        message: req.message,
-        origin: request_origin(&extensions),
-    };
-    let accepted = if req.initial_fields.is_empty() && req.initial_view.is_none() {
-        crate::flow::command::create_object(&state, input).await?
-    } else {
-        crate::flow::command::create_object_with_collection_schema(
-            &state,
-            input,
-            serde_json::json!({"initial_fields": req.initial_fields, "initial_view": req.initial_view}),
-        )
-        .await?
-    };
-
-    Ok(ApiResponse::success(accepted))
-}
-
 #[derive(Debug, Deserialize)]
 pub struct ListFlowObjectsQuery {
     pub project_id: Option<Uuid>,
@@ -1301,41 +1157,6 @@ pub struct ListFlowObjectsQuery {
     pub include_archived: bool,
 }
 
-/// `GET /api/v1/workspaces/{workspace_id}/flow/objects`
-pub async fn list_flow_objects(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Path(workspace_id): Path<Uuid>,
-    FlowQuery(params): FlowQuery<ListFlowObjectsQuery>,
-) -> Result<impl IntoResponse, ApiError> {
-    let extensions = build_auth_extensions(claims, bot);
-    for _attempt in 0..policy::AUTHORIZATION_READ_ATTEMPTS {
-        let access = policy::begin_flow_read(&state, &extensions, workspace_id).await?;
-        let Some(response) = query::list_objects(
-            &state,
-            &access,
-            query::ListObjectsParams {
-                workspace_id,
-                project_id: params.project_id,
-                unprojected: params.unprojected,
-                object_type: params.object_type.clone(),
-                parent_id: params.parent_id,
-                q: params.q.clone(),
-                cursor: params.cursor.clone(),
-                limit: params.limit,
-                include_archived: params.include_archived,
-            },
-        )
-        .await?
-        else {
-            continue;
-        };
-        return Ok(ApiResponse::success(response));
-    }
-    Err(policy::authorization_read_unstable())
-}
-
 #[derive(Debug, Deserialize)]
 pub struct GetFlowObjectQuery {
     pub at_seq: Option<i64>,
@@ -1345,93 +1166,6 @@ pub struct GetFlowObjectQuery {
 #[derive(Debug, Deserialize)]
 pub struct DescribeCollectionQuery {
     pub at_seq: Option<i64>,
-}
-
-async fn collection_read_access(
-    state: &AppState,
-    extensions: &axum::http::Extensions,
-    collection_id: Uuid,
-) -> Result<Option<policy::AuthorizedFlowObject>, ApiError> {
-    let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, collection_id)
-        .await?
-        .ok_or_else(|| ApiError::not_found("collection not found".to_string()))?;
-    policy::require_flow_object_access(
-        state,
-        extensions,
-        workspace_id,
-        collection_id,
-        crate::flow::collab::authz::PermissionLevel::View,
-    )
-    .await
-}
-
-/// `GET /api/v1/flow/collections/{collection_id}` and the Collection branch of the schema
-/// resource. Both are served from synchronous projections; neither decodes collab bytes.
-pub async fn get_flow_collection(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Path(collection_id): Path<Uuid>,
-    FlowQuery(params): FlowQuery<DescribeCollectionQuery>,
-) -> Result<impl IntoResponse, ApiError> {
-    let extensions = build_auth_extensions(claims, bot);
-    for _attempt in 0..policy::AUTHORIZATION_READ_ATTEMPTS {
-        let Some(access) = collection_read_access(&state, &extensions, collection_id).await? else {
-            continue;
-        };
-        let Some(description) = collections::describe_collection(&state, &access, params.at_seq).await? else {
-            continue;
-        };
-        return Ok(ApiResponse::success(description));
-    }
-    Err(policy::authorization_read_unstable())
-}
-
-/// `GET /api/v1/flow/objects/{object_id}/schema` (`rest-api-v1.md` v0.6 schema row).
-///
-/// A Collection returns its own schema, exactly as `GET /flow/collections/{id}`; a Record returns
-/// its owning Collection's schema, to a caller who can read both the Record and that Collection.
-/// Any other object type has no Collection schema and is `not_found`, as before.
-pub async fn get_flow_object_schema(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Path(object_id): Path<Uuid>,
-    FlowQuery(params): FlowQuery<DescribeCollectionQuery>,
-) -> Result<impl IntoResponse, ApiError> {
-    let extensions = build_auth_extensions(claims, bot);
-    let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, object_id)
-        .await?
-        .ok_or_else(|| ApiError::not_found("collection not found".to_string()))?;
-    for _attempt in 0..policy::AUTHORIZATION_READ_ATTEMPTS {
-        let Some(object_access) = policy::require_flow_object_access(
-            &state,
-            &extensions,
-            workspace_id,
-            object_id,
-            crate::flow::collab::authz::PermissionLevel::View,
-        )
-        .await?
-        else {
-            continue;
-        };
-        let access = match collections::owning_collection_id(&state.db, object_id).await? {
-            Some(collection_id) => {
-                let Some(collection_access) = collection_read_access(&state, &extensions, collection_id).await? else {
-                    continue;
-                };
-                // Both authorizations read the same workspace epoch, which
-                // `describe_collection` re-checks before answering.
-                collection_access
-            }
-            None => object_access,
-        };
-        let Some(description) = collections::describe_collection(&state, &access, params.at_seq).await? else {
-            continue;
-        };
-        return Ok(ApiResponse::success(description));
-    }
-    Err(policy::authorization_read_unstable())
 }
 
 #[derive(Debug, Deserialize)]
@@ -1467,97 +1201,12 @@ fn parse_field_ids(raw: Option<String>) -> Result<Vec<Uuid>, ApiError> {
     )
 }
 
-/// `GET /api/v1/flow/collections/{collection_id}/records`.
-pub async fn get_flow_collection_records(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Path(collection_id): Path<Uuid>,
-    FlowQuery(params): FlowQuery<GetCollectionRecordsQuery>,
-) -> Result<impl IntoResponse, ApiError> {
-    let request = RecordQueryPayload {
-        filter: parse_json_query(params.filter, "filter")?,
-        sort: parse_json_query(params.sort, "sort")?,
-        group: params.group,
-        cursor: params.cursor,
-        limit: params.limit.unwrap_or(50),
-        field_ids: parse_field_ids(params.field_ids)?,
-    };
-    query_flow_collection(&state, claims, bot, collection_id, &request, params.view_id).await
-}
-
-async fn query_flow_collection(
-    state: &AppState,
-    claims: JwtClaims,
-    bot: Option<Extension<BotAuthContext>>,
-    collection_id: Uuid,
-    request: &RecordQueryPayload,
-    view_id: Option<Uuid>,
-) -> Result<axum::response::Response, ApiError> {
-    let extensions = build_auth_extensions(claims, bot);
-    for _attempt in 0..policy::AUTHORIZATION_READ_ATTEMPTS {
-        let Some(access) = collection_read_access(state, &extensions, collection_id).await? else {
-            continue;
-        };
-        let request = collections::apply_saved_view(&state.db, access.object_id(), view_id, request).await?;
-        let Some(response) = collections::query_collection_records(state, &access, &request).await? else {
-            continue;
-        };
-        return Ok(ApiResponse::success(response).into_response());
-    }
-    Err(policy::authorization_read_unstable())
-}
-
-/// `POST /api/v1/flow/collections/{collection_id}/query`.
-pub async fn post_flow_collection_query(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Path(collection_id): Path<Uuid>,
-    Json(request): Json<RecordQueryPayload>,
-) -> Result<impl IntoResponse, ApiError> {
-    query_flow_collection(&state, claims, bot, collection_id, &request, None).await
-}
-
 #[derive(Debug, Deserialize)]
 pub struct CreateCollectionRecordRequest {
     pub values_by_field_id: serde_json::Map<String, Value>,
     pub body: Option<String>,
     pub idempotency_key: String,
     pub message: Option<String>,
-}
-
-/// `POST /api/v1/flow/collections/{collection_id}/records`.
-pub async fn post_flow_collection_record(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Path(collection_id): Path<Uuid>,
-    Json(req): Json<CreateCollectionRecordRequest>,
-) -> Result<impl IntoResponse, ApiError> {
-    let extensions = build_auth_extensions(claims, bot);
-    let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, collection_id)
-        .await?
-        .ok_or_else(|| ApiError::not_found("collection not found".to_string()))?;
-    let (actor_id, role, is_bot) = policy::require_flow_workspace_access(&state, &extensions, workspace_id).await?;
-    let accepted = crate::flow::command::execute_command(
-        &state,
-        ExecuteCommandInput {
-            object_id: collection_id,
-            actor_id,
-            principal_kind: if is_bot { "bot".to_string() } else { "user".to_string() },
-            role,
-            command_type: "record_create".to_string(),
-            payload: serde_json::json!({"properties": req.values_by_field_id, "body": req.body}),
-            expected_frontier: None,
-            idempotency_key: req.idempotency_key,
-            message: req.message,
-            origin_client_id: format!("rest:{actor_id}"),
-            origin: request_origin(&extensions),
-        },
-    )
-    .await?;
-    Ok(ApiResponse::success(accepted))
 }
 
 #[derive(Debug, Deserialize)]
@@ -1568,123 +1217,12 @@ pub struct GetFlowNavigatorQuery {
     pub include_archived: bool,
 }
 
-/// `GET /api/v1/workspaces/{workspace_id}/flow/navigator`.
-pub async fn get_flow_navigator(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Path(workspace_id): Path<Uuid>,
-    FlowQuery(params): FlowQuery<GetFlowNavigatorQuery>,
-) -> Result<impl IntoResponse, ApiError> {
-    let extensions = build_auth_extensions(claims, bot);
-    for _attempt in 0..policy::AUTHORIZATION_READ_ATTEMPTS {
-        let access = policy::begin_flow_read(&state, &extensions, workspace_id).await?;
-        let Some(response) = query::get_navigator(
-            &state,
-            &access,
-            params.project_id,
-            params.depth,
-            params.include_archived,
-        )
-        .await?
-        else {
-            continue;
-        };
-        return Ok(ApiResponse::success(response));
-    }
-    Err(policy::authorization_read_unstable())
-}
-
-/// `GET /api/v1/flow/objects/{object_id}`
-pub async fn get_flow_object(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Path(object_id): Path<Uuid>,
-    FlowQuery(params): FlowQuery<GetFlowObjectQuery>,
-) -> Result<impl IntoResponse, ApiError> {
-    let extensions = build_auth_extensions(claims, bot);
-    let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, object_id)
-        .await?
-        .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
-    let render = Render::parse(params.render.as_deref())?;
-    for _attempt in 0..policy::AUTHORIZATION_READ_ATTEMPTS {
-        let Some(access) = policy::require_flow_object_access(
-            &state,
-            &extensions,
-            workspace_id,
-            object_id,
-            crate::flow::collab::authz::PermissionLevel::View,
-        )
-        .await?
-        else {
-            continue;
-        };
-        let Some(view) = query::get_object(&state, &access, params.at_seq, render).await? else {
-            continue;
-        };
-        return Ok(ApiResponse::success(view));
-    }
-    Err(policy::authorization_read_unstable())
-}
-
 #[derive(Debug, Deserialize)]
 pub struct GetFlowObjectBootstrapQuery {
     #[serde(default)]
     pub editor_model: Option<u32>,
     pub known_seq: Option<i64>,
     pub known_frontier: Option<String>,
-}
-
-/// `GET /api/v1/flow/objects/{object_id}/bootstrap` (`rest-api-v1.md`: "**user only**；object
-/// read（`view` 档即可，与 WS `open`/`snapshot` 同档）；flag").
-///
-/// Unlike every other handler in this module, a bot token is rejected outright rather than
-/// folded into the workspace-access check — matching `routes::collab::create_ticket`'s identical
-/// "issued a `bot_or_user_auth_middleware`-gated route but this one endpoint is user-only" shape.
-/// `flow::query::get_bootstrap` shares `flow::collab::bootstrap::load` with the WebSocket
-/// `snapshot` frame, so this and a WS `open` on the same document can never diverge (`ADR-0010`).
-pub async fn get_flow_object_bootstrap(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Path(object_id): Path<Uuid>,
-    FlowQuery(params): FlowQuery<GetFlowObjectBootstrapQuery>,
-) -> Result<impl IntoResponse, ApiError> {
-    if bot.is_some() {
-        return Err(ApiError::forbidden(
-            "bot tokens cannot call the bootstrap endpoint; user access token only".to_string(),
-        ));
-    }
-    let extensions = build_auth_extensions(claims, None);
-    let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, object_id)
-        .await?
-        .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
-    for _attempt in 0..policy::AUTHORIZATION_READ_ATTEMPTS {
-        let Some(access) = policy::require_flow_object_access(
-            &state,
-            &extensions,
-            workspace_id,
-            object_id,
-            crate::flow::collab::authz::PermissionLevel::View,
-        )
-        .await?
-        else {
-            continue;
-        };
-        crate::flow::scope_editor::require_admitted(&state.db, object_id).await?;
-        let Some(bootstrap) =
-            query::get_bootstrap(&state, &access, params.known_seq, params.known_frontier.clone()).await?
-        else {
-            continue;
-        };
-        crate::flow::scope_editor::require_bootstrap_model(
-            &serde_json::to_value(&bootstrap).map_err(|_| ApiError::internal())?,
-            params.editor_model.unwrap_or(1),
-        )?;
-        return Ok(ApiResponse::success(bootstrap));
-    }
-    Err(policy::authorization_read_unstable())
 }
 
 #[derive(Debug, Deserialize)]
@@ -1704,52 +1242,6 @@ pub struct ExecuteFlowCommandRequest {
     pub message: Option<String>,
 }
 
-/// `POST /api/v1/flow/objects/{object_id}/commands`, shared by content, lifecycle, governance,
-/// and v0.6 Collection command families.
-///
-/// `command::execute_command` re-runs the object-level `edit`/`full_access` permission check
-/// itself (`authz::effective_permission`) on top of the workspace-membership gate here — the same
-/// split `flow::collab::ticket::issue` uses for the WebSocket path (workspace access, then a
-/// separate object-level check), since `OwnedBy(FlowObject)` is stricter than plain membership.
-pub async fn post_flow_object_command(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Path(object_id): Path<Uuid>,
-    Json(req): Json<ExecuteFlowCommandRequest>,
-) -> Result<impl IntoResponse, ApiError> {
-    let extensions = build_auth_extensions(claims, bot);
-    let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, object_id)
-        .await?
-        .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
-    let (actor_id, role, is_bot) = policy::require_flow_workspace_access(&state, &extensions, workspace_id).await?;
-
-    // This surface has no client-id handshake like the WebSocket ticket flow (`ADR-0007`), so a
-    // stable per-actor tag is synthesized for `collab_updates.origin_client_id` / the relayed
-    // `update` frame's `origin` field — descriptive metadata only, never an authority.
-    let origin_client_id = format!("rest:{actor_id}");
-
-    let accepted = crate::flow::command::execute_command(
-        &state,
-        ExecuteCommandInput {
-            object_id,
-            actor_id,
-            principal_kind: if is_bot { "bot".to_string() } else { "user".to_string() },
-            role,
-            command_type: req.command.command_type,
-            payload: req.command.payload,
-            expected_frontier: req.expected_frontier,
-            idempotency_key: req.idempotency_key,
-            message: req.message,
-            origin_client_id,
-            origin: request_origin(&extensions),
-        },
-    )
-    .await?;
-
-    Ok(ApiResponse::success(accepted))
-}
-
 #[derive(Debug, Deserialize)]
 pub struct FlowRelationsQuery {
     pub direction: Option<String>,
@@ -1758,90 +1250,10 @@ pub struct FlowRelationsQuery {
     pub limit: Option<u64>,
 }
 
-/// `GET /api/v1/flow/objects/{object_id}/relations`.
-///
-/// The root object is authorized here through the standard `OwnedBy(FlowObject)` read context;
-/// `flow::relations` reauthorizes every opposite endpoint at the same epoch and performs the
-/// final epoch check before exposing the page.
-pub async fn get_flow_object_relations(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Path(object_id): Path<Uuid>,
-    FlowQuery(params): FlowQuery<FlowRelationsQuery>,
-) -> Result<impl IntoResponse, ApiError> {
-    let extensions = build_auth_extensions(claims, bot);
-    let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, object_id)
-        .await?
-        .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
-    let direction = relations::RelationDirection::parse(params.direction.as_deref())?;
-    for _attempt in 0..policy::AUTHORIZATION_READ_ATTEMPTS {
-        let Some(access) = policy::require_flow_object_access(
-            &state,
-            &extensions,
-            workspace_id,
-            object_id,
-            crate::flow::collab::authz::PermissionLevel::View,
-        )
-        .await?
-        else {
-            continue;
-        };
-        let Some(page) = relations::list_relations(
-            &state,
-            &access,
-            relations::ListRelationsParams {
-                direction,
-                relation_type: params.relation_type.clone(),
-                cursor: params.cursor.clone(),
-                limit: params.limit,
-            },
-        )
-        .await?
-        else {
-            continue;
-        };
-        return Ok(ApiResponse::success(page));
-    }
-    Err(policy::authorization_read_unstable())
-}
-
 #[derive(Debug, Deserialize)]
 pub struct FlowObjectHistoryQuery {
     pub before_seq: Option<i64>,
     pub limit: Option<u64>,
-}
-
-/// `GET /api/v1/flow/objects/{object_id}/history`
-pub async fn get_flow_object_history(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Path(object_id): Path<Uuid>,
-    FlowQuery(params): FlowQuery<FlowObjectHistoryQuery>,
-) -> Result<impl IntoResponse, ApiError> {
-    let extensions = build_auth_extensions(claims, bot);
-    let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, object_id)
-        .await?
-        .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
-    for _attempt in 0..policy::AUTHORIZATION_READ_ATTEMPTS {
-        let Some(access) = policy::require_flow_object_access(
-            &state,
-            &extensions,
-            workspace_id,
-            object_id,
-            crate::flow::collab::authz::PermissionLevel::View,
-        )
-        .await?
-        else {
-            continue;
-        };
-        let Some(response) = query::get_history(&state, &access, params.before_seq, params.limit).await? else {
-            continue;
-        };
-        return Ok(ApiResponse::success(response));
-    }
-    Err(policy::authorization_read_unstable())
 }
 
 #[derive(Debug, Deserialize)]
@@ -1851,53 +1263,6 @@ pub struct FlowObjectDiffQuery {
     pub render: Option<String>,
 }
 
-/// `GET /api/v1/flow/objects/{object_id}/diff`.
-///
-/// This is a history read: object visibility is established through WP-10's shared
-/// `require_flow_object_access` context and the query service rechecks its epoch after the
-/// historical state has been reconstructed. An absent object and an object the caller cannot
-/// view both produce the same `not_found` answer.
-pub async fn get_flow_object_diff(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Path(object_id): Path<Uuid>,
-    FlowQuery(params): FlowQuery<FlowObjectDiffQuery>,
-) -> Result<impl IntoResponse, ApiError> {
-    let extensions = build_auth_extensions(claims, bot);
-    let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, object_id)
-        .await?
-        .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
-    for _attempt in 0..policy::AUTHORIZATION_READ_ATTEMPTS {
-        let Some(access) = policy::require_flow_object_access(
-            &state,
-            &extensions,
-            workspace_id,
-            object_id,
-            crate::flow::collab::authz::PermissionLevel::View,
-        )
-        .await?
-        else {
-            continue;
-        };
-        // Parse caller-controlled query values only after object visibility is established.
-        // Otherwise malformed queries distinguish a hidden existing object (400) from an absent
-        // object (404), turning this endpoint into an existence oracle.
-        let from_seq = params
-            .from_seq
-            .ok_or_else(|| ApiError::invalid_update("from_seq is required"))?;
-        let to_seq = params
-            .to_seq
-            .ok_or_else(|| ApiError::invalid_update("to_seq is required"))?;
-        let render = Render::parse(params.render.as_deref())?;
-        let Some(response) = query::get_object_diff(&state, &access, from_seq, to_seq, render).await? else {
-            continue;
-        };
-        return Ok(ApiResponse::success(response));
-    }
-    Err(policy::authorization_read_unstable())
-}
-
 #[derive(Debug, Deserialize)]
 pub struct ProjectionLagQuery {
     pub project_id: Option<Uuid>,
@@ -1905,7 +1270,7 @@ pub struct ProjectionLagQuery {
     pub limit: Option<u64>,
 }
 
-/// `GET /api/v1/workspaces/{workspace_id}/flow/projection-lag`.
+/// `GET /api/v2/flow/workspaces/{workspace_id}/projection-lag`.
 ///
 /// Workspace membership starts WP-10's shared read context; the domain layer batch-authorizes
 /// every candidate object and rechecks the epoch before returning any page or aggregate.
@@ -1952,7 +1317,7 @@ pub struct FlowSearchQuery {
     pub limit: Option<u64>,
 }
 
-/// `GET /api/v1/workspaces/{workspace_id}/flow/search`.
+/// `GET /api/v2/flow/workspaces/{workspace_id}/search`.
 ///
 /// The domain service validates the exclusive scope, evaluates a policy-filtered frontier, then
 /// reauthorizes every matching candidate. An epoch change restarts the entire request so no page
@@ -2100,16 +1465,122 @@ mod flow_database_tests {
 
     use super::{
         CreateFlowObjectRequest, ExecuteFlowCommandRequest, FlowCommandEnvelope, FlowObjectDiffQuery,
-        FlowObjectHistoryQuery, FlowRelationsQuery, FlowSearchQuery, GetFlowNavigatorQuery,
-        GetFlowObjectBootstrapQuery, GetFlowObjectQuery, ListFlowObjectsQuery, ProjectionLagQuery,
-        SetFlowFeatureRequest, SetInheritanceRequest, create_flow_object, delete_flow_object_reference,
-        get_flow_conversion, get_flow_feature, get_flow_navigator, get_flow_object, get_flow_object_bootstrap,
-        get_flow_object_diff, get_flow_object_grants, get_flow_object_history, get_flow_object_references,
-        get_flow_object_relations, get_flow_projection_lag, get_flow_search, list_flow_objects, post_flow_conversion,
-        post_flow_conversion_preview, post_flow_conversion_retry, post_flow_object_command, post_flow_object_reference,
-        put_flow_object_grants, put_flow_object_inheritance, request_origin, set_flow_feature,
+        FlowObjectHistoryQuery, FlowSearchQuery, GetFlowObjectQuery, ListFlowObjectsQuery, ProjectionLagQuery,
+        SetFlowFeatureRequest, get_flow_feature, get_flow_projection_lag, get_flow_search, put_flow_object_grants,
+        put_flow_object_inheritance, request_origin, set_flow_feature,
     };
-    use crate::error::{ApiError, ApiErrorKind};
+    use super::{
+        get_flow_v2_conversion as get_flow_conversion, get_flow_v2_diff, get_flow_v2_history, get_flow_v2_object,
+        get_flow_v2_objects, post_flow_v2_command as post_flow_object_command,
+        post_flow_v2_conversion as post_flow_conversion, post_flow_v2_conversion_retry as post_flow_conversion_retry,
+        post_flow_v2_object,
+    };
+    use crate::middleware::bot_auth::BotAuthContext;
+
+    // The workspace-level requests the tests below were written against, served by the v2 handlers
+    // that now answer them: the scope of the workspace is looked up and the request is mapped.
+    async fn create_flow_object(
+        state: State<AppState>,
+        claims: Extension<JwtClaims>,
+        bot: Option<Extension<BotAuthContext>>,
+        Path(workspace): Path<Uuid>,
+        Json(request): Json<CreateFlowObjectRequest>,
+    ) -> Result<Response, ApiError> {
+        let scope = crate::flow::scope::legacy_scope(&state.0.db, workspace).await?;
+        post_flow_v2_object(
+            state,
+            claims,
+            bot,
+            Json(crate::flow::scope::CreateInput {
+                editor_model: 1,
+                scope_id: scope.id,
+                object_type: request.object_type,
+                parent_object_id: request.parent_object_id,
+                project_id: request.project_id,
+                title: request.title,
+                idempotency_key: request.idempotency_key,
+                message: request.message,
+                initial_fields: request.initial_fields,
+                initial_view: request.initial_view,
+            }),
+        )
+        .await
+    }
+    async fn list_flow_objects(
+        state: State<AppState>,
+        claims: Extension<JwtClaims>,
+        bot: Option<Extension<BotAuthContext>>,
+        Path(workspace): Path<Uuid>,
+        super::FlowQuery(query): super::FlowQuery<ListFlowObjectsQuery>,
+    ) -> Result<Response, ApiError> {
+        let scope = crate::flow::scope::legacy_scope(&state.0.db, workspace).await?;
+        Ok(get_flow_v2_objects(
+            state,
+            claims,
+            bot,
+            Path(scope.id),
+            axum::extract::Query(super::ScopeListQuery {
+                parent_id: query.parent_id,
+                project_id: query.project_id,
+                unprojected: query.unprojected,
+                limit: query.limit,
+                cursor: query.cursor,
+                q: query.q,
+                include_archived: query.include_archived,
+                object_type: query.object_type,
+                depth: None,
+            }),
+        )
+        .await?
+        .into_response())
+    }
+    async fn post_flow_conversion_preview(
+        state: State<AppState>,
+        claims: Extension<JwtClaims>,
+        bot: Option<Extension<BotAuthContext>>,
+        Json(input): Json<crate::flow::bridge::ConversionPreviewInput>,
+    ) -> Result<Response, ApiError> {
+        let body = serde_json::to_value(input).map_err(|_| ApiError::internal())?;
+        super::post_flow_v2_conversion_preview(state, claims, bot, Json(body)).await
+    }
+    async fn get_flow_object(
+        state: State<AppState>,
+        claims: Extension<JwtClaims>,
+        bot: Option<Extension<BotAuthContext>>,
+        path: Path<Uuid>,
+        super::FlowQuery(query): super::FlowQuery<GetFlowObjectQuery>,
+    ) -> Result<Response, ApiError> {
+        Ok(
+            get_flow_v2_object(state, claims, bot, path, axum::extract::Query(query))
+                .await?
+                .into_response(),
+        )
+    }
+    async fn get_flow_object_history(
+        state: State<AppState>,
+        claims: Extension<JwtClaims>,
+        bot: Option<Extension<BotAuthContext>>,
+        path: Path<Uuid>,
+        super::FlowQuery(query): super::FlowQuery<FlowObjectHistoryQuery>,
+    ) -> Result<Response, ApiError> {
+        Ok(
+            get_flow_v2_history(state, claims, bot, path, axum::extract::Query(query))
+                .await?
+                .into_response(),
+        )
+    }
+    async fn get_flow_object_diff(
+        state: State<AppState>,
+        claims: Extension<JwtClaims>,
+        bot: Option<Extension<BotAuthContext>>,
+        path: Path<Uuid>,
+        super::FlowQuery(query): super::FlowQuery<FlowObjectDiffQuery>,
+    ) -> Result<Response, ApiError> {
+        Ok(get_flow_v2_diff(state, claims, bot, path, axum::extract::Query(query))
+            .await?
+            .into_response())
+    }
+    use crate::error::ApiError;
     use crate::flow::collab::{
         authz::PermissionLevel,
         permission_cache::{PermissionCache, PrincipalKind},
@@ -2117,8 +1588,8 @@ mod flow_database_tests {
     };
     use crate::routes::bot::{CreateBotRequest, create_bot};
     use crate::routes::form::{
-        CreateFormRequest, CreateRecordRequest, UpdateFormPermissionsRequest, UpsertFormPermissionPolicy,
-        create_form_record, create_project_form, delete_form, update_form_permissions,
+        CreateFormRequest, UpdateFormPermissionsRequest, UpsertFormPermissionPolicy, create_project_form, delete_form,
+        update_form_permissions,
     };
     use crate::routes::member::{
         AddMemberRequest, UpdateMemberRoleRequest, add_member, remove_member, update_member_role,
@@ -2126,7 +1597,7 @@ mod flow_database_tests {
     use axum::extract::{Path, State};
 
     use super::FlowQuery;
-    use axum::http::HeaderMap;
+
     use axum::{Extension, Json};
 
     const TEST_DATABASE_URL_ENV: &str = "OPENPR_TEST_DATABASE_URL";
@@ -2306,6 +1777,24 @@ mod flow_database_tests {
 
     /// Seeds one workspace with an owner member and, unless `flow_enabled` is false, a
     /// `flow_workspace_settings` row turning the feature on for it.
+    /// The user and the seat `bots::create` gives a bot beside its token row: the scope-native routes
+    /// look the bot up as a bot user of the workspace.
+    async fn seed_bot_identity(state: &AppState, bot_id: Uuid, workspace_id: Uuid) {
+        exec(
+            state,
+            "INSERT INTO users (id, email, password_hash, name, role, is_active, entity_type) \
+             VALUES ($1, $2, '!', 'flow test bot', 'user', true, 'bot')",
+            vec![bot_id.into(), format!("{bot_id}@bot.flow-test.local").into()],
+        )
+        .await;
+        exec(
+            state,
+            "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'member')",
+            vec![workspace_id.into(), bot_id.into()],
+        )
+        .await;
+    }
+
     async fn seed_workspace(state: &AppState, flow_enabled: bool) -> (Uuid, Uuid) {
         let workspace_id = Uuid::new_v4();
         let owner_id = Uuid::new_v4();
@@ -2502,11 +1991,11 @@ mod flow_database_tests {
     fn authorization_router(state: AppState, caller_id: Uuid) -> axum::Router {
         axum::Router::new()
             .route(
-                "/api/v1/flow/objects/{object_id}/grants",
+                "/api/v2/flow/objects/{object_id}/grants",
                 axum::routing::put(put_flow_object_grants),
             )
             .route(
-                "/api/v1/flow/objects/{object_id}/inheritance",
+                "/api/v2/flow/objects/{object_id}/inheritance",
                 axum::routing::put(put_flow_object_inheritance),
             )
             .layer(claims_for(caller_id))
@@ -2591,7 +2080,7 @@ mod flow_database_tests {
 
         let (status, body) = http_put(
             app,
-            &format!("/api/v1/flow/objects/{object_id}/grants"),
+            &format!("/api/v2/flow/objects/{object_id}/grants"),
             &json!({
                 "grants": [
                     {"principal_kind": "bot", "principal_id": first, "level": "full_access"},
@@ -2612,7 +2101,7 @@ mod flow_database_tests {
         object_id
     }
 
-    /// ★ The transport→domain seam of `PUT /api/v1/flow/objects/{object_id}/inheritance`.
+    /// ★ The transport→domain seam of `PUT /api/v2/flow/objects/{object_id}/inheritance`.
     ///
     /// `ADR-0012` §4.1 point 2 makes `initial_grants` a whole-table **replacement**, and
     /// `rest-api-v1.md` spells the field `initial_grants?`. Those two together mean the wire has
@@ -2646,7 +2135,7 @@ mod flow_database_tests {
         let before = explicit_roster(&state, absent).await;
         let (status, body) = http_put(
             &app,
-            &format!("/api/v1/flow/objects/{absent}/inheritance"),
+            &format!("/api/v2/flow/objects/{absent}/inheritance"),
             &json!({ "inherit_from_parent": false, "idempotency_key": Uuid::new_v4().to_string() }).to_string(),
         )
         .await;
@@ -2663,7 +2152,7 @@ mod flow_database_tests {
         let emptied = page_with_two_grants(&state, &app, workspace_id, owner_id, alice, bob).await;
         let (status, body) = http_put(
             &app,
-            &format!("/api/v1/flow/objects/{emptied}/inheritance"),
+            &format!("/api/v2/flow/objects/{emptied}/inheritance"),
             &json!({
                 "inherit_from_parent": false,
                 "initial_grants": [],
@@ -2684,7 +2173,7 @@ mod flow_database_tests {
         let replaced = page_with_two_grants(&state, &app, workspace_id, owner_id, alice, bob).await;
         let (status, body) = http_put(
             &app,
-            &format!("/api/v1/flow/objects/{replaced}/inheritance"),
+            &format!("/api/v2/flow/objects/{replaced}/inheritance"),
             &json!({
                 "inherit_from_parent": false,
                 "initial_grants": [{"principal_kind": "bot", "principal_id": carol, "level": "view"}],
@@ -2820,42 +2309,6 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
-    /// Migration 0054 defines `flow_object_projections.state` as the valid empty JSON object.
-    /// Markdown rendering must interpret that persisted default as an empty semantic snapshot,
-    /// not turn a legal row into an internal error.
-    #[tokio::test]
-    async fn markdown_render_accepts_the_empty_projection_state_default() {
-        let scratch = scratch_or_skip!("markdown-empty-state");
-        let state = state_for(scratch.db.clone());
-        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
-        let object_id = create_page_as_owner(&state, workspace_id, owner_id, "Empty state").await;
-        exec(
-            &state,
-            "UPDATE flow_object_projections SET state = '{}'::jsonb WHERE object_id = $1",
-            vec![object_id.into()],
-        )
-        .await;
-
-        let response = body_json(to_response(
-            get_flow_object(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(object_id),
-                FlowQuery(GetFlowObjectQuery {
-                    at_seq: None,
-                    render: Some("markdown".to_string()),
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(response["code"], 0, "{response}");
-        assert_eq!(response["data"]["semantic_content"]["rendered"], "# Empty state\n");
-
-        scratch.drop_self().await;
-    }
-
     #[tokio::test]
     async fn create_rejects_an_unregistered_object_type_via_body_code_not_http_status() {
         let scratch = scratch_or_skip!("bad-object-type");
@@ -2973,125 +2426,6 @@ mod flow_database_tests {
         let body = body_json(response).await;
         assert_eq!(body["code"], 404, "{body}");
         assert!(body["data"].is_null(), "{body}");
-
-        scratch.drop_self().await;
-    }
-
-    /// All four v0.5 read paths share effective object authorization. The restricted page has a
-    /// boundary and no member grant, so the DB oracle is `Denied`: it must disappear from the list
-    /// and every object-id read must collapse to the same `not_found` envelope.
-    #[tokio::test]
-    async fn effective_permission_filters_every_flow_read_path_without_count_leakage() {
-        let scratch = scratch_or_skip!("effective_read_filter");
-        let state = state_for(scratch.db.clone());
-        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
-        let member_id = seed_member(&state, workspace_id).await;
-        let visible_id = create_page_as_owner(&state, workspace_id, owner_id, "Visible page").await;
-        let restricted_id = create_page_as_owner(&state, workspace_id, owner_id, "Restricted page").await;
-        exec(
-            &state,
-            "UPDATE flow_objects SET inherit_from_parent = false WHERE id = $1",
-            vec![restricted_id.into()],
-        )
-        .await;
-        exec(
-            &state,
-            "UPDATE flow_workspace_settings SET authz_epoch = authz_epoch + 1 WHERE workspace_id = $1",
-            vec![workspace_id.into()],
-        )
-        .await;
-
-        let list = body_json(to_response(
-            list_flow_objects(
-                State(state.clone()),
-                claims_for(member_id),
-                None,
-                Path(workspace_id),
-                FlowQuery(ListFlowObjectsQuery {
-                    project_id: None,
-                    unprojected: false,
-                    object_type: None,
-                    parent_id: None,
-                    q: None,
-                    cursor: None,
-                    limit: Some(50),
-                    include_archived: false,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(list["code"], 0, "{list}");
-        let items = list["data"]["items"].as_array().expect("items is an array");
-        assert_eq!(
-            items.len(),
-            1,
-            "the hidden candidate must not affect response cardinality"
-        );
-        assert_eq!(items[0]["id"], visible_id.to_string());
-        let response_keys: std::collections::BTreeSet<&str> = list["data"]
-            .as_object()
-            .expect("list data is an object")
-            .keys()
-            .map(String::as_str)
-            .collect();
-        let allowed_keys = ["items", "next_cursor"].into_iter().collect();
-        assert!(
-            response_keys.is_subset(&allowed_keys),
-            "the list response exposed a key outside the frozen whitelist: {response_keys:?}"
-        );
-        assert!(
-            response_keys.contains("items"),
-            "the required items key is missing: {list}"
-        );
-
-        let get = body_json(to_response(
-            get_flow_object(
-                State(state.clone()),
-                claims_for(member_id),
-                None,
-                Path(restricted_id),
-                FlowQuery(GetFlowObjectQuery {
-                    at_seq: None,
-                    render: None,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        let bootstrap = body_json(to_response(
-            get_flow_object_bootstrap(
-                State(state.clone()),
-                claims_for(member_id),
-                None,
-                Path(restricted_id),
-                FlowQuery(GetFlowObjectBootstrapQuery {
-                    editor_model: None,
-                    known_seq: None,
-                    known_frontier: None,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        let history = body_json(to_response(
-            get_flow_object_history(
-                State(state.clone()),
-                claims_for(member_id),
-                None,
-                Path(restricted_id),
-                FlowQuery(FlowObjectHistoryQuery {
-                    before_seq: None,
-                    limit: None,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        for body in [&get, &bootstrap, &history] {
-            assert_eq!(body["code"], 404, "{body}");
-            assert!(body["data"].is_null(), "{body}");
-        }
 
         scratch.drop_self().await;
     }
@@ -3646,433 +2980,6 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
-    #[tokio::test]
-    async fn object_reads_reauthorize_after_their_final_epoch_check_changes() {
-        let scratch = scratch_or_skip!("object_read_epoch_retry");
-        let state = state_for(scratch.db.clone());
-        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
-        let member_id = seed_member(&state, workspace_id).await;
-        let object_ids = [
-            create_page_as_owner(&state, workspace_id, owner_id, "Retry object").await,
-            create_page_as_owner(&state, workspace_id, owner_id, "Retry bootstrap").await,
-            create_page_as_owner(&state, workspace_id, owner_id, "Retry history").await,
-        ];
-
-        // On a cold cache, checks one and two surround DB authorization. Changing the epoch at
-        // check three therefore targets the final pre-return fence in each query function.
-        crate::flow::policy::plan_epoch_changes_for_test(workspace_id, 2, 1);
-        let object = body_json(to_response(
-            get_flow_object(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(object_ids[0]),
-                FlowQuery(GetFlowObjectQuery {
-                    at_seq: None,
-                    render: None,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(object["code"], 0, "the object read did not recover: {object}");
-
-        crate::flow::policy::plan_epoch_changes_for_test(workspace_id, 2, 1);
-        let bootstrap = body_json(to_response(
-            get_flow_object_bootstrap(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(object_ids[1]),
-                FlowQuery(GetFlowObjectBootstrapQuery {
-                    editor_model: None,
-                    known_seq: None,
-                    known_frontier: None,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(bootstrap["code"], 0, "the bootstrap read did not recover: {bootstrap}");
-
-        crate::flow::policy::plan_epoch_changes_for_test(workspace_id, 2, 1);
-        let history = body_json(to_response(
-            get_flow_object_history(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(object_ids[2]),
-                FlowQuery(FlowObjectHistoryQuery {
-                    before_seq: None,
-                    limit: None,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(history["code"], 0, "the history read did not recover: {history}");
-
-        // Each member read succeeds on the workspace baseline, then its final epoch check applies
-        // a real boundary revocation. A correct route discards the prepared response, retries, and
-        // returns the same fieldless not-found envelope that a normally hidden object returns.
-        for (index, object_id) in object_ids.into_iter().enumerate() {
-            let visible = match index {
-                0 => {
-                    body_json(to_response(
-                        get_flow_object(
-                            State(state.clone()),
-                            claims_for(member_id),
-                            None,
-                            Path(object_id),
-                            FlowQuery(GetFlowObjectQuery {
-                                at_seq: None,
-                                render: None,
-                            }),
-                        )
-                        .await,
-                    ))
-                    .await
-                }
-                1 => {
-                    body_json(to_response(
-                        get_flow_object_bootstrap(
-                            State(state.clone()),
-                            claims_for(member_id),
-                            None,
-                            Path(object_id),
-                            FlowQuery(GetFlowObjectBootstrapQuery {
-                                editor_model: None,
-                                known_seq: None,
-                                known_frontier: None,
-                            }),
-                        )
-                        .await,
-                    ))
-                    .await
-                }
-                _ => {
-                    body_json(to_response(
-                        get_flow_object_history(
-                            State(state.clone()),
-                            claims_for(member_id),
-                            None,
-                            Path(object_id),
-                            FlowQuery(FlowObjectHistoryQuery {
-                                before_seq: None,
-                                limit: None,
-                            }),
-                        )
-                        .await,
-                    ))
-                    .await
-                }
-            };
-            assert_eq!(
-                visible["code"], 0,
-                "the member must be authorized before revocation: {visible}"
-            );
-
-            // The successful member read above warmed this principal's permission cache, so this
-            // request has one initial epoch check and then the final pre-return check.
-            crate::flow::policy::plan_object_revocation_for_test(workspace_id, object_id, 1);
-            let revoked = match index {
-                0 => {
-                    body_json(to_response(
-                        get_flow_object(
-                            State(state.clone()),
-                            claims_for(member_id),
-                            None,
-                            Path(object_id),
-                            FlowQuery(GetFlowObjectQuery {
-                                at_seq: None,
-                                render: None,
-                            }),
-                        )
-                        .await,
-                    ))
-                    .await
-                }
-                1 => {
-                    body_json(to_response(
-                        get_flow_object_bootstrap(
-                            State(state.clone()),
-                            claims_for(member_id),
-                            None,
-                            Path(object_id),
-                            FlowQuery(GetFlowObjectBootstrapQuery {
-                                editor_model: None,
-                                known_seq: None,
-                                known_frontier: None,
-                            }),
-                        )
-                        .await,
-                    ))
-                    .await
-                }
-                _ => {
-                    body_json(to_response(
-                        get_flow_object_history(
-                            State(state.clone()),
-                            claims_for(member_id),
-                            None,
-                            Path(object_id),
-                            FlowQuery(FlowObjectHistoryQuery {
-                                before_seq: None,
-                                limit: None,
-                            }),
-                        )
-                        .await,
-                    ))
-                    .await
-                }
-            };
-            assert_eq!(
-                revoked["code"], 404,
-                "a read prepared before revocation escaped: {revoked}"
-            );
-            assert!(revoked["data"].is_null(), "a denied read exposed data: {revoked}");
-        }
-
-        scratch.drop_self().await;
-    }
-
-    #[tokio::test]
-    async fn list_epoch_retry_is_bounded_to_three_complete_attempts() {
-        let scratch = scratch_or_skip!("list_epoch_retry");
-        let state = state_for(scratch.db.clone());
-        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
-        create_page_as_owner(&state, workspace_id, owner_id, "Retry list").await;
-
-        crate::flow::policy::plan_epoch_changes_for_test(workspace_id, 0, 2);
-        let recovered = body_json(to_response(
-            list_flow_objects(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(workspace_id),
-                FlowQuery(ListFlowObjectsQuery {
-                    project_id: None,
-                    unprojected: false,
-                    object_type: None,
-                    parent_id: None,
-                    q: None,
-                    cursor: None,
-                    limit: Some(50),
-                    include_archived: false,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(
-            recovered["code"], 0,
-            "the third stable attempt must succeed: {recovered}"
-        );
-
-        crate::flow::policy::plan_epoch_changes_for_test(workspace_id, 0, 3);
-        let exhausted = body_json(to_response(
-            list_flow_objects(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(workspace_id),
-                FlowQuery(ListFlowObjectsQuery {
-                    project_id: None,
-                    unprojected: false,
-                    object_type: None,
-                    parent_id: None,
-                    q: None,
-                    cursor: None,
-                    limit: Some(50),
-                    include_archived: false,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(
-            exhausted["code"], 409,
-            "three unstable attempts must report conflict: {exhausted}"
-        );
-        assert_eq!(exhausted["error_code"], "authorization_churn");
-        assert_eq!(
-            exhausted["details"]["retry_after_ms"],
-            crate::flow::policy::AUTHORIZATION_CHURN_RETRY_AFTER_MS
-        );
-        assert_eq!(
-            exhausted["message"], "authorization changed repeatedly while the read was being evaluated",
-            "the caller-safe explanation remains stable"
-        );
-        let forbidden = body_json(to_response::<Response>(Err(ApiError::typed(
-            ApiErrorKind::Forbidden,
-            "authorization changed repeatedly while the read was being evaluated",
-        ))))
-        .await;
-        assert_eq!(forbidden["code"], 403);
-        assert_eq!(forbidden["error_code"], "forbidden");
-        assert_ne!(
-            exhausted["error_code"], forbidden["error_code"],
-            "authorization churn must be distinguishable from a real denial without reading message prose"
-        );
-
-        scratch.drop_self().await;
-    }
-
-    #[tokio::test]
-    async fn grant_and_inheritance_endpoints_collapse_foreign_and_absent_objects() {
-        let scratch = scratch_or_skip!("grant_existence_collapse");
-        let state = state_for(scratch.db.clone());
-        let (_workspace_id, owner_id) = seed_workspace(&state, true).await;
-        let (foreign_workspace_id, foreign_owner_id) = seed_workspace(&state, true).await;
-        let foreign_id = create_page_as_owner(
-            &state,
-            foreign_workspace_id,
-            foreign_owner_id,
-            "Foreign authorization object",
-        )
-        .await;
-        let absent_id = Uuid::new_v4();
-
-        let foreign_get = body_json(to_response(
-            get_flow_object_grants(State(state.clone()), claims_for(owner_id), None, Path(foreign_id)).await,
-        ))
-        .await;
-        let absent_get = body_json(to_response(
-            get_flow_object_grants(State(state.clone()), claims_for(owner_id), None, Path(absent_id)).await,
-        ))
-        .await;
-        assert_eq!(foreign_get["code"], 404, "{foreign_get}");
-        assert_eq!(foreign_get, absent_get, "GET /grants leaked cross-tenant existence");
-
-        let grants_request = || SetGrantsRequest {
-            grants: Vec::new(),
-            confirm_self_lockout: false,
-            dry_run: false,
-            idempotency_key: "grant-collapse-key".to_string(),
-        };
-        let foreign_put_grants = body_json(to_response(
-            put_flow_object_grants(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(foreign_id),
-                Json(grants_request()),
-            )
-            .await,
-        ))
-        .await;
-        let absent_put_grants = body_json(to_response(
-            put_flow_object_grants(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(absent_id),
-                Json(grants_request()),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(foreign_put_grants["code"], 404, "{foreign_put_grants}");
-        assert_eq!(
-            foreign_put_grants, absent_put_grants,
-            "PUT /grants leaked cross-tenant existence"
-        );
-
-        let inheritance_request = || SetInheritanceRequest {
-            inherit_from_parent: false,
-            confirm_self_lockout: false,
-            dry_run: false,
-            initial_grants: None,
-            idempotency_key: "inheritance-collapse-key".to_string(),
-        };
-        let foreign_put_inheritance = body_json(to_response(
-            put_flow_object_inheritance(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(foreign_id),
-                Json(inheritance_request()),
-            )
-            .await,
-        ))
-        .await;
-        let absent_put_inheritance = body_json(to_response(
-            put_flow_object_inheritance(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(absent_id),
-                Json(inheritance_request()),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(foreign_put_inheritance["code"], 404, "{foreign_put_inheritance}");
-        assert_eq!(
-            foreign_put_inheritance, absent_put_inheritance,
-            "PUT /inheritance leaked cross-tenant existence"
-        );
-
-        scratch.drop_self().await;
-    }
-
-    /// 1,001 hidden rows force the overfetch loop one row past the public scan ceiling. The error
-    /// must reject rather than return a misleading empty short page, and both numeric fields must
-    /// expose only the fixed ceiling, never the actual pre-filter count.
-    #[tokio::test]
-    async fn authorized_overfetch_rejects_past_scan_budget_without_revealing_examined_rows() {
-        let scratch = scratch_or_skip!("authorized_scan_budget");
-        let state = state_for(scratch.db.clone());
-        let (workspace_id, _owner_id) = seed_workspace(&state, true).await;
-        let member_id = seed_member(&state, workspace_id).await;
-        let root_id = crate::flow::repository::ensure_workspace_navigator_root(&state.db, workspace_id)
-            .await
-            .expect("scan fixture root materializes");
-        exec(
-            &state,
-            "WITH objects AS ( \
-                 INSERT INTO flow_objects (id, workspace_id, object_type, parent_id, inherit_from_parent, created_at) \
-                 SELECT gen_random_uuid(), $1, 'page', $2, false, now() + n * interval '1 microsecond' \
-                   FROM generate_series(1, 1001) AS n RETURNING id \
-             ), documents AS ( \
-                 INSERT INTO collab_documents (object_id, format_version, snapshot, snapshot_frontier, head_frontier) \
-                 SELECT id, 'loro-1', '\\x'::bytea, '\\x'::bytea, '\\x'::bytea FROM objects \
-             ) \
-             INSERT INTO flow_object_projections (object_id, document_seq, document_frontier, title, state, plain_text) \
-             SELECT id, 0, '\\x'::bytea, 'hidden', '{}'::jsonb, '' FROM objects",
-            vec![workspace_id.into(), root_id.into()],
-        )
-        .await;
-
-        let body = body_json(to_response(
-            list_flow_objects(
-                State(state.clone()),
-                claims_for(member_id),
-                None,
-                Path(workspace_id),
-                FlowQuery(ListFlowObjectsQuery {
-                    project_id: None,
-                    unprojected: false,
-                    object_type: None,
-                    parent_id: None,
-                    q: None,
-                    cursor: None,
-                    limit: Some(50),
-                    include_archived: false,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(body["error_code"], "limit_exceeded", "{body}");
-        assert_eq!(body["details"]["limit_kind"], "scan_budget", "{body}");
-        assert_eq!(body["details"]["limit"], 1000, "{body}");
-        assert_eq!(body["details"]["observed"], 1000, "{body}");
-        assert!(body["data"].is_null(), "a partial empty page must not escape: {body}");
-
-        scratch.drop_self().await;
-    }
-
     /// Exercises the audit's concrete interference shape: a maximum-size permission cache, a
     /// list that must inspect past the 1,000-row scan budget, and an unrelated content write in
     /// flight at the same time. The timings are diagnostic evidence rather than a brittle CI
@@ -4289,73 +3196,6 @@ mod flow_database_tests {
             .expect("count query returns a row");
         let n: i64 = count.try_get("", "n").expect("count column reads");
         assert_eq!(n, 1);
-
-        scratch.drop_self().await;
-    }
-
-    #[tokio::test]
-    async fn navigator_response_exposes_the_materialized_root_and_default_parent() {
-        let scratch = scratch_or_skip!("navigator-root-response");
-        let state = state_for(scratch.db.clone());
-        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
-        let claims = claims_for(owner_id);
-
-        let created = body_json(to_response(
-            create_flow_object(
-                State(state.clone()),
-                claims.clone(),
-                None,
-                Path(workspace_id),
-                Json(CreateFlowObjectRequest {
-                    object_type: "page".to_string(),
-                    project_id: None,
-                    parent_object_id: None,
-                    title: "Top-level Page".to_string(),
-                    idempotency_key: Uuid::new_v4().to_string(),
-                    message: None,
-                    initial_fields: Vec::new(),
-                    initial_view: None,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(created["code"], 0, "{created}");
-        let page_id = created["data"]["object"]["id"].as_str().expect("page id").to_string();
-        let root_id = created["data"]["object"]["parent_id"]
-            .as_str()
-            .expect("NR-3 default parent")
-            .to_string();
-        assert_ne!(page_id, root_id, "top-level Page must not itself be the root");
-
-        let navigator = body_json(to_response(
-            get_flow_navigator(
-                State(state.clone()),
-                claims,
-                None,
-                Path(workspace_id),
-                FlowQuery(GetFlowNavigatorQuery {
-                    project_id: None,
-                    depth: Some(20),
-                    include_archived: false,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(navigator["code"], 0, "{navigator}");
-        assert_eq!(navigator["data"]["root_object_id"], root_id, "{navigator}");
-        assert_eq!(
-            navigator["data"]["nodes"].as_array().map(Vec::len),
-            Some(1),
-            "{navigator}"
-        );
-        assert_eq!(navigator["data"]["nodes"][0]["object_id"], page_id, "{navigator}");
-        assert_eq!(navigator["data"]["nodes"][0]["parent_id"], root_id, "{navigator}");
-        assert!(navigator["data"]["nodes"][0]["position"].is_string(), "{navigator}");
-        assert_eq!(navigator["data"]["nodes"][0]["type"], "page", "{navigator}");
-        assert_eq!(navigator["data"]["document_seq"], 0, "{navigator}");
-        assert!(navigator["data"]["frontier"].is_string(), "{navigator}");
 
         scratch.drop_self().await;
     }
@@ -4911,1149 +3751,6 @@ mod flow_database_tests {
             "member removal deletes presence immediately"
         );
         assert_eq!(registry.session_count(document_id), 0);
-
-        scratch.drop_self().await;
-    }
-
-    #[tokio::test]
-    async fn external_guest_sees_only_objects_reached_by_an_explicit_flow_grant() {
-        let scratch = scratch_or_skip!("external-guest-grant");
-        let state = state_for(scratch.db.clone());
-        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
-        let guest_id = seed_user(&state).await;
-        let visible_id = create_page_as_owner(&state, workspace_id, owner_id, "guest-visible").await;
-        let hidden_id = create_page_as_owner(&state, workspace_id, owner_id, "guest-hidden").await;
-
-        let before = body_json(to_response(
-            list_flow_objects(
-                State(state.clone()),
-                claims_for(guest_id),
-                None,
-                Path(workspace_id),
-                FlowQuery(ListFlowObjectsQuery {
-                    project_id: None,
-                    unprojected: false,
-                    object_type: None,
-                    parent_id: None,
-                    q: None,
-                    cursor: None,
-                    limit: None,
-                    include_archived: false,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(before["code"], 0, "{before}");
-        assert!(before["data"]["items"].as_array().expect("items").is_empty());
-
-        let granted = body_json(to_response(
-            put_flow_object_grants(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(visible_id),
-                Json(SetGrantsRequest {
-                    grants: vec![GrantRequestBody {
-                        principal_kind: "user".to_string(),
-                        principal_id: guest_id,
-                        level: "view".to_string(),
-                    }],
-                    confirm_self_lockout: true,
-                    dry_run: false,
-                    idempotency_key: Uuid::new_v4().to_string(),
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(granted["code"], 0, "{granted}");
-
-        let after = body_json(to_response(
-            list_flow_objects(
-                State(state.clone()),
-                claims_for(guest_id),
-                None,
-                Path(workspace_id),
-                FlowQuery(ListFlowObjectsQuery {
-                    project_id: None,
-                    unprojected: false,
-                    object_type: None,
-                    parent_id: None,
-                    q: None,
-                    cursor: None,
-                    limit: None,
-                    include_archived: false,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(after["code"], 0, "{after}");
-        let ids: Vec<String> = after["data"]["items"]
-            .as_array()
-            .expect("items")
-            .iter()
-            .filter_map(|item| item["id"].as_str().map(str::to_string))
-            .collect();
-        assert_eq!(ids, vec![visible_id.to_string()]);
-        assert!(!ids.contains(&hidden_id.to_string()));
-
-        let visible = body_json(to_response(
-            get_flow_object(
-                State(state.clone()),
-                claims_for(guest_id),
-                None,
-                Path(visible_id),
-                FlowQuery(GetFlowObjectQuery {
-                    at_seq: None,
-                    render: None,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(visible["code"], 0, "{visible}");
-
-        let hidden = body_json(to_response(
-            get_flow_object(
-                State(state.clone()),
-                claims_for(guest_id),
-                None,
-                Path(hidden_id),
-                FlowQuery(GetFlowObjectQuery {
-                    at_seq: None,
-                    render: None,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(hidden["code"], 404, "{hidden}");
-
-        scratch.drop_self().await;
-    }
-
-    #[tokio::test]
-    async fn flow_bridge_guest_routes_hide_reference_cardinality_and_target_existence() {
-        use base64::Engine as _;
-
-        #[derive(FromQueryResult)]
-        struct Frontier {
-            head_frontier: Vec<u8>,
-        }
-
-        let scratch = scratch_or_skip!("bridge-guest-non-enumeration");
-        let state = state_for(scratch.db.clone());
-        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
-        let guest_id = seed_user(&state).await;
-        let project_id = Uuid::new_v4();
-        exec(
-            &state,
-            "INSERT INTO projects (id, workspace_id, key, name, created_by) \
-             VALUES ($1, $2, 'BGN', 'Bridge guest non-enumeration', $3)",
-            vec![project_id.into(), workspace_id.into(), owner_id.into()],
-        )
-        .await;
-        let form = body_json(to_response(
-            create_project_form(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(project_id),
-                Json(CreateFormRequest {
-                    key: "guest_hidden_form".to_string(),
-                    name: "Guest hidden form".to_string(),
-                    description: None,
-                    icon: None,
-                    color: None,
-                    title_template: None,
-                    schema: None,
-                    detail_layout: None,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(form["code"], 0, "{form}");
-        let form_id = Uuid::parse_str(form["data"]["id"].as_str().expect("form id")).expect("UUID");
-        let source_id = create_page_as_owner(&state, workspace_id, owner_id, "guest bridge source").await;
-
-        let created = body_json(to_response(
-            post_flow_object_reference(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(source_id),
-                Json(crate::flow::bridge::CreateReferenceInput {
-                    target_type: "form".to_string(),
-                    target_id: form_id,
-                    display: json!({"mode":"embed"}),
-                    idempotency_key: Uuid::new_v4().to_string(),
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(created["code"], 0, "{created}");
-
-        let set_guest_level = |level: &str| {
-            put_flow_object_grants(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(source_id),
-                Json(SetGrantsRequest {
-                    grants: vec![GrantRequestBody {
-                        principal_kind: "user".to_string(),
-                        principal_id: guest_id,
-                        level: level.to_string(),
-                    }],
-                    confirm_self_lockout: true,
-                    dry_run: false,
-                    idempotency_key: Uuid::new_v4().to_string(),
-                }),
-            )
-        };
-        assert_eq!(body_json(to_response(set_guest_level("view").await)).await["code"], 0);
-        let view_only_create = body_json(to_response(
-            post_flow_object_reference(
-                State(state.clone()),
-                claims_for(guest_id),
-                None,
-                Path(source_id),
-                Json(crate::flow::bridge::CreateReferenceInput {
-                    target_type: "form".to_string(),
-                    target_id: form_id,
-                    display: json!({}),
-                    idempotency_key: Uuid::new_v4().to_string(),
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(view_only_create["code"], 404, "{view_only_create}");
-
-        assert_eq!(body_json(to_response(set_guest_level("edit").await)).await["code"], 0);
-        let guest_list = body_json(to_response(
-            get_flow_object_references(State(state.clone()), claims_for(guest_id), None, Path(source_id)).await,
-        ))
-        .await;
-        assert_eq!(guest_list["code"], 0, "{guest_list}");
-        assert_eq!(guest_list["data"]["items"], json!([]), "{guest_list}");
-
-        let create_as_guest = |target_id| {
-            post_flow_object_reference(
-                State(state.clone()),
-                claims_for(guest_id),
-                None,
-                Path(source_id),
-                Json(crate::flow::bridge::CreateReferenceInput {
-                    target_type: "form".to_string(),
-                    target_id,
-                    display: json!({}),
-                    idempotency_key: Uuid::new_v4().to_string(),
-                }),
-            )
-        };
-        let existing_reference = body_json(to_response(create_as_guest(form_id).await)).await;
-        let missing_reference = body_json(to_response(create_as_guest(Uuid::new_v4()).await)).await;
-        assert_eq!(existing_reference, missing_reference);
-        assert_eq!(existing_reference["code"], 404, "{existing_reference}");
-        assert!(existing_reference.get("details").is_none());
-
-        let frontier = Frontier::find_by_statement(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT head_frontier FROM collab_documents WHERE object_id=$1",
-            vec![source_id.into()],
-        ))
-        .one(&state.db)
-        .await
-        .expect("frontier query")
-        .expect("frontier");
-        let frontier = base64::engine::general_purpose::STANDARD.encode(frontier.head_frontier);
-        let preview_as_guest = |target_type: &str, mapping: Value| {
-            post_flow_conversion_preview(
-                State(state.clone()),
-                claims_for(guest_id),
-                None,
-                Json(crate::flow::bridge::ConversionPreviewInput {
-                    source_object_id: source_id,
-                    source_frontier: frontier.clone(),
-                    target_type: target_type.to_string(),
-                    mapping,
-                    idempotency_key: Uuid::new_v4().to_string(),
-                }),
-            )
-        };
-        let existing_preview = body_json(to_response(
-            preview_as_guest("form_record", json!({"target_form_id":form_id,"values":{}})).await,
-        ))
-        .await;
-        let missing_preview = body_json(to_response(
-            preview_as_guest("form_record", json!({"target_form_id":Uuid::new_v4(),"values":{}})).await,
-        ))
-        .await;
-        assert_eq!(existing_preview, missing_preview);
-        assert_eq!(existing_preview["code"], 404, "{existing_preview}");
-        let create_form_preview = body_json(to_response(
-            preview_as_guest("form", json!({"target_project_id":project_id,"schema":{"fields":[]}})).await,
-        ))
-        .await;
-        assert_eq!(create_form_preview["code"], 404, "{create_form_preview}");
-
-        let archived = body_json(to_response(
-            delete_form(State(state.clone()), claims_for(owner_id), None, Path(form_id)).await,
-        ))
-        .await;
-        assert_eq!(archived["code"], 0, "{archived}");
-        let unavailable = body_json(to_response(
-            get_flow_object_references(State(state.clone()), claims_for(owner_id), None, Path(source_id)).await,
-        ))
-        .await;
-        assert_eq!(unavailable["data"]["items"], json!([{"visibility":"unavailable"}]));
-
-        scratch.drop_self().await;
-    }
-
-    #[tokio::test]
-    async fn flow_bridge_reference_embed_reauthorizes_forms_policy_and_missing_policy_is_read_only() {
-        #[derive(FromQueryResult, PartialEq, Eq, Debug)]
-        struct SourceHead {
-            head_seq: i64,
-            head_frontier: Vec<u8>,
-        }
-
-        let scratch = scratch_or_skip!("bridge-reference-reauth");
-        let state = state_for(scratch.db.clone());
-        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
-        let member_id = seed_member(&state, workspace_id).await;
-        let baseline = body_json(to_response(
-            set_flow_feature(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(workspace_id),
-                Json(SetFlowFeatureRequest {
-                    enabled: Some(true),
-                    default_member_level: Some("view".to_string()),
-                    bridge_enabled: None,
-                    idempotency_key: Uuid::new_v4().to_string(),
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(baseline["code"], 0, "{baseline}");
-        let project_id = Uuid::new_v4();
-        exec(
-            &state,
-            "INSERT INTO projects (id, workspace_id, key, name, created_by) \
-             VALUES ($1, $2, 'BRG', 'Bridge test', $3)",
-            vec![project_id.into(), workspace_id.into(), owner_id.into()],
-        )
-        .await;
-        let form = body_json(to_response(
-            create_project_form(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(project_id),
-                Json(CreateFormRequest {
-                    key: "bridge_form".to_string(),
-                    name: "Sensitive form".to_string(),
-                    description: Some("must not be cached".to_string()),
-                    icon: None,
-                    color: None,
-                    title_template: None,
-                    schema: Some(json!({
-                        "version":"openpr.form.schema.v1",
-                        "fields":[
-                            {"field_id":"fld_public","key":"public","type":"text"},
-                            {"field_id":"fld_private","key":"private","type":"text"}
-                        ]
-                    })),
-                    detail_layout: None,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(form["code"], 0, "{form}");
-        let form_id = Uuid::parse_str(form["data"]["id"].as_str().expect("form id")).expect("UUID");
-        let source_id = create_page_as_owner(&state, workspace_id, owner_id, "bridge source").await;
-
-        let member_policy = body_json(to_response(
-            update_form_permissions(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(form_id),
-                Json(UpdateFormPermissionsRequest {
-                    policies: vec![UpsertFormPermissionPolicy {
-                        subject_type: "role".to_string(),
-                        subject_id: "member".to_string(),
-                        policy: json!({"actions":{"form.view":true}}),
-                    }],
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(member_policy["code"], 0, "{member_policy}");
-        let view_grant = body_json(to_response(
-            put_flow_object_grants(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(source_id),
-                Json(SetGrantsRequest {
-                    grants: vec![GrantRequestBody {
-                        principal_kind: "user".to_string(),
-                        principal_id: member_id,
-                        level: "view".to_string(),
-                    }],
-                    confirm_self_lockout: true,
-                    dry_run: false,
-                    idempotency_key: Uuid::new_v4().to_string(),
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(view_grant["code"], 0, "{view_grant}");
-        let view_only_create = body_json(to_response(
-            post_flow_object_reference(
-                State(state.clone()),
-                claims_for(member_id),
-                None,
-                Path(source_id),
-                Json(crate::flow::bridge::CreateReferenceInput {
-                    target_type: "form".to_string(),
-                    target_id: form_id,
-                    display: json!({}),
-                    idempotency_key: Uuid::new_v4().to_string(),
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(view_only_create["code"], 404, "{view_only_create}");
-        let no_member_write = state
-            .db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT count(*) AS n FROM flow_bridge_references WHERE source_object_id=$1",
-                vec![source_id.into()],
-            ))
-            .await
-            .expect("member reference count query")
-            .expect("member reference count");
-        assert_eq!(no_member_write.try_get::<i64>("", "n").expect("count"), 0);
-        let source_head = SourceHead::find_by_statement(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT head_seq, head_frontier FROM collab_documents WHERE object_id=$1",
-            vec![source_id.into()],
-        ))
-        .one(&state.db)
-        .await
-        .expect("source head query")
-        .expect("source head");
-
-        let reference_key = Uuid::new_v4().to_string();
-        let create_input = || crate::flow::bridge::CreateReferenceInput {
-            target_type: "form".to_string(),
-            target_id: form_id,
-            display: json!({"mode": "embed"}),
-            idempotency_key: reference_key.clone(),
-        };
-        let created = body_json(to_response(
-            post_flow_object_reference(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(source_id),
-                Json(create_input()),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(created["code"], 0, "{created}");
-        // No policy row names the owner's role: workspace owners hold every form permission.
-        assert_eq!(created["data"]["permission_state"]["access"], "controlled");
-        assert_eq!(created["data"]["permission_state"]["configuration"], "explicit");
-        assert_eq!(
-            created["data"]["permission_state"]["actions"],
-            json!([
-                "form.view",
-                "record.create",
-                "record.update",
-                "record.delete",
-                "record.export"
-            ])
-        );
-        let reference_id =
-            Uuid::parse_str(created["data"]["reference_id"].as_str().expect("reference id")).expect("UUID");
-
-        let replay = body_json(to_response(
-            post_flow_object_reference(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(source_id),
-                Json(create_input()),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(replay["code"], 0, "{replay}");
-        assert_eq!(replay["data"]["reference_id"], reference_id.to_string());
-
-        let before = body_json(to_response(
-            get_flow_object_references(State(state.clone()), claims_for(owner_id), None, Path(source_id)).await,
-        ))
-        .await;
-        assert_eq!(before["code"], 0, "{before}");
-        assert_eq!(before["data"]["items"][0]["visibility"], "available");
-        assert_eq!(before["data"]["items"][0]["title"], "Sensitive form");
-
-        let record = body_json(to_response(
-            create_form_record(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(form_id),
-                Json(CreateRecordRequest {
-                    values: json!({"public":"visible","private":"redact-me"}),
-                    title: Some("Sensitive record".to_string()),
-                    source: None,
-                    idempotency_key: Some(Uuid::new_v4().to_string()),
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(record["code"], 0, "{record}");
-        let record_id = Uuid::parse_str(record["data"]["id"].as_str().expect("record id")).expect("UUID");
-        let record_reference = body_json(to_response(
-            post_flow_object_reference(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(source_id),
-                Json(crate::flow::bridge::CreateReferenceInput {
-                    target_type: "form_record".to_string(),
-                    target_id: record_id,
-                    display: json!({}),
-                    idempotency_key: Uuid::new_v4().to_string(),
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(record_reference["code"], 0, "{record_reference}");
-
-        let restricted = body_json(to_response(
-            update_form_permissions(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(form_id),
-                Json(UpdateFormPermissionsRequest {
-                    policies: vec![UpsertFormPermissionPolicy {
-                        subject_type: "role".to_string(),
-                        subject_id: "owner".to_string(),
-                        policy: json!({
-                            "actions":{"form.view":true,"record.create":true},
-                            "fields":{"private":{"read":false,"write":false}}
-                        }),
-                    }],
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(restricted["code"], 0, "{restricted}");
-        let redacted = body_json(to_response(
-            get_flow_object_references(State(state.clone()), claims_for(owner_id), None, Path(source_id)).await,
-        ))
-        .await;
-        assert_eq!(redacted["code"], 0, "{redacted}");
-        let record_item = redacted["data"]["items"]
-            .as_array()
-            .expect("reference items")
-            .iter()
-            .find(|item| item["target_id"] == record_id.to_string())
-            .expect("record reference");
-        assert_eq!(record_item["summary"], json!({"public":"visible"}));
-        assert_eq!(record_item["permission_state"]["field_read_limited"], true);
-
-        exec(
-            &state,
-            "UPDATE flow_workspace_settings SET bridge_enabled=false WHERE workspace_id=$1",
-            vec![workspace_id.into()],
-        )
-        .await;
-        let disabled_list = body_json(to_response(
-            get_flow_object_references(State(state.clone()), claims_for(owner_id), None, Path(source_id)).await,
-        ))
-        .await;
-        assert_eq!(disabled_list["code"], 0, "{disabled_list}");
-        assert!(
-            disabled_list["data"]["items"]
-                .as_array()
-                .expect("disabled items")
-                .iter()
-                .all(|item| item["permission_state"]["access"] == "read_only"
-                    && item["permission_state"]["actions"] == json!(["form.view"])),
-            "disabled bridge must downgrade every visible reference: {disabled_list}"
-        );
-        exec(
-            &state,
-            "UPDATE flow_workspace_settings SET bridge_enabled=true WHERE workspace_id=$1",
-            vec![workspace_id.into()],
-        )
-        .await;
-
-        let policy = body_json(to_response(
-            update_form_permissions(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(form_id),
-                Json(UpdateFormPermissionsRequest {
-                    policies: vec![UpsertFormPermissionPolicy {
-                        subject_type: "role".to_string(),
-                        subject_id: "owner".to_string(),
-                        policy: json!({"actions": {"form.view": false}}),
-                    }],
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(policy["code"], 0, "{policy}");
-
-        let after = body_json(to_response(
-            get_flow_object_references(State(state.clone()), claims_for(owner_id), None, Path(source_id)).await,
-        ))
-        .await;
-        assert_eq!(after["code"], 0, "{after}");
-        assert_eq!(after["data"]["items"], json!([]));
-
-        let remove_key = Uuid::new_v4().to_string();
-        let removed = body_json(to_response(
-            delete_flow_object_reference(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path((source_id, reference_id)),
-                HeaderMap::from_iter([(
-                    axum::http::header::HeaderName::from_static("idempotency-key"),
-                    axum::http::HeaderValue::from_str(&remove_key).expect("header"),
-                )]),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(removed["code"], 0, "{removed}");
-        assert_eq!(removed["data"]["removed"], true);
-        let after_reference_commands = SourceHead::find_by_statement(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT head_seq, head_frontier FROM collab_documents WHERE object_id=$1",
-            vec![source_id.into()],
-        ))
-        .one(&state.db)
-        .await
-        .expect("source head query")
-        .expect("source head");
-        assert_eq!(
-            after_reference_commands, source_head,
-            "reference and unreference must not advance an existing document head"
-        );
-
-        let target_count = state
-            .db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT count(*) AS n FROM project_forms WHERE id = $1",
-                vec![form_id.into()],
-            ))
-            .await
-            .expect("target count query")
-            .expect("target count");
-        assert_eq!(target_count.try_get::<i64>("", "n").expect("count"), 1);
-
-        exec(
-            &state,
-            "UPDATE flow_workspace_settings SET bridge_enabled=false WHERE workspace_id=$1",
-            vec![workspace_id.into()],
-        )
-        .await;
-        let disabled = body_json(to_response(
-            post_flow_object_reference(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(source_id),
-                Json(crate::flow::bridge::CreateReferenceInput {
-                    target_type: "form".to_string(),
-                    target_id: form_id,
-                    display: json!({}),
-                    idempotency_key: Uuid::new_v4().to_string(),
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(disabled["code"], 403, "{disabled}");
-
-        scratch.drop_self().await;
-    }
-
-    #[tokio::test]
-    #[allow(clippy::items_after_statements)]
-    async fn flow_bridge_conversion_commit_rechecks_policy_and_is_idempotent_without_rewriting_source() {
-        use base64::Engine as _;
-
-        #[derive(FromQueryResult)]
-        struct SourceHead {
-            head_seq: i64,
-            head_frontier: Vec<u8>,
-        }
-
-        let scratch = scratch_or_skip!("bridge-conversion-policy");
-        let state = state_for(scratch.db.clone());
-        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
-        let project_id = Uuid::new_v4();
-        exec(
-            &state,
-            "INSERT INTO projects (id, workspace_id, key, name, created_by) \
-             VALUES ($1, $2, 'CNV', 'Conversion test', $3)",
-            vec![project_id.into(), workspace_id.into(), owner_id.into()],
-        )
-        .await;
-        let form = body_json(to_response(
-            create_project_form(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(project_id),
-                Json(CreateFormRequest {
-                    key: "conversion_target".to_string(),
-                    name: "Conversion target".to_string(),
-                    description: None,
-                    icon: None,
-                    color: None,
-                    title_template: None,
-                    schema: None,
-                    detail_layout: None,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        let form_id = Uuid::parse_str(form["data"]["id"].as_str().expect("form id")).expect("UUID");
-        let set_policy = |allowed: bool| {
-            update_form_permissions(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(form_id),
-                Json(UpdateFormPermissionsRequest {
-                    policies: vec![UpsertFormPermissionPolicy {
-                        subject_type: "role".to_string(),
-                        subject_id: "owner".to_string(),
-                        policy: json!({"actions":{"form.view":true,"record.create":allowed}}),
-                    }],
-                }),
-            )
-        };
-        assert_eq!(body_json(to_response(set_policy(true).await)).await["code"], 0);
-
-        let source_id = create_page_as_owner(&state, workspace_id, owner_id, "conversion source").await;
-        let source_head = SourceHead::find_by_statement(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT d.head_seq, d.head_frontier FROM collab_documents d WHERE d.object_id=$1",
-            vec![source_id.into()],
-        ))
-        .one(&state.db)
-        .await
-        .expect("source head query")
-        .expect("source head");
-        let frontier = base64::engine::general_purpose::STANDARD.encode(&source_head.head_frontier);
-        let preview_request = |key: String| crate::flow::bridge::ConversionPreviewInput {
-            source_object_id: source_id,
-            source_frontier: frontier.clone(),
-            target_type: "form_record".to_string(),
-            mapping: json!({"target_form_id":form_id,"title":"Converted","values":{}}),
-            idempotency_key: key,
-        };
-        let preview = body_json(to_response(
-            post_flow_conversion_preview(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Json(preview_request(Uuid::new_v4().to_string())),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(preview["code"], 0, "{preview}");
-        let preview_id = Uuid::parse_str(preview["data"]["preview_id"].as_str().expect("preview id")).expect("UUID");
-
-        assert_eq!(body_json(to_response(set_policy(false).await)).await["code"], 0);
-        let rejected = body_json(to_response(
-            post_flow_conversion(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Json(crate::flow::bridge::ConversionCommitInput {
-                    preview_id,
-                    source_frontier: frontier.clone(),
-                    target_schema_version: 1,
-                    idempotency_key: Uuid::new_v4().to_string(),
-                    confirm: true,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(rejected["code"], 403, "{rejected}");
-        let rejected_actions = rejected["details"]["permission_state"]["actions"]
-            .as_array()
-            .expect("permission actions");
-        assert!(
-            rejected_actions.contains(&json!("form.view")) && !rejected_actions.contains(&json!("record.create")),
-            "commit rejection must return the current decision with record.create removed: {rejected}"
-        );
-
-        let zero = state
-            .db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT (SELECT count(*) FROM form_records WHERE form_id=$1) AS records, \
-                    (SELECT count(*) FROM flow_object_lineage WHERE source_object_id=$2) AS lineage",
-                vec![form_id.into(), source_id.into()],
-            ))
-            .await
-            .expect("zero-write query")
-            .expect("counts");
-        assert_eq!(zero.try_get::<i64>("", "records").expect("records"), 0);
-        assert_eq!(zero.try_get::<i64>("", "lineage").expect("lineage"), 0);
-
-        assert_eq!(body_json(to_response(set_policy(true).await)).await["code"], 0);
-        let preview_key = Uuid::new_v4().to_string();
-        let preview = body_json(to_response(
-            post_flow_conversion_preview(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Json(preview_request(preview_key.clone())),
-            )
-            .await,
-        ))
-        .await;
-        let preview_id = Uuid::parse_str(preview["data"]["preview_id"].as_str().expect("preview id")).expect("UUID");
-        let preview_replay = body_json(to_response(
-            post_flow_conversion_preview(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Json(preview_request(preview_key.clone())),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(preview_replay["data"]["preview_id"], preview_id.to_string());
-        let preview_collision = body_json(to_response(
-            post_flow_conversion_preview(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Json(crate::flow::bridge::ConversionPreviewInput {
-                    source_object_id: source_id,
-                    source_frontier: frontier.clone(),
-                    target_type: "form_record".to_string(),
-                    mapping: json!({"target_form_id":form_id,"title":"different","values":{}}),
-                    idempotency_key: preview_key,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(preview_collision["code"], 400, "{preview_collision}");
-        let commit_key = Uuid::new_v4().to_string();
-        let commit_input = || crate::flow::bridge::ConversionCommitInput {
-            preview_id,
-            source_frontier: frontier.clone(),
-            target_schema_version: 1,
-            idempotency_key: commit_key.clone(),
-            confirm: true,
-        };
-        let committed_result =
-            post_flow_conversion(State(state.clone()), claims_for(owner_id), None, Json(commit_input())).await;
-        if let Err(error) = &committed_result {
-            panic!("conversion commit failed: {error:?}");
-        }
-        let committed = body_json(to_response(committed_result)).await;
-        assert_eq!(committed["code"], 0, "{committed}");
-        assert_eq!(committed["data"]["status"], "completed");
-        assert_eq!(
-            committed["data"]["created_target_ids"].as_array().map(Vec::len),
-            Some(1)
-        );
-        let job_id = Uuid::parse_str(committed["data"]["job_id"].as_str().expect("job id")).expect("UUID");
-        let status = body_json(to_response(
-            get_flow_conversion(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(job_id.to_string()),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(status["code"], 0, "{status}");
-        assert_eq!(status["data"]["status"], "completed");
-        let replay = body_json(to_response(
-            post_flow_conversion(State(state.clone()), claims_for(owner_id), None, Json(commit_input())).await,
-        ))
-        .await;
-        assert_eq!(replay["data"]["job_id"], committed["data"]["job_id"]);
-        assert_eq!(
-            replay["data"]["created_target_ids"],
-            committed["data"]["created_target_ids"]
-        );
-
-        let after_head = SourceHead::find_by_statement(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT d.head_seq, d.head_frontier FROM collab_documents d WHERE d.object_id=$1",
-            vec![source_id.into()],
-        ))
-        .one(&state.db)
-        .await
-        .expect("source head query")
-        .expect("source head");
-        assert_eq!(after_head.head_seq, source_head.head_seq);
-        assert_eq!(after_head.head_frontier, source_head.head_frontier);
-
-        for fault in [1_u8, 2_u8] {
-            let preview = body_json(to_response(
-                post_flow_conversion_preview(
-                    State(state.clone()),
-                    claims_for(owner_id),
-                    None,
-                    Json(preview_request(Uuid::new_v4().to_string())),
-                )
-                .await,
-            ))
-            .await;
-            let fault_preview_id =
-                Uuid::parse_str(preview["data"]["preview_id"].as_str().expect("preview id")).expect("UUID");
-            crate::flow::bridge::set_conversion_fault_for_test(fault_preview_id, fault);
-            let failed = body_json(to_response(
-                post_flow_conversion(
-                    State(state.clone()),
-                    claims_for(owner_id),
-                    None,
-                    Json(crate::flow::bridge::ConversionCommitInput {
-                        preview_id: fault_preview_id,
-                        source_frontier: frontier.clone(),
-                        target_schema_version: 1,
-                        idempotency_key: Uuid::new_v4().to_string(),
-                        confirm: true,
-                    }),
-                )
-                .await,
-            ))
-            .await;
-            crate::flow::bridge::set_conversion_fault_for_test(fault_preview_id, 0);
-            // The caller gets the typed failure; the job row records it with a stable code.
-            assert_eq!(failed["error_code"], "server_rejected", "fault {fault}: {failed}");
-            assert!(failed["data"].is_null(), "fault {fault}: {failed}");
-            let failed = body_json(to_response(
-                post_flow_conversion(
-                    State(state.clone()),
-                    claims_for(owner_id),
-                    None,
-                    Json(crate::flow::bridge::ConversionCommitInput {
-                        preview_id: fault_preview_id,
-                        source_frontier: frontier.clone(),
-                        target_schema_version: 1,
-                        idempotency_key: Uuid::new_v4().to_string(),
-                        confirm: true,
-                    }),
-                )
-                .await,
-            ))
-            .await;
-            assert_eq!(failed["code"], 0, "fault {fault}: {failed}");
-            assert_eq!(failed["data"]["status"], "failed", "fault {fault}: {failed}");
-            assert_eq!(failed["data"]["error"], "server_rejected", "fault {fault}: {failed}");
-            let failed_job_id = Uuid::parse_str(failed["data"]["job_id"].as_str().expect("job id")).expect("UUID");
-            let retried = body_json(to_response(
-                post_flow_conversion_retry(
-                    State(state.clone()),
-                    claims_for(owner_id),
-                    None,
-                    Path(failed_job_id.to_string()),
-                    Json(crate::flow::bridge::ConversionRetryInput {
-                        idempotency_key: Uuid::new_v4().to_string(),
-                        confirm: true,
-                    }),
-                )
-                .await,
-            ))
-            .await;
-            assert_eq!(retried["code"], 0, "fault {fault} retry: {retried}");
-            assert_eq!(retried["data"]["status"], "completed");
-            assert_eq!(retried["data"]["created_target_ids"].as_array().map(Vec::len), Some(1));
-        }
-
-        let expiring_preview = body_json(to_response(
-            post_flow_conversion_preview(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Json(preview_request(Uuid::new_v4().to_string())),
-            )
-            .await,
-        ))
-        .await;
-        let expiring_preview_id =
-            Uuid::parse_str(expiring_preview["data"]["preview_id"].as_str().expect("preview id")).expect("UUID");
-        crate::flow::bridge::set_conversion_fault_for_test(expiring_preview_id, 1);
-        let expired_failed = body_json(to_response(
-            post_flow_conversion(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Json(crate::flow::bridge::ConversionCommitInput {
-                    preview_id: expiring_preview_id,
-                    source_frontier: frontier.clone(),
-                    target_schema_version: 1,
-                    idempotency_key: Uuid::new_v4().to_string(),
-                    confirm: true,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        crate::flow::bridge::set_conversion_fault_for_test(expiring_preview_id, 0);
-        assert_eq!(expired_failed["error_code"], "server_rejected", "{expired_failed}");
-        let expired_job_id = state
-            .db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT id FROM flow_conversion_jobs WHERE preview_id=$1 AND status='failed'",
-                vec![expiring_preview_id.into()],
-            ))
-            .await
-            .expect("failed job query")
-            .expect("the failed job row exists")
-            .try_get::<Uuid>("", "id")
-            .expect("job id");
-        exec(
-            &state,
-            "UPDATE flow_conversion_previews SET expires_at=now()-interval '1 second' WHERE id=$1",
-            vec![expiring_preview_id.into()],
-        )
-        .await;
-        let expired_retry = body_json(to_response(
-            post_flow_conversion_retry(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(expired_job_id.to_string()),
-                Json(crate::flow::bridge::ConversionRetryInput {
-                    idempotency_key: Uuid::new_v4().to_string(),
-                    confirm: true,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        // Retry does not depend on the preview TTL (rest-api-v1.md v0.7, 2026-10-10).
-        assert_eq!(expired_retry["code"], 0, "{expired_retry}");
-        assert_eq!(expired_retry["data"]["status"], "completed", "{expired_retry}");
-
-        let preview = body_json(to_response(
-            post_flow_conversion_preview(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Json(preview_request(Uuid::new_v4().to_string())),
-            )
-            .await,
-        ))
-        .await;
-        let last_preview_id =
-            Uuid::parse_str(preview["data"]["preview_id"].as_str().expect("preview id")).expect("UUID");
-        let last_key = Uuid::new_v4().to_string();
-        let last_input = || crate::flow::bridge::ConversionCommitInput {
-            preview_id: last_preview_id,
-            source_frontier: frontier.clone(),
-            target_schema_version: 1,
-            idempotency_key: last_key.clone(),
-            confirm: true,
-        };
-        crate::flow::bridge::set_conversion_fault_for_test(last_preview_id, 3);
-        let lost_response =
-            post_flow_conversion(State(state.clone()), claims_for(owner_id), None, Json(last_input())).await;
-        crate::flow::bridge::set_conversion_fault_for_test(last_preview_id, 0);
-        assert!(
-            lost_response.is_err(),
-            "post-commit response injection must surface an error"
-        );
-        let recovered = body_json(to_response(
-            post_flow_conversion(State(state.clone()), claims_for(owner_id), None, Json(last_input())).await,
-        ))
-        .await;
-        assert_eq!(recovered["code"], 0, "{recovered}");
-        assert_eq!(recovered["data"]["status"], "completed");
-
-        let totals = state
-            .db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT (SELECT count(*) FROM form_records WHERE form_id=$1) AS records, \
-                        (SELECT count(*) FROM flow_object_lineage WHERE source_object_id=$2) AS lineage",
-                vec![form_id.into(), source_id.into()],
-            ))
-            .await
-            .expect("conversion totals query")
-            .expect("conversion totals");
-        assert_eq!(totals.try_get::<i64>("", "records").expect("records"), 5);
-        assert_eq!(totals.try_get::<i64>("", "lineage").expect("lineage"), 5);
-
-        let events = state
-            .db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT \
-                   (SELECT count(*) FROM form_events WHERE form_id=$1 AND event_type='form.record.created' \
-                    AND source->>'type'='flow_conversion') AS native_events, \
-                   (SELECT count(*) FROM business_events WHERE project_id=$2 AND event_type='form.record.created' \
-                    AND source->>'type'='flow_conversion') AS native_business_events, \
-                   (SELECT count(*) FROM business_events WHERE workspace_id=$3 \
-                    AND event_type='flow.conversion.completed') AS completed_events",
-                vec![form_id.into(), project_id.into(), workspace_id.into()],
-            ))
-            .await
-            .expect("event totals query")
-            .expect("event totals");
-        assert_eq!(events.try_get::<i64>("", "native_events").expect("native events"), 5);
-        assert_eq!(
-            events
-                .try_get::<i64>("", "native_business_events")
-                .expect("native business events"),
-            5
-        );
-        assert_eq!(
-            events.try_get::<i64>("", "completed_events").expect("completed events"),
-            5
-        );
 
         scratch.drop_self().await;
     }
@@ -6744,7 +4441,7 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
-    /// `POST /api/v1/flow/objects/{object_id}/commands`: all eight v0.4 command types, each
+    /// `POST /api/v2/flow/objects/{object_id}/commands`: all eight v0.4 command types, each
     /// exercised at least once against a real database and the real shared write path
     /// (`flow::command::execute_content_command` calls the identical `write::accept_update`
     /// `flow::collab::session` uses), plus three independent error paths — a well-formed stale
@@ -7222,62 +4919,6 @@ mod flow_database_tests {
         ))
         .await;
         assert_eq!(missing_seq["error_code"], "resync_required", "{missing_seq}");
-
-        scratch.drop_self().await;
-    }
-
-    /// The endpoint and storage query must enforce the same one-past boundary. A pure helper test
-    /// cannot prove that SQL fetched row 1001; this real history fixture does. If `LIMIT` is
-    /// mutated from `row_limit + 1` to `row_limit`, the endpoint sees only 1000 rows and falls
-    /// through to a misleading `resync_required` instead of this typed budget rejection.
-    #[tokio::test]
-    async fn diff_endpoint_rejects_real_1001_row_history_as_limit_exceeded() {
-        let scratch = scratch_or_skip!("diff-row-budget");
-        let state = state_for(scratch.db.clone());
-        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
-        let object_id = create_page_as_owner(&state, workspace_id, owner_id, "large history").await;
-        let document_id = document_of(&state, object_id).await;
-
-        exec(
-            &state,
-            "INSERT INTO collab_updates \
-                (document_id, seq, update_id, content_hash, before_frontier, after_frontier, \
-                 bytes, actor_id, origin_surface, origin_client_id, projection_seq, event_id) \
-             SELECT $1, n, gen_random_uuid(), lpad(n::text, 64, '0'), ''::bytea, ''::bytea, \
-                    ''::bytea, $2, 'rest', 'diff-budget-fixture', n, \
-                    (SELECT id FROM business_events WHERE aggregate_id = $3 ORDER BY id LIMIT 1) \
-               FROM generate_series(1, 1001) AS n",
-            vec![document_id.into(), owner_id.into(), object_id.to_string().into()],
-        )
-        .await;
-        exec(
-            &state,
-            "UPDATE collab_documents \
-                SET head_seq = 1001, update_count = 1001, head_frontier = ''::bytea \
-              WHERE id = $1",
-            vec![document_id.into()],
-        )
-        .await;
-
-        let response = body_json(to_response(
-            get_flow_object_diff(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(object_id),
-                FlowQuery(FlowObjectDiffQuery {
-                    from_seq: Some(0),
-                    to_seq: Some(1001),
-                    render: None,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(response["error_code"], "limit_exceeded", "{response}");
-        assert_eq!(response["details"]["limit_kind"], "scan_budget", "{response}");
-        assert_eq!(response["details"]["limit"], 1000, "{response}");
-        assert_eq!(response["details"]["observed"], 1001, "{response}");
 
         scratch.drop_self().await;
     }
@@ -8012,112 +5653,6 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
-    /// `GET /api/v1/flow/objects/{object_id}/bootstrap`: a user request returns the complete
-    /// `Bootstrap` shape (`snapshot_base64`/`tail_updates`/`head_frontier`/`limits`/
-    /// `websocket_path`) with the real document identity; a bot token is rejected outright
-    /// (`rest-api-v1.md`: "**user only**").
-    #[tokio::test]
-    async fn bootstrap_endpoint_returns_the_full_shape_for_a_user_and_rejects_a_bot() {
-        let scratch = scratch_or_skip!("bootstrap-basic");
-        let state = state_for(scratch.db.clone());
-        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
-        let claims = claims_for(owner_id);
-
-        let create_body = body_json(to_response(
-            create_flow_object(
-                State(state.clone()),
-                claims.clone(),
-                None,
-                Path(workspace_id),
-                Json(CreateFlowObjectRequest {
-                    object_type: "page".to_string(),
-                    project_id: None,
-                    parent_object_id: None,
-                    title: "Bootstrap Test Page".to_string(),
-                    idempotency_key: Uuid::new_v4().to_string(),
-                    message: None,
-                    initial_fields: Vec::new(),
-                    initial_view: None,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        let object_id = Uuid::parse_str(
-            create_body["data"]["object"]["id"]
-                .as_str()
-                .expect("object id is a string"),
-        )
-        .expect("object id is a uuid");
-        let document_id = Uuid::parse_str(
-            create_body["data"]["object"]["document_id"]
-                .as_str()
-                .expect("document id is a string"),
-        )
-        .expect("document id is a uuid");
-
-        let response = to_response(
-            get_flow_object_bootstrap(
-                State(state.clone()),
-                claims.clone(),
-                None,
-                Path(object_id),
-                FlowQuery(GetFlowObjectBootstrapQuery {
-                    editor_model: None,
-                    known_seq: None,
-                    known_frontier: None,
-                }),
-            )
-            .await,
-        );
-        assert_eq!(response.status(), axum::http::StatusCode::OK);
-        let body = body_json(response).await;
-        assert_eq!(body["code"], 0, "{body}");
-        assert_eq!(body["data"]["object_id"], object_id.to_string());
-        assert_eq!(body["data"]["document_id"], document_id.to_string());
-        assert_eq!(body["data"]["engine"], "loro");
-        assert_eq!(body["data"]["snapshot_seq"], 0);
-        assert_eq!(body["data"]["head_seq"], 0);
-        assert!(body["data"]["snapshot_base64"].is_string(), "{body}");
-        assert!(!body["data"]["snapshot_base64"].as_str().unwrap().is_empty(), "{body}");
-        assert!(body["data"]["tail_updates"].as_array().unwrap().is_empty(), "{body}");
-        assert!(body["data"]["head_frontier"].is_string(), "{body}");
-        assert_eq!(body["data"]["websocket_path"], "/api/v1/collab/ws");
-        let limits = &body["data"]["limits"];
-        assert_eq!(limits["version"], "sylvode.flow.limits.v1", "{body}");
-        assert_eq!(limits["update_bytes_max"], 65_536, "{body}");
-        assert_eq!(limits["bootstrap_decoded_bytes_max"], 8_388_608, "{body}");
-        assert_eq!(limits["import_compression_ratio_max"], 100, "{body}");
-
-        // A bot token must never reach the bootstrap handler's actual logic.
-        let bot_ctx = Extension(crate::middleware::bot_auth::BotAuthContext {
-            bot_id: Uuid::new_v4(),
-            workspace_id,
-            permissions: vec!["read".to_string(), "write".to_string(), "admin".to_string()],
-            surface: crate::flow::event_origin::EventSurface::Rest,
-            tool_name: None,
-            request_id: uuid::Uuid::new_v4(),
-        });
-        let bot_response = to_response(
-            get_flow_object_bootstrap(
-                State(state.clone()),
-                claims.clone(),
-                Some(bot_ctx),
-                Path(object_id),
-                FlowQuery(GetFlowObjectBootstrapQuery {
-                    editor_model: None,
-                    known_seq: None,
-                    known_frontier: None,
-                }),
-            )
-            .await,
-        );
-        let bot_body = body_json(bot_response).await;
-        assert_eq!(bot_body["code"], 403, "a bot token must be rejected: {bot_body}");
-
-        scratch.drop_self().await;
-    }
-
     /// `create_object`'s cross-workspace `parent_object_id`/`project_id` check and `move_object`'s
     /// cross-workspace target (`error-mapping-v1.md`: `not_found` "cross-workspace 也归此类";
     /// `cross_workspace_relation` is only for *stored* relations found on read/move paths): each
@@ -8551,62 +6086,6 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
-    /// The shared workspace-drain producer reaches the real REST handler as HTTP 200 plus the
-    /// structured business envelope consumed unchanged by MCP/CLI and mirrored on WS/UI.
-    #[tokio::test]
-    async fn object_get_surfaces_shared_server_draining_drain_fixture_as_http_200_business_error() {
-        let scratch = scratch_or_skip!("rest-server-draining");
-        let state = state_for(scratch.db.clone());
-        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
-        let claims = claims_for(owner_id);
-        let create_body = body_json(to_response(
-            create_flow_object(
-                State(state.clone()),
-                claims.clone(),
-                None,
-                Path(workspace_id),
-                Json(CreateFlowObjectRequest {
-                    object_type: "page".to_string(),
-                    project_id: None,
-                    parent_object_id: None,
-                    title: "Drain Surface Test".to_string(),
-                    idempotency_key: Uuid::new_v4().to_string(),
-                    message: None,
-                    initial_fields: Vec::new(),
-                    initial_view: None,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        let object_id =
-            Uuid::parse_str(create_body["data"]["object"]["id"].as_str().expect("object id")).expect("object UUID");
-
-        let guard = crate::flow::collab::runtime::runtime().begin_workspace_drain(workspace_id, 2_000);
-        let response = to_response(
-            get_flow_object(
-                State(state.clone()),
-                claims,
-                None,
-                Path(object_id),
-                FlowQuery(GetFlowObjectQuery {
-                    at_seq: None,
-                    render: None,
-                }),
-            )
-            .await,
-        );
-        assert_eq!(response.status(), axum::http::StatusCode::OK);
-        let body = body_json(response).await;
-        assert_eq!(body["code"], 409, "{body}");
-        assert_eq!(body["error_code"], "server_draining");
-        assert_eq!(body["details"]["reason"], "drain");
-        assert_eq!(body["details"]["retry_after_ms"], 2_000);
-        drop(guard);
-
-        scratch.drop_self().await;
-    }
-
     /// Call-direction proof for `check_operation`'s `tree_depth` branch: a chain of `insert_block`
     /// commands reaching exactly `tree_depth_max` is accepted one command at a time; the next one
     /// is rejected via body code 400 naming `tree_depth`, and the rejection advances neither the
@@ -8817,80 +6296,6 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
-    /// `page_size` (`page_limit_max=100`): `list_flow_objects` -> `query::list_objects` ->
-    /// `query::validate_limit`. `limit=100` is accepted; `limit=101` is rejected through the
-    /// same `ApiError::limit_exceeded` typed path every other `limit_kind` uses, so the REST
-    /// envelope actually carries `error_code="limit_exceeded"` and
-    /// `details={limit_kind,limit,observed}` (`error.rs`'s `ApiResponse`-backed `Typed` arm),
-    /// not a bare message string. No document/`event_dispatch` side effect to check here: this
-    /// is a read-only list endpoint, not a write path.
-    #[tokio::test]
-    async fn list_objects_endpoint_rejects_page_size_over_page_limit_max_and_accepts_exact_boundary() {
-        const PAGE_LIMIT_MAX: u64 = 100;
-
-        let scratch = scratch_or_skip!("page-size-boundary");
-        let state = state_for(scratch.db.clone());
-        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
-        let claims = claims_for(owner_id);
-
-        let list_query = |limit: Option<u64>| ListFlowObjectsQuery {
-            project_id: None,
-            unprojected: false,
-            object_type: None,
-            parent_id: None,
-            q: None,
-            cursor: None,
-            limit,
-            include_archived: false,
-        };
-
-        // ---- exact boundary: limit=page_limit_max is accepted ----
-        let exact_response = to_response(
-            list_flow_objects(
-                State(state.clone()),
-                claims.clone(),
-                None,
-                Path(workspace_id),
-                FlowQuery(list_query(Some(PAGE_LIMIT_MAX))),
-            )
-            .await,
-        );
-        assert_eq!(exact_response.status(), axum::http::StatusCode::OK);
-        let exact_body = body_json(exact_response).await;
-        assert_eq!(
-            exact_body["code"], 0,
-            "limit=page_limit_max must be accepted: {exact_body}"
-        );
-
-        // ---- plus one: limit=page_limit_max+1 is rejected limit_kind=page_size ----
-        let plus_one_response = to_response(
-            list_flow_objects(
-                State(state.clone()),
-                claims.clone(),
-                None,
-                Path(workspace_id),
-                FlowQuery(list_query(Some(PAGE_LIMIT_MAX + 1))),
-            )
-            .await,
-        );
-        assert_eq!(
-            plus_one_response.status(),
-            axum::http::StatusCode::OK,
-            "REST is always a 200 envelope; business failure is in the body's `code`"
-        );
-        let plus_one_body = body_json(plus_one_response).await;
-        assert_ne!(
-            plus_one_body["code"], 0,
-            "limit=page_limit_max+1 must be rejected: {plus_one_body}"
-        );
-        assert_eq!(plus_one_body["error_code"], "limit_exceeded");
-        assert_eq!(plus_one_body["details"]["limit_kind"], "page_size");
-        assert_eq!(plus_one_body["details"]["limit"], PAGE_LIMIT_MAX);
-        assert_eq!(plus_one_body["details"]["observed"], PAGE_LIMIT_MAX + 1);
-
-        scratch.drop_self().await;
-    }
-
     /// `flow.command.rejected` is written for a bot's rejected command as well as a user's.
     ///
     /// This producer is the one that could fail **silently**: `record_command_rejected` logs its
@@ -8916,6 +6321,15 @@ mod flow_database_tests {
         let (workspace_id, owner_id) = seed_workspace(&state, true).await;
         let claims = claims_for(owner_id);
         let bot_id = Uuid::new_v4();
+        seed_bot_identity(&state, bot_id, workspace_id).await;
+        exec(
+            &state,
+            "INSERT INTO workspace_bots (id, workspace_id, name, token_hash, token_prefix, permissions, \
+             transport_surface, is_active) \
+             VALUES ($1, $2, 'archive bot', $3, 'archive', '[\"read\",\"write\",\"admin\"]'::jsonb, 'mcp_stdio', true)",
+            vec![bot_id.into(), workspace_id.into(), bot_id.to_string().into()],
+        )
+        .await;
         let bot = Extension(crate::middleware::bot_auth::BotAuthContext {
             bot_id,
             workspace_id,
@@ -9058,6 +6472,7 @@ mod flow_database_tests {
             hasher.update(raw_token.as_bytes());
             format!("{:x}", hasher.finalize())
         };
+        seed_bot_identity(&state, bot_id, workspace_id).await;
         exec(
             &state,
             "INSERT INTO workspace_bots \
@@ -9089,7 +6504,7 @@ mod flow_database_tests {
 
         let app = axum::Router::new()
             .route(
-                "/api/v1/flow/workspaces/{workspace_id}/objects",
+                "/api/v2/flow/workspaces/{workspace_id}/objects",
                 axum::routing::post(create_flow_object),
             )
             .layer(axum::middleware::from_fn_with_state(
@@ -9102,7 +6517,7 @@ mod flow_database_tests {
             app.oneshot(
                 axum::http::Request::builder()
                     .method(axum::http::Method::POST)
-                    .uri(format!("/api/v1/flow/workspaces/{workspace_id}/objects"))
+                    .uri(format!("/api/v2/flow/workspaces/{workspace_id}/objects"))
                     .header(axum::http::header::CONTENT_TYPE, "application/json")
                     .header(axum::http::header::AUTHORIZATION, format!("Bearer {raw_token}"))
                     .header("x-sylvode-mcp-surface", "cli_tools_call")
@@ -9192,6 +6607,7 @@ mod flow_database_tests {
             hasher.update(raw_token.as_bytes());
             format!("{:x}", hasher.finalize())
         };
+        seed_bot_identity(&state, bot_id, workspace_id).await;
         exec(
             &state,
             "INSERT INTO workspace_bots \
@@ -9210,7 +6626,7 @@ mod flow_database_tests {
         // The create route behind the **production** auth middleware.
         let app = axum::Router::new()
             .route(
-                "/api/v1/flow/workspaces/{workspace_id}/objects",
+                "/api/v2/flow/workspaces/{workspace_id}/objects",
                 axum::routing::post(create_flow_object),
             )
             .layer(axum::middleware::from_fn_with_state(
@@ -9224,7 +6640,7 @@ mod flow_database_tests {
             app.oneshot(
                 axum::http::Request::builder()
                     .method(axum::http::Method::POST)
-                    .uri(format!("/api/v1/flow/workspaces/{workspace_id}/objects"))
+                    .uri(format!("/api/v2/flow/workspaces/{workspace_id}/objects"))
                     .header(axum::http::header::CONTENT_TYPE, "application/json")
                     .header(axum::http::header::AUTHORIZATION, format!("Bearer {raw_token}"))
                     .header("x-sylvode-mcp-surface", "mcp_stdio")
@@ -9332,6 +6748,8 @@ mod flow_database_tests {
             hasher.update(raw_token.as_bytes());
             format!("{:x}", hasher.finalize())
         };
+        let bot_id = Uuid::new_v4();
+        seed_bot_identity(&state, bot_id, workspace_id).await;
         exec(
             &state,
             "INSERT INTO workspace_bots \
@@ -9339,7 +6757,7 @@ mod flow_database_tests {
              VALUES ($1, $2, 'attribution-spellings-bot', $3, $4, '[\"read\",\"write\"]'::jsonb, \
              'mcp_stdio', true)",
             vec![
-                Uuid::new_v4().into(),
+                bot_id.into(),
                 workspace_id.into(),
                 token_hash.into(),
                 raw_token[..8].to_string().into(),
@@ -9349,7 +6767,7 @@ mod flow_database_tests {
 
         let app = axum::Router::new()
             .route(
-                "/api/v1/flow/workspaces/{workspace_id}/objects",
+                "/api/v2/flow/workspaces/{workspace_id}/objects",
                 axum::routing::post(create_flow_object),
             )
             .layer(axum::middleware::from_fn_with_state(
@@ -9365,7 +6783,7 @@ mod flow_database_tests {
                 use tower::ServiceExt as _;
                 let mut request = axum::http::Request::builder()
                     .method(axum::http::Method::POST)
-                    .uri(format!("/api/v1/flow/workspaces/{workspace_id}/objects"))
+                    .uri(format!("/api/v2/flow/workspaces/{workspace_id}/objects"))
                     .header(axum::http::header::CONTENT_TYPE, "application/json")
                     .header(axum::http::header::AUTHORIZATION, format!("Bearer {raw_token}"));
                 for (name, value) in headers {
@@ -9516,6 +6934,7 @@ mod flow_database_tests {
         let (workspace_id, owner_id) = seed_workspace(&state, true).await;
         let claims = claims_for(owner_id);
         let bot_id = Uuid::new_v4();
+        seed_bot_identity(&state, bot_id, workspace_id).await;
         exec(
             &state,
             "INSERT INTO workspace_bots
@@ -10056,67 +7475,6 @@ mod flow_database_tests {
             vec!["rest".to_string()],
             "a REST content command must be recorded as a REST write, not a WebSocket one"
         );
-
-        scratch.drop_self().await;
-    }
-
-    #[tokio::test]
-    async fn relations_handler_returns_a_real_link_through_the_rest_shape() {
-        let scratch = scratch_or_skip!("relations-handler");
-        let state = state_for(scratch.db.clone());
-        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
-        let source = create_page_as_owner(&state, workspace_id, owner_id, "Source").await;
-        let target = create_page_as_owner(&state, workspace_id, owner_id, "Target").await;
-
-        let linked = body_json(to_response(
-            post_flow_object_command(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(source),
-                Json(ExecuteFlowCommandRequest {
-                    command: FlowCommandEnvelope {
-                        command_type: "link".to_string(),
-                        payload: json!({
-                            "target_object_id": target,
-                            "relation_type": "related_to",
-                            "properties": {"label": "visible"},
-                        }),
-                    },
-                    expected_frontier: None,
-                    idempotency_key: Uuid::new_v4().to_string(),
-                    message: None,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(linked["code"], 0, "{linked}");
-
-        let page = body_json(to_response(
-            get_flow_object_relations(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(source),
-                FlowQuery(FlowRelationsQuery {
-                    direction: Some("outgoing".to_string()),
-                    relation_type: Some("related_to".to_string()),
-                    cursor: None,
-                    limit: Some(50),
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(page["code"], 0, "{page}");
-        assert_eq!(page["data"]["items"].as_array().map(Vec::len), Some(1));
-        assert_eq!(page["data"]["items"][0]["visibility"], "visible");
-        assert_eq!(page["data"]["items"][0]["other_object"]["id"], target.to_string());
-        assert_eq!(page["data"]["items"][0]["relation_type"], "related_to");
-        assert!(page["data"].get("total").is_none());
-        assert!(page["data"].get("filtered_count").is_none());
-        assert!(page["data"].get("examined").is_none());
 
         scratch.drop_self().await;
     }
@@ -10880,321 +8238,6 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
-    #[tokio::test]
-    async fn flow_package_import_export_upload_preview_commit_status_runs_through_real_http_shapes() {
-        use tower::ServiceExt as _;
-        if !cfg!(target_os = "linux") {
-            eprintln!("NOT EXECUTED: the import validates in the isolated worker, which requires Linux");
-            return;
-        }
-
-        let scratch = scratch_or_skip!("package-route-chain");
-        let state = state_for(scratch.db.clone());
-        let (source_workspace, source_owner) = seed_workspace(&state, true).await;
-        let (target_workspace, target_owner) = seed_workspace(&state, true).await;
-        create_page_as_owner(&state, source_workspace, source_owner, "route package source").await;
-
-        let source_app = axum::Router::new()
-            .route(
-                "/api/v1/workspaces/{workspace_id}/flow/exports",
-                axum::routing::post(super::post_flow_workspace_export),
-            )
-            .route(
-                "/api/v1/flow/exports/{job_id}",
-                axum::routing::get(super::get_flow_export),
-            )
-            .route(
-                "/api/v1/flow/exports/{job_id}/artifact",
-                axum::routing::get(super::get_flow_export_artifact),
-            )
-            .layer(claims_for(source_owner))
-            .with_state(state.clone());
-        let export_response = source_app
-            .clone()
-            .oneshot(
-                axum::http::Request::builder()
-                    .method("POST")
-                    .uri(format!("/api/v1/workspaces/{source_workspace}/flow/exports"))
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(axum::body::Body::from(
-                        json!({"format":"package","include_history":false,"idempotency_key":"route-export"})
-                            .to_string(),
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let export_body = body_json(export_response).await;
-        assert_eq!(export_body["code"], 0, "{export_body}");
-        let export_job_id = export_body["data"]["job_id"].as_str().unwrap();
-        let status_response = source_app
-            .clone()
-            .oneshot(
-                axum::http::Request::builder()
-                    .uri(format!("/api/v1/flow/exports/{export_job_id}"))
-                    .body(axum::body::Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let status = body_json(status_response).await;
-        assert_eq!(status["data"]["checksum"], export_body["data"]["checksum"]);
-        let artifact_response = source_app
-            .oneshot(
-                axum::http::Request::builder()
-                    .uri(format!("/api/v1/flow/exports/{export_job_id}/artifact"))
-                    .body(axum::body::Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(
-            artifact_response.headers()[axum::http::header::CONTENT_TYPE],
-            "application/vnd.sylvode.flow-package+zip;version=1"
-        );
-        let artifact_bytes = to_bytes(artifact_response.into_body(), usize::MAX).await.unwrap();
-
-        let target_app = axum::Router::new()
-            .route(
-                "/api/v1/workspaces/{workspace_id}/flow/import-artifacts",
-                axum::routing::post(super::post_flow_import_artifact),
-            )
-            .route(
-                "/api/v1/workspaces/{workspace_id}/flow/imports/preview",
-                axum::routing::post(super::post_flow_import_preview),
-            )
-            .route(
-                "/api/v1/workspaces/{workspace_id}/flow/imports/{import_id}/commit",
-                axum::routing::post(super::post_flow_import_commit),
-            )
-            .route(
-                "/api/v1/workspaces/{workspace_id}/flow/imports/{import_id}",
-                axum::routing::get(super::get_flow_import),
-            )
-            .layer(claims_for(target_owner))
-            .with_state(state.clone());
-        let upload_response = target_app
-            .clone()
-            .oneshot(
-                axum::http::Request::builder()
-                    .method("POST")
-                    .uri(format!("/api/v1/workspaces/{target_workspace}/flow/import-artifacts"))
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(axum::body::Body::from(
-                        json!({
-                            "source":{"kind":"inline_base64","package_base64":base64::engine::general_purpose::STANDARD.encode(&artifact_bytes)},
-                            "idempotency_key":"route-upload"
-                        })
-                        .to_string(),
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let upload = body_json(upload_response).await;
-        assert_eq!(upload["code"], 0, "{upload}");
-        let mut multipart_body = b"--flow-boundary\r\nContent-Disposition: form-data; name=\"package\"; filename=\"flow.sylvode-flow.zip\"\r\nContent-Type: application/vnd.sylvode.flow-package+zip;version=1\r\n\r\n".to_vec();
-        multipart_body.extend_from_slice(&artifact_bytes);
-        multipart_body.extend_from_slice(b"\r\n--flow-boundary--\r\n");
-        let multipart_response = target_app
-            .clone()
-            .oneshot(
-                axum::http::Request::builder()
-                    .method("POST")
-                    .uri(format!("/api/v1/workspaces/{target_workspace}/flow/import-artifacts"))
-                    .header(
-                        axum::http::header::CONTENT_TYPE,
-                        "multipart/form-data; boundary=flow-boundary",
-                    )
-                    .header("idempotency-key", "route-multipart-upload")
-                    .body(axum::body::Body::from(multipart_body))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let multipart_upload = body_json(multipart_response).await;
-        assert_eq!(multipart_upload["code"], 0, "{multipart_upload}");
-        assert_eq!(
-            multipart_upload["data"]["package_sha256"],
-            upload["data"]["package_sha256"]
-        );
-        assert_ne!(multipart_upload["data"]["artifact_id"], upload["data"]["artifact_id"]);
-
-        let staged_key = format!("flow-package-staging/{target_workspace}/{}.zip", Uuid::new_v4());
-        let storage = crate::services::object_storage::ObjectStorage::from_runtime_config().unwrap();
-        storage.put(&staged_key, &artifact_bytes).await.unwrap();
-        let staged_response = target_app
-            .clone()
-            .oneshot(
-                axum::http::Request::builder()
-                    .method("POST")
-                    .uri(format!("/api/v1/workspaces/{target_workspace}/flow/import-artifacts"))
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(axum::body::Body::from(
-                        json!({
-                            "source": {
-                                "kind": "staged_object", "object_key": staged_key,
-                                "size": artifact_bytes.len(),
-                                "package_sha256": upload["data"]["package_sha256"],
-                            },
-                            "idempotency_key": "route-staged-upload",
-                        })
-                        .to_string(),
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let staged_upload = body_json(staged_response).await;
-        assert_eq!(staged_upload["code"], 0, "{staged_upload}");
-        assert_eq!(
-            staged_upload["data"]["package_sha256"],
-            upload["data"]["package_sha256"]
-        );
-        assert_ne!(staged_upload["data"]["artifact_id"], upload["data"]["artifact_id"]);
-
-        for (index, forbidden_field) in ["path", "url", "provider"].into_iter().enumerate() {
-            let mut source = json!({
-                "kind": "inline_base64",
-                "package_base64": base64::engine::general_purpose::STANDARD.encode(&artifact_bytes),
-            });
-            source[forbidden_field] = json!("attacker-controlled");
-            let rejected = target_app
-                .clone()
-                .oneshot(
-                    axum::http::Request::builder()
-                        .method("POST")
-                        .uri(format!("/api/v1/workspaces/{target_workspace}/flow/import-artifacts"))
-                        .header(axum::http::header::CONTENT_TYPE, "application/json")
-                        .body(axum::body::Body::from(
-                            json!({"source":source,"idempotency_key":format!("forbidden-{index}")}).to_string(),
-                        ))
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            let rejected = body_json(rejected).await;
-            assert_ne!(
-                rejected["code"], 0,
-                "{forbidden_field} override must be rejected: {rejected}"
-            );
-        }
-        let cross_workspace_key = format!("flow-package-staging/{}/foreign.zip", Uuid::new_v4());
-        let cross_workspace = target_app
-            .clone()
-            .oneshot(
-                axum::http::Request::builder()
-                    .method("POST")
-                    .uri(format!("/api/v1/workspaces/{target_workspace}/flow/import-artifacts"))
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(axum::body::Body::from(
-                        json!({
-                            "source": {
-                                "kind":"staged_object", "object_key":cross_workspace_key,
-                                "size":artifact_bytes.len(),
-                                "package_sha256":upload["data"]["package_sha256"],
-                            },
-                            "idempotency_key":"cross-workspace-staging",
-                        })
-                        .to_string(),
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_ne!(body_json(cross_workspace).await["code"], 0);
-        storage.delete(&staged_key).await.unwrap();
-
-        let preview_response = target_app
-            .clone()
-            .oneshot(
-                axum::http::Request::builder()
-                    .method("POST")
-                    .uri(format!("/api/v1/workspaces/{target_workspace}/flow/imports/preview"))
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(axum::body::Body::from(
-                        json!({
-                            "artifact_id":upload["data"]["artifact_id"],"project_mapping":{},
-                            "external_reference_policy":"detach","conflict_policy":"reject_existing",
-                            "include_history":false,"idempotency_key":"route-preview"
-                        })
-                        .to_string(),
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let preview = body_json(preview_response).await;
-        assert_eq!(preview["code"], 0, "{preview}");
-        let preview_import_id = preview["data"]["preview_id"].as_str().unwrap();
-        let commit_response = target_app
-            .clone()
-            .oneshot(
-                axum::http::Request::builder()
-                    .method("POST")
-                    .uri(format!(
-                        "/api/v1/workspaces/{target_workspace}/flow/imports/{preview_import_id}/commit"
-                    ))
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(axum::body::Body::from(
-                        json!({
-                            "package_sha256":preview["data"]["package_sha256"],
-                            "mapping_hash":preview["data"]["mapping_hash"],"conflict_policy":"reject_existing",
-                            "confirm":true,"idempotency_key":"route-commit"
-                        })
-                        .to_string(),
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let committed = body_json(commit_response).await;
-        assert_eq!(committed["code"], 0, "{committed}");
-        let committed_import_job_id = committed["data"]["job_id"].as_str().unwrap();
-        let report_response = target_app
-            .oneshot(
-                axum::http::Request::builder()
-                    .uri(format!(
-                        "/api/v1/workspaces/{target_workspace}/flow/imports/{committed_import_job_id}"
-                    ))
-                    .body(axum::body::Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let report = body_json(report_response).await;
-        assert_eq!(report["data"]["status"], "completed", "{report}");
-        assert_eq!(report["data"]["counts"]["created"], 1);
-        scratch.drop_self().await;
-    }
-
-    /// Workspace A holds one project with two Pages; its workspace package is
-    /// exported over HTTP and uploaded into workspace B, which has its own project.
-    struct ExportedPackage {
-        target_app: axum::Router,
-        target_workspace: Uuid,
-        target_project: Uuid,
-        source_project: Uuid,
-        artifact_id: Value,
-    }
-
-    async fn package_seed_project(state: &AppState, workspace_id: Uuid, owner_id: Uuid, name: &str) -> Uuid {
-        let project_id = Uuid::new_v4();
-        exec(
-            state,
-            "INSERT INTO projects (id, workspace_id, key, name, created_by) VALUES ($1, $2, $3, $4, $5)",
-            vec![
-                project_id.into(),
-                workspace_id.into(),
-                format!("K{}", &project_id.simple().to_string()[..6]).into(),
-                name.to_string().into(),
-                owner_id.into(),
-            ],
-        )
-        .await;
-        project_id
-    }
-
     async fn package_send(app: &axum::Router, method: &str, uri: String, body: Option<Value>) -> Value {
         use tower::ServiceExt as _;
         let builder = axum::http::Request::builder().method(method).uri(uri);
@@ -11206,376 +8249,6 @@ mod flow_database_tests {
             None => builder.body(axum::body::Body::empty()).unwrap(),
         };
         body_json(app.clone().oneshot(request).await.unwrap()).await
-    }
-
-    async fn exported_project_package(state: &AppState) -> ExportedPackage {
-        use tower::ServiceExt as _;
-
-        let (source_workspace, source_owner) = seed_workspace(state, true).await;
-        let (target_workspace, target_owner) = seed_workspace(state, true).await;
-        let source_project = package_seed_project(state, source_workspace, source_owner, "Source roadmap").await;
-        let target_project = package_seed_project(state, target_workspace, target_owner, "Target roadmap").await;
-        for title in ["page one", "page two"] {
-            let body = body_json(to_response(
-                create_flow_object(
-                    State(state.clone()),
-                    claims_for(source_owner),
-                    None,
-                    Path(source_workspace),
-                    Json(CreateFlowObjectRequest {
-                        object_type: "page".to_string(),
-                        project_id: Some(source_project),
-                        parent_object_id: None,
-                        title: title.to_string(),
-                        idempotency_key: Uuid::new_v4().to_string(),
-                        message: None,
-                        initial_fields: Vec::new(),
-                        initial_view: None,
-                    }),
-                )
-                .await,
-            ))
-            .await;
-            assert_eq!(body["code"], 0, "{body}");
-        }
-        let source_app = axum::Router::new()
-            .route(
-                "/api/v1/workspaces/{workspace_id}/flow/exports",
-                axum::routing::post(super::post_flow_workspace_export),
-            )
-            .route(
-                "/api/v1/flow/exports/{job_id}/artifact",
-                axum::routing::get(super::get_flow_export_artifact),
-            )
-            .layer(claims_for(source_owner))
-            .with_state(state.clone());
-        let exported = package_send(
-            &source_app,
-            "POST",
-            format!("/api/v1/workspaces/{source_workspace}/flow/exports"),
-            Some(json!({"format":"package","include_history":false,"idempotency_key":"package-export"})),
-        )
-        .await;
-        assert_eq!(exported["code"], 0, "{exported}");
-        let export_job = exported["data"]["job_id"].as_str().unwrap();
-        let artifact = source_app
-            .oneshot(
-                axum::http::Request::builder()
-                    .uri(format!("/api/v1/flow/exports/{export_job}/artifact"))
-                    .body(axum::body::Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let package = to_bytes(artifact.into_body(), usize::MAX).await.unwrap();
-
-        let target_app = axum::Router::new()
-            .route(
-                "/api/v1/workspaces/{workspace_id}/flow/import-artifacts",
-                axum::routing::post(super::post_flow_import_artifact),
-            )
-            .route(
-                "/api/v1/workspaces/{workspace_id}/flow/imports/preview",
-                axum::routing::post(super::post_flow_import_preview),
-            )
-            .route(
-                "/api/v1/workspaces/{workspace_id}/flow/imports/{import_id}/commit",
-                axum::routing::post(super::post_flow_import_commit),
-            )
-            .route(
-                "/api/v1/workspaces/{workspace_id}/flow/imports/{import_id}",
-                axum::routing::get(super::get_flow_import),
-            )
-            .layer(claims_for(target_owner))
-            .with_state(state.clone());
-        let upload = package_send(
-            &target_app,
-            "POST",
-            format!("/api/v1/workspaces/{target_workspace}/flow/import-artifacts"),
-            Some(json!({
-                "source":{"kind":"inline_base64","package_base64":base64::engine::general_purpose::STANDARD.encode(&package)},
-                "idempotency_key":"package-upload"
-            })),
-        )
-        .await;
-        assert_eq!(upload["code"], 0, "{upload}");
-        ExportedPackage {
-            target_app,
-            target_workspace,
-            target_project,
-            source_project,
-            artifact_id: upload["data"]["artifact_id"].clone(),
-        }
-    }
-
-    async fn package_preview(fixture: &ExportedPackage, project_mapping: Value, policy: &str, key: &str) -> Value {
-        package_send(
-            &fixture.target_app,
-            "POST",
-            format!("/api/v1/workspaces/{}/flow/imports/preview", fixture.target_workspace),
-            Some(json!({
-                "artifact_id":fixture.artifact_id,"project_mapping":project_mapping,
-                "external_reference_policy":"detach","conflict_policy":policy,
-                "include_history":false,"idempotency_key":key
-            })),
-        )
-        .await
-    }
-
-    async fn package_commit(fixture: &ExportedPackage, preview: &Value, policy: &str, key: &str) -> Value {
-        let preview_id = preview["data"]["preview_id"].as_str().unwrap();
-        package_send(
-            &fixture.target_app,
-            "POST",
-            format!(
-                "/api/v1/workspaces/{}/flow/imports/{preview_id}/commit",
-                fixture.target_workspace
-            ),
-            Some(json!({
-                "package_sha256":preview["data"]["package_sha256"],
-                "mapping_hash":preview["data"]["mapping_hash"],"conflict_policy":policy,
-                "confirm":true,"idempotency_key":key
-            })),
-        )
-        .await
-    }
-
-    async fn package_report(fixture: &ExportedPackage, committed: &Value) -> Value {
-        let import_id = committed["data"]["import_id"].as_str().unwrap();
-        package_send(
-            &fixture.target_app,
-            "GET",
-            format!(
-                "/api/v1/workspaces/{}/flow/imports/{import_id}",
-                fixture.target_workspace
-            ),
-            None,
-        )
-        .await
-    }
-
-    #[tokio::test]
-    async fn preview_manifest_summary_lists_the_package_source_projects() {
-        if !cfg!(target_os = "linux") {
-            eprintln!("NOT EXECUTED: the import validates in the isolated worker, which requires Linux");
-            return;
-        }
-        let scratch = scratch_or_skip!("package-manifest-summary");
-        let state = state_for(scratch.db.clone());
-        let fixture = exported_project_package(&state).await;
-        let preview = package_preview(
-            &fixture,
-            json!({ fixture.source_project.to_string(): fixture.target_project }),
-            "reject_existing",
-            "package-summary",
-        )
-        .await;
-        assert_eq!(preview["code"], 0, "{preview}");
-        let summary = &preview["data"]["manifest_summary"];
-        assert_eq!(
-            summary["projects"],
-            json!([{"source_project_id":fixture.source_project,"title":"Source roadmap"}]),
-            "{preview}"
-        );
-        assert_eq!(summary["object_count"], 2, "{preview}");
-        assert_eq!(summary["document_count"], 2, "{preview}");
-        assert_eq!(
-            summary["package_schema"],
-            crate::flow::package::PACKAGE_SCHEMA,
-            "{preview}"
-        );
-        assert_eq!(
-            summary["engine"]["name"],
-            crate::flow::package::ENGINE_NAME,
-            "{preview}"
-        );
-        let replay = package_preview(
-            &fixture,
-            json!({ fixture.source_project.to_string(): fixture.target_project }),
-            "reject_existing",
-            "package-summary",
-        )
-        .await;
-        assert_eq!(replay["data"]["preview_id"], preview["data"]["preview_id"]);
-        assert_eq!(
-            replay["data"]["manifest_summary"], *summary,
-            "an idempotent replay keeps the summary"
-        );
-        let committed = package_commit(&fixture, &preview, "reject_existing", "package-summary-commit").await;
-        assert_eq!(committed["code"], 0, "{committed}");
-        let report = package_report(&fixture, &committed).await;
-        assert_eq!(report["data"]["counts"]["created"], 2, "{report}");
-        let in_target_project: i64 = state
-            .db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT count(*) AS n FROM flow_objects WHERE workspace_id=$1 AND project_id=$2 AND object_type='page'",
-                vec![fixture.target_workspace.into(), fixture.target_project.into()],
-            ))
-            .await
-            .unwrap()
-            .unwrap()
-            .try_get("", "n")
-            .unwrap();
-        assert_eq!(in_target_project, 2, "both pages land in the mapped target project");
-        scratch.drop_self().await;
-    }
-
-    async fn package_page_count(state: &AppState, workspace_id: Uuid, project_id: Option<Uuid>) -> i64 {
-        state
-            .db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT count(*) AS n FROM flow_objects WHERE workspace_id=$1 AND object_type='page' \
-                 AND project_id IS NOT DISTINCT FROM $2",
-                vec![workspace_id.into(), project_id.into()],
-            ))
-            .await
-            .unwrap()
-            .unwrap()
-            .try_get("", "n")
-            .unwrap()
-    }
-
-    #[tokio::test]
-    async fn empty_project_mapping_previews_unmapped_projects_and_commit_is_project_unmapped() {
-        let scratch = scratch_or_skip!("package-unmapped");
-        let state = state_for(scratch.db.clone());
-        let fixture = exported_project_package(&state).await;
-        let source = fixture.source_project;
-
-        let preview = package_preview(&fixture, json!({}), "reject_existing", "package-unmapped").await;
-        assert_eq!(
-            preview["code"], 0,
-            "an empty mapping previews instead of failing: {preview}"
-        );
-        assert_eq!(
-            preview["data"]["manifest_summary"]["projects"]
-                .as_array()
-                .unwrap()
-                .len(),
-            1
-        );
-        assert_eq!(preview["data"]["conflicts"], json!([source]), "{preview}");
-        assert_eq!(
-            preview["data"]["conflict_details"],
-            json!([{"kind":"project_unmapped","source_project_id":source,"title":"Source roadmap"}]),
-            "{preview}"
-        );
-        let committed = package_commit(&fixture, &preview, "reject_existing", "package-unmapped-commit").await;
-        assert_typed(&committed, "invalid_update", 400);
-        assert_eq!(committed["details"]["reason"], "project_unmapped", "{committed}");
-        assert_eq!(package_page_count(&state, fixture.target_workspace, None).await, 0);
-        assert_eq!(
-            package_page_count(&state, fixture.target_workspace, Some(fixture.target_project)).await,
-            0
-        );
-
-        let unprojected = package_preview(
-            &fixture,
-            json!({ source.to_string(): "unprojected" }),
-            "reject_existing",
-            "package-unprojected",
-        )
-        .await;
-        assert_eq!(unprojected["code"], 0, "{unprojected}");
-        assert_eq!(unprojected["data"]["conflicts"], json!([]), "{unprojected}");
-        assert_eq!(unprojected["data"]["conflict_details"], json!([]), "{unprojected}");
-        assert_eq!(
-            unprojected["data"]["mapping"]["project_map"],
-            json!({ source.to_string(): null }),
-            "the literal freezes to the same mapping as null"
-        );
-        let committed = package_commit(&fixture, &unprojected, "reject_existing", "package-unprojected-commit").await;
-        assert_eq!(committed["code"], 0, "{committed}");
-        let report = package_report(&fixture, &committed).await;
-        assert_eq!(report["data"]["counts"]["created"], 2, "{report}");
-        assert_eq!(package_page_count(&state, fixture.target_workspace, None).await, 2);
-        scratch.drop_self().await;
-    }
-
-    #[tokio::test]
-    async fn package_roundtrip_reports_unmapped_projects_and_lineage_conflicts_in_preview() {
-        if !cfg!(target_os = "linux") {
-            eprintln!("NOT EXECUTED: the import validates in the isolated worker, which requires Linux");
-            return;
-        }
-        let scratch = scratch_or_skip!("package-roundtrip");
-        let state = state_for(scratch.db.clone());
-        let fixture = exported_project_package(&state).await;
-        let source = fixture.source_project;
-        let mapped = json!({ source.to_string(): fixture.target_project });
-
-        // (1) An empty mapping previews and names the one source project as unmapped.
-        let empty = package_preview(&fixture, json!({}), "reject_existing", "package-rt-empty").await;
-        assert_eq!(empty["code"], 0, "{empty}");
-        assert_eq!(
-            empty["data"]["manifest_summary"]["projects"].as_array().unwrap().len(),
-            1
-        );
-        assert_eq!(
-            empty["data"]["conflict_details"],
-            json!([{"kind":"project_unmapped","source_project_id":source,"title":"Source roadmap"}]),
-            "{empty}"
-        );
-
-        // (2) Mapped onto B's project, the commit creates both pages.
-        let first = package_preview(&fixture, mapped.clone(), "reject_existing", "package-rt-first").await;
-        assert_eq!(first["code"], 0, "{first}");
-        assert_eq!(first["data"]["conflicts"], json!([]), "{first}");
-        let committed = package_commit(&fixture, &first, "reject_existing", "package-rt-first-commit").await;
-        assert_eq!(committed["code"], 0, "{committed}");
-        let report = package_report(&fixture, &committed).await;
-        assert_eq!(report["data"]["counts"]["created"], 2, "{report}");
-        let object_mapping = report["data"]["object_mapping"].as_object().unwrap().clone();
-        assert_eq!(object_mapping.len(), 2);
-        let pages_after_import =
-            package_page_count(&state, fixture.target_workspace, Some(fixture.target_project)).await;
-        assert_eq!(pages_after_import, 2);
-
-        // (3) The same package again under reject_existing: preview succeeds and lists both
-        // lineage hits; the commit is refused as policy_rejected with zero canonical writes.
-        let again = package_preview(&fixture, mapped.clone(), "reject_existing", "package-rt-again").await;
-        assert_eq!(
-            again["code"], 0,
-            "a lineage hit is a preview conflict, not an error: {again}"
-        );
-        let mut expected_conflicts: Vec<Value> = object_mapping
-            .iter()
-            .map(|(source_object, target)| {
-                json!({"kind":"lineage_exists","source_object_id":source_object,"existing_target_id":target})
-            })
-            .collect();
-        expected_conflicts.sort_by_key(|entry| entry["source_object_id"].as_str().unwrap().to_string());
-        assert_eq!(
-            again["data"]["conflict_details"],
-            Value::Array(expected_conflicts),
-            "{again}"
-        );
-        let mut expected_ids: Vec<&String> = object_mapping.keys().collect();
-        expected_ids.sort();
-        assert_eq!(again["data"]["conflicts"], json!(expected_ids), "{again}");
-        let refused = package_commit(&fixture, &again, "reject_existing", "package-rt-again-commit").await;
-        assert_typed(&refused, "policy_rejected", 403);
-        assert_eq!(
-            package_page_count(&state, fixture.target_workspace, Some(fixture.target_project)).await,
-            pages_after_import
-        );
-
-        // (4) reuse_import_lineage resolves the same conflicts to the existing targets.
-        let reuse = package_preview(&fixture, mapped, "reuse_import_lineage", "package-rt-reuse").await;
-        assert_eq!(reuse["code"], 0, "{reuse}");
-        assert_eq!(reuse["data"]["conflict_details"], again["data"]["conflict_details"]);
-        let reuse_commit = package_commit(&fixture, &reuse, "reuse_import_lineage", "package-rt-reuse-commit").await;
-        assert_eq!(reuse_commit["code"], 0, "{reuse_commit}");
-        let reuse_report = package_report(&fixture, &reuse_commit).await;
-        assert_eq!(reuse_report["data"]["counts"]["reused"], 2, "{reuse_report}");
-        assert_eq!(reuse_report["data"]["counts"]["created"], 0, "{reuse_report}");
-        assert_eq!(
-            package_page_count(&state, fixture.target_workspace, Some(fixture.target_project)).await,
-            pages_after_import
-        );
-        scratch.drop_self().await;
     }
 
     #[tokio::test]
@@ -11594,15 +8267,15 @@ mod flow_database_tests {
         .await;
         let app = axum::Router::new()
             .route(
-                "/api/v1/workspaces/{workspace_id}/flow/exports",
+                "/api/v2/flow/workspaces/{workspace_id}/exports",
                 axum::routing::post(super::post_flow_workspace_export),
             )
             .route(
-                "/api/v1/flow/exports/{job_id}",
+                "/api/v2/flow/exports/{job_id}",
                 axum::routing::get(super::get_flow_export),
             )
             .route(
-                "/api/v1/flow/exports/{job_id}/artifact",
+                "/api/v2/flow/exports/{job_id}/artifact",
                 axum::routing::get(super::get_flow_export_artifact),
             )
             .layer(claims_for(owner_id))
@@ -11611,7 +8284,7 @@ mod flow_database_tests {
         let created = package_send(
             &app,
             "POST",
-            format!("/api/v1/workspaces/{export_workspace}/flow/exports"),
+            format!("/api/v2/flow/workspaces/{export_workspace}/exports"),
             Some(request.clone()),
         )
         .await;
@@ -11620,7 +8293,7 @@ mod flow_database_tests {
         assert_eq!(created["data"]["error"], "checksum_mismatch", "{created}");
         let job = created["data"]["job_id"].as_str().unwrap().to_string();
 
-        let status = package_send(&app, "GET", format!("/api/v1/flow/exports/{job}"), None).await;
+        let status = package_send(&app, "GET", format!("/api/v2/flow/exports/{job}"), None).await;
         assert_eq!(status["code"], 0, "{status}");
         assert_eq!(status["data"]["status"], "failed", "{status}");
         assert_eq!(status["data"]["error"], "checksum_mismatch", "{status}");
@@ -11629,14 +8302,14 @@ mod flow_database_tests {
         let replay = package_send(
             &app,
             "POST",
-            format!("/api/v1/workspaces/{export_workspace}/flow/exports"),
+            format!("/api/v2/flow/workspaces/{export_workspace}/exports"),
             Some(request),
         )
         .await;
         assert_eq!(replay["data"]["job_id"], json!(job), "{replay}");
         assert_eq!(replay["data"]["error"], "checksum_mismatch", "{replay}");
 
-        let artifact = package_send(&app, "GET", format!("/api/v1/flow/exports/{job}/artifact"), None).await;
+        let artifact = package_send(&app, "GET", format!("/api/v2/flow/exports/{job}/artifact"), None).await;
         assert_typed(&artifact, "not_found", 404);
         scratch.drop_self().await;
     }
@@ -11652,7 +8325,7 @@ mod flow_database_tests {
             build_package,
         };
 
-        const IMPORT_ARTIFACT_ROUTE: &str = "/api/v1/workspaces/{workspace_id}/flow/import-artifacts";
+        const IMPORT_ARTIFACT_ROUTE: &str = "/api/v2/flow/workspaces/{workspace_id}/import-artifacts";
 
         fn rewrite_snapshot_deflated(package: &[u8]) -> Vec<u8> {
             let mut archive = ZipArchive::new(Cursor::new(package)).expect("stored package opens");
@@ -11735,7 +8408,7 @@ mod flow_database_tests {
                         .oneshot(
                             axum::http::Request::builder()
                                 .method("POST")
-                                .uri(format!("/api/v1/workspaces/{workspace_id}/flow/import-artifacts"))
+                                .uri(format!("/api/v2/flow/workspaces/{workspace_id}/import-artifacts"))
                                 .header(axum::http::header::CONTENT_TYPE, "application/json")
                                 .body(axum::body::Body::from(
                                     json!({
@@ -12140,41 +8813,6 @@ mod flow_database_tests {
         let drifted = body_json(to_response(compact(head + 1, "typed-compact-key").await)).await;
         assert_typed(&drifted, "invalid_update", 400);
         assert_eq!(drifted["details"]["reason"], "idempotency_key_body_drift", "{drifted}");
-        scratch.drop_self().await;
-    }
-
-    #[tokio::test]
-    async fn conversion_get_and_retry_of_unknown_job_are_typed_not_found() {
-        let scratch = scratch_or_skip!("typed-conversion-not-found");
-        let state = state_for(scratch.db.clone());
-        let (_workspace_id, owner_id) = seed_workspace(&state, true).await;
-        let missing = Uuid::new_v4();
-        let body = body_json(to_response(
-            get_flow_conversion(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(missing.to_string()),
-            )
-            .await,
-        ))
-        .await;
-        assert_typed(&body, "not_found", 404);
-        let body = body_json(to_response(
-            post_flow_conversion_retry(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(missing.to_string()),
-                Json(crate::flow::bridge::ConversionRetryInput {
-                    idempotency_key: Uuid::new_v4().to_string(),
-                    confirm: true,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_typed(&body, "not_found", 404);
         scratch.drop_self().await;
     }
 
@@ -12998,120 +9636,6 @@ mod flow_database_tests {
     // Conversion (Forms bridge) job lifecycle
     // ---------------------------------------------------------------------------------------------
 
-    /// Calls the conversion read/retry/owner routes through the production router and its path
-    /// extractors, so a malformed id is parsed exactly as for a real client. A non-JSON body is
-    /// returned as `{"non_json_body": <text>}` instead of panicking.
-    async fn conversion_route(state: &AppState, user_id: Uuid, method: &str, uri: &str, body: Option<Value>) -> Value {
-        use tower::ServiceExt as _;
-        let app = axum::Router::new()
-            .route(
-                "/api/v1/flow/conversions/{job_id}",
-                axum::routing::get(get_flow_conversion),
-            )
-            .route(
-                "/api/v1/flow/conversions/{conversion_id}/owner",
-                axum::routing::get(super::get_flow_conversion_owner),
-            )
-            .route(
-                "/api/v1/flow/conversions/{job_id}/retry",
-                axum::routing::post(post_flow_conversion_retry),
-            )
-            .layer(claims_for(user_id))
-            .with_state(state.clone());
-        let request = axum::http::Request::builder()
-            .method(method)
-            .uri(uri)
-            .header(axum::http::header::CONTENT_TYPE, "application/json")
-            .body(axum::body::Body::from(
-                body.map_or_else(Vec::new, |value| value.to_string().into_bytes()),
-            ))
-            .expect("the request builds");
-        let response = app.oneshot(request).await.expect("the router answers");
-        let bytes = to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("response body reads");
-        serde_json::from_slice(&bytes)
-            .unwrap_or_else(|_| json!({"non_json_body": String::from_utf8_lossy(&bytes).to_string()}))
-    }
-
-    /// A Flow query string that does not parse (a non-numeric `limit`, a non-UUID `view_id`, ...)
-    /// is a typed `invalid_update` envelope, not axum's plain-text 400 query rejection.
-    #[tokio::test]
-    async fn unparseable_flow_query_parameters_are_typed_invalid_update() {
-        use tower::ServiceExt as _;
-        let scratch = scratch_or_skip!("typed-query-rejection");
-        let state = state_for(scratch.db.clone());
-        let (workspace, owner_id) = seed_workspace(&state, true).await;
-        let app = axum::Router::new()
-            .route(
-                "/api/v1/admin/workspaces/{workspace_id}/flow/lag",
-                axum::routing::get(get_flow_admin_lag),
-            )
-            .route(
-                "/api/v1/flow/collections/{collection_id}/records",
-                axum::routing::get(super::get_flow_collection_records),
-            )
-            .route(
-                "/api/v1/workspaces/{workspace_id}/flow/objects",
-                axum::routing::get(super::list_flow_objects),
-            )
-            .route(
-                "/api/v1/flow/objects/{object_id}/history",
-                axum::routing::get(super::get_flow_object_history),
-            )
-            .layer(claims_for(owner_id))
-            .with_state(state.clone());
-        let object = Uuid::new_v4();
-        for uri in [
-            format!("/api/v1/admin/workspaces/{workspace}/flow/lag?limit=abc"),
-            format!("/api/v1/flow/collections/{object}/records?view_id=not-a-uuid"),
-            format!("/api/v1/flow/collections/{object}/records?limit=-1"),
-            format!("/api/v1/workspaces/{workspace}/flow/objects?limit=many"),
-            format!("/api/v1/flow/objects/{object}/history?before_seq=x"),
-        ] {
-            let response = app
-                .clone()
-                .oneshot(
-                    axum::http::Request::builder()
-                        .uri(&uri)
-                        .body(axum::body::Body::empty())
-                        .expect("the request builds"),
-                )
-                .await
-                .expect("the router answers");
-            assert_eq!(response.status(), axum::http::StatusCode::OK, "{uri}");
-            let bytes = to_bytes(response.into_body(), usize::MAX)
-                .await
-                .expect("response body reads");
-            let body: Value = serde_json::from_slice(&bytes)
-                .unwrap_or_else(|_| panic!("{uri}: not a JSON envelope: {}", String::from_utf8_lossy(&bytes)));
-            assert_typed(&body, "invalid_update", 400);
-        }
-        scratch.drop_self().await;
-    }
-
-    /// A malformed conversion/job id is a typed `not_found` envelope on every
-    /// conversion route, not axum's plain-text path rejection.
-    #[tokio::test]
-    async fn non_uuid_conversion_ids_are_typed_not_found() {
-        let scratch = scratch_or_skip!("bridge-non-uuid");
-        let state = state_for(scratch.db.clone());
-        let (_, owner_id) = seed_workspace(&state, true).await;
-        for (method, uri, body) in [
-            ("GET", "/api/v1/flow/conversions/not-a-uuid", None),
-            ("GET", "/api/v1/flow/conversions/not-a-uuid/owner", None),
-            (
-                "POST",
-                "/api/v1/flow/conversions/not-a-uuid/retry",
-                Some(json!({"idempotency_key":"k","confirm":true})),
-            ),
-        ] {
-            let response = conversion_route(&state, owner_id, method, uri, body).await;
-            assert_typed(&response, "not_found", 404);
-        }
-        scratch.drop_self().await;
-    }
-
     struct ConversionFixture {
         workspace_id: Uuid,
         owner_id: Uuid,
@@ -13289,63 +9813,6 @@ mod flow_database_tests {
             .expect("count")
     }
 
-    /// Every job response carries `target_type`.
-    #[tokio::test]
-    async fn conversion_job_responses_carry_target_type() {
-        let scratch = scratch_or_skip!("bridge-target-type");
-        let state = state_for(scratch.db.clone());
-        let fx = conversion_seed(&state, true).await;
-        let (preview_id, _) = conversion_record_preview(&state, &fx).await;
-        let committed = conversion_commit(&state, &fx, preview_id, 1, "bridge-target-record").await;
-        assert_eq!(committed["data"]["target_type"], "form_record", "{committed}");
-        let read = conversion_route(
-            &state,
-            fx.owner_id,
-            "GET",
-            &format!(
-                "/api/v1/flow/conversions/{}",
-                committed["data"]["job_id"].as_str().expect("job id")
-            ),
-            None,
-        )
-        .await;
-        assert_eq!(read["data"]["target_type"], "form_record", "{read}");
-
-        let preview = conversion_preview(
-            &state,
-            &fx,
-            json!({"target_project_id":fx.project_id,"key":"bridge_new_form","name":"New form"}),
-        )
-        .await;
-        assert_eq!(preview["code"], 0, "{preview}");
-        let preview_id = Uuid::parse_str(preview["data"]["preview_id"].as_str().expect("preview id")).expect("UUID");
-        let committed = conversion_commit(&state, &fx, preview_id, 0, "bridge-target-form").await;
-        assert_eq!(committed["code"], 0, "{committed}");
-        assert_eq!(committed["data"]["target_type"], "form", "{committed}");
-        let read = conversion_route(
-            &state,
-            fx.owner_id,
-            "GET",
-            &format!(
-                "/api/v1/flow/conversions/{}",
-                committed["data"]["job_id"].as_str().expect("job id")
-            ),
-            None,
-        )
-        .await;
-        assert_eq!(read["data"]["target_type"], "form", "{read}");
-        assert_eq!(
-            conversion_count(
-                &state,
-                "SELECT count(*) AS n FROM project_forms WHERE workspace_id=$1",
-                vec![fx.workspace_id.into()]
-            )
-            .await,
-            2
-        );
-        scratch.drop_self().await;
-    }
-
     #[derive(FromQueryResult)]
     struct ConversionJobRow {
         id: Uuid,
@@ -13406,106 +9873,6 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
-    /// The 14 stable codes of `error-mapping-v1.md`; a conversion job's `error` must be one of them.
-    const CONVERSION_STABLE_CODES: [&str; 14] = [
-        "unauthenticated",
-        "forbidden",
-        "feature_disabled",
-        "not_found",
-        "unsupported_protocol",
-        "stale_frontier",
-        "invalid_update",
-        "policy_rejected",
-        "limit_exceeded",
-        "resync_required",
-        "server_rejected",
-        "server_draining",
-        "checksum_mismatch",
-        "unsupported_format",
-    ];
-
-    /// A failure after the job row exists -- here the production-reachable
-    /// Forms policy revocation and form archive between preview and commit -- leaves the job
-    /// `failed` with a stable `error` code, emits `flow.conversion.failed`, and still answers the
-    /// caller with a typed error.
-    #[tokio::test]
-    async fn execution_failure_persists_a_failed_job_with_a_stable_error() {
-        let scratch = scratch_or_skip!("bridge-failed-job");
-        let state = state_for(scratch.db.clone());
-        let fx = conversion_seed(&state, true).await;
-
-        // (a) record.create revoked after the preview.
-        let (preview_id, _) = conversion_record_preview(&state, &fx).await;
-        conversion_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
-        let rejected = conversion_commit(&state, &fx, preview_id, 1, "bridge-revoked").await;
-        assert_typed(&rejected, "policy_rejected", 403);
-        let jobs = conversion_jobs_of_preview(&state, preview_id).await;
-        assert_eq!(jobs.len(), 1, "the job row must survive the failure");
-        assert_eq!(jobs[0].status, "failed");
-        assert_eq!(jobs[0].error_code.as_deref(), Some("policy_rejected"));
-        assert_eq!(rejected["details"]["job_id"], jobs[0].id.to_string(), "{rejected}");
-        assert_eq!(rejected["details"]["job_status"], "failed", "{rejected}");
-        let read = conversion_route(
-            &state,
-            fx.owner_id,
-            "GET",
-            &format!("/api/v1/flow/conversions/{}", jobs[0].id),
-            None,
-        )
-        .await;
-        assert_eq!(read["code"], 0, "{read}");
-        assert_eq!(read["data"]["status"], "failed", "{read}");
-        let error = read["data"]["error"].as_str().expect("a failed job carries error");
-        assert!(
-            CONVERSION_STABLE_CODES.contains(&error),
-            "unstable job error {error}: {read}"
-        );
-        assert_eq!(
-            conversion_count(
-                &state,
-                "SELECT count(*) AS n FROM business_events WHERE aggregate_id=$1 \
-                 AND event_type='flow.conversion.failed' AND payload->>'error'='policy_rejected'",
-                vec![jobs[0].id.to_string().into()]
-            )
-            .await,
-            1
-        );
-        assert_eq!(
-            conversion_count(
-                &state,
-                "SELECT count(*) AS n FROM form_records WHERE form_id=$1",
-                vec![fx.form_id.into()]
-            )
-            .await,
-            0,
-            "a failed conversion writes no target"
-        );
-
-        // (b) the target form is archived through the Forms route after the preview.
-        conversion_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
-        let (archived_preview_id, _) = conversion_record_preview(&state, &fx).await;
-        let archived = body_json(to_response(
-            delete_form(State(state.clone()), claims_for(fx.owner_id), None, Path(fx.form_id)).await,
-        ))
-        .await;
-        assert_eq!(archived["code"], 0, "{archived}");
-        let rejected = conversion_commit(&state, &fx, archived_preview_id, 1, "bridge-archived").await;
-        assert!(
-            rejected["error_code"]
-                .as_str()
-                .is_some_and(|code| CONVERSION_STABLE_CODES.contains(&code)),
-            "{rejected}"
-        );
-        assert!(rejected["data"].is_null(), "{rejected}");
-        let jobs = conversion_jobs_of_preview(&state, archived_preview_id).await;
-        assert_eq!(jobs.len(), 1, "the job row must survive the failure");
-        assert_eq!(jobs[0].status, "failed");
-        assert_eq!(jobs[0].error_code.as_deref(), rejected["error_code"].as_str());
-        assert_eq!(rejected["details"]["job_id"], jobs[0].id.to_string(), "{rejected}");
-        assert_eq!(rejected["details"]["job_status"], "failed", "{rejected}");
-        scratch.drop_self().await;
-    }
-
     /// An expired preview is refused with `policy_rejected` +
     /// `details.reason=preview_expired`, before any job exists.
     #[tokio::test]
@@ -13549,163 +9916,6 @@ mod flow_database_tests {
                 .is_some_and(|actions| actions.iter().any(|action| action == "record.create")),
             "{preview}"
         );
-        scratch.drop_self().await;
-    }
-
-    async fn conversion_retry(state: &AppState, fx: &ConversionFixture, job_id: &str) -> Value {
-        conversion_route(
-            state,
-            fx.owner_id,
-            "POST",
-            &format!("/api/v1/flow/conversions/{job_id}/retry"),
-            Some(json!({"idempotency_key": Uuid::new_v4().to_string(), "confirm": true})),
-        )
-        .await
-    }
-
-    async fn conversion_change_schema(state: &AppState, fx: &ConversionFixture, expected_version: i32) {
-        let mut schema = conversion_text_schema();
-        if let Some(fields) = schema["fields"].as_array_mut() {
-            fields.push(json!({
-                "field_id": format!("fld_conversion_extra_{expected_version}"),
-                "key": format!("extra_{expected_version}"),
-                "type": "text",
-                "required": false
-            }));
-        }
-        let updated = body_json(to_response(
-            crate::routes::form::update_form(
-                State(state.clone()),
-                claims_for(fx.owner_id),
-                None,
-                Path(fx.form_id),
-                Json(crate::routes::form::UpdateFormRequest {
-                    name: None,
-                    description: None,
-                    icon: None,
-                    color: None,
-                    title_template: None,
-                    schema: Some(schema),
-                    detail_layout: None,
-                    expected_schema_version: Some(expected_version),
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(updated["code"], 0, "{updated}");
-    }
-
-    /// A target schema change between preview and commit (or between a
-    /// failure and its retry) is `policy_rejected` + `details.reason=target_schema_changed`.
-    #[tokio::test]
-    async fn target_schema_change_is_policy_rejected_target_schema_changed() {
-        let scratch = scratch_or_skip!("bridge-schema-changed");
-        let state = state_for(scratch.db.clone());
-        let fx = conversion_seed(&state, true).await;
-
-        let (preview_id, _) = conversion_record_preview(&state, &fx).await;
-        conversion_change_schema(&state, &fx, 1).await;
-        let rejected = conversion_commit(&state, &fx, preview_id, 1, "bridge-schema-commit").await;
-        assert_typed(&rejected, "policy_rejected", 403);
-        assert_eq!(rejected["details"]["reason"], "target_schema_changed", "{rejected}");
-        let mismatched = conversion_commit(&state, &fx, preview_id, 2, "bridge-schema-input").await;
-        assert_typed(&mismatched, "policy_rejected", 403);
-        assert_eq!(mismatched["details"]["reason"], "target_schema_changed", "{mismatched}");
-
-        // A failed job whose target schema moves on before the retry.
-        let (preview_id, _) = conversion_record_preview(&state, &fx).await;
-        conversion_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
-        let failed = conversion_commit(&state, &fx, preview_id, 2, "bridge-schema-retry").await;
-        assert_typed(&failed, "policy_rejected", 403);
-        let job_id = conversion_jobs_of_preview(&state, preview_id)
-            .await
-            .first()
-            .map(|job| job.id)
-            .expect("the failed job exists");
-        conversion_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
-        conversion_change_schema(&state, &fx, 2).await;
-        let retried = conversion_retry(&state, &fx, &job_id.to_string()).await;
-        assert_typed(&retried, "policy_rejected", 403);
-        assert_eq!(retried["details"]["reason"], "target_schema_changed", "{retried}");
-        let jobs = conversion_jobs_of_preview(&state, preview_id).await;
-        assert_eq!(jobs[0].status, "failed");
-        assert_eq!(jobs[0].error_code.as_deref(), Some("policy_rejected"));
-        scratch.drop_self().await;
-    }
-
-    /// Retry does not depend on the preview TTL. A job that failed is retried 20
-    /// minutes after its preview expired, against the job's own frozen frontier/schema version;
-    /// a source that moved on in the meantime is `stale_frontier`.
-    #[tokio::test]
-    async fn failed_job_retries_twenty_minutes_after_its_preview_expired() {
-        let scratch = scratch_or_skip!("bridge-retry-ttl");
-        let state = state_for(scratch.db.clone());
-        let fx = conversion_seed(&state, true).await;
-        let (preview_id, _) = conversion_record_preview(&state, &fx).await;
-        conversion_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
-        let failed = conversion_commit(&state, &fx, preview_id, 1, "bridge-ttl-commit").await;
-        assert_typed(&failed, "policy_rejected", 403);
-        let job_id = conversion_jobs_of_preview(&state, preview_id)
-            .await
-            .first()
-            .map(|job| job.id)
-            .expect("the failed job exists");
-        conversion_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
-        exec(
-            &state,
-            "UPDATE flow_conversion_previews SET created_at=now()-interval '35 minutes', \
-             expires_at=now()-interval '20 minutes' WHERE id=$1",
-            vec![preview_id.into()],
-        )
-        .await;
-        let retried = conversion_retry(&state, &fx, &job_id.to_string()).await;
-        assert_eq!(retried["code"], 0, "{retried}");
-        assert_eq!(retried["data"]["job_id"], job_id.to_string(), "{retried}");
-        assert_eq!(retried["data"]["status"], "completed", "{retried}");
-        assert_eq!(
-            retried["data"]["created_target_ids"].as_array().map(Vec::len),
-            Some(1),
-            "{retried}"
-        );
-        assert!(retried["data"]["error"].is_null(), "{retried}");
-
-        // Source advanced after the failure: retry is stale_frontier and the job stays failed.
-        let (preview_id, _) = conversion_record_preview(&state, &fx).await;
-        conversion_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
-        let failed = conversion_commit(&state, &fx, preview_id, 1, "bridge-ttl-stale").await;
-        assert_typed(&failed, "policy_rejected", 403);
-        let job_id = conversion_jobs_of_preview(&state, preview_id)
-            .await
-            .first()
-            .map(|job| job.id)
-            .expect("the failed job exists");
-        conversion_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
-        let advanced = body_json(to_response(
-            post_flow_object_command(
-                State(state.clone()),
-                claims_for(fx.owner_id),
-                None,
-                Path(fx.source_id),
-                Json(ExecuteFlowCommandRequest {
-                    command: FlowCommandEnvelope {
-                        command_type: "set_title".to_string(),
-                        payload: json!({"title": "advanced source"}),
-                    },
-                    expected_frontier: None,
-                    idempotency_key: Uuid::new_v4().to_string(),
-                    message: None,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(advanced["code"], 0, "{advanced}");
-        let stale_retry = conversion_retry(&state, &fx, &job_id.to_string()).await;
-        assert_typed(&stale_retry, "stale_frontier", 409);
-        let jobs = conversion_jobs_of_preview(&state, preview_id).await;
-        assert_eq!(jobs[0].status, "failed");
-        assert_eq!(jobs[0].error_code.as_deref(), Some("stale_frontier"));
         scratch.drop_self().await;
     }
 
@@ -13812,6 +10022,583 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
+    /// `rest-api-v1.md` v0.7: the stale-`started` sweep runs at startup *and periodically*. A job
+    /// that goes stale after the reaper's first sweep is failed by a later one without any retry
+    /// or restart, and the loop ends when it is told to stop.
+    #[tokio::test]
+    async fn the_conversion_reaper_fails_jobs_that_go_stale_after_startup_and_stops_on_shutdown() {
+        let scratch = scratch_or_skip!("conversion-reaper");
+        let state = state_for(scratch.db.clone());
+        let fx = conversion_seed(&state, true).await;
+        let job = conversion_failed_job(&state, &fx, "conversion-reaper-job").await;
+        exec(
+            &state,
+            "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, started_at=now() WHERE id=$1",
+            vec![job.into()],
+        )
+        .await;
+        let (stop, stop_rx) = tokio::sync::watch::channel(false);
+        let reaper = tokio::spawn(crate::flow::bridge::run_conversion_reaper(
+            state.clone(),
+            std::time::Duration::from_millis(200),
+            stop_rx,
+        ));
+        // Let the startup sweep pass while the job is still fresh.
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        assert_eq!(
+            conversion_job_status(&state, job).await,
+            ("started".to_string(), None),
+            "a fresh started job survives the sweeps"
+        );
+        // The run crashes long ago, as far as the row is concerned.
+        exec(
+            &state,
+            "UPDATE flow_conversion_jobs SET started_at=now()-interval '16 minutes' WHERE id=$1",
+            vec![job.into()],
+        )
+        .await;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while conversion_job_status(&state, job).await.0 == "started" && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        assert_eq!(
+            conversion_job_status(&state, job).await,
+            ("failed".to_string(), Some("server_rejected".to_string())),
+            "a later periodic sweep fails the job without a retry"
+        );
+        assert_eq!(conversion_reaped_events(&state, job).await, (1, 1));
+        stop.send(true).expect("the reaper is listening");
+        tokio::time::timeout(std::time::Duration::from_secs(5), reaper)
+            .await
+            .expect("the reaper stops on shutdown")
+            .expect("the reaper task ends cleanly");
+        scratch.drop_self().await;
+    }
+
+    /// The stale-`started` sweep measures a run from `started_at`, the moment the run entered
+    /// `started`, not from `updated_at`: a statement that touches a `started` job does not
+    /// postpone its reclaim, and an old `updated_at` does not reclaim a run that began just now.
+    #[tokio::test]
+    async fn the_conversion_sweep_measures_a_run_from_started_at_and_ignores_updated_at() {
+        let scratch = scratch_or_skip!("conversion-started-at");
+        let state = state_for(scratch.db.clone());
+        let fx = conversion_seed(&state, true).await;
+        let touched_job = conversion_failed_job(&state, &fx, "started-at-touched").await;
+        let young_job = conversion_failed_job(&state, &fx, "started-at-young").await;
+        // A run that began 16 minutes ago whose row was written a moment ago ...
+        exec(
+            &state,
+            "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, \
+             started_at=now()-interval '16 minutes', updated_at=now() WHERE id=$1",
+            vec![touched_job.into()],
+        )
+        .await;
+        // ... and a run that began just now on a row last written 16 minutes ago.
+        exec(
+            &state,
+            "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, \
+             started_at=now(), updated_at=now()-interval '16 minutes' WHERE id=$1",
+            vec![young_job.into()],
+        )
+        .await;
+
+        let reaped = crate::flow::bridge::reap_stale_conversion_jobs(
+            &state,
+            crate::flow::bridge::conversion_started_stale_after(),
+        )
+        .await
+        .expect("the sweep runs");
+        assert_eq!(
+            conversion_job_status(&state, touched_job).await,
+            ("failed".to_string(), Some("server_rejected".to_string())),
+            "a run past the threshold is reclaimed although its row was just written"
+        );
+        assert_eq!(conversion_reaped_events(&state, touched_job).await, (1, 1));
+        assert_eq!(
+            conversion_job_status(&state, young_job).await,
+            ("started".to_string(), None),
+            "a run that just began is left alone although its row was last written long ago"
+        );
+        assert_eq!(conversion_reaped_events(&state, young_job).await, (0, 0));
+        assert_eq!(reaped, 1);
+        scratch.drop_self().await;
+    }
+
+    /// Migration 0072 on a database that already holds jobs: a `started` row's `started_at` is
+    /// backfilled from its `updated_at`, any other row's from its `created_at`, the column ends
+    /// `NOT NULL DEFAULT now()`, and running the file again changes nothing: a `started_at` that
+    /// was written after the first run (a retry claim) is not backfilled over.
+    #[tokio::test]
+    async fn the_started_at_migration_backfills_existing_jobs_and_reruns_cleanly() {
+        const MIGRATION: &str = include_str!("../../../../migrations/0072_flow_conversion_job_started_at.sql");
+        let scratch = scratch_or_skip!("conversion-started-at-migration");
+        let state = state_for(scratch.db.clone());
+        let fx = conversion_seed(&state, true).await;
+        let running = conversion_failed_job(&state, &fx, "started-at-migration-running").await;
+        let failed = conversion_failed_job(&state, &fx, "started-at-migration-failed").await;
+        state
+            .db
+            .execute_unprepared("ALTER TABLE flow_conversion_jobs DROP COLUMN started_at")
+            .await
+            .expect("the pre-migration shape");
+        exec(
+            &state,
+            "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, \
+             created_at=now()-interval '3 hours', updated_at=now()-interval '2 hours' WHERE id=$1",
+            vec![running.into()],
+        )
+        .await;
+        exec(
+            &state,
+            "UPDATE flow_conversion_jobs SET created_at=now()-interval '5 hours', \
+             updated_at=now()-interval '4 hours' WHERE id=$1",
+            vec![failed.into()],
+        )
+        .await;
+        let backfilled = |column: &'static str, job_id: Uuid| {
+            let state = state.clone();
+            async move {
+                conversion_count(
+                    &state,
+                    &format!("SELECT count(*) AS n FROM flow_conversion_jobs WHERE id=$1 AND started_at = {column}"),
+                    vec![job_id.into()],
+                )
+                .await
+            }
+        };
+        let column_is_final = || {
+            let state = state.clone();
+            async move {
+                conversion_count(
+                    &state,
+                    "SELECT count(*) AS n FROM information_schema.columns \
+                     WHERE table_schema = current_schema() AND table_name = 'flow_conversion_jobs' \
+                     AND column_name = 'started_at' AND is_nullable = 'NO' AND column_default = 'now()'",
+                    vec![],
+                )
+                .await
+            }
+        };
+        state
+            .db
+            .execute_unprepared(MIGRATION)
+            .await
+            .unwrap_or_else(|err| panic!("first run: {err}"));
+        assert_eq!(backfilled("updated_at", running).await, 1, "first run");
+        assert_eq!(backfilled("created_at", failed).await, 1, "first run");
+        assert_eq!(column_is_final().await, 1, "first run");
+
+        // Between the runs both rows get a `started_at` that is neither their `created_at` nor
+        // their `updated_at`, as a retry claim would write it.
+        exec(
+            &state,
+            "UPDATE flow_conversion_jobs SET started_at = created_at + interval '7 minutes' WHERE id = ANY($1)",
+            vec![vec![running, failed].into()],
+        )
+        .await;
+        let kept = |job_id: Uuid| backfilled("created_at + interval '7 minutes'", job_id);
+        assert_eq!(kept(running).await + kept(failed).await, 2, "both rows were rewritten");
+        assert_eq!(
+            backfilled("updated_at", running).await + backfilled("created_at", failed).await,
+            0,
+            "the rewritten values differ from what the backfill computes"
+        );
+
+        state
+            .db
+            .execute_unprepared(MIGRATION)
+            .await
+            .unwrap_or_else(|err| panic!("second run: {err}"));
+        assert_eq!(
+            kept(running).await,
+            1,
+            "running the migration again does not backfill over a `started` row's started_at"
+        );
+        assert_eq!(
+            kept(failed).await,
+            1,
+            "running the migration again does not backfill over a `failed` row's started_at"
+        );
+        assert_eq!(column_is_final().await, 1, "second run");
+        scratch.drop_self().await;
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Form record detail carries its Flow lineage
+    // ---------------------------------------------------------------------------------------------
+
+    // ---------------------------------------------------------------------------------------------
+    // Backend tidy-up (records view_id, record schema, bootstrap level, job error_reason)
+    // ---------------------------------------------------------------------------------------------
+
+    /// Calls the conversion read/retry/owner routes through the production router and its path
+    /// extractors, so a malformed id is parsed exactly as for a real client. A non-JSON body is
+    /// returned as `{"non_json_body": <text>}` instead of panicking.
+    const CONVERSION_STABLE_CODES: [&str; 14] = [
+        "unauthenticated",
+        "forbidden",
+        "feature_disabled",
+        "not_found",
+        "unsupported_protocol",
+        "stale_frontier",
+        "invalid_update",
+        "policy_rejected",
+        "limit_exceeded",
+        "resync_required",
+        "server_rejected",
+        "server_draining",
+        "checksum_mismatch",
+        "unsupported_format",
+    ];
+
+    async fn conversion_route(state: &AppState, user_id: Uuid, method: &str, uri: &str, body: Option<Value>) -> Value {
+        use tower::ServiceExt as _;
+        let app = axum::Router::new()
+            .route(
+                "/api/v2/flow/conversions/{job_id}",
+                axum::routing::get(get_flow_conversion),
+            )
+            .route(
+                "/api/v2/flow/conversions/{conversion_id}/owner",
+                axum::routing::get(super::get_flow_v2_conversion_owner),
+            )
+            .route(
+                "/api/v2/flow/conversions/{job_id}/retry",
+                axum::routing::post(post_flow_conversion_retry),
+            )
+            .layer(claims_for(user_id))
+            .with_state(state.clone());
+        let request = axum::http::Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(
+                body.map_or_else(Vec::new, |value| value.to_string().into_bytes()),
+            ))
+            .expect("the request builds");
+        let response = app.oneshot(request).await.expect("the router answers");
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body reads");
+        serde_json::from_slice(&bytes)
+            .unwrap_or_else(|_| json!({"non_json_body": String::from_utf8_lossy(&bytes).to_string()}))
+    }
+
+    async fn conversion_retry(state: &AppState, fx: &ConversionFixture, job_id: &str) -> Value {
+        conversion_route(
+            state,
+            fx.owner_id,
+            "POST",
+            &format!("/api/v2/flow/conversions/{job_id}/retry"),
+            Some(json!({"idempotency_key": Uuid::new_v4().to_string(), "confirm": true})),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn conversion_get_and_retry_of_unknown_job_are_typed_not_found() {
+        let scratch = scratch_or_skip!("typed-conversion-not-found");
+        let state = state_for(scratch.db.clone());
+        let (_workspace_id, owner_id) = seed_workspace(&state, true).await;
+        let missing = Uuid::new_v4();
+        let body = body_json(to_response(
+            get_flow_conversion(State(state.clone()), claims_for(owner_id), None, Path(missing)).await,
+        ))
+        .await;
+        assert_typed(&body, "not_found", 404);
+        let body = body_json(to_response(
+            post_flow_conversion_retry(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Path(missing),
+                Json(crate::flow::bridge::ConversionRetryInput {
+                    idempotency_key: Uuid::new_v4().to_string(),
+                    confirm: true,
+                }),
+            )
+            .await,
+        ))
+        .await;
+        assert_typed(&body, "not_found", 404);
+        scratch.drop_self().await;
+    }
+
+    /// Every job response carries `target_type`.
+    #[tokio::test]
+    async fn conversion_job_responses_carry_target_type() {
+        let scratch = scratch_or_skip!("bridge-target-type");
+        let state = state_for(scratch.db.clone());
+        let fx = conversion_seed(&state, true).await;
+        let (preview_id, _) = conversion_record_preview(&state, &fx).await;
+        let committed = conversion_commit(&state, &fx, preview_id, 1, "bridge-target-record").await;
+        assert_eq!(committed["data"]["target_type"], "form_record", "{committed}");
+        let read = conversion_route(
+            &state,
+            fx.owner_id,
+            "GET",
+            &format!(
+                "/api/v2/flow/conversions/{}",
+                committed["data"]["job_id"].as_str().expect("job id")
+            ),
+            None,
+        )
+        .await;
+        assert_eq!(read["data"]["target_type"], "form_record", "{read}");
+
+        let preview = conversion_preview(
+            &state,
+            &fx,
+            json!({"target_project_id":fx.project_id,"key":"bridge_new_form","name":"New form"}),
+        )
+        .await;
+        assert_eq!(preview["code"], 0, "{preview}");
+        let preview_id = Uuid::parse_str(preview["data"]["preview_id"].as_str().expect("preview id")).expect("UUID");
+        let committed = conversion_commit(&state, &fx, preview_id, 0, "bridge-target-form").await;
+        assert_eq!(committed["code"], 0, "{committed}");
+        assert_eq!(committed["data"]["target_type"], "form", "{committed}");
+        let read = conversion_route(
+            &state,
+            fx.owner_id,
+            "GET",
+            &format!(
+                "/api/v2/flow/conversions/{}",
+                committed["data"]["job_id"].as_str().expect("job id")
+            ),
+            None,
+        )
+        .await;
+        assert_eq!(read["data"]["target_type"], "form", "{read}");
+        assert_eq!(
+            conversion_count(
+                &state,
+                "SELECT count(*) AS n FROM project_forms WHERE workspace_id=$1",
+                vec![fx.workspace_id.into()]
+            )
+            .await,
+            2
+        );
+        scratch.drop_self().await;
+    }
+
+    /// A failure after the job row exists -- here the production-reachable
+    /// Forms policy revocation and form archive between preview and commit -- leaves the job
+    /// `failed` with a stable `error` code, emits `flow.conversion.failed`, and still answers the
+    /// caller with a typed error.
+    #[tokio::test]
+    async fn execution_failure_persists_a_failed_job_with_a_stable_error() {
+        let scratch = scratch_or_skip!("bridge-failed-job");
+        let state = state_for(scratch.db.clone());
+        let fx = conversion_seed(&state, true).await;
+
+        // (a) record.create revoked after the preview.
+        let (preview_id, _) = conversion_record_preview(&state, &fx).await;
+        conversion_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
+        let rejected = conversion_commit(&state, &fx, preview_id, 1, "bridge-revoked").await;
+        assert_typed(&rejected, "policy_rejected", 403);
+        let jobs = conversion_jobs_of_preview(&state, preview_id).await;
+        assert_eq!(jobs.len(), 1, "the job row must survive the failure");
+        assert_eq!(jobs[0].status, "failed");
+        assert_eq!(jobs[0].error_code.as_deref(), Some("policy_rejected"));
+        assert_eq!(rejected["details"]["job_id"], jobs[0].id.to_string(), "{rejected}");
+        assert_eq!(rejected["details"]["job_status"], "failed", "{rejected}");
+        let read = conversion_route(
+            &state,
+            fx.owner_id,
+            "GET",
+            &format!("/api/v2/flow/conversions/{}", jobs[0].id),
+            None,
+        )
+        .await;
+        assert_eq!(read["code"], 0, "{read}");
+        assert_eq!(read["data"]["status"], "failed", "{read}");
+        let error = read["data"]["error"].as_str().expect("a failed job carries error");
+        assert!(
+            CONVERSION_STABLE_CODES.contains(&error),
+            "unstable job error {error}: {read}"
+        );
+        assert_eq!(
+            conversion_count(
+                &state,
+                "SELECT count(*) AS n FROM business_events WHERE aggregate_id=$1 \
+                 AND event_type='flow.conversion.failed' AND payload->>'error'='policy_rejected'",
+                vec![jobs[0].id.to_string().into()]
+            )
+            .await,
+            1
+        );
+        assert_eq!(
+            conversion_count(
+                &state,
+                "SELECT count(*) AS n FROM form_records WHERE form_id=$1",
+                vec![fx.form_id.into()]
+            )
+            .await,
+            0,
+            "a failed conversion writes no target"
+        );
+
+        // (b) the target form is archived through the Forms route after the preview.
+        conversion_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
+        let (archived_preview_id, _) = conversion_record_preview(&state, &fx).await;
+        let archived = body_json(to_response(
+            delete_form(State(state.clone()), claims_for(fx.owner_id), None, Path(fx.form_id)).await,
+        ))
+        .await;
+        assert_eq!(archived["code"], 0, "{archived}");
+        let rejected = conversion_commit(&state, &fx, archived_preview_id, 1, "bridge-archived").await;
+        assert!(
+            rejected["error_code"]
+                .as_str()
+                .is_some_and(|code| CONVERSION_STABLE_CODES.contains(&code)),
+            "{rejected}"
+        );
+        assert!(rejected["data"].is_null(), "{rejected}");
+        let jobs = conversion_jobs_of_preview(&state, archived_preview_id).await;
+        assert_eq!(jobs.len(), 1, "the job row must survive the failure");
+        assert_eq!(jobs[0].status, "failed");
+        assert_eq!(jobs[0].error_code.as_deref(), rejected["error_code"].as_str());
+        assert_eq!(rejected["details"]["job_id"], jobs[0].id.to_string(), "{rejected}");
+        assert_eq!(rejected["details"]["job_status"], "failed", "{rejected}");
+        scratch.drop_self().await;
+    }
+
+    /// Retry does not depend on the preview TTL. A job that failed is retried 20
+    /// minutes after its preview expired, against the job's own frozen frontier/schema version;
+    /// a source that moved on in the meantime is `stale_frontier`.
+    #[tokio::test]
+    async fn failed_job_retries_twenty_minutes_after_its_preview_expired() {
+        let scratch = scratch_or_skip!("bridge-retry-ttl");
+        let state = state_for(scratch.db.clone());
+        let fx = conversion_seed(&state, true).await;
+        let (preview_id, _) = conversion_record_preview(&state, &fx).await;
+        conversion_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
+        let failed = conversion_commit(&state, &fx, preview_id, 1, "bridge-ttl-commit").await;
+        assert_typed(&failed, "policy_rejected", 403);
+        let job_id = conversion_jobs_of_preview(&state, preview_id)
+            .await
+            .first()
+            .map(|job| job.id)
+            .expect("the failed job exists");
+        conversion_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
+        exec(
+            &state,
+            "UPDATE flow_conversion_previews SET created_at=now()-interval '35 minutes', \
+             expires_at=now()-interval '20 minutes' WHERE id=$1",
+            vec![preview_id.into()],
+        )
+        .await;
+        let retried = conversion_retry(&state, &fx, &job_id.to_string()).await;
+        assert_eq!(retried["code"], 0, "{retried}");
+        assert_eq!(retried["data"]["job_id"], job_id.to_string(), "{retried}");
+        assert_eq!(retried["data"]["status"], "completed", "{retried}");
+        assert_eq!(
+            retried["data"]["created_target_ids"].as_array().map(Vec::len),
+            Some(1),
+            "{retried}"
+        );
+        assert!(retried["data"]["error"].is_null(), "{retried}");
+
+        // Source advanced after the failure: retry is stale_frontier and the job stays failed.
+        let (preview_id, _) = conversion_record_preview(&state, &fx).await;
+        conversion_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
+        let failed = conversion_commit(&state, &fx, preview_id, 1, "bridge-ttl-stale").await;
+        assert_typed(&failed, "policy_rejected", 403);
+        let job_id = conversion_jobs_of_preview(&state, preview_id)
+            .await
+            .first()
+            .map(|job| job.id)
+            .expect("the failed job exists");
+        conversion_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
+        let advanced = body_json(to_response(
+            post_flow_object_command(
+                State(state.clone()),
+                claims_for(fx.owner_id),
+                None,
+                Path(fx.source_id),
+                Json(ExecuteFlowCommandRequest {
+                    command: FlowCommandEnvelope {
+                        command_type: "set_title".to_string(),
+                        payload: json!({"title": "advanced source"}),
+                    },
+                    expected_frontier: None,
+                    idempotency_key: Uuid::new_v4().to_string(),
+                    message: None,
+                }),
+            )
+            .await,
+        ))
+        .await;
+        assert_eq!(advanced["code"], 0, "{advanced}");
+        let stale_retry = conversion_retry(&state, &fx, &job_id.to_string()).await;
+        assert_typed(&stale_retry, "stale_frontier", 409);
+        let jobs = conversion_jobs_of_preview(&state, preview_id).await;
+        assert_eq!(jobs[0].status, "failed");
+        assert_eq!(jobs[0].error_code.as_deref(), Some("stale_frontier"));
+        scratch.drop_self().await;
+    }
+
+    /// A job the stale-`started` sweep failed reports `error_reason:"stale_started"`; any
+    /// other `failed` job (and a reaped job that later fails again for another reason) has no
+    /// `error_reason` key.
+    #[tokio::test]
+    async fn reaped_conversion_job_reports_error_reason_stale_started() {
+        let scratch = scratch_or_skip!("surface-error-reason");
+        let state = state_for(scratch.db.clone());
+        let fx = conversion_seed(&state, true).await;
+        let reaped_job = conversion_failed_job(&state, &fx, "surface-reason-stale").await;
+        let plain_failed = conversion_failed_job(&state, &fx, "surface-reason-plain").await;
+        exec(
+            &state,
+            "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, \
+             started_at=now()-interval '16 minutes' WHERE id=$1",
+            vec![reaped_job.into()],
+        )
+        .await;
+        let reaped = crate::flow::bridge::reap_stale_conversion_jobs(
+            &state,
+            crate::flow::bridge::conversion_started_stale_after(),
+        )
+        .await
+        .expect("the sweep runs");
+        assert_eq!(reaped, 1);
+        let job = |job_id: Uuid| {
+            let state = state.clone();
+            let owner_id = fx.owner_id;
+            async move {
+                conversion_route(
+                    &state,
+                    owner_id,
+                    "GET",
+                    &format!("/api/v2/flow/conversions/{job_id}"),
+                    None,
+                )
+                .await
+            }
+        };
+        let reaped_view = job(reaped_job).await;
+        assert_eq!(reaped_view["data"]["status"], "failed", "{reaped_view}");
+        assert_eq!(reaped_view["data"]["error"], "server_rejected", "{reaped_view}");
+        assert_eq!(reaped_view["data"]["error_reason"], "stale_started", "{reaped_view}");
+
+        let plain_view = job(plain_failed).await;
+        assert_eq!(plain_view["data"]["status"], "failed", "{plain_view}");
+        assert!(
+            plain_view["data"].get("error_reason").is_none(),
+            "an ordinary failure carries no error_reason: {plain_view}"
+        );
+
+        // The reaped job is retried, fails again for an ordinary reason: the reason is gone.
+        conversion_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
+        let refused = conversion_retry(&state, &fx, &reaped_job.to_string()).await;
+        assert_typed(&refused, "policy_rejected", 403);
+        let refailed = job(reaped_job).await;
+        assert_eq!(refailed["data"]["status"], "failed", "{refailed}");
+        assert!(refailed["data"].get("error_reason").is_none(), "{refailed}");
+        conversion_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
+        scratch.drop_self().await;
+    }
+
     /// A job left `started` past the threshold (its run crashed) is reaped to
     /// `failed`/`server_rejected` with one business `flow.conversion.failed` (`reason=stale_started`);
     /// a fresh `started` job is left alone; a second sweep writes nothing; and a retry that finds a
@@ -13897,175 +10684,6 @@ mod flow_database_tests {
             ("started".to_string(), None)
         );
         assert_eq!(conversion_reaped_events(&state, retry_job).await, (0, 0));
-        scratch.drop_self().await;
-    }
-
-    /// `rest-api-v1.md` v0.7: the stale-`started` sweep runs at startup *and periodically*. A job
-    /// that goes stale after the reaper's first sweep is failed by a later one without any retry
-    /// or restart, and the loop ends when it is told to stop.
-    #[tokio::test]
-    async fn the_conversion_reaper_fails_jobs_that_go_stale_after_startup_and_stops_on_shutdown() {
-        let scratch = scratch_or_skip!("conversion-reaper");
-        let state = state_for(scratch.db.clone());
-        let fx = conversion_seed(&state, true).await;
-        let job = conversion_failed_job(&state, &fx, "conversion-reaper-job").await;
-        exec(
-            &state,
-            "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, started_at=now() WHERE id=$1",
-            vec![job.into()],
-        )
-        .await;
-        let (stop, stop_rx) = tokio::sync::watch::channel(false);
-        let reaper = tokio::spawn(crate::flow::bridge::run_conversion_reaper(
-            state.clone(),
-            std::time::Duration::from_millis(200),
-            stop_rx,
-        ));
-        // Let the startup sweep pass while the job is still fresh.
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        assert_eq!(
-            conversion_job_status(&state, job).await,
-            ("started".to_string(), None),
-            "a fresh started job survives the sweeps"
-        );
-        // The run crashes long ago, as far as the row is concerned.
-        exec(
-            &state,
-            "UPDATE flow_conversion_jobs SET started_at=now()-interval '16 minutes' WHERE id=$1",
-            vec![job.into()],
-        )
-        .await;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while conversion_job_status(&state, job).await.0 == "started" && std::time::Instant::now() < deadline {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
-        assert_eq!(
-            conversion_job_status(&state, job).await,
-            ("failed".to_string(), Some("server_rejected".to_string())),
-            "a later periodic sweep fails the job without a retry"
-        );
-        assert_eq!(conversion_reaped_events(&state, job).await, (1, 1));
-        stop.send(true).expect("the reaper is listening");
-        tokio::time::timeout(std::time::Duration::from_secs(5), reaper)
-            .await
-            .expect("the reaper stops on shutdown")
-            .expect("the reaper task ends cleanly");
-        scratch.drop_self().await;
-    }
-
-    async fn conversion_job_started_seconds_ago(state: &AppState, job_id: Uuid) -> f64 {
-        state
-            .db
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT extract(epoch FROM clock_timestamp() - started_at)::float8 AS age \
-                 FROM flow_conversion_jobs WHERE id=$1",
-                vec![job_id.into()],
-            ))
-            .await
-            .expect("started_at query")
-            .expect("job row")
-            .try_get::<f64>("", "age")
-            .expect("age")
-    }
-
-    /// Makes the database record every `UPDATE` that changes a conversion job's `started_at`,
-    /// with the job's status before and after it. Read with [`take_started_at_moves`].
-    async fn record_started_at_moves(state: &AppState) {
-        state
-            .db
-            .execute_unprepared(
-                "CREATE TABLE conversion_started_at_moves (                    seq BIGSERIAL PRIMARY KEY, job_id UUID NOT NULL, status_before TEXT NOT NULL,                    status_after TEXT NOT NULL);                  CREATE FUNCTION record_conversion_started_at_move() RETURNS trigger LANGUAGE plpgsql AS $$                  BEGIN                    IF NEW.started_at IS DISTINCT FROM OLD.started_at THEN                      INSERT INTO conversion_started_at_moves (job_id, status_before, status_after)                      VALUES (NEW.id, OLD.status, NEW.status);                    END IF;                    RETURN NEW;                  END $$;                  CREATE TRIGGER record_conversion_started_at_move BEFORE UPDATE ON flow_conversion_jobs                    FOR EACH ROW EXECUTE FUNCTION record_conversion_started_at_move()",
-            )
-            .await
-            .expect("the started_at recorder is installed");
-    }
-
-    /// The recorded `started_at` changes of `job_id` since the last call, oldest first, as
-    /// `(status before, status after)`; the record is emptied.
-    async fn take_started_at_moves(state: &AppState, job_id: Uuid) -> Vec<(String, String)> {
-        let rows = state
-            .db
-            .query_all(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "DELETE FROM conversion_started_at_moves WHERE job_id=$1                  RETURNING seq, status_before, status_after",
-                vec![job_id.into()],
-            ))
-            .await
-            .expect("started_at moves query");
-        let mut moves: Vec<(i64, String, String)> = rows
-            .iter()
-            .map(|row| {
-                (
-                    row.try_get::<i64>("", "seq").expect("seq"),
-                    row.try_get::<String>("", "status_before").expect("status before"),
-                    row.try_get::<String>("", "status_after").expect("status after"),
-                )
-            })
-            .collect();
-        moves.sort();
-        moves.into_iter().map(|(_, before, after)| (before, after)).collect()
-    }
-
-    /// Sets `job_id`'s `started_at` to 16 minutes ago, as the test's own write: it is not left in
-    /// the record of moves.
-    async fn backdate_started_at(state: &AppState, job_id: Uuid) {
-        exec(
-            state,
-            "UPDATE flow_conversion_jobs SET started_at=now()-interval '16 minutes' WHERE id=$1",
-            vec![job_id.into()],
-        )
-        .await;
-        let own = take_started_at_moves(state, job_id).await;
-        assert_eq!(own.len(), 1, "the backdating write itself is recorded: {own:?}");
-    }
-
-    /// The stale-`started` sweep measures a run from `started_at`, the moment the run entered
-    /// `started`, not from `updated_at`: a statement that touches a `started` job does not
-    /// postpone its reclaim, and an old `updated_at` does not reclaim a run that began just now.
-    #[tokio::test]
-    async fn the_conversion_sweep_measures_a_run_from_started_at_and_ignores_updated_at() {
-        let scratch = scratch_or_skip!("conversion-started-at");
-        let state = state_for(scratch.db.clone());
-        let fx = conversion_seed(&state, true).await;
-        let touched_job = conversion_failed_job(&state, &fx, "started-at-touched").await;
-        let young_job = conversion_failed_job(&state, &fx, "started-at-young").await;
-        // A run that began 16 minutes ago whose row was written a moment ago ...
-        exec(
-            &state,
-            "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, \
-             started_at=now()-interval '16 minutes', updated_at=now() WHERE id=$1",
-            vec![touched_job.into()],
-        )
-        .await;
-        // ... and a run that began just now on a row last written 16 minutes ago.
-        exec(
-            &state,
-            "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, \
-             started_at=now(), updated_at=now()-interval '16 minutes' WHERE id=$1",
-            vec![young_job.into()],
-        )
-        .await;
-
-        let reaped = crate::flow::bridge::reap_stale_conversion_jobs(
-            &state,
-            crate::flow::bridge::conversion_started_stale_after(),
-        )
-        .await
-        .expect("the sweep runs");
-        assert_eq!(
-            conversion_job_status(&state, touched_job).await,
-            ("failed".to_string(), Some("server_rejected".to_string())),
-            "a run past the threshold is reclaimed although its row was just written"
-        );
-        assert_eq!(conversion_reaped_events(&state, touched_job).await, (1, 1));
-        assert_eq!(
-            conversion_job_status(&state, young_job).await,
-            ("started".to_string(), None),
-            "a run that just began is left alone although its row was last written long ago"
-        );
-        assert_eq!(conversion_reaped_events(&state, young_job).await, (0, 0));
-        assert_eq!(reaped, 1);
         scratch.drop_self().await;
     }
 
@@ -14185,774 +10803,583 @@ mod flow_database_tests {
         scratch.drop_self().await;
     }
 
-    /// Migration 0072 on a database that already holds jobs: a `started` row's `started_at` is
-    /// backfilled from its `updated_at`, any other row's from its `created_at`, the column ends
-    /// `NOT NULL DEFAULT now()`, and running the file again changes nothing: a `started_at` that
-    /// was written after the first run (a retry claim) is not backfilled over.
+    /// A target schema change between preview and commit (or between a
+    /// failure and its retry) is `policy_rejected` + `details.reason=target_schema_changed`.
     #[tokio::test]
-    async fn the_started_at_migration_backfills_existing_jobs_and_reruns_cleanly() {
-        const MIGRATION: &str = include_str!("../../../../migrations/0072_flow_conversion_job_started_at.sql");
-        let scratch = scratch_or_skip!("conversion-started-at-migration");
+    async fn target_schema_change_is_policy_rejected_target_schema_changed() {
+        let scratch = scratch_or_skip!("bridge-schema-changed");
         let state = state_for(scratch.db.clone());
         let fx = conversion_seed(&state, true).await;
-        let running = conversion_failed_job(&state, &fx, "started-at-migration-running").await;
-        let failed = conversion_failed_job(&state, &fx, "started-at-migration-failed").await;
-        state
-            .db
-            .execute_unprepared("ALTER TABLE flow_conversion_jobs DROP COLUMN started_at")
-            .await
-            .expect("the pre-migration shape");
-        exec(
-            &state,
-            "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, \
-             created_at=now()-interval '3 hours', updated_at=now()-interval '2 hours' WHERE id=$1",
-            vec![running.into()],
-        )
-        .await;
-        exec(
-            &state,
-            "UPDATE flow_conversion_jobs SET created_at=now()-interval '5 hours', \
-             updated_at=now()-interval '4 hours' WHERE id=$1",
-            vec![failed.into()],
-        )
-        .await;
-        let backfilled = |column: &'static str, job_id: Uuid| {
-            let state = state.clone();
-            async move {
-                conversion_count(
-                    &state,
-                    &format!("SELECT count(*) AS n FROM flow_conversion_jobs WHERE id=$1 AND started_at = {column}"),
-                    vec![job_id.into()],
-                )
-                .await
-            }
-        };
-        let column_is_final = || {
-            let state = state.clone();
-            async move {
-                conversion_count(
-                    &state,
-                    "SELECT count(*) AS n FROM information_schema.columns \
-                     WHERE table_schema = current_schema() AND table_name = 'flow_conversion_jobs' \
-                     AND column_name = 'started_at' AND is_nullable = 'NO' AND column_default = 'now()'",
-                    vec![],
-                )
-                .await
-            }
-        };
-        state
-            .db
-            .execute_unprepared(MIGRATION)
-            .await
-            .unwrap_or_else(|err| panic!("first run: {err}"));
-        assert_eq!(backfilled("updated_at", running).await, 1, "first run");
-        assert_eq!(backfilled("created_at", failed).await, 1, "first run");
-        assert_eq!(column_is_final().await, 1, "first run");
 
-        // Between the runs both rows get a `started_at` that is neither their `created_at` nor
-        // their `updated_at`, as a retry claim would write it.
-        exec(
-            &state,
-            "UPDATE flow_conversion_jobs SET started_at = created_at + interval '7 minutes' WHERE id = ANY($1)",
-            vec![vec![running, failed].into()],
-        )
-        .await;
-        let kept = |job_id: Uuid| backfilled("created_at + interval '7 minutes'", job_id);
-        assert_eq!(kept(running).await + kept(failed).await, 2, "both rows were rewritten");
-        assert_eq!(
-            backfilled("updated_at", running).await + backfilled("created_at", failed).await,
-            0,
-            "the rewritten values differ from what the backfill computes"
-        );
+        let (preview_id, _) = conversion_record_preview(&state, &fx).await;
+        conversion_change_schema(&state, &fx, 1).await;
+        let rejected = conversion_commit(&state, &fx, preview_id, 1, "bridge-schema-commit").await;
+        assert_typed(&rejected, "policy_rejected", 403);
+        assert_eq!(rejected["details"]["reason"], "target_schema_changed", "{rejected}");
+        let mismatched = conversion_commit(&state, &fx, preview_id, 2, "bridge-schema-input").await;
+        assert_typed(&mismatched, "policy_rejected", 403);
+        assert_eq!(mismatched["details"]["reason"], "target_schema_changed", "{mismatched}");
 
-        state
-            .db
-            .execute_unprepared(MIGRATION)
+        // A failed job whose target schema moves on before the retry.
+        let (preview_id, _) = conversion_record_preview(&state, &fx).await;
+        conversion_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
+        let failed = conversion_commit(&state, &fx, preview_id, 2, "bridge-schema-retry").await;
+        assert_typed(&failed, "policy_rejected", 403);
+        let job_id = conversion_jobs_of_preview(&state, preview_id)
             .await
-            .unwrap_or_else(|err| panic!("second run: {err}"));
-        assert_eq!(
-            kept(running).await,
-            1,
-            "running the migration again does not backfill over a `started` row's started_at"
-        );
-        assert_eq!(
-            kept(failed).await,
-            1,
-            "running the migration again does not backfill over a `failed` row's started_at"
-        );
-        assert_eq!(column_is_final().await, 1, "second run");
+            .first()
+            .map(|job| job.id)
+            .expect("the failed job exists");
+        conversion_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
+        conversion_change_schema(&state, &fx, 2).await;
+        let retried = conversion_retry(&state, &fx, &job_id.to_string()).await;
+        assert_typed(&retried, "policy_rejected", 403);
+        assert_eq!(retried["details"]["reason"], "target_schema_changed", "{retried}");
+        let jobs = conversion_jobs_of_preview(&state, preview_id).await;
+        assert_eq!(jobs[0].status, "failed");
+        assert_eq!(jobs[0].error_code.as_deref(), Some("policy_rejected"));
         scratch.drop_self().await;
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // Form record detail carries its Flow lineage
-    // ---------------------------------------------------------------------------------------------
+    #[tokio::test]
+    #[allow(clippy::items_after_statements)]
+    async fn flow_bridge_conversion_commit_rechecks_policy_and_is_idempotent_without_rewriting_source() {
+        use base64::Engine as _;
 
-    async fn lineage_record_detail(state: &AppState, user_id: Uuid, record_id: Uuid) -> Value {
-        let body = body_json(to_response(
-            crate::routes::form::get_form_record(State(state.clone()), claims_for(user_id), None, Path(record_id))
-                .await,
+        #[derive(FromQueryResult)]
+        struct SourceHead {
+            head_seq: i64,
+            head_frontier: Vec<u8>,
+        }
+
+        let scratch = scratch_or_skip!("bridge-conversion-policy");
+        let state = state_for(scratch.db.clone());
+        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
+        let project_id = Uuid::new_v4();
+        exec(
+            &state,
+            "INSERT INTO projects (id, workspace_id, key, name, created_by) \
+             VALUES ($1, $2, 'CNV', 'Conversion test', $3)",
+            vec![project_id.into(), workspace_id.into(), owner_id.into()],
+        )
+        .await;
+        let form = body_json(to_response(
+            create_project_form(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Path(project_id),
+                Json(CreateFormRequest {
+                    key: "conversion_target".to_string(),
+                    name: "Conversion target".to_string(),
+                    description: None,
+                    icon: None,
+                    color: None,
+                    title_template: None,
+                    schema: None,
+                    detail_layout: None,
+                }),
+            )
+            .await,
         ))
         .await;
-        assert_eq!(body["code"], 0, "{body}");
-        body
+        let form_id = Uuid::parse_str(form["data"]["id"].as_str().expect("form id")).expect("UUID");
+        let set_policy = |allowed: bool| {
+            update_form_permissions(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Path(form_id),
+                Json(UpdateFormPermissionsRequest {
+                    policies: vec![UpsertFormPermissionPolicy {
+                        subject_type: "role".to_string(),
+                        subject_id: "owner".to_string(),
+                        policy: json!({"actions":{"form.view":true,"record.create":allowed}}),
+                    }],
+                }),
+            )
+        };
+        assert_eq!(body_json(to_response(set_policy(true).await)).await["code"], 0);
+
+        let source_id = create_page_as_owner(&state, workspace_id, owner_id, "conversion source").await;
+        let source_head = SourceHead::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT d.head_seq, d.head_frontier FROM collab_documents d WHERE d.object_id=$1",
+            vec![source_id.into()],
+        ))
+        .one(&state.db)
+        .await
+        .expect("source head query")
+        .expect("source head");
+        let frontier = base64::engine::general_purpose::STANDARD.encode(&source_head.head_frontier);
+        let preview_request = |key: String| crate::flow::bridge::ConversionPreviewInput {
+            source_object_id: source_id,
+            source_frontier: frontier.clone(),
+            target_type: "form_record".to_string(),
+            mapping: json!({"target_form_id":form_id,"title":"Converted","values":{}}),
+            idempotency_key: key,
+        };
+        let preview = body_json(to_response(
+            post_flow_conversion_preview(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Json(preview_request(Uuid::new_v4().to_string())),
+            )
+            .await,
+        ))
+        .await;
+        assert_eq!(preview["code"], 0, "{preview}");
+        let preview_id = Uuid::parse_str(preview["data"]["preview_id"].as_str().expect("preview id")).expect("UUID");
+
+        assert_eq!(body_json(to_response(set_policy(false).await)).await["code"], 0);
+        let rejected = body_json(to_response(
+            post_flow_conversion(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Json(crate::flow::bridge::ConversionCommitInput {
+                    preview_id,
+                    source_frontier: frontier.clone(),
+                    target_schema_version: 1,
+                    idempotency_key: Uuid::new_v4().to_string(),
+                    confirm: true,
+                }),
+            )
+            .await,
+        ))
+        .await;
+        assert_eq!(rejected["code"], 403, "{rejected}");
+        let rejected_actions = rejected["details"]["permission_state"]["actions"]
+            .as_array()
+            .expect("permission actions");
+        assert!(
+            rejected_actions.contains(&json!("form.view")) && !rejected_actions.contains(&json!("record.create")),
+            "commit rejection must return the current decision with record.create removed: {rejected}"
+        );
+
+        let zero = state
+            .db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT (SELECT count(*) FROM form_records WHERE form_id=$1) AS records, \
+                    (SELECT count(*) FROM flow_object_lineage WHERE source_object_id=$2) AS lineage",
+                vec![form_id.into(), source_id.into()],
+            ))
+            .await
+            .expect("zero-write query")
+            .expect("counts");
+        assert_eq!(zero.try_get::<i64>("", "records").expect("records"), 0);
+        assert_eq!(zero.try_get::<i64>("", "lineage").expect("lineage"), 0);
+
+        assert_eq!(body_json(to_response(set_policy(true).await)).await["code"], 0);
+        let preview_key = Uuid::new_v4().to_string();
+        let preview = body_json(to_response(
+            post_flow_conversion_preview(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Json(preview_request(preview_key.clone())),
+            )
+            .await,
+        ))
+        .await;
+        let preview_id = Uuid::parse_str(preview["data"]["preview_id"].as_str().expect("preview id")).expect("UUID");
+        let preview_replay = body_json(to_response(
+            post_flow_conversion_preview(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Json(preview_request(preview_key.clone())),
+            )
+            .await,
+        ))
+        .await;
+        assert_eq!(preview_replay["data"]["preview_id"], preview_id.to_string());
+        let preview_collision = body_json(to_response(
+            post_flow_conversion_preview(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Json(crate::flow::bridge::ConversionPreviewInput {
+                    source_object_id: source_id,
+                    source_frontier: frontier.clone(),
+                    target_type: "form_record".to_string(),
+                    mapping: json!({"target_form_id":form_id,"title":"different","values":{}}),
+                    idempotency_key: preview_key,
+                }),
+            )
+            .await,
+        ))
+        .await;
+        assert_eq!(preview_collision["code"], 400, "{preview_collision}");
+        let commit_key = Uuid::new_v4().to_string();
+        let commit_input = || crate::flow::bridge::ConversionCommitInput {
+            preview_id,
+            source_frontier: frontier.clone(),
+            target_schema_version: 1,
+            idempotency_key: commit_key.clone(),
+            confirm: true,
+        };
+        let committed_result =
+            post_flow_conversion(State(state.clone()), claims_for(owner_id), None, Json(commit_input())).await;
+        if let Err(error) = &committed_result {
+            panic!("conversion commit failed: {error:?}");
+        }
+        let committed = body_json(to_response(committed_result)).await;
+        assert_eq!(committed["code"], 0, "{committed}");
+        assert_eq!(committed["data"]["status"], "completed");
+        assert_eq!(
+            committed["data"]["created_target_ids"].as_array().map(Vec::len),
+            Some(1)
+        );
+        let job_id = Uuid::parse_str(committed["data"]["job_id"].as_str().expect("job id")).expect("UUID");
+        let status = body_json(to_response(
+            get_flow_conversion(State(state.clone()), claims_for(owner_id), None, Path(job_id)).await,
+        ))
+        .await;
+        assert_eq!(status["code"], 0, "{status}");
+        assert_eq!(status["data"]["status"], "completed");
+        let replay = body_json(to_response(
+            post_flow_conversion(State(state.clone()), claims_for(owner_id), None, Json(commit_input())).await,
+        ))
+        .await;
+        assert_eq!(replay["data"]["job_id"], committed["data"]["job_id"]);
+        assert_eq!(
+            replay["data"]["created_target_ids"],
+            committed["data"]["created_target_ids"]
+        );
+
+        let after_head = SourceHead::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT d.head_seq, d.head_frontier FROM collab_documents d WHERE d.object_id=$1",
+            vec![source_id.into()],
+        ))
+        .one(&state.db)
+        .await
+        .expect("source head query")
+        .expect("source head");
+        assert_eq!(after_head.head_seq, source_head.head_seq);
+        assert_eq!(after_head.head_frontier, source_head.head_frontier);
+
+        for fault in [1_u8, 2_u8] {
+            let preview = body_json(to_response(
+                post_flow_conversion_preview(
+                    State(state.clone()),
+                    claims_for(owner_id),
+                    None,
+                    Json(preview_request(Uuid::new_v4().to_string())),
+                )
+                .await,
+            ))
+            .await;
+            let fault_preview_id =
+                Uuid::parse_str(preview["data"]["preview_id"].as_str().expect("preview id")).expect("UUID");
+            crate::flow::bridge::set_conversion_fault_for_test(fault_preview_id, fault);
+            let failed = body_json(to_response(
+                post_flow_conversion(
+                    State(state.clone()),
+                    claims_for(owner_id),
+                    None,
+                    Json(crate::flow::bridge::ConversionCommitInput {
+                        preview_id: fault_preview_id,
+                        source_frontier: frontier.clone(),
+                        target_schema_version: 1,
+                        idempotency_key: Uuid::new_v4().to_string(),
+                        confirm: true,
+                    }),
+                )
+                .await,
+            ))
+            .await;
+            crate::flow::bridge::set_conversion_fault_for_test(fault_preview_id, 0);
+            // The caller gets the typed failure; the job row records it with a stable code.
+            assert_eq!(failed["error_code"], "server_rejected", "fault {fault}: {failed}");
+            assert!(failed["data"].is_null(), "fault {fault}: {failed}");
+            let failed = body_json(to_response(
+                post_flow_conversion(
+                    State(state.clone()),
+                    claims_for(owner_id),
+                    None,
+                    Json(crate::flow::bridge::ConversionCommitInput {
+                        preview_id: fault_preview_id,
+                        source_frontier: frontier.clone(),
+                        target_schema_version: 1,
+                        idempotency_key: Uuid::new_v4().to_string(),
+                        confirm: true,
+                    }),
+                )
+                .await,
+            ))
+            .await;
+            assert_eq!(failed["code"], 0, "fault {fault}: {failed}");
+            assert_eq!(failed["data"]["status"], "failed", "fault {fault}: {failed}");
+            assert_eq!(failed["data"]["error"], "server_rejected", "fault {fault}: {failed}");
+            let failed_job_id = Uuid::parse_str(failed["data"]["job_id"].as_str().expect("job id")).expect("UUID");
+            let retried = body_json(to_response(
+                post_flow_conversion_retry(
+                    State(state.clone()),
+                    claims_for(owner_id),
+                    None,
+                    Path(failed_job_id),
+                    Json(crate::flow::bridge::ConversionRetryInput {
+                        idempotency_key: Uuid::new_v4().to_string(),
+                        confirm: true,
+                    }),
+                )
+                .await,
+            ))
+            .await;
+            assert_eq!(retried["code"], 0, "fault {fault} retry: {retried}");
+            assert_eq!(retried["data"]["status"], "completed");
+            assert_eq!(retried["data"]["created_target_ids"].as_array().map(Vec::len), Some(1));
+        }
+
+        let expiring_preview = body_json(to_response(
+            post_flow_conversion_preview(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Json(preview_request(Uuid::new_v4().to_string())),
+            )
+            .await,
+        ))
+        .await;
+        let expiring_preview_id =
+            Uuid::parse_str(expiring_preview["data"]["preview_id"].as_str().expect("preview id")).expect("UUID");
+        crate::flow::bridge::set_conversion_fault_for_test(expiring_preview_id, 1);
+        let expired_failed = body_json(to_response(
+            post_flow_conversion(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Json(crate::flow::bridge::ConversionCommitInput {
+                    preview_id: expiring_preview_id,
+                    source_frontier: frontier.clone(),
+                    target_schema_version: 1,
+                    idempotency_key: Uuid::new_v4().to_string(),
+                    confirm: true,
+                }),
+            )
+            .await,
+        ))
+        .await;
+        crate::flow::bridge::set_conversion_fault_for_test(expiring_preview_id, 0);
+        assert_eq!(expired_failed["error_code"], "server_rejected", "{expired_failed}");
+        let expired_job_id = state
+            .db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT id FROM flow_conversion_jobs WHERE preview_id=$1 AND status='failed'",
+                vec![expiring_preview_id.into()],
+            ))
+            .await
+            .expect("failed job query")
+            .expect("the failed job row exists")
+            .try_get::<Uuid>("", "id")
+            .expect("job id");
+        exec(
+            &state,
+            "UPDATE flow_conversion_previews SET expires_at=now()-interval '1 second' WHERE id=$1",
+            vec![expiring_preview_id.into()],
+        )
+        .await;
+        let expired_retry = body_json(to_response(
+            post_flow_conversion_retry(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Path(expired_job_id),
+                Json(crate::flow::bridge::ConversionRetryInput {
+                    idempotency_key: Uuid::new_v4().to_string(),
+                    confirm: true,
+                }),
+            )
+            .await,
+        ))
+        .await;
+        // Retry does not depend on the preview TTL (rest-api-v1.md v0.7, 2026-10-10).
+        assert_eq!(expired_retry["code"], 0, "{expired_retry}");
+        assert_eq!(expired_retry["data"]["status"], "completed", "{expired_retry}");
+
+        let preview = body_json(to_response(
+            post_flow_conversion_preview(
+                State(state.clone()),
+                claims_for(owner_id),
+                None,
+                Json(preview_request(Uuid::new_v4().to_string())),
+            )
+            .await,
+        ))
+        .await;
+        let last_preview_id =
+            Uuid::parse_str(preview["data"]["preview_id"].as_str().expect("preview id")).expect("UUID");
+        let last_key = Uuid::new_v4().to_string();
+        let last_input = || crate::flow::bridge::ConversionCommitInput {
+            preview_id: last_preview_id,
+            source_frontier: frontier.clone(),
+            target_schema_version: 1,
+            idempotency_key: last_key.clone(),
+            confirm: true,
+        };
+        crate::flow::bridge::set_conversion_fault_for_test(last_preview_id, 3);
+        let lost_response =
+            post_flow_conversion(State(state.clone()), claims_for(owner_id), None, Json(last_input())).await;
+        crate::flow::bridge::set_conversion_fault_for_test(last_preview_id, 0);
+        assert!(
+            lost_response.is_err(),
+            "post-commit response injection must surface an error"
+        );
+        let recovered = body_json(to_response(
+            post_flow_conversion(State(state.clone()), claims_for(owner_id), None, Json(last_input())).await,
+        ))
+        .await;
+        assert_eq!(recovered["code"], 0, "{recovered}");
+        assert_eq!(recovered["data"]["status"], "completed");
+
+        let totals = state
+            .db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT (SELECT count(*) FROM form_records WHERE form_id=$1) AS records, \
+                        (SELECT count(*) FROM flow_object_lineage WHERE source_object_id=$2) AS lineage",
+                vec![form_id.into(), source_id.into()],
+            ))
+            .await
+            .expect("conversion totals query")
+            .expect("conversion totals");
+        assert_eq!(totals.try_get::<i64>("", "records").expect("records"), 5);
+        assert_eq!(totals.try_get::<i64>("", "lineage").expect("lineage"), 5);
+
+        let events = state
+            .db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT \
+                   (SELECT count(*) FROM form_events WHERE form_id=$1 AND event_type='form.record.created' \
+                    AND source->>'type'='flow_conversion') AS native_events, \
+                   (SELECT count(*) FROM business_events WHERE project_id=$2 AND event_type='form.record.created' \
+                    AND source->>'type'='flow_conversion') AS native_business_events, \
+                   (SELECT count(*) FROM business_events WHERE workspace_id=$3 \
+                    AND event_type='flow.conversion.completed') AS completed_events",
+                vec![form_id.into(), project_id.into(), workspace_id.into()],
+            ))
+            .await
+            .expect("event totals query")
+            .expect("event totals");
+        assert_eq!(events.try_get::<i64>("", "native_events").expect("native events"), 5);
+        assert_eq!(
+            events
+                .try_get::<i64>("", "native_business_events")
+                .expect("native business events"),
+            5
+        );
+        assert_eq!(
+            events.try_get::<i64>("", "completed_events").expect("completed events"),
+            5
+        );
+
+        scratch.drop_self().await;
     }
 
-    /// `GET /form-records/{id}` reports the Flow reference to the record and the
-    /// conversion job that created it; a caller who loses Flow read access to the source Page gets
-    /// only the ids of the reference/job with `source_available:false`; a removed reference
-    /// disappears; Flow disabled yields empty lists.
-    #[tokio::test]
-    async fn record_detail_reports_flow_lineage_filtered_by_source_read_access() {
-        let scratch = scratch_or_skip!("lineage-lineage");
-        let state = state_for(scratch.db.clone());
-        let fx = conversion_seed(&state, false).await;
-        let member_id = seed_member(&state, fx.workspace_id).await;
-        let policies = body_json(to_response(
-            update_form_permissions(
+    /// Makes the database record every `UPDATE` that changes a conversion job's `started_at`,
+    /// with the job's status before and after it. Read with [`take_started_at_moves`].
+    async fn record_started_at_moves(state: &AppState) {
+        state
+            .db
+            .execute_unprepared(
+                "CREATE TABLE conversion_started_at_moves (                    seq BIGSERIAL PRIMARY KEY, job_id UUID NOT NULL, status_before TEXT NOT NULL,                    status_after TEXT NOT NULL);                  CREATE FUNCTION record_conversion_started_at_move() RETURNS trigger LANGUAGE plpgsql AS $$                  BEGIN                    IF NEW.started_at IS DISTINCT FROM OLD.started_at THEN                      INSERT INTO conversion_started_at_moves (job_id, status_before, status_after)                      VALUES (NEW.id, OLD.status, NEW.status);                    END IF;                    RETURN NEW;                  END $$;                  CREATE TRIGGER record_conversion_started_at_move BEFORE UPDATE ON flow_conversion_jobs                    FOR EACH ROW EXECUTE FUNCTION record_conversion_started_at_move()",
+            )
+            .await
+            .expect("the started_at recorder is installed");
+    }
+
+    /// The recorded `started_at` changes of `job_id` since the last call, oldest first, as
+    /// `(status before, status after)`; the record is emptied.
+    async fn take_started_at_moves(state: &AppState, job_id: Uuid) -> Vec<(String, String)> {
+        let rows = state
+            .db
+            .query_all(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "DELETE FROM conversion_started_at_moves WHERE job_id=$1                  RETURNING seq, status_before, status_after",
+                vec![job_id.into()],
+            ))
+            .await
+            .expect("started_at moves query");
+        let mut moves: Vec<(i64, String, String)> = rows
+            .iter()
+            .map(|row| {
+                (
+                    row.try_get::<i64>("", "seq").expect("seq"),
+                    row.try_get::<String>("", "status_before").expect("status before"),
+                    row.try_get::<String>("", "status_after").expect("status after"),
+                )
+            })
+            .collect();
+        moves.sort();
+        moves.into_iter().map(|(_, before, after)| (before, after)).collect()
+    }
+
+    async fn conversion_job_started_seconds_ago(state: &AppState, job_id: Uuid) -> f64 {
+        state
+            .db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT extract(epoch FROM clock_timestamp() - started_at)::float8 AS age \
+                 FROM flow_conversion_jobs WHERE id=$1",
+                vec![job_id.into()],
+            ))
+            .await
+            .expect("started_at query")
+            .expect("job row")
+            .try_get::<f64>("", "age")
+            .expect("age")
+    }
+
+    /// Sets `job_id`'s `started_at` to 16 minutes ago, as the test's own write: it is not left in
+    /// the record of moves.
+    async fn backdate_started_at(state: &AppState, job_id: Uuid) {
+        exec(
+            state,
+            "UPDATE flow_conversion_jobs SET started_at=now()-interval '16 minutes' WHERE id=$1",
+            vec![job_id.into()],
+        )
+        .await;
+        let own = take_started_at_moves(state, job_id).await;
+        assert_eq!(own.len(), 1, "the backdating write itself is recorded: {own:?}");
+    }
+
+    async fn conversion_change_schema(state: &AppState, fx: &ConversionFixture, expected_version: i32) {
+        let mut schema = conversion_text_schema();
+        if let Some(fields) = schema["fields"].as_array_mut() {
+            fields.push(json!({
+                "field_id": format!("fld_conversion_extra_{expected_version}"),
+                "key": format!("extra_{expected_version}"),
+                "type": "text",
+                "required": false
+            }));
+        }
+        let updated = body_json(to_response(
+            crate::routes::form::update_form(
                 State(state.clone()),
                 claims_for(fx.owner_id),
                 None,
                 Path(fx.form_id),
-                Json(UpdateFormPermissionsRequest {
-                    policies: vec![
-                        UpsertFormPermissionPolicy {
-                            subject_type: "role".to_string(),
-                            subject_id: "owner".to_string(),
-                            policy: json!({"actions":{"form.view":true,"record.create":true}}),
-                        },
-                        UpsertFormPermissionPolicy {
-                            subject_type: "role".to_string(),
-                            subject_id: "member".to_string(),
-                            policy: json!({"actions":{"form.view":true}}),
-                        },
-                    ],
+                Json(crate::routes::form::UpdateFormRequest {
+                    name: None,
+                    description: None,
+                    icon: None,
+                    color: None,
+                    title_template: None,
+                    schema: Some(schema),
+                    detail_layout: None,
+                    expected_schema_version: Some(expected_version),
                 }),
             )
             .await,
         ))
         .await;
-        assert_eq!(policies["code"], 0, "{policies}");
-
-        // Page -> conversion -> record.
-        let (preview_id, _) = conversion_record_preview(&state, &fx).await;
-        let committed = conversion_commit(&state, &fx, preview_id, 1, "lineage-convert").await;
-        assert_eq!(committed["data"]["status"], "completed", "{committed}");
-        let job_id = committed["data"]["job_id"].as_str().expect("job id").to_string();
-        let lineage_id = committed["data"]["lineage_id"].clone();
-        assert!(lineage_id.is_string(), "{committed}");
-        let record_id =
-            Uuid::parse_str(committed["data"]["created_target_ids"][0].as_str().expect("record id")).expect("UUID");
-
-        // Page -> reference -> the same record.
-        let reference = body_json(to_response(
-            post_flow_object_reference(
-                State(state.clone()),
-                claims_for(fx.owner_id),
-                None,
-                Path(fx.source_id),
-                Json(crate::flow::bridge::CreateReferenceInput {
-                    target_type: "form_record".to_string(),
-                    target_id: record_id,
-                    display: json!({"mode":"card"}),
-                    idempotency_key: Uuid::new_v4().to_string(),
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(reference["code"], 0, "{reference}");
-        let reference_id = reference["data"]["reference_id"]
-            .as_str()
-            .expect("reference id")
-            .to_string();
-        let source = fx.source_id.to_string();
-
-        // (1) Both lineages are visible to a member who can read the Page.
-        let before = lineage_record_detail(&state, member_id, record_id).await;
-        assert_eq!(before["data"]["id"], record_id.to_string(), "{before}");
-        let lineage = &before["data"]["flow_lineage"];
-        let references = lineage["references"].as_array().expect("references");
-        assert_eq!(references.len(), 1, "{before}");
-        assert_eq!(references[0]["reference_id"], reference_id.as_str());
-        assert_eq!(references[0]["source_available"], true);
-        assert_eq!(references[0]["source_object_id"], source.as_str());
-        assert_eq!(references[0]["source_title"], "conversion source");
-        assert_eq!(references[0]["display"], json!({"mode":"card"}));
-        assert!(references[0]["created_at"].is_string(), "{before}");
-        let conversions = lineage["conversions"].as_array().expect("conversions");
-        assert_eq!(conversions.len(), 1, "{before}");
-        assert_eq!(conversions[0]["job_id"], job_id.as_str());
-        assert_eq!(conversions[0]["source_available"], true);
-        assert_eq!(conversions[0]["source_object_id"], source.as_str());
-        assert_eq!(conversions[0]["source_title"], "conversion source");
-        assert_eq!(conversions[0]["status"], "completed");
-        assert_eq!(conversions[0]["lineage_id"], lineage_id);
-        assert!(conversions[0]["created_at"].is_string(), "{before}");
-        // The member reads the source but neither started the job nor administers the workspace,
-        // so `GET /flow/conversions/{job_id}` is closed to them; the owner who started it is not.
-        assert_eq!(conversions[0]["job_available"], false, "{before}");
-        let member_job = conversion_route(
-            &state,
-            member_id,
-            "GET",
-            &format!("/api/v1/flow/conversions/{job_id}"),
-            None,
-        )
-        .await;
-        assert_typed(&member_job, "not_found", 404);
-        let owner_before = lineage_record_detail(&state, fx.owner_id, record_id).await;
-        assert_eq!(
-            owner_before["data"]["flow_lineage"]["conversions"][0]["job_available"], true,
-            "{owner_before}"
-        );
-        let owner_job = conversion_route(
-            &state,
-            fx.owner_id,
-            "GET",
-            &format!("/api/v1/flow/conversions/{job_id}"),
-            None,
-        )
-        .await;
-        assert_eq!(owner_job["code"], 0, "{owner_job}");
-
-        // (2) The owner restricts the Page to an empty roster: the member loses Flow read access.
-        let app = authorization_router(state.clone(), fx.owner_id);
-        let (status, restricted) = http_put(
-            &app,
-            &format!("/api/v1/flow/objects/{}/inheritance", fx.source_id),
-            &json!({
-                "inherit_from_parent": false,
-                "initial_grants": [],
-                "idempotency_key": Uuid::new_v4().to_string(),
-            })
-            .to_string(),
-        )
-        .await;
-        assert_eq!(status, axum::http::StatusCode::OK, "{restricted}");
-        assert_eq!(restricted["code"], 0, "{restricted}");
-        let hidden = lineage_record_detail(&state, member_id, record_id).await;
-        assert_eq!(
-            hidden["data"]["flow_lineage"],
-            json!({
-                "references": [{"reference_id": reference_id, "source_available": false}],
-                "conversions": [{"job_id": job_id, "source_available": false}],
-            }),
-            "{hidden}"
-        );
-        let hidden_text = hidden["data"]["flow_lineage"].to_string();
-        assert!(!hidden_text.contains(&source), "{hidden_text}");
-        assert!(!hidden_text.contains("conversion source"), "{hidden_text}");
-        let owner_view = lineage_record_detail(&state, fx.owner_id, record_id).await;
-        assert_eq!(
-            owner_view["data"]["flow_lineage"]["references"][0]["source_available"], true,
-            "{owner_view}"
-        );
-
-        // (3) Removing the reference drops it; the conversion lineage stays.
-        let removed = body_json(to_response(
-            delete_flow_object_reference(
-                State(state.clone()),
-                claims_for(fx.owner_id),
-                None,
-                Path((fx.source_id, Uuid::parse_str(&reference_id).expect("UUID"))),
-                HeaderMap::from_iter([(
-                    axum::http::header::HeaderName::from_static("idempotency-key"),
-                    axum::http::HeaderValue::from_str(&Uuid::new_v4().to_string()).expect("header"),
-                )]),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(removed["code"], 0, "{removed}");
-        let after_removal = lineage_record_detail(&state, fx.owner_id, record_id).await;
-        assert_eq!(
-            after_removal["data"]["flow_lineage"]["references"],
-            json!([]),
-            "{after_removal}"
-        );
-        assert_eq!(
-            after_removal["data"]["flow_lineage"]["conversions"][0]["job_id"],
-            job_id.as_str()
-        );
-
-        // (4) Flow disabled for the workspace: both lists are empty, the detail still succeeds.
-        let disabled = body_json(to_response(
-            set_flow_feature(
-                State(state.clone()),
-                claims_for(fx.owner_id),
-                None,
-                Path(fx.workspace_id),
-                Json(SetFlowFeatureRequest {
-                    enabled: Some(false),
-                    default_member_level: None,
-                    bridge_enabled: None,
-                    idempotency_key: Uuid::new_v4().to_string(),
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(disabled["code"], 0, "{disabled}");
-        let off = lineage_record_detail(&state, fx.owner_id, record_id).await;
-        assert_eq!(
-            off["data"]["flow_lineage"],
-            json!({"references": [], "conversions": []}),
-            "{off}"
-        );
-        scratch.drop_self().await;
-    }
-
-    // ---------------------------------------------------------------------------------------------
-    // Backend tidy-up (records view_id, record schema, bootstrap level, job error_reason)
-    // ---------------------------------------------------------------------------------------------
-
-    /// The record and bootstrap routes mounted on their production paths (the schema route on the handler
-    /// `main.rs` registers for it), with an `Extension<JwtClaims>` standing in for the auth
-    /// middleware. Returns the HTTP status and the JSON body.
-    async fn mounted_route(
-        state: &AppState,
-        user_id: Uuid,
-        method: &str,
-        uri: &str,
-        body: Option<Value>,
-    ) -> (u16, Value) {
-        use tower::ServiceExt as _;
-        let app = axum::Router::new()
-            .route(
-                "/api/v1/flow/collections/{collection_id}/records",
-                axum::routing::get(super::get_flow_collection_records).post(super::post_flow_collection_record),
-            )
-            .route(
-                "/api/v1/flow/collections/{collection_id}",
-                axum::routing::get(super::get_flow_collection),
-            )
-            .route(
-                "/api/v1/flow/objects/{object_id}/schema",
-                axum::routing::get(super::get_flow_object_schema),
-            )
-            .route(
-                "/api/v1/flow/objects/{object_id}/commands",
-                axum::routing::post(post_flow_object_command),
-            )
-            .route(
-                "/api/v1/flow/objects/{object_id}/bootstrap",
-                axum::routing::get(get_flow_object_bootstrap),
-            )
-            .layer(claims_for(user_id))
-            .with_state(state.clone());
-        let request = axum::http::Request::builder()
-            .method(method)
-            .uri(uri)
-            .header(axum::http::header::CONTENT_TYPE, "application/json")
-            .body(axum::body::Body::from(
-                body.map_or_else(Vec::new, |value| value.to_string().into_bytes()),
-            ))
-            .expect("the request builds");
-        let response = app.oneshot(request).await.expect("the router answers");
-        let status = response.status().as_u16();
-        let bytes = to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("response body reads");
-        let json = serde_json::from_slice(&bytes)
-            .unwrap_or_else(|_| json!({"non_json_body": String::from_utf8_lossy(&bytes).to_string()}));
-        (status, json)
-    }
-
-    async fn run_object_command(state: &AppState, user_id: Uuid, object_id: Uuid, kind: &str, payload: Value) -> Value {
-        let (_, body) = mounted_route(
-            state,
-            user_id,
-            "POST",
-            &format!("/api/v1/flow/objects/{object_id}/commands"),
-            Some(json!({
-                "command": {"type": kind, "payload": payload},
-                "idempotency_key": Uuid::new_v4().to_string(),
-            })),
-        )
-        .await;
-        assert_eq!(body["code"], 0, "{kind}: {body}");
-        body
-    }
-
-    async fn seeded_collection(state: &AppState, workspace_id: Uuid, owner_id: Uuid, title: &str) -> Uuid {
-        let body = body_json(to_response(
-            create_flow_object(
-                State(state.clone()),
-                claims_for(owner_id),
-                None,
-                Path(workspace_id),
-                Json(CreateFlowObjectRequest {
-                    object_type: "collection".to_string(),
-                    project_id: None,
-                    parent_object_id: None,
-                    title: title.to_string(),
-                    idempotency_key: Uuid::new_v4().to_string(),
-                    message: None,
-                    initial_fields: Vec::new(),
-                    initial_view: None,
-                }),
-            )
-            .await,
-        ))
-        .await;
-        assert_eq!(body["code"], 0, "{body}");
-        Uuid::parse_str(body["data"]["object"]["id"].as_str().expect("object id")).expect("uuid")
-    }
-
-    async fn seeded_record(state: &AppState, owner_id: Uuid, collection_id: Uuid, values: Value) -> Uuid {
-        let (_, body) = mounted_route(
-            state,
-            owner_id,
-            "POST",
-            &format!("/api/v1/flow/collections/{collection_id}/records"),
-            Some(json!({"values_by_field_id": values, "idempotency_key": Uuid::new_v4().to_string()})),
-        )
-        .await;
-        assert_eq!(body["code"], 0, "{body}");
-        Uuid::parse_str(body["data"]["object"]["id"].as_str().expect("record id")).expect("uuid")
-    }
-
-    /// Percent-encodes everything outside RFC 3986's unreserved set, for a JSON query value.
-    fn query_escape(raw: &str) -> String {
-        use std::fmt::Write as _;
-        let mut out = String::with_capacity(raw.len() * 3);
-        for byte in raw.bytes() {
-            if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
-                out.push(char::from(byte));
-            } else {
-                let _ = write!(out, "%{byte:02X}");
-            }
-        }
-        out
-    }
-
-    fn record_numbers(body: &Value, field_id: Uuid) -> Vec<i64> {
-        body["data"]["items"]
-            .as_array()
-            .unwrap_or_else(|| panic!("records response has items: {body}"))
-            .iter()
-            .map(|item| {
-                item["values_by_field_id"][field_id.to_string()]
-                    .as_i64()
-                    .unwrap_or_else(|| panic!("record has a number value: {item}"))
-            })
-            .collect()
-    }
-
-    /// `rest-api-v1.md` v0.6 records GET `view_id?`: records are queried with the
-    /// filter/sort/group the view saved in its config; an explicit query parameter overrides the
-    /// view's value for that part only; an unknown `view_id` is a typed `invalid_update`.
-    #[tokio::test]
-    async fn records_get_applies_the_saved_view_query() {
-        let scratch = scratch_or_skip!("surface-view-id");
-        let state = state_for(scratch.db.clone());
-        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
-        let collection_id = seeded_collection(&state, workspace_id, owner_id, "Ranked").await;
-        let rank = Uuid::new_v4();
-        let status = Uuid::new_v4();
-        run_object_command(
-            &state,
-            owner_id,
-            collection_id,
-            "field_create",
-            json!({"field_id": rank, "label": "Rank", "field_type": "number"}),
-        )
-        .await;
-        run_object_command(
-            &state,
-            owner_id,
-            collection_id,
-            "field_create",
-            json!({"field_id": status, "label": "Status", "field_type": "select", "config": {"options": ["a", "b"]}}),
-        )
-        .await;
-        for (value, group) in [(1, "b"), (2, "a"), (3, "b"), (4, "a")] {
-            seeded_record(
-                &state,
-                owner_id,
-                collection_id,
-                json!({rank.to_string(): value, status.to_string(): group}),
-            )
-            .await;
-        }
-        let table_view = Uuid::new_v4();
-        run_object_command(
-            &state,
-            owner_id,
-            collection_id,
-            "view_create",
-            json!({
-                "view_id": table_view, "name": "Top", "view_type": "table",
-                "config": {
-                    "filter": {"field_id": rank, "op": "gt", "value": 1},
-                    "sort": {"field_id": rank, "direction": "desc"},
-                    "column_widths": {}
-                }
-            }),
-        )
-        .await;
-        let board_view = Uuid::new_v4();
-        run_object_command(
-            &state,
-            owner_id,
-            collection_id,
-            "view_create",
-            json!({
-                "view_id": board_view, "name": "Board", "view_type": "board",
-                "config": {"group_field_id": status, "sort": {"field_id": rank, "direction": "asc"}}
-            }),
-        )
-        .await;
-        let records = format!("/api/v1/flow/collections/{collection_id}/records");
-
-        let (_, plain) = mounted_route(&state, owner_id, "GET", &records, None).await;
-        assert_eq!(plain["code"], 0, "{plain}");
-        assert_eq!(record_numbers(&plain, rank).len(), 4, "no view: every record");
-
-        let (_, saved) = mounted_route(
-            &state,
-            owner_id,
-            "GET",
-            &format!("{records}?view_id={table_view}"),
-            None,
-        )
-        .await;
-        assert_eq!(saved["code"], 0, "{saved}");
-        assert_eq!(
-            record_numbers(&saved, rank),
-            [4, 3, 2],
-            "the view's filter and sort apply: {saved}"
-        );
-
-        let explicit_sort = query_escape(&json!({"field_id": rank, "direction": "asc"}).to_string());
-        let (_, overridden) = mounted_route(
-            &state,
-            owner_id,
-            "GET",
-            &format!("{records}?view_id={table_view}&sort={explicit_sort}"),
-            None,
-        )
-        .await;
-        assert_eq!(overridden["code"], 0, "{overridden}");
-        assert_eq!(
-            record_numbers(&overridden, rank),
-            [2, 3, 4],
-            "an explicit sort wins, the view's filter still applies: {overridden}"
-        );
-
-        let (_, grouped) = mounted_route(
-            &state,
-            owner_id,
-            "GET",
-            &format!("{records}?view_id={board_view}"),
-            None,
-        )
-        .await;
-        assert_eq!(grouped["code"], 0, "{grouped}");
-        assert_eq!(
-            record_numbers(&grouped, rank),
-            [2, 4, 1, 3],
-            "the board view groups by its saved group field, then sorts: {grouped}"
-        );
-
-        let (_, unknown) = mounted_route(
-            &state,
-            owner_id,
-            "GET",
-            &format!("{records}?view_id={}", Uuid::new_v4()),
-            None,
-        )
-        .await;
-        assert_typed(&unknown, "invalid_update", 400);
-        scratch.drop_self().await;
-    }
-
-    /// `rest-api-v1.md` v0.6 schema row: `GET /flow/objects/{record_id}/schema` returns
-    /// the owning Collection's schema to a reader of the record, while
-    /// `GET /flow/collections/{record_id}` stays `not_found` and a non-reader gets `not_found`.
-    #[tokio::test]
-    async fn record_schema_returns_the_owning_collection_schema() {
-        let scratch = scratch_or_skip!("surface-record-schema");
-        let state = state_for(scratch.db.clone());
-        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
-        let member_id = seed_member(&state, workspace_id).await;
-        let outsider_id = seed_user(&state).await;
-        exec(
-            &state,
-            "UPDATE flow_workspace_settings SET default_member_level = 'view' WHERE workspace_id = $1",
-            vec![workspace_id.into()],
-        )
-        .await;
-        let collection_id = seeded_collection(&state, workspace_id, owner_id, "Schema owner").await;
-        let field_id = Uuid::new_v4();
-        run_object_command(
-            &state,
-            owner_id,
-            collection_id,
-            "field_create",
-            json!({"field_id": field_id, "label": "Name", "field_type": "text"}),
-        )
-        .await;
-        let record_id = seeded_record(&state, owner_id, collection_id, json!({field_id.to_string(): "x"})).await;
-
-        let (_, collection_schema) = mounted_route(
-            &state,
-            member_id,
-            "GET",
-            &format!("/api/v1/flow/objects/{collection_id}/schema"),
-            None,
-        )
-        .await;
-        assert_eq!(collection_schema["code"], 0, "{collection_schema}");
-        let (status_code, record_schema) = mounted_route(
-            &state,
-            member_id,
-            "GET",
-            &format!("/api/v1/flow/objects/{record_id}/schema"),
-            None,
-        )
-        .await;
-        assert_eq!(status_code, 200, "{record_schema}");
-        assert_eq!(record_schema["code"], 0, "{record_schema}");
-        assert_eq!(
-            record_schema["data"]["object"]["id"],
-            collection_id.to_string(),
-            "{record_schema}"
-        );
-        assert_eq!(
-            record_schema["data"]["fields"][0]["field_id"],
-            field_id.to_string(),
-            "{record_schema}"
-        );
-        assert_eq!(
-            record_schema["data"], collection_schema["data"],
-            "same schema as the collection's own"
-        );
-
-        let (_, by_collection_path) = mounted_route(
-            &state,
-            member_id,
-            "GET",
-            &format!("/api/v1/flow/collections/{record_id}"),
-            None,
-        )
-        .await;
-        assert_typed(&by_collection_path, "not_found", 404);
-        let (_, outsider) = mounted_route(
-            &state,
-            outsider_id,
-            "GET",
-            &format!("/api/v1/flow/objects/{record_id}/schema"),
-            None,
-        )
-        .await;
-        assert_ne!(outsider["code"], 0, "{outsider}");
-        assert!(
-            crate::router_source::text().contains("get(routes::flow::get_flow_object_schema)"),
-            "the router must route the schema resource to the record-aware handler"
-        );
-        scratch.drop_self().await;
-    }
-
-    /// `rest-api-v1.md` bootstrap row, 2026-10-10: the REST bootstrap needs `view`, the
-    /// same level as the WebSocket `open`/`snapshot` that shares its loader.
-    #[tokio::test]
-    async fn view_member_can_bootstrap_like_the_websocket_snapshot() {
-        let scratch = scratch_or_skip!("surface-bootstrap-view");
-        let state = state_for(scratch.db.clone());
-        let (workspace_id, owner_id) = seed_workspace(&state, true).await;
-        let viewer_id = seed_member(&state, workspace_id).await;
-        let outsider_id = seed_user(&state).await;
-        exec(
-            &state,
-            "UPDATE flow_workspace_settings SET default_member_level = 'view' WHERE workspace_id = $1",
-            vec![workspace_id.into()],
-        )
-        .await;
-        let page_id = create_page_as_owner(&state, workspace_id, owner_id, "Viewable").await;
-        let (status_code, viewer) = mounted_route(
-            &state,
-            viewer_id,
-            "GET",
-            &format!("/api/v1/flow/objects/{page_id}/bootstrap"),
-            None,
-        )
-        .await;
-        assert_eq!(status_code, 200, "{viewer}");
-        assert_eq!(viewer["code"], 0, "a view member bootstraps: {viewer}");
-        assert!(viewer["data"]["snapshot_base64"].is_string(), "{viewer}");
-        let (_, outsider) = mounted_route(
-            &state,
-            outsider_id,
-            "GET",
-            &format!("/api/v1/flow/objects/{page_id}/bootstrap"),
-            None,
-        )
-        .await;
-        assert_ne!(outsider["code"], 0, "a non-member still cannot bootstrap: {outsider}");
-        scratch.drop_self().await;
-    }
-
-    /// A job the stale-`started` sweep failed reports `error_reason:"stale_started"`; any
-    /// other `failed` job (and a reaped job that later fails again for another reason) has no
-    /// `error_reason` key.
-    #[tokio::test]
-    async fn reaped_conversion_job_reports_error_reason_stale_started() {
-        let scratch = scratch_or_skip!("surface-error-reason");
-        let state = state_for(scratch.db.clone());
-        let fx = conversion_seed(&state, true).await;
-        let reaped_job = conversion_failed_job(&state, &fx, "surface-reason-stale").await;
-        let plain_failed = conversion_failed_job(&state, &fx, "surface-reason-plain").await;
-        exec(
-            &state,
-            "UPDATE flow_conversion_jobs SET status='started', error_code=NULL, \
-             started_at=now()-interval '16 minutes' WHERE id=$1",
-            vec![reaped_job.into()],
-        )
-        .await;
-        let reaped = crate::flow::bridge::reap_stale_conversion_jobs(
-            &state,
-            crate::flow::bridge::conversion_started_stale_after(),
-        )
-        .await
-        .expect("the sweep runs");
-        assert_eq!(reaped, 1);
-        let job = |job_id: Uuid| {
-            let state = state.clone();
-            let owner_id = fx.owner_id;
-            async move {
-                conversion_route(
-                    &state,
-                    owner_id,
-                    "GET",
-                    &format!("/api/v1/flow/conversions/{job_id}"),
-                    None,
-                )
-                .await
-            }
-        };
-        let reaped_view = job(reaped_job).await;
-        assert_eq!(reaped_view["data"]["status"], "failed", "{reaped_view}");
-        assert_eq!(reaped_view["data"]["error"], "server_rejected", "{reaped_view}");
-        assert_eq!(reaped_view["data"]["error_reason"], "stale_started", "{reaped_view}");
-
-        let plain_view = job(plain_failed).await;
-        assert_eq!(plain_view["data"]["status"], "failed", "{plain_view}");
-        assert!(
-            plain_view["data"].get("error_reason").is_none(),
-            "an ordinary failure carries no error_reason: {plain_view}"
-        );
-
-        // The reaped job is retried, fails again for an ordinary reason: the reason is gone.
-        conversion_set_record_create(&state, fx.owner_id, fx.form_id, false).await;
-        let refused = conversion_retry(&state, &fx, &reaped_job.to_string()).await;
-        assert_typed(&refused, "policy_rejected", 403);
-        let refailed = job(reaped_job).await;
-        assert_eq!(refailed["data"]["status"], "failed", "{refailed}");
-        assert!(refailed["data"].get("error_reason").is_none(), "{refailed}");
-        conversion_set_record_create(&state, fx.owner_id, fx.form_id, true).await;
-        scratch.drop_self().await;
+        assert_eq!(updated["code"], 0, "{updated}");
     }
 }
 
@@ -15032,20 +11459,7 @@ async fn authorization_caller(
     ))
 }
 
-/// `GET /api/v1/flow/objects/{object_id}/grants`
-pub async fn get_flow_object_grants(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Path(object_id): Path<Uuid>,
-) -> Result<impl IntoResponse, ApiError> {
-    let extensions = build_auth_extensions(claims, bot);
-    let (workspace_id, caller) = authorization_caller(&state, &extensions, object_id).await?;
-    let view = grants::get_grants(&state, workspace_id, object_id, &caller).await?;
-    Ok(ApiResponse::success(view))
-}
-
-/// `PUT /api/v1/flow/objects/{object_id}/grants`
+/// `PUT /api/v2/flow/objects/{object_id}/grants`
 pub async fn put_flow_object_grants(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
@@ -15071,7 +11485,7 @@ pub async fn put_flow_object_grants(
     Ok(ApiResponse::success(view))
 }
 
-/// `PUT /api/v1/flow/objects/{object_id}/inheritance`
+/// `PUT /api/v2/flow/objects/{object_id}/inheritance`
 pub async fn put_flow_object_inheritance(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,

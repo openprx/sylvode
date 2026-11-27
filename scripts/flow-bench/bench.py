@@ -200,12 +200,26 @@ def send_with_contention_retry(
         return data, total_ms, retry_waits
 
 
+def flow_scope_id(origin: str, token: str, workspace_id: str) -> str:
+    """The Flow scope bound to a workspace: the workspace-level Flow routes hang off it."""
+    data, _elapsed, _size = call("GET", f"{origin}/api/v2/flow/workspaces/{workspace_id}/scope", token, None, 30)
+    scope = data.get("scope")
+    if not isinstance(scope, dict) or not isinstance(scope.get("id"), str):
+        raise ApiError(f"workspace scope response missing scope id: {list(data)[:12]}")
+    return scope["id"]
+
+
 def create_page(origin: str, token: str, workspace_id: str, title: str) -> tuple[dict, float]:
     data, elapsed, _size = call(
         "POST",
-        f"{origin}/api/v1/workspaces/{workspace_id}/flow/objects",
+        f"{origin}/api/v2/flow/objects",
         token,
-        {"object_type": "page", "title": title, "idempotency_key": new_key()},
+        {
+            "scope_id": flow_scope_id(origin, token, workspace_id),
+            "object_type": "page",
+            "title": title,
+            "idempotency_key": new_key(),
+        },
         60,
     )
     obj = data.get("object")
@@ -241,7 +255,7 @@ def semantic_batches(origin: str, token: str, object_id: str, blocks: int, token
             "command": {"type": "semantic_patch", "payload": {"operations": operations}},
             "idempotency_key": new_key(),
         }
-        url = f"{origin}/api/v1/flow/objects/{object_id}/commands"
+        url = f"{origin}/api/v2/flow/objects/{object_id}/commands"
 
         def on_retry(attempt: int, wait_ms: float) -> None:
             eprint(
@@ -287,7 +301,7 @@ def steady_patch(origin: str, token: str, object_id: str) -> dict:
     ]
     data, elapsed, _size = call(
         "POST",
-        f"{origin}/api/v1/flow/objects/{object_id}/commands",
+        f"{origin}/api/v2/flow/objects/{object_id}/commands",
         token,
         {
             "command": {"type": "semantic_patch", "payload": {"operations": operations}},
@@ -301,7 +315,7 @@ def steady_patch(origin: str, token: str, object_id: str) -> dict:
 def bootstrap_once(origin: str, token: str, object_id: str) -> tuple[dict, float, int]:
     data, elapsed, size = call(
         "GET",
-        f"{origin}/api/v1/flow/objects/{object_id}/bootstrap",
+        f"{origin}/api/v2/flow/objects/{object_id}/bootstrap",
         token,
         None,
         180,
@@ -332,7 +346,7 @@ def search_once(origin: str, token: str, workspace_id: str, query: str) -> tuple
     )
     data, elapsed, size = call(
         "GET",
-        f"{origin}/api/v1/workspaces/{workspace_id}/flow/search?{params}",
+        f"{origin}/api/v2/flow/scopes/{flow_scope_id(origin, token, workspace_id)}/search?{params}",
         token,
         None,
         180,
@@ -385,7 +399,7 @@ def wait_for_search(origin: str, token: str, workspace_id: str, query: str, obje
 def command(origin: str, token: str, object_id: str, command_type: str, payload: dict, timeout: float = 120) -> tuple[dict, float]:
     data, elapsed, _size = call(
         "POST",
-        f"{origin}/api/v1/flow/objects/{object_id}/commands",
+        f"{origin}/api/v2/flow/objects/{object_id}/commands",
         token,
         {"command": {"type": command_type, "payload": payload}, "idempotency_key": new_key()},
         timeout,
@@ -503,7 +517,7 @@ def run_api(ids_path: Path, out: Path) -> None:
         for index in range(COMMENT_COUNT):
             _data, elapsed, _size = call(
                 "POST",
-                f"{origin}/api/v1/flow/objects/{page_1k['id']}/comments",
+                f"{origin}/api/v2/flow/objects/{page_1k['id']}/comments",
                 token,
                 {"body": f"bench comment {index}"},
                 60,
@@ -519,7 +533,7 @@ def run_api(ids_path: Path, out: Path) -> None:
             try:
                 data, elapsed, _size = call(
                     "GET",
-                    f"{origin}/api/v1/flow/objects/{page_1k['id']}/comments",
+                    f"{origin}/api/v2/flow/objects/{page_1k['id']}/comments",
                     token,
                     None,
                     60,
@@ -624,13 +638,13 @@ def run_api(ids_path: Path, out: Path) -> None:
     write_part(out, "api", payload)
 
 
-def issue_ticket(origin: str, token: str, workspace_id: str, document_id: str, client_id: str, collab_origin: str) -> str:
+def issue_ticket(origin: str, token: str, object_id: str, document_id: str, client_id: str, collab_origin: str) -> str:
     data, _elapsed, _size = call(
         "POST",
-        f"{origin}/api/v1/collab/tickets",
+        f"{origin}/api/v2/flow/collab/tickets",
         token,
         {
-            "workspace_id": workspace_id,
+            "object_id": object_id,
             "document_id": document_id,
             "client_id": client_id,
             "origin": collab_origin,
@@ -650,11 +664,11 @@ async def fanout_session(ids: dict) -> dict:
     token = ids["token"]
     document_id = ids["pages"]["fanout"]["document_id"]
     object_id = ids["pages"]["fanout"]["id"]
-    client_id = "bench-fanout"
+    client_id = str(uuid.uuid4())
     collab_origin = ids["collab_origin"]
-    ticket = issue_ticket(observer, token, ids["workspace_id"], document_id, client_id, collab_origin)
+    ticket = issue_ticket(observer, token, object_id, document_id, client_id, collab_origin)
     query = urllib.parse.urlencode({"ticket": ticket, "client_id": client_id})
-    ws_url = observer.replace("http://", "ws://", 1) + f"/api/v1/collab/ws?{query}"
+    ws_url = observer.replace("http://", "ws://", 1) + f"/api/v2/flow/collab/ws?{query}"
     arrivals: dict[int, float] = {}
     errors: list[str] = []
 

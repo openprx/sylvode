@@ -317,18 +317,6 @@ pub async fn initialize(
     }
 }
 
-pub async fn require_document_admitted(db: &DatabaseConnection, document: Uuid) -> Result<(), ApiError> {
-    let row = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT object_id FROM collab_documents WHERE id=$1",
-            vec![document.into()],
-        ))
-        .await?
-        .ok_or_else(|| ApiError::not_found("document not found"))?;
-    require_admitted(db, row.try_get("", "object_id")?).await
-}
-
 #[cfg(test)]
 mod model_tests {
     use super::*;

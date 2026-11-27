@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test, type APIRequestContext, type Page, type Request } from '@playwright/test';
+import { flowScopePath, postWorkspaceFlowObject } from './flow-scope-support';
 
 /**
  * The Flow navigator (`/workspace/{id}/flow`) against a real API + PostgreSQL + search worker:
@@ -160,7 +161,7 @@ test('navigator: Flow search, lag badge, Page create and typed Collection bounda
 	const pages: Array<{ id: string; title: string }> = [];
 	for (const title of titles) {
 		const created = await unwrap<{ object: { id: string } }>(
-			await request.post(`/api/v1/workspaces/${workspace.id}/flow/objects`, {
+			await postWorkspaceFlowObject(request, workspace.id, {
 				headers: auth,
 				data: {
 					object_type: 'page',
@@ -192,7 +193,7 @@ test('navigator: Flow search, lag badge, Page create and typed Collection bounda
 		.toBe(3);
 
 	const lag = await unwrap<{ max_lag: number; p95_lag: number }>(
-		await request.get(`/api/v1/workspaces/${workspace.id}/flow/projection-lag`, { headers: auth })
+		await request.get(`${await flowScopePath(request, workspace.id, auth)}/projection-lag`, { headers: auth })
 	);
 
 	const context = await browser.newContext();
@@ -261,7 +262,7 @@ test('navigator: Flow search, lag badge, Page create and typed Collection bounda
 	process.kill(pid, 'SIGSTOP');
 	try {
 		await unwrap(
-			await request.post(`/api/v1/flow/objects/${renamed.id}/commands`, {
+			await request.post(`/api/v2/flow/objects/${renamed.id}/commands`, {
 				headers: auth,
 				data: {
 					command: {
@@ -359,7 +360,7 @@ test('navigator: Flow search, lag badge, Page create and typed Collection bounda
 		initial_view: { view_id: crypto.randomUUID(), view_type: 'board', name: 'Board' }
 	};
 	const created = await unwrap<{ object: { id: string; object_type: string } }>(
-		await request.post(`/api/v1/workspaces/${workspace.id}/flow/objects`, { headers: auth, data: body })
+		await postWorkspaceFlowObject(request, workspace.id, { headers: auth, data: body })
 	);
 	expect(created.object.object_type).toBe('collection');
 	const collectionId = created.object.id;
@@ -369,7 +370,7 @@ test('navigator: Flow search, lag badge, Page create and typed Collection bounda
 		fields: Array<{ field_id: string; label: string; type: string }>;
 		views: Array<{ view_id: string; type: string; name: string }>;
 	}>(
-		await request.get(`/api/v1/flow/collections/${collectionId}`, {
+		await request.get(`/api/v2/flow/collections/${collectionId}`, {
 			headers: auth
 		})
 	);

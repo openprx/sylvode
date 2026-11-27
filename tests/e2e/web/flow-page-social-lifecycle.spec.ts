@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext, type BrowserContext } from '@playwright/test';
+import { flowScopePath, postWorkspaceFlowObject } from './flow-scope-support';
 
 const runId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 type Session = { tokens: { access_token: string; refresh_token: string }; user: { id: string } };
@@ -47,7 +48,7 @@ test('page: comment-only block actions, public appearance, archive, restore and 
   await unwrap(await request.put(`/api/v1/workspaces/${workspace.id}/features/flow`, {
     headers: auth, data: { enabled: true, default_member_level: 'comment', idempotency_key: crypto.randomUUID() }
   }));
-  const created = await unwrap<{ object: { id: string } }>(await request.post(`/api/v1/workspaces/${workspace.id}/flow/objects`, {
+  const created = await unwrap<{ object: { id: string } }>(await postWorkspaceFlowObject(request, workspace.id, {
     headers: auth, data: { object_type: 'page', title: `Review page ${runId}`, idempotency_key: crypto.randomUUID() }
   }));
   const id = created.object.id;
@@ -82,25 +83,25 @@ test('page: comment-only block actions, public appearance, archive, restore and 
     await comments.getByRole('button', { name: 'Comment', exact: true }).click();
     await expect(comments).toContainText(`Anchored comment ${runId}`);
     const listed = await unwrap<{ items: Array<{ body: string; block_id: string | null }> }>(
-      await request.get(`/api/v1/flow/objects/${id}/comments`, { headers: auth })
+      await request.get(`/api/v2/flow/objects/${id}/comments`, { headers: auth })
     );
     expect(listed.items.find((item) => item.body === `Anchored comment ${runId}`)?.block_id).toBeTruthy();
     await memberPage.screenshot({ path: test.info().outputPath('comment-only-block.png'), fullPage: true });
-    const forbidden = await request.put(`/api/v1/flow/objects/${id}/appearance`, {
+    const forbidden = await request.put(`/api/v2/flow/objects/${id}/appearance`, {
       headers: memberAuth, data: { icon: { kind: 'emoji', emoji: '🌿' } }
     });
     expect((await forbidden.json()).code).not.toBe(0);
 
     const imageBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aEmUAAAAASUVORK5CYII=';
-    const asset = await unwrap<{ asset_id: string }>(await request.post(`/api/v1/flow/objects/${id}/appearance/assets`, {
+    const asset = await unwrap<{ asset_id: string }>(await request.post(`/api/v2/flow/objects/${id}/appearance/assets`, {
       headers: auth, data: { data_base64: imageBase64 }
     }));
-    await unwrap(await request.put(`/api/v1/flow/objects/${id}/appearance`, {
+    await unwrap(await request.put(`/api/v2/flow/objects/${id}/appearance`, {
       headers: auth, data: { icon: { kind: 'emoji', emoji: '🌿' }, cover: { kind: 'upload', asset_id: asset.asset_id, position: 0.35 } }
     }));
     await page.reload();
     await expect(page.getByTestId('flow-page-cover').locator('img')).toBeVisible();
-    const share = await unwrap<{ token: string; link: { id: string } }>(await request.post(`/api/v1/flow/objects/${id}/share-links`, {
+    const share = await unwrap<{ token: string; link: { id: string } }>(await request.post(`/api/v2/flow/objects/${id}/share-links`, {
       headers: auth, data: {}
     }));
     const publicPage = await publicContext.newPage();
@@ -112,24 +113,24 @@ test('page: comment-only block actions, public appearance, archive, restore and 
     await expect(publicPage.locator('[contenteditable=true]')).toHaveCount(0);
     await publicPage.screenshot({ path: test.info().outputPath('public-page-with-cover.png'), fullPage: true });
 
-    const command = async (type: 'archive' | 'restore') => unwrap(await request.post(`/api/v1/flow/objects/${id}/commands`, {
+    const command = async (type: 'archive' | 'restore') => unwrap(await request.post(`/api/v2/flow/objects/${id}/commands`, {
       headers: auth, data: { command: { type, payload: {} }, idempotency_key: crypto.randomUUID() }
     }));
     await command('archive');
-    let trash = await unwrap<{ items: Array<{ id: string }> }>(await request.get(`/api/v1/workspaces/${workspace.id}/flow/trash`, { headers: auth }));
+    let trash = await unwrap<{ items: Array<{ id: string }> }>(await request.get(`${await flowScopePath(request, workspace.id, auth)}/trash`, { headers: auth }));
     expect(trash.items.some((item) => item.id === id)).toBe(true);
     await command('restore');
     await page.reload();
     await expect(editor).toContainText('A page ready for review');
     await expect(page.getByTestId('flow-page-cover').locator('img')).toBeVisible();
-    trash = await unwrap(await request.get(`/api/v1/workspaces/${workspace.id}/flow/trash`, { headers: auth }));
+    trash = await unwrap(await request.get(`${await flowScopePath(request, workspace.id, auth)}/trash`, { headers: auth }));
     expect(trash.items.some((item) => item.id === id)).toBe(false);
     await command('archive');
-    const purged = await unwrap<{ deleted_id: string; deleted_count: number }>(await request.post(`/api/v1/flow/objects/${id}/purge`, { headers: auth, data: {} }));
+    const purged = await unwrap<{ deleted_id: string; deleted_count: number }>(await request.post(`/api/v2/flow/objects/${id}/purge`, { headers: auth, data: {} }));
     expect(purged).toEqual({ deleted_id: id, deleted_count: 1 });
-    const gone = await request.get(`/api/v1/flow/objects/${id}`, { headers: auth });
+    const gone = await request.get(`/api/v2/flow/objects/${id}`, { headers: auth });
     expect((await gone.json()).code).not.toBe(0);
-    const assetGone = await request.get(`/api/v1/flow/public-shares/${share.token}/assets/${asset.asset_id}`);
+    const assetGone = await request.get(`/api/v2/flow/public-shares/${share.token}/assets/${asset.asset_id}`);
     expect(assetGone.headers()['content-type']).toContain('application/json');
     expect(await assetGone.json()).toMatchObject({ code: 404, data: null, error_code: 'not_found' });
   } finally {

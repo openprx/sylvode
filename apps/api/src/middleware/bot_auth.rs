@@ -443,6 +443,62 @@ pub(crate) fn sha256_hex(input: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
+/// The permissions a bot token acts with: the stored list, with `admin` counted as `write` for a bot
+/// that holds a level per project (it is never a workspace administrator). The one derivation both the
+/// authentication middleware and the scope-native Flow authorization use.
+pub(crate) fn effective_bot_permissions(
+    stored: &serde_json::Value,
+    runner: bool,
+    project_scope: &str,
+    default_project_level: &str,
+) -> Vec<String> {
+    let access = super::scoped_bot::BotAccess::from_row(runner, project_scope, default_project_level);
+    let permissions: Vec<String> = stored
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    if matches!(access, super::scoped_bot::BotAccess::Projects { .. }) {
+        without_admin(permissions)
+    } else {
+        permissions
+    }
+}
+
+/// The workspace role of the bot `bot_id` in `workspace_id`, from its token's permissions and scope
+/// (`workspace_bots`), exactly as the workspace handlers take it. `None` for a user that is not a bot
+/// of that workspace. The membership row of a bot never decides a role.
+pub(crate) async fn bot_token_role<C: ConnectionTrait>(
+    db: &C,
+    bot_id: Uuid,
+    workspace_id: Uuid,
+) -> Result<Option<String>, ApiError> {
+    #[derive(Debug, FromQueryResult)]
+    struct Row {
+        permissions: serde_json::Value,
+        project_scope: String,
+        default_project_level: String,
+        runner: bool,
+    }
+    let row = Row::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT permissions, project_scope, default_project_level, \
+                EXISTS (SELECT 1 FROM bot_runners r WHERE r.bot_id = workspace_bots.id) AS runner \
+           FROM workspace_bots WHERE id = $1 AND workspace_id = $2",
+        vec![bot_id.into(), workspace_id.into()],
+    ))
+    .one(db)
+    .await
+    .map_err(ApiError::internal_database_failure)?;
+    Ok(row.map(|row| {
+        bot_role_from_permissions(&effective_bot_permissions(
+            &row.permissions,
+            row.runner,
+            &row.project_scope,
+            &row.default_project_level,
+        ))
+    }))
+}
+
 /// The permissions of a project-scoped bot: `admin` counts as `write`. A bot that holds a level per
 /// project is never a workspace administrator, so it is a plain `member` everywhere and never
 /// bypasses a form policy or a record scope.
@@ -557,14 +613,12 @@ pub async fn bot_or_user_auth_middleware(
         });
 
         let access = super::scoped_bot::BotAccess::from_row(bot.runner, &bot.project_scope, &bot.default_project_level);
-        let mut permissions: Vec<String> = bot
-            .permissions
-            .as_array()
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-            .unwrap_or_default();
-        if matches!(access, super::scoped_bot::BotAccess::Projects { .. }) {
-            permissions = without_admin(permissions);
-        }
+        let permissions = effective_bot_permissions(
+            &bot.permissions,
+            bot.runner,
+            &bot.project_scope,
+            &bot.default_project_level,
+        );
 
         let context = bot_auth_context(
             bot.id,

@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { expect, test, type APIRequestContext, type Page, type Request } from '@playwright/test';
+import { postWorkspaceFlowObject } from './flow-scope-support';
 
 /**
  * Workspace Flow operations panel (`/workspace/{id}/settings/flow/operations`) against a real
@@ -122,7 +123,7 @@ test('admin reads health/lag/integrity and runs verify, compact, rebuild and rep
 		})
 	);
 	const created = await unwrap<{ object: { id: string; document_id: string } }>(
-		await request.post(`/api/v1/workspaces/${workspace.id}/flow/objects`, {
+		await postWorkspaceFlowObject(request, workspace.id, {
 			headers: auth,
 			data: {
 				object_type: 'page',
@@ -373,7 +374,7 @@ test('admin reads health/lag/integrity and runs verify, compact, rebuild and rep
 	// ---- paging: more documents than one page; every one is reachable by cursor ----
 	for (let i = 0; i < 50; i += 1) {
 		await unwrap(
-			await request.post(`/api/v1/workspaces/${workspace.id}/flow/objects`, {
+			await postWorkspaceFlowObject(request, workspace.id, {
 				headers: auth,
 				data: {
 					object_type: 'page',
@@ -490,7 +491,7 @@ test('a document whose stored snapshot no longer matches is listed as failed wit
 	const documents: string[] = [];
 	for (const title of [`Broken ${runId}`, `Fine ${runId}`]) {
 		const created = await unwrap<{ object: { document_id: string } }>(
-			await request.post(`/api/v1/workspaces/${workspace.id}/flow/objects`, {
+			await postWorkspaceFlowObject(request, workspace.id, {
 				headers: auth,
 				data: { object_type: 'page', title, idempotency_key: crypto.randomUUID() }
 			})

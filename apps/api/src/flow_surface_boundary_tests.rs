@@ -432,6 +432,22 @@ fn assert_server_draining(answer: &Answer, context: &str) {
 }
 
 /// A workspace with Flow enabled and its owner.
+/// The list route of the workspace's Flow scope: the scope is created with the workspace's first
+/// Flow use, as the API does it.
+async fn scope_objects_uri(db: &DatabaseConnection, workspace_id: Uuid) -> String {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT flow_ensure_legacy_scope($1) AS id",
+            vec![workspace_id.into()],
+        ))
+        .await
+        .expect("the scope query runs")
+        .expect("the scope query answers");
+    let scope: Uuid = row.try_get("", "id").expect("the scope id is a UUID");
+    format!("/api/v2/flow/scopes/{scope}/objects")
+}
+
 async fn seed_flow_workspace(db: &DatabaseConnection) -> (Uuid, Uuid) {
     let workspace_id = Uuid::new_v4();
     let owner_id = Uuid::new_v4();
@@ -479,7 +495,7 @@ fn assert_legacy_database_error(answer: &Answer, context: &str) {
     assert_legacy(answer, LEGACY_DATABASE_ERROR_BODY, context);
 }
 
-/// Real database failures on one Flow read route (`GET .../flow/objects`), one Flow write
+/// Real database failures on one Flow read route (`GET .../scopes/{scope}/objects`), one Flow write
 /// route (`PUT .../features/flow`) and one route outside the Flow surface
 /// (`GET .../labels`), all through the application router:
 ///
@@ -501,7 +517,7 @@ async fn real_database_failures_are_typed_on_flow_routes_and_unchanged_elsewhere
     let state = state_for(db.clone());
     let (workspace_id, owner_id) = seed_flow_workspace(&db).await;
     let token = token_for(owner_id);
-    let read_uri = format!("/api/v1/workspaces/{workspace_id}/flow/objects");
+    let read_uri = scope_objects_uri(&db, workspace_id).await;
     let write_uri = format!("/api/v1/workspaces/{workspace_id}/features/flow");
     let label_uri = format!("/api/v1/workspaces/{workspace_id}/labels");
     let read = || call(&state, &Method::GET, &read_uri, Some(&token), None);
@@ -572,57 +588,9 @@ async fn real_database_failures_are_typed_on_flow_routes_and_unchanged_elsewhere
     scratch.drop_self().await;
 }
 
-/// An exception the application's own database functions raise (`SQLSTATE` class `P0`; a
-/// `RAISE EXCEPTION` without an `ERRCODE` is `P0001`) refuses the same request every time, so
-/// the Flow surface answers it as a refusal and not as contention to retry:
-/// `GET .../flow/navigator` for a project that does not exist, where `flow_ensure_navigator_root`
-/// raises. A transient condition raised the same way with its own `SQLSTATE` stays
-/// `server_draining`.
-#[tokio::test]
-async fn an_exception_raised_by_a_database_function_is_a_refusal_and_not_contention() {
-    let Some(scratch) = scratch("flow_surface_raise").await else {
-        eprintln!("skipped: OPENPR_TEST_DATABASE_URL is not set");
-        return;
-    };
-    let db = scratch.connection().clone();
-    run_migrations_with(&db, MigrationOptions::default())
-        .await
-        .expect("migrations apply");
-    let state = state_for(db.clone());
-    let (workspace_id, owner_id) = seed_flow_workspace(&db).await;
-    let token = token_for(owner_id);
-    let navigator = |query: String| {
-        let uri = format!("/api/v1/workspaces/{workspace_id}/flow/navigator{query}");
-        let (state, token) = (&state, &token);
-        async move { call(state, &Method::GET, &uri, Some(token), None).await }
-    };
-
-    let healthy = navigator(String::new()).await;
-    assert_eq!(healthy.json()["code"], 0, "{}", healthy.text());
-    assert!(healthy.behind_boundary);
-
-    let missing_project = navigator(format!("?project_id={}", Uuid::new_v4())).await;
-    assert!(missing_project.behind_boundary);
-    assert_server_rejected(&missing_project, "navigator of a project that does not exist");
-
-    // The same function raising a transient condition is still contention.
-    db.execute_unprepared(
-        "ALTER FUNCTION flow_ensure_navigator_root(uuid, uuid) RENAME TO flow_ensure_navigator_root_kept; \
-         CREATE FUNCTION flow_ensure_navigator_root(uuid, uuid) RETURNS uuid LANGUAGE plpgsql AS $$ \
-         BEGIN RAISE EXCEPTION 'deadlock detected' USING ERRCODE = '40P01'; END $$",
-    )
-    .await
-    .expect("the transient failure is injected");
-    assert_server_draining(
-        &navigator(format!("?project_id={}", Uuid::new_v4())).await,
-        "navigator, deadlock raised by the function",
-    );
-    scratch.drop_self().await;
-}
-
 /// A bot credential (`opr_...`) and the two database statements the authentication
 /// middleware runs for it, the credential lookup before the handler and the attribution
-/// record after it. When the lookup fails, a Flow route (`GET .../flow/objects`) answers the
+/// record after it. When the lookup fails, a Flow route (`GET .../scopes/{scope}/objects`) answers the
 /// typed envelope of that failure, exactly as it does for a failure inside the handler. When
 /// the attribution record fails the operation has already run, so the Flow route answers
 /// `server_rejected` with no `details` whether the failure is deterministic or transient,
@@ -644,19 +612,34 @@ async fn bot_credential_database_failures_are_typed_on_flow_routes_and_unchanged
     let state = state_for(db.clone());
     let (workspace_id, owner_id) = seed_flow_workspace(&db).await;
     let token = format!("opr_{}", Uuid::new_v4().simple());
+    // The bot as `bots::create` makes it: a bot user, its seat and its token row.
+    let bot_id = Uuid::new_v4();
+    exec(
+        &db,
+        "INSERT INTO users (id, email, password_hash, name, role, is_active, entity_type) \
+         VALUES ($1, $2, '!', 'boundary-bot', 'user', true, 'bot')",
+        vec![bot_id.into(), format!("{bot_id}@bot.boundary.test").into()],
+    )
+    .await;
+    exec(
+        &db,
+        "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES ($1, $2, 'admin')",
+        vec![workspace_id.into(), bot_id.into()],
+    )
+    .await;
     exec(
         &db,
         "INSERT INTO workspace_bots (id, workspace_id, name, token_hash, token_prefix, permissions, created_by) \
          VALUES ($1, $2, 'boundary-bot', $3, 'opr_boun', '[\"read\",\"write\",\"admin\"]'::jsonb, $4)",
         vec![
-            Uuid::new_v4().into(),
+            bot_id.into(),
             workspace_id.into(),
             hex::encode(Sha256::digest(token.as_bytes())).into(),
             owner_id.into(),
         ],
     )
     .await;
-    let flow_uri = format!("/api/v1/workspaces/{workspace_id}/flow/objects");
+    let flow_uri = scope_objects_uri(&db, workspace_id).await;
     let label_uri = format!("/api/v1/workspaces/{workspace_id}/labels");
     let flow = || call(&state, &Method::GET, &flow_uri, Some(&token), None);
     let labels = || call(&state, &Method::GET, &label_uri, Some(&token), None);
@@ -765,9 +748,9 @@ async fn an_unrouted_path_answers_outside_the_boundary() {
     let mut probes = Vec::new();
     for uri in [
         "/api/v1/no-such-route".to_string(),
-        "/api/v1/flow/no-such-route".to_string(),
-        "/api/v1/collab/no-such-route".to_string(),
-        format!("/api/v1/workspaces/{workspace_id}/flow/no-such-route"),
+        "/api/v2/flow/no-such-route".to_string(),
+        "/api/v2/flow/collab/no-such-route".to_string(),
+        format!("/api/v2/flow/workspaces/{workspace_id}/no-such-route"),
     ] {
         for method in [Method::GET, Method::POST, Method::DELETE] {
             probes.push((method.clone(), uri.clone(), None));

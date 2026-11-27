@@ -37,15 +37,28 @@ const SELECT: &str = "SELECT id,scope_id,workspace_id,scope_kind,object_id,actor
 pub fn receipt(row: &ExportRow) -> Value {
     json!({"job_id":row.id,"scope_id":row.scope_id,"object_id":row.object_id,"scope_kind":row.scope_kind,"status":row.status,"format":row.format,"checksum":row.package_sha256,"size":row.size_bytes,"expires_at":row.expires_at.map(platform::timestamp::Timestamp::to_rfc3339),"warnings":row.warnings,"download_url":format!("/api/v2/flow/exports/{}/artifact",row.id)})
 }
-pub async fn get<C: ConnectionTrait + TransactionTrait>(db: &C, job: Uuid, user: Uuid) -> Result<ExportRow, ApiError> {
-    let row = ExportRow::find_by_statement(Statement::from_sql_and_values(
+async fn load<C: ConnectionTrait>(db: &C, job: Uuid) -> Result<ExportRow, ApiError> {
+    ExportRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         format!("{SELECT} WHERE id=$1"),
         vec![job.into()],
     ))
     .one(db)
     .await?
-    .ok_or_else(|| ApiError::not_found("export not found"))?;
+    .ok_or_else(|| ApiError::not_found("export not found"))
+}
+/// The object an export job exports; `None` for a job of a whole scope.
+pub async fn job_object<C: ConnectionTrait>(db: &C, job: Uuid) -> Result<Option<Uuid>, ApiError> {
+    Ok(load(db, job).await?.object_id)
+}
+/// Whether `job` is a workspace export, judged by the workspace handlers and not by scoped access.
+/// No principal is needed to tell; the handler that serves the job authorizes the caller.
+pub async fn is_workspace_job<C: ConnectionTrait>(db: &C, job: Uuid) -> Result<bool, ApiError> {
+    let row = load(db, job).await?;
+    Ok(row.workspace_id.is_some() && !uses_scoped_access(&row))
+}
+pub async fn get<C: ConnectionTrait + TransactionTrait>(db: &C, job: Uuid, user: Uuid) -> Result<ExportRow, ApiError> {
+    let row = load(db, job).await?;
     if row.workspace_id.is_some() && !uses_scoped_access(&row) {
         return Ok(row);
     }

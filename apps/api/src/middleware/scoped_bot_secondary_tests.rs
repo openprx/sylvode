@@ -24,8 +24,8 @@ use super::scoped_bot_tests::{Cast, call, cast};
 use crate::middleware::bot_auth::bot_or_user_auth_middleware;
 use crate::routes::context::tenant_fixture::{count, exec, state_for};
 use crate::routes::flow::{
-    post_flow_conversion, post_flow_conversion_preview, post_flow_object_command, post_flow_object_reference,
-    post_flow_v2_body_asset_copy,
+    post_flow_v2_body_asset_copy, post_flow_v2_command, post_flow_v2_conversion, post_flow_v2_conversion_preview,
+    post_flow_v2_reference,
 };
 use crate::routes::issue_pages::{link_issue_page, list_issue_pages};
 use crate::scratch_or_skip;
@@ -35,20 +35,20 @@ fn app(db: &DatabaseConnection) -> Router {
     let layer = || from_fn_with_state(state.clone(), bot_or_user_auth_middleware);
     Router::new()
         .route(
-            "/api/v1/flow/conversions/preview",
-            post(post_flow_conversion_preview).route_layer(layer()),
+            "/api/v2/flow/conversions/preview",
+            post(post_flow_v2_conversion_preview).route_layer(layer()),
         )
         .route(
-            "/api/v1/flow/conversions",
-            post(post_flow_conversion).route_layer(layer()),
+            "/api/v2/flow/conversions",
+            post(post_flow_v2_conversion).route_layer(layer()),
         )
         .route(
-            "/api/v1/flow/objects/{object_id}/commands",
-            post(post_flow_object_command).route_layer(layer()),
+            "/api/v2/flow/objects/{object_id}/commands",
+            post(post_flow_v2_command).route_layer(layer()),
         )
         .route(
-            "/api/v1/flow/objects/{object_id}/references",
-            post(post_flow_object_reference).route_layer(layer()),
+            "/api/v2/flow/objects/{object_id}/references",
+            post(post_flow_v2_reference).route_layer(layer()),
         )
         .route(
             "/api/v2/flow/objects/{object_id}/body-assets/copy",
@@ -171,7 +171,7 @@ async fn a_conversion_is_judged_by_its_source_not_by_a_project_id_in_the_body() 
     for (kind, token) in bots(&s) {
         let mut body = preview_body(s.page2, s.form1, &format!("inject-{kind}"));
         body["project_id"] = json!(s.p1);
-        let answer = call(&s.app, "POST", "/api/v1/flow/conversions/preview", &token, Some(body)).await;
+        let answer = call(&s.app, "POST", "/api/v2/flow/conversions/preview", &token, Some(body)).await;
         assert!(is_refusal(&answer), "{kind}: {answer:?}");
         let made = count(
             &scratch.db,
@@ -194,7 +194,7 @@ async fn a_conversion_target_in_another_project_is_refused() {
         let own = call(
             &s.app,
             "POST",
-            "/api/v1/flow/conversions/preview",
+            "/api/v2/flow/conversions/preview",
             &token,
             Some(preview_body(s.page1, s.form1, &format!("own-{kind}"))),
         )
@@ -204,7 +204,7 @@ async fn a_conversion_target_in_another_project_is_refused() {
         let foreign = call(
             &s.app,
             "POST",
-            "/api/v1/flow/conversions/preview",
+            "/api/v2/flow/conversions/preview",
             &token,
             Some(preview_body(s.page1, s.form2, &format!("foreign-{kind}"))),
         )
@@ -219,7 +219,7 @@ async fn a_conversion_target_in_another_project_is_refused() {
         let answer = call(
             &s.app,
             "POST",
-            "/api/v1/flow/conversions/preview",
+            "/api/v2/flow/conversions/preview",
             &token,
             Some(new_form.clone()),
         )
@@ -229,7 +229,7 @@ async fn a_conversion_target_in_another_project_is_refused() {
         let answer = call(
             &s.app,
             "POST",
-            "/api/v1/flow/conversions/preview",
+            "/api/v2/flow/conversions/preview",
             &token,
             Some(new_form),
         )
@@ -281,7 +281,7 @@ async fn a_conversion_commit_checks_the_stored_target() {
         let answer = call(
             &s.app,
             "POST",
-            "/api/v1/flow/conversions",
+            "/api/v2/flow/conversions",
             &token,
             Some(json!({
                 "preview_id": preview, "source_frontier": "", "target_schema_version": 1,
@@ -329,7 +329,7 @@ async fn a_move_destination_needs_write_in_its_project() {
         let answer = call(
             &s.app,
             "POST",
-            &format!("/api/v1/flow/objects/{}/commands", s.page1),
+            &format!("/api/v2/flow/objects/{}/commands", s.page1),
             &token,
             Some(command(s.page2, &format!("out-{kind}"))),
         )
@@ -356,7 +356,7 @@ async fn a_move_destination_needs_write_in_its_project() {
     let answer = call(
         &s.app,
         "POST",
-        &format!("/api/v1/flow/objects/{}/commands", s.page1),
+        &format!("/api/v2/flow/objects/{}/commands", s.page1),
         &mixed_token,
         Some(command(s.page2, "into-read-only")),
     )
@@ -374,7 +374,7 @@ async fn a_relation_to_a_page_of_another_project_is_refused() {
         let answer = call(
             &s.app,
             "POST",
-            &format!("/api/v1/flow/objects/{}/commands", s.page1),
+            &format!("/api/v2/flow/objects/{}/commands", s.page1),
             &token,
             Some(json!({
                 "command": {"type": "link", "payload": {"target_object_id": s.page2, "relation_type": "related"}},
@@ -414,7 +414,7 @@ async fn a_reference_target_in_another_project_is_refused() {
     let s = scene("sx7", &scratch.db).await;
     for (kind, token) in bots(&s) {
         let reference = |target_type: &str, target: Uuid, key: &str| json!({"target_type": target_type, "target_id": target, "display": {}, "idempotency_key": key});
-        let path = format!("/api/v1/flow/objects/{}/references", s.page1);
+        let path = format!("/api/v2/flow/objects/{}/references", s.page1);
         let answer = call(
             &s.app,
             "POST",
@@ -543,7 +543,7 @@ async fn an_unrestricted_bot_is_not_limited() {
     let answer = call(
         &s.app,
         "POST",
-        "/api/v1/flow/conversions/preview",
+        "/api/v2/flow/conversions/preview",
         &s.c.plain_token,
         Some(preview_body(s.page1, s.form2, "plain-cross")),
     )

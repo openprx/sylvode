@@ -716,4 +716,31 @@ The remaining endpoints follow the conventions above. Their paths, relative to `
 | Forms | `/projects/{project_id}/forms`, `/forms/{form_id}`, `/form-records/{record_id}`, `/form-views/{view_id}`, `/form-attachments/{attachment_id}`, `/form-export-jobs/{job_id}`, `/form-import-jobs/{job_id}`, `/form-attachment-package-jobs/{job_id}`, `/form-import-mapping-templates/{template_id}`; see the [forms guide](../guide/forms.md); `GET /form-attachments/{attachment_id}` reads one attachment (archived ones too) with its `form_id` and `project_id`; a delegated token with `forms:read` or `forms:write` reaches the form list, one form, its records, one record, and creating and updating a record, and nothing else of forms (see [OAuth](oauth.md#calling-the-api-with-a-delegated-token)) |
 | Plugins | `/projects/{project_id}/plugins`, `/plugins/{plugin_id}`, `/projects/{project_id}/plugin-packages`, `/me/form-plugin-packages`; see [plugins](../plugins/README.md) |
 | Governance | `/proposals`, `/proposal-comments/{id}`, `/proposal-templates`, `/decisions`, `/decision-domains`, `/projects/{project_id}/domains`, `/governance/config`, `/governance/audit-logs`, `/trust-scores`, `/users/{id}/trust`, `/impact-reviews`, `/vetoers`, `/projects/{pid}/audit-reports`, `/ai-learning/{review_id}/feedback`, `/projects/{project_id}/ai-participants/{bot_id}/learning`; see the [governance guide](../guide/governance.md) |
-| Flow | `/workspaces/{workspace_id}/flow/...`, `/workspaces/{workspace_id}/features/flow`, `/flow/...`, `/collab/...`, and `/api/v2/flow/`; see the [Flow guide](../guide/flow.md) and the Flow command groups of the [`sylvode` command line](cli.md) |
+| Flow | `/workspaces/{workspace_id}/features/flow` under `/api/v1/`; every other Flow route is under `/api/v2/flow/`, and the Flow operations of the first row; see the [Flow guide](../guide/flow.md), the collaboration section below and the Flow command groups of the [`sylvode` command line](cli.md) |
+
+## Flow collaboration
+
+Flow has one route surface, `/api/v2/flow/`. A workspace is reached through the scope bound to it:
+`GET /api/v2/flow/workspaces/{workspace_id}/scope` answers `{scope: {id, ...}, roots}`, and the workspace
+level routes (`/scopes/{scope_id}/objects`, `/search`, `/trash`, `/navigator`, `/projection-lag`,
+`/exports`, `/import-artifacts`, `/imports/...`) hang off that scope id. Object routes take the object
+id directly, for personal and workspace content alike.
+
+A workspace bot token is accepted on the routes that serve workspace content, with the bot's own
+permissions and the workspace's Flow switch; it never reaches a personal scope, and the routes that
+only a person can use (personal home, collaboration tickets, bootstrap, mounts, block shares, body
+assets, child reservations, operations, packages, transfers) refuse it.
+
+Live collaboration needs a user access token, never a bot token:
+
+- `POST /api/v2/flow/collab/tickets` with `{object_id, document_id, client_id, origin}` returns a
+  one-time ticket (valid for 60 seconds) and the WebSocket path. `client_id` must be a UUID that the
+  client generates; any other value is refused (`400`/`422`). `origin` must be allowed by the server's
+  collaboration origins. The caller needs at least view access to the object.
+- `GET /api/v2/flow/collab/ws?ticket=...&client_id=...` upgrades to the collaboration WebSocket. It
+  takes no bearer credential: the ticket is the credential, it is consumed by the upgrade, and it is
+  bound to the same `client_id` (a UUID) and `Origin` it was issued for. A `client_id` that is not a
+  UUID, a used, expired or foreign ticket, and a disabled workspace are all refused before the upgrade.
+- `GET /api/v2/flow/objects/{object_id}/collab` reads the document diagnostics and
+  `POST /api/v2/flow/objects/{object_id}/collab/verify` runs the shallow integrity check; both accept a
+  user or a workspace bot token.

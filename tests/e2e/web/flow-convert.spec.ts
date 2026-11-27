@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { expect, test, type APIRequestContext, type Page, type Request } from '@playwright/test';
+import { postWorkspaceFlowObject } from './flow-scope-support';
 
 /**
  * Flow Page -> Universal Forms record conversion wizard (`/flow/{objectId}/convert`)
@@ -213,7 +214,7 @@ test('owner converts a Page into a Forms record through source, mapping, preview
 	);
 	const pageTitle = `Launch plan ${runId}`;
 	const created = await unwrap<{ object: { id: string } }>(
-		await request.post(`/api/v1/workspaces/${workspace.id}/flow/objects`, {
+		await postWorkspaceFlowObject(request, workspace.id, {
 			headers: auth,
 			data: { object_type: 'page', title: pageTitle, idempotency_key: crypto.randomUUID() }
 		})
@@ -261,7 +262,7 @@ test('owner converts a Page into a Forms record through source, mapping, preview
 	// Read after the object page was open: opening the editor itself can advance the document, so
 	// the head the wizard shows is the one after that visit.
 	const before = await unwrap<ObjectView>(
-		await request.get(`/api/v1/flow/objects/${objectId}`, { headers: auth })
+		await request.get(`/api/v2/flow/objects/${objectId}`, { headers: auth })
 	);
 	await expect(page.getByTestId('flow-convert-source-title')).toHaveText(pageTitle);
 	await expect(page.getByTestId('flow-convert-source-seq')).toHaveText(String(before.document_seq));
@@ -335,7 +336,7 @@ test('owner converts a Page into a Forms record through source, mapping, preview
 
 	const renamed = `Launch plan renamed ${runId}`;
 	await unwrap(
-		await request.post(`/api/v1/flow/objects/${objectId}/commands`, {
+		await request.post(`/api/v2/flow/objects/${objectId}/commands`, {
 			headers: auth,
 			data: {
 				command: { type: 'set_title', payload: { title: renamed } },
@@ -360,7 +361,7 @@ test('owner converts a Page into a Forms record through source, mapping, preview
 	await expect(step).toHaveText('Step 3 of 4: Preview');
 	expect(secondPreview.preview_id).not.toBe(firstPreview.preview_id);
 	const after = await unwrap<ObjectView>(
-		await request.get(`/api/v1/flow/objects/${objectId}`, { headers: auth })
+		await request.get(`/api/v2/flow/objects/${objectId}`, { headers: auth })
 	);
 	expect(after.frontier).not.toBe(before.frontier);
 	expect(secondPreview.source_frontier).toBe(after.frontier);
@@ -429,7 +430,7 @@ test('owner converts a Page into a Forms record through source, mapping, preview
 	expect(record.source.source_object_id).toBe(objectId);
 	// The source Page is unchanged by the conversion.
 	const source = await unwrap<ObjectView>(
-		await request.get(`/api/v1/flow/objects/${objectId}`, { headers: auth })
+		await request.get(`/api/v2/flow/objects/${objectId}`, { headers: auth })
 	);
 	expect(source.frontier).toBe(after.frontier);
 	expect(source.title).toBe(renamed);
@@ -551,7 +552,7 @@ async function conversionSetup(
 		})
 	);
 	const created = await unwrap<{ object: { id: string } }>(
-		await request.post(`/api/v1/workspaces/${workspace.id}/flow/objects`, {
+		await postWorkspaceFlowObject(request, workspace.id, {
 			headers: auth,
 			data: {
 				object_type: 'page',
@@ -576,7 +577,7 @@ async function convertOverRest(
 	setup: ConversionSetup
 ): Promise<{ job: Job; previewId: string }> {
 	const source = await unwrap<ObjectView>(
-		await request.get(`/api/v1/flow/objects/${setup.objectId}`, {
+		await request.get(`/api/v2/flow/objects/${setup.objectId}`, {
 			headers: setup.auth
 		})
 	);
@@ -661,7 +662,7 @@ async function failedJobOverRest(
 	setup: ConversionSetup
 ): Promise<{ jobId: string; previewId: string }> {
 	const source = await unwrap<ObjectView>(
-		await request.get(`/api/v1/flow/objects/${setup.objectId}`, { headers: setup.auth })
+		await request.get(`/api/v2/flow/objects/${setup.objectId}`, { headers: setup.auth })
 	);
 	const preview = await unwrap<Preview>(
 		await request.post('/api/v2/flow/conversions/preview', {
@@ -892,7 +893,7 @@ test('a failed job is retried only after confirmation, with one key per job, ind
 	// ---- 2. the Page moved on after the failure: the retry is a permanent `stale_frontier` ----
 	const second = await failedJobOverRest(request, setup);
 	await unwrap(
-		await request.post(`/api/v1/flow/objects/${setup.objectId}/commands`, {
+		await request.post(`/api/v2/flow/objects/${setup.objectId}/commands`, {
 			headers: setup.auth,
 			data: {
 				command: { type: 'set_title', payload: { title: `Retry plan moved ${runId}` } },

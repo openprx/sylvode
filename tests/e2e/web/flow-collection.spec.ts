@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+import { postWorkspaceFlowObject } from './flow-scope-support';
 
 // Collections are part of the Flow browser: the navigator offers them, a collection opens its
 // table, board and schema editor, and a record opens its panel. This gate verifies that the UI
@@ -120,7 +121,7 @@ test('collection: the navigator offers it, the browser opens it, typed schema an
 		const tableId = crypto.randomUUID();
 		const boardId = crypto.randomUUID();
 		const created = await unwrap<{ object: { id: string; document_id: string } }>(
-			await context.request.post(`/api/v1/workspaces/${workspace.id}/flow/objects`, {
+			await postWorkspaceFlowObject(context.request, workspace.id, {
 				headers: auth,
 				data: {
 					object_type: 'collection',
@@ -142,17 +143,17 @@ test('collection: the navigator offers it, the browser opens it, typed schema an
 		const collectionId = created.object.id;
 		const schema = async () =>
 			unwrap<CollectionData>(
-				await context.request.get(`/api/v1/flow/collections/${collectionId}`, { headers: auth })
+				await context.request.get(`/api/v2/flow/collections/${collectionId}`, { headers: auth })
 			);
 		const list = async (viewId?: string) =>
 			unwrap<RecordsData>(
-				await context.request.get(`/api/v1/flow/collections/${collectionId}/records`, {
+				await context.request.get(`/api/v2/flow/collections/${collectionId}/records`, {
 					headers: auth,
 					params: viewId ? { view_id: viewId } : {}
 				})
 			);
 		const command = (type: string, payload: Record<string, unknown>, expectedFrontier?: string) =>
-			context.request.post(`/api/v1/flow/objects/${collectionId}/commands`, {
+			context.request.post(`/api/v2/flow/objects/${collectionId}/commands`, {
 				headers: auth,
 				data: {
 					command: { type, payload },
@@ -196,7 +197,7 @@ test('collection: the navigator offers it, the browser opens it, typed schema an
 		const records = [];
 		for (const name of ['Alpha', 'Beta']) {
 			const record = await unwrap<{ object: { id: string } }>(
-				await context.request.post(`/api/v1/flow/collections/${collectionId}/records`, {
+				await context.request.post(`/api/v2/flow/collections/${collectionId}/records`, {
 					headers: auth,
 					data: { values_by_field_id: { [nameId]: name }, idempotency_key: crypto.randomUUID() }
 				})
@@ -225,7 +226,7 @@ test('collection: the navigator offers it, the browser opens it, typed schema an
 			await command('record_patch', { record_id: first.record.id, body }, first.record.frontier)
 		);
 		const recordObject = () =>
-			context.request.get(`/api/v1/flow/objects/${first.record.id}`, { headers: auth });
+			context.request.get(`/api/v2/flow/objects/${first.record.id}`, { headers: auth });
 		const saved = await unwrap<{
 			semantic_content: { nodes: Record<string, { properties: { body: string } }> };
 		}>(await recordObject());

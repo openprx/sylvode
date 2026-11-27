@@ -3,7 +3,6 @@
 //! Included from `routes::flow` so the flow-surface gate still sees `routes::flow::`.
 
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderValue, header};
 use axum::response::IntoResponse;
 use axum::{Extension, Json};
 use platform::app::AppState;
@@ -12,42 +11,14 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::error::ApiError;
-use crate::flow::appearance::{self, PageAppearance, PageCover, PageIcon};
 use crate::flow::collab::authz::{self, PermissionLevel};
-use crate::flow::comments;
 use crate::flow::policy;
 use crate::flow::restore::{self, RestoreVersionRequest};
-use crate::flow::shares;
 use crate::flow::trash;
 use crate::middleware::bot_auth::BotAuthContext;
 use crate::response::ApiResponse;
 
-use super::{ShareClientIp, build_auth_extensions, request_origin};
-
-#[derive(Debug, Deserialize)]
-pub struct AssetPath {
-    pub object_id: Uuid,
-    pub asset_id: Uuid,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PublicAssetPath {
-    pub token: String,
-    pub asset_id: Uuid,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AppearanceBody {
-    #[serde(default)]
-    pub icon: Option<PageIcon>,
-    #[serde(default)]
-    pub cover: Option<PageCover>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct UploadAppearanceBody {
-    pub data_base64: String,
-}
+use super::{build_auth_extensions, request_origin};
 
 #[derive(Debug, Deserialize)]
 pub struct RestoreVersionBody {
@@ -63,94 +34,6 @@ pub struct TrashQuery {
     pub project_id: Option<Uuid>,
     pub cursor: Option<String>,
     pub limit: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct MentionQuery {
-    #[serde(default)]
-    pub q: String,
-}
-
-pub async fn put_flow_appearance(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Path(object_id): Path<Uuid>,
-    Json(body): Json<AppearanceBody>,
-) -> Result<impl IntoResponse, ApiError> {
-    let access = authorize(&state, &claims, bot.as_ref(), object_id, PermissionLevel::View).await?;
-    require_level(
-        &state,
-        &access,
-        PermissionLevel::Edit,
-        "edit access is required to change the page header",
-    )
-    .await?;
-    let appearance = appearance::set_appearance(
-        &state.db,
-        access.workspace_id(),
-        access.object_id(),
-        access.actor_id(),
-        access.principal_kind_wire() == "bot",
-        &PageAppearance {
-            icon: body.icon,
-            cover: body.cover,
-        },
-    )
-    .await?;
-    Ok(ApiResponse::success(appearance))
-}
-
-pub async fn post_flow_appearance_asset(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Path(object_id): Path<Uuid>,
-    Json(body): Json<UploadAppearanceBody>,
-) -> Result<impl IntoResponse, ApiError> {
-    let access = authorize(&state, &claims, bot.as_ref(), object_id, PermissionLevel::View).await?;
-    require_level(
-        &state,
-        &access,
-        PermissionLevel::Edit,
-        "edit access is required to upload a page image",
-    )
-    .await?;
-    let created = appearance::upload_asset(
-        &state.db,
-        access.workspace_id(),
-        access.object_id(),
-        access.actor_id(),
-        access.principal_kind_wire() == "bot",
-        &body.data_base64,
-    )
-    .await?;
-    Ok(ApiResponse::success(created))
-}
-
-pub async fn get_flow_appearance_asset(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Path(path): Path<AssetPath>,
-) -> Result<impl IntoResponse, ApiError> {
-    let access = authorize(&state, &claims, bot.as_ref(), path.object_id, PermissionLevel::View).await?;
-    let asset = if access.principal_kind_wire() == "user" {
-        crate::flow::scope_assets::read(&state.db, access.object_id(), path.asset_id, access.actor_id()).await?
-    } else {
-        appearance::read_asset(&state.db, access.workspace_id(), access.object_id(), path.asset_id).await?
-    };
-    Ok(image_response(asset))
-}
-
-pub async fn get_public_flow_appearance_asset(
-    State(state): State<AppState>,
-    Path(path): Path<PublicAssetPath>,
-    ShareClientIp(ip): ShareClientIp,
-) -> Result<impl IntoResponse, ApiError> {
-    shares::enforce_public_share_rate_limit(&state.db, ip).await?;
-    let asset = shares::read_public_asset(&state.db, &path.token, path.asset_id).await?;
-    Ok(image_response(asset))
 }
 
 pub async fn post_flow_restore_version(
@@ -225,35 +108,6 @@ pub async fn post_flow_purge(
     )
     .await?;
     Ok(ApiResponse::success(purged))
-}
-
-pub async fn get_flow_mention_candidates(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Path(object_id): Path<Uuid>,
-    Query(query): Query<MentionQuery>,
-) -> Result<impl IntoResponse, ApiError> {
-    let access = authorize(&state, &claims, bot.as_ref(), object_id, PermissionLevel::View).await?;
-    require_level(
-        &state,
-        &access,
-        PermissionLevel::Comment,
-        "comment access is required to mention someone",
-    )
-    .await?;
-    let listed =
-        comments::list_mention_candidates(&state.db, access.workspace_id(), access.object_id(), &query.q).await?;
-    Ok(ApiResponse::success(listed))
-}
-
-fn image_response(asset: appearance::AppearanceAssetBytes) -> axum::response::Response {
-    let mut response = axum::response::Response::new(axum::body::Body::from(asset.bytes));
-    let headers = response.headers_mut();
-    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(asset.content_type));
-    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("private, max-age=300"));
-    headers.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
-    response
 }
 
 async fn authorize(

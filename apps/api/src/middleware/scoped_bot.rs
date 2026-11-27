@@ -902,7 +902,7 @@ mod tests {
                 );
             }
         }
-        assert_eq!(flagged.len(), 15);
+        assert_eq!(flagged.len(), 11);
     }
 
     /// Every `(method, pattern)` that the router files register behind `bot_or_user_auth_middleware`.
@@ -1038,12 +1038,14 @@ mod tests {
             ("GET", "/api/v1/workspaces/{workspace_id}/activities"),
             ("GET", "/api/v2/flow/block-share-placements"),
             ("POST", "/api/v2/flow/collab/tickets"),
-            ("GET", "/api/v1/workspaces/{workspace_id}/flow/projection-lag"),
-            ("GET", "/api/v1/workspaces/{workspace_id}/flow/navigator"),
-            ("GET", "/api/v2/flow/workspaces/{workspace_id}/scope"),
+            ("GET", "/api/v2/flow/scopes/{scope_id}/projection-lag"),
+            ("GET", "/api/v2/flow/scopes/{scope_id}/navigator"),
         ] {
             assert_eq!(class(method, pattern), Refused, "{method} {pattern}");
         }
+        // The workspace's Flow scope is the one lookup every workspace Flow route starts from: the
+        // handler answers the bot's own workspace only.
+        assert_eq!(class("GET", "/api/v2/flow/workspaces/{workspace_id}/scope"), NoProject);
         // Filtered: the workspace-level reads whose handler limits the rows to the readable projects.
         for (method, pattern) in [
             ("GET", "/api/v1/workspaces/{workspace_id}/projects"),
@@ -1068,7 +1070,7 @@ mod tests {
             ("GET", "/api/v1/projects/{project_id}/board"),
             ("POST", "/api/v2/flow/objects/{object_id}/commands"),
             ("POST", "/api/v2/flow/objects"),
-            ("POST", "/api/v1/flow/conversions"),
+            ("POST", "/api/v2/flow/conversions"),
             ("GET", "/api/v2/flow/records/{record_id}/context"),
         ] {
             assert!(project(class(method, pattern)), "{method} {pattern}");
@@ -1090,9 +1092,9 @@ mod tests {
         }
         // The workspace Flow reads that take the project from the query: allowed only for a named project.
         for pattern in [
-            "/api/v1/workspaces/{workspace_id}/flow/objects",
-            "/api/v1/workspaces/{workspace_id}/flow/search",
-            "/api/v1/workspaces/{workspace_id}/flow/trash",
+            "/api/v2/flow/scopes/{scope_id}/objects",
+            "/api/v2/flow/scopes/{scope_id}/search",
+            "/api/v2/flow/scopes/{scope_id}/trash",
         ] {
             assert_eq!(
                 class("GET", pattern),

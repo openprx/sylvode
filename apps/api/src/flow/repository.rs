@@ -6,10 +6,7 @@
 use std::fmt::Write as _;
 
 use platform::timestamp::Timestamp;
-use sea_orm::{
-    AccessMode, ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, IsolationLevel, Statement,
-    TransactionTrait,
-};
+use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -86,107 +83,6 @@ pub async fn fetch_object_workspace<C: ConnectionTrait>(conn: &C, object_id: Uui
         )),
         other => Ok(other.and_then(|r| r.workspace_id)),
     }
-}
-
-/// Immutable accepted update needed to reconstruct the semantic state at a historical seq.
-#[derive(Debug, FromQueryResult)]
-pub struct DiffUpdateRow {
-    pub seq: i64,
-    pub bytes: Vec<u8>,
-    pub content_hash: String,
-    pub before_frontier: Vec<u8>,
-    pub after_frontier: Vec<u8>,
-}
-
-/// One MVCC-consistent view of an object's document head and all retained updates through the
-/// caller's requested upper sequence.
-pub struct DiffHistoryRows {
-    pub workspace_id: Uuid,
-    pub document_id: Uuid,
-    pub snapshot: Vec<u8>,
-    pub snapshot_seq: i64,
-    pub snapshot_frontier: Vec<u8>,
-    pub head_seq: i64,
-    pub head_frontier: Vec<u8>,
-    pub updates: Vec<DiffUpdateRow>,
-}
-
-/// Loads the data needed by `GET .../diff` in one `REPEATABLE READ READ ONLY` snapshot.
-///
-/// v0.5 retains every `collab_updates` row, including rows older than the document's advanced
-/// snapshot pointer. Those rows provide the exact seq-to-frontier index while Loro's full
-/// snapshot retains the operation history needed to fork at either frontier; using only the
-/// current snapshot state would silently substitute `snapshot_seq` for older requests.
-pub async fn fetch_diff_history(
-    db: &DatabaseConnection,
-    object_id: Uuid,
-    to_seq: i64,
-    row_limit: u64,
-) -> Result<Option<DiffHistoryRows>, ApiError> {
-    #[derive(FromQueryResult)]
-    struct DocumentRow {
-        workspace_id: Uuid,
-        document_id: Uuid,
-        snapshot: Vec<u8>,
-        snapshot_seq: i64,
-        snapshot_frontier: Vec<u8>,
-        head_seq: i64,
-        head_frontier: Vec<u8>,
-    }
-
-    let tx = db
-        .begin_with_config(Some(IsolationLevel::RepeatableRead), Some(AccessMode::ReadOnly))
-        .await?;
-    let document = DocumentRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT fo.workspace_id, cd.id AS document_id, cd.snapshot, cd.snapshot_seq, \
-                cd.snapshot_frontier, cd.head_seq, cd.head_frontier \
-           FROM flow_objects fo \
-           JOIN collab_documents cd ON cd.object_id = fo.id \
-          WHERE fo.id = $1",
-        vec![object_id.into()],
-    ))
-    .one(&tx)
-    .await?;
-    let Some(document) = document else {
-        tx.commit().await?;
-        return Ok(None);
-    };
-
-    let history_upper = if to_seq > document.head_seq {
-        0
-    } else if to_seq == 0 && document.head_seq > 0 {
-        1
-    } else {
-        to_seq
-    };
-    let updates = DiffUpdateRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT seq, bytes, content_hash, before_frontier, after_frontier \
-           FROM collab_updates \
-          WHERE document_id = $1 AND seq >= 1 AND seq <= $2 \
-          ORDER BY seq ASC \
-          LIMIT $3",
-        vec![
-            document.document_id.into(),
-            history_upper.into(),
-            i64::try_from(row_limit.saturating_add(1)).unwrap_or(i64::MAX).into(),
-        ],
-    ))
-    .all(&tx)
-    .await?;
-    tx.commit().await?;
-
-    Ok(Some(DiffHistoryRows {
-        workspace_id: document.workspace_id,
-        document_id: document.document_id,
-        snapshot: document.snapshot,
-        snapshot_seq: document.snapshot_seq,
-        snapshot_frontier: document.snapshot_frontier,
-        head_seq: document.head_seq,
-        head_frontier: document.head_frontier,
-        updates,
-    }))
 }
 
 pub struct ListFilter {
@@ -704,63 +600,6 @@ pub async fn ensure_workspace_navigator_root<C: ConnectionTrait>(
     ensure_navigator_root(conn, workspace_id, None).await
 }
 
-#[derive(Debug, FromQueryResult)]
-pub struct NavigatorNodeRow {
-    pub id: Uuid,
-    pub parent_id: Uuid,
-    pub object_type: String,
-    pub title: String,
-    pub created_at: Timestamp,
-    pub appearance: Value,
-}
-
-/// Loads the bounded PostgreSQL-authoritative subtree rooted at one navigator object. The query
-/// traverses archived parents so an active descendant cannot be silently re-rooted; archive
-/// filtering is applied only to the returned rows.
-pub async fn fetch_navigator_nodes<C: ConnectionTrait>(
-    conn: &C,
-    workspace_id: Uuid,
-    navigator_object_id: Uuid,
-    depth: u64,
-    include_archived: bool,
-) -> Result<Vec<NavigatorNodeRow>, ApiError> {
-    let depth = i64::try_from(depth).map_err(|_| ApiError::invalid_update("depth is too large".to_string()))?;
-    Ok(NavigatorNodeRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        r"
-            WITH RECURSIVE tree AS (
-                SELECT object_row.id, object_row.parent_id, object_row.object_type,
-                       object_row.lifecycle_status, object_row.created_at, object_row.appearance,
-                       ARRAY[object_row.id]::uuid[] AS path, 1::bigint AS depth
-                  FROM flow_objects object_row
-                 WHERE object_row.workspace_id = $1 AND object_row.parent_id = $2
-                UNION ALL
-                SELECT child.id, child.parent_id, child.object_type,
-                       child.lifecycle_status, child.created_at, child.appearance,
-                       tree.path || child.id, tree.depth + 1
-                  FROM tree
-                  JOIN flow_objects child
-                    ON child.workspace_id = $1 AND child.parent_id = tree.id
-                 WHERE tree.depth < $3 AND NOT child.id = ANY(tree.path)
-            )
-            SELECT tree.id, tree.parent_id, tree.object_type, projection.title,
-                   tree.created_at, tree.appearance
-              FROM tree
-              JOIN flow_object_projections projection ON projection.object_id = tree.id
-             WHERE $4 OR tree.lifecycle_status = 'active'
-             ORDER BY tree.created_at, tree.id
-        ",
-        vec![
-            workspace_id.into(),
-            navigator_object_id.into(),
-            depth.into(),
-            include_archived.into(),
-        ],
-    ))
-    .all(conn)
-    .await?)
-}
-
 pub struct NewCollabDocument {
     pub id: Uuid,
     pub object_id: Uuid,
@@ -994,58 +833,6 @@ pub async fn update_flow_settings<C: ConnectionTrait>(
     ))
     .await?;
     Ok(())
-}
-
-pub struct HistoryFilter {
-    pub document_id: Uuid,
-    pub before_seq: Option<i64>,
-    /// Already clamped to `1..=100` by the handler.
-    pub limit: u64,
-}
-
-#[derive(Debug, FromQueryResult)]
-pub struct HistoryRow {
-    pub seq: i64,
-    pub actor_id: Option<Uuid>,
-    pub origin_surface: String,
-    pub message: Option<String>,
-    pub semantic_summary: Value,
-    pub created_at: Timestamp,
-}
-
-/// `collab_updates` joined with the `business_events` row its `event_id` points at.
-///
-/// Surfaces the caller-facing `message` (`business_events.metadata->>'message'`) and a JSON
-/// summary of what changed (`business_events.payload`). Always empty in this package: nothing
-/// here ever inserts a `collab_updates` row (that only happens through the content-command
-/// endpoint, not shipped in this package), so this query is exercised now purely so the shape is
-/// right once that lands.
-pub async fn fetch_history<C: ConnectionTrait>(conn: &C, filter: &HistoryFilter) -> Result<Vec<HistoryRow>, ApiError> {
-    let mut sql = String::from(
-        r"
-            SELECT
-                cu.seq, cu.actor_id, cu.origin_surface,
-                be.metadata ->> 'message' AS message,
-                be.payload AS semantic_summary,
-                cu.created_at
-            FROM collab_updates cu
-            INNER JOIN business_events be ON be.id = cu.event_id
-            WHERE cu.document_id = $1
-        ",
-    );
-    let mut values: Vec<sea_orm::Value> = vec![filter.document_id.into()];
-    if let Some(before_seq) = filter.before_seq {
-        values.push(before_seq.into());
-        let _ = write!(sql, " AND cu.seq < ${}", values.len());
-    }
-    values.push(i64::try_from(filter.limit).unwrap_or(i64::MAX).into());
-    let _ = write!(sql, " ORDER BY cu.seq DESC LIMIT ${}", values.len());
-
-    Ok(
-        HistoryRow::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres, sql, values))
-            .all(conn)
-            .await?,
-    )
 }
 
 // ================================================================================================

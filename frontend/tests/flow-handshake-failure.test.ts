@@ -58,7 +58,7 @@ async function harness(server: FakeCollabServer) {
 				return {
 					code: 0,
 					message: 'ok',
-					data: { websocket_url: '/api/v1/collab/ws?ticket=t', expires_at: '', ticket: 't' }
+					data: { websocket_url: '/api/v2/flow/collab/ws?ticket=t', expires_at: '', ticket: 't' }
 				} as never;
 			}
 		},

@@ -73,34 +73,34 @@ async fn all_six_bridge_tools_call_the_frozen_rest_contract() -> Result<(), Box<
         (&reference.0, &reference.1),
         (
             &"POST".to_string(),
-            &format!("/api/v1/flow/objects/{SOURCE}/references")
+            &format!("/api/v2/flow/objects/{SOURCE}/references")
         )
     );
     assert_eq!(
         (&unreference.0, &unreference.1, unreference.3.as_deref()),
         (
             &"DELETE".to_string(),
-            &format!("/api/v1/flow/objects/{SOURCE}/references/{REFERENCE}"),
+            &format!("/api/v2/flow/objects/{SOURCE}/references/{REFERENCE}"),
             Some("unref-key")
         )
     );
     assert_eq!(
         (&preview.0, &preview.1),
-        (&"POST".to_string(), &"/api/v1/flow/conversions/preview".to_string())
+        (&"POST".to_string(), &"/api/v2/flow/conversions/preview".to_string())
     );
     assert_eq!(preview.2.pointer("/source_frontier"), Some(&json!("frontier")));
     assert_eq!(
         (&commit.0, &commit.1),
-        (&"POST".to_string(), &"/api/v1/flow/conversions".to_string())
+        (&"POST".to_string(), &"/api/v2/flow/conversions".to_string())
     );
     assert_eq!(commit.2.pointer("/confirm"), Some(&json!(true)));
     assert_eq!(
         (&status.0, &status.1),
-        (&"GET".to_string(), &format!("/api/v1/flow/conversions/{JOB}"))
+        (&"GET".to_string(), &format!("/api/v2/flow/conversions/{JOB}"))
     );
     assert_eq!(
         (&retry.0, &retry.1),
-        (&"POST".to_string(), &format!("/api/v1/flow/conversions/{JOB}/retry"))
+        (&"POST".to_string(), &format!("/api/v2/flow/conversions/{JOB}/retry"))
     );
     Ok(())
 }

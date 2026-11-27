@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use time::Duration as SignedDuration;
 use uuid::Uuid;
 
-use super::appearance::{self, PageAppearance};
+use super::appearance::PageAppearance;
 use super::collab::authz::PermissionLevel;
 use super::public_page::PublicBlock;
 use crate::error::ApiError;
@@ -157,20 +157,6 @@ pub async fn list_links(
     })
 }
 
-pub async fn create_link(
-    db: &DatabaseConnection,
-    workspace: Uuid,
-    object: Uuid,
-    user: Uuid,
-    _level: PermissionLevel,
-    expires: Option<Timestamp>,
-) -> Result<CreatedShareLink, ApiError> {
-    if super::scope::identity(db, object).await?.workspace_id != Some(workspace) {
-        return Err(missing());
-    }
-    super::scope_shares::create(db, object, user, expires).await
-}
-
 pub(crate) async fn create_link_on<C: ConnectionTrait>(
     db: &C,
     workspace_id: Option<Uuid>,
@@ -231,17 +217,6 @@ pub async fn revoke_link<C: ConnectionTrait>(
     .await?
     .ok_or_else(|| ApiError::not_found("flow share link not found".to_string()))?;
     Ok(view_of(row))
-}
-
-pub async fn read_public(db: &DatabaseConnection, token: &str) -> Result<PublicShareView, ApiError> {
-    super::scope_shares::read_public(db, token).await
-}
-pub async fn read_public_asset(
-    db: &DatabaseConnection,
-    token: &str,
-    asset: Uuid,
-) -> Result<appearance::AppearanceAssetBytes, ApiError> {
-    super::scope_shares::read_public_asset(db, token, asset).await
 }
 
 fn require_manage(level: PermissionLevel) -> Result<(), ApiError> {

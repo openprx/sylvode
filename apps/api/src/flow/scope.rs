@@ -274,19 +274,38 @@ pub async fn authorize<C: ConnectionTrait>(
     let checked = revision(db, scope.id).await?;
     if let Some(workspace) = object_row.workspace_id {
         #[derive(FromQueryResult)]
-        struct Role {
-            role: String,
+        struct Principal {
+            role: Option<String>,
+            is_bot: bool,
         }
-        let role = Role::find_by_statement(Statement::from_sql_and_values(
+        let principal = Principal::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT role FROM workspace_members WHERE workspace_id=$1 AND user_id=$2",
-            vec![workspace.into(), user.into()],
+            "SELECT (SELECT role FROM workspace_members WHERE workspace_id=$1 AND user_id=$2) AS role, \
+             EXISTS(SELECT 1 FROM users WHERE id=$2 AND entity_type=$3) AS is_bot",
+            vec![
+                workspace.into(),
+                user.into(),
+                crate::services::bot_identity::BOT_ENTITY_TYPE.into(),
+            ],
         ))
         .one(db)
-        .await?
-        .map_or_else(|| "__flow_guest".to_string(), |r| r.role);
+        .await?;
+        let guest = || "__flow_guest".to_string();
+        let (role, kind) = match principal {
+            // A workspace bot is evaluated as a bot, with the role its token carries (never the one of
+            // its membership row): the human-only admin fallback does not apply to it, its grants are
+            // `bot` grants, and a project-scoped bot is never an administrator.
+            Some(Principal { is_bot: true, .. }) => (
+                crate::middleware::bot_auth::bot_token_role(db, user, workspace)
+                    .await?
+                    .unwrap_or_else(guest),
+                "bot",
+            ),
+            Some(Principal { role, .. }) => (role.unwrap_or_else(guest), "user"),
+            None => (guest(), "user"),
+        };
         super::policy::require_flow_enabled_on(db, workspace).await?;
-        let level = authz::effective_permission(db, workspace, object, "user", user, &role).await?;
+        let level = authz::effective_permission(db, workspace, object, kind, user, &role).await?;
         if level < minimum {
             return Err(not_found());
         }

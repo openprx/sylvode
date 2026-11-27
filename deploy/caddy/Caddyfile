@@ -66,7 +66,7 @@ sylvode.example.com {
 
 	# `format json` on its own logs `request.uri` verbatim, and two Sylvode URLs
 	# carry a credential in their query string: the one-time WebSocket ticket on
-	# `GET /api/v1/collab/ws?ticket=...` (`ADR-0007`) and the HMAC on the signed
+	# `GET /api/v2/flow/collab/ws?ticket=...` (`ADR-0007`) and the HMAC on the signed
 	# attachment/upload download URLs (`?expires=...&signature=...`). Both are
 	# bearer credentials -- anyone replaying the logged URL before it expires is
 	# that user. apps/api/src/routes/collab.rs::trace_span already strips the

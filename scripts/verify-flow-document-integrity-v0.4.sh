@@ -191,9 +191,11 @@ print(f"{header}.{body}.{signature}")
 BASE="http://127.0.0.1:$API_PORT"
 AUTH=(-H "Authorization: Bearer $USER_JWT" -H 'Content-Type: application/json')
 
-CREATE_RESPONSE="$(curl -sS -X POST "$BASE/api/v1/workspaces/$WORKSPACE_ID/flow/objects" "${AUTH[@]}" \
-  -d "$(jq -n --arg key "$(python3 -c 'import uuid; print(uuid.uuid4())')" \
-    '{object_type:"page",title:"Integrity initial",idempotency_key:$key}')")"
+SCOPE_ID="$(psql "$SCRATCH_URL" -Atc "SELECT scope_id FROM flow_workspace_scope_bindings WHERE workspace_id='$WORKSPACE_ID'")"
+[[ -n "$SCOPE_ID" ]] || { echo "FAIL: workspace has no Flow scope" >&2; exit 2; }
+CREATE_RESPONSE="$(curl -sS -X POST "$BASE/api/v2/flow/objects" "${AUTH[@]}" \
+  -d "$(jq -n --arg key "$(python3 -c 'import uuid; print(uuid.uuid4())')" --arg scope "$SCOPE_ID" \
+    '{scope_id:$scope,object_type:"page",title:"Integrity initial",idempotency_key:$key}')")"
 OBJECT_ID="$(jq -r '.data.object.id // empty' <<<"$CREATE_RESPONSE")"
 [[ -n "$OBJECT_ID" ]] || { echo "FAIL: create fixture failed: $CREATE_RESPONSE" >&2; exit 2; }
 DOCUMENT_ID="$(psql "$SCRATCH_URL" -Atc "SELECT id FROM collab_documents WHERE object_id='$OBJECT_ID'")"
@@ -201,7 +203,7 @@ DOCUMENT_ID="$(psql "$SCRATCH_URL" -Atc "SELECT id FROM collab_documents WHERE o
 
 command_request() {
   local command_type="$1" payload="$2"
-  curl -sS -X POST "$BASE/api/v1/flow/objects/$OBJECT_ID/commands" "${AUTH[@]}" \
+  curl -sS -X POST "$BASE/api/v2/flow/objects/$OBJECT_ID/commands" "${AUTH[@]}" \
     -d "$(jq -n --arg type "$command_type" --argjson payload "$payload" \
       --arg key "$(python3 -c 'import uuid; print(uuid.uuid4())')" \
       '{command:{type:$type,payload:$payload},idempotency_key:$key}')"
@@ -321,7 +323,7 @@ bootstrap_replay() {
   fi
 }
 
-BOOTSTRAP_BEFORE="$(curl -sS "$BASE/api/v1/flow/objects/$OBJECT_ID/bootstrap" "${AUTH[@]}")"
+BOOTSTRAP_BEFORE="$(curl -sS "$BASE/api/v2/flow/objects/$OBJECT_ID/bootstrap" "${AUTH[@]}")"
 REPLAY_BEFORE="$(bootstrap_replay "$BOOTSTRAP_BEFORE" before)"
 HASH_BEFORE="$(jq -r '.semantic_hash // empty' <<<"$REPLAY_BEFORE")"
 [[ -n "$HASH_BEFORE" ]] || add_violation "pre-restart bootstrap produced no semantic hash"
@@ -340,7 +342,7 @@ API_PID=""
 start_api second
 SECOND_PID="$API_PID"
 [[ "$SECOND_PID" != "$FIRST_PID" ]] || add_violation "api restart reused the same PID"
-BOOTSTRAP_AFTER="$(curl -sS "$BASE/api/v1/flow/objects/$OBJECT_ID/bootstrap" "${AUTH[@]}")"
+BOOTSTRAP_AFTER="$(curl -sS "$BASE/api/v2/flow/objects/$OBJECT_ID/bootstrap" "${AUTH[@]}")"
 REPLAY_AFTER="$(bootstrap_replay "$BOOTSTRAP_AFTER" after)"
 HASH_AFTER="$(jq -r '.semantic_hash // empty' <<<"$REPLAY_AFTER")"
 [[ -n "$HASH_AFTER" ]] || add_violation "post-restart bootstrap produced no semantic hash"

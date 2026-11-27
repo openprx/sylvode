@@ -125,7 +125,8 @@ pub struct Seen {
 }
 
 /// The stand-in API: every request is recorded and answered with a generic success envelope whose
-/// `data` carries the ids the ownership lookups read (`project_id`, `form_id`, `project.id`).
+/// `data` carries the ids the ownership lookups read (`project_id`, `form_id`, `project.id`) and the
+/// Flow scope a workspace resolves to (`scope.id`).
 #[derive(Clone)]
 pub struct Api {
     url: String,
@@ -162,7 +163,7 @@ async fn record(State(state): State<State_>, request: Request) -> impl IntoRespo
     } else {
         json!({
             "document_id": UUID, "project_id": UUID, "form_id": UUID, "id": UUID,
-            "project": { "id": UUID }
+            "project": { "id": UUID }, "scope": { "id": UUID }
         })
     };
     state.seen.lock().push(Seen {

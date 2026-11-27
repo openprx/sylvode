@@ -100,6 +100,7 @@ async fn every_registered_resource_is_served_by_its_sylvode_identity_only() -> T
             "data":{
                 "project_id":PROJECT,
                 "form_id":FORM,
+                "scope":{"id":PROJECT},
                 "recent_decisions":[],
                 "mcp":{"tool_registry":{}}
             }

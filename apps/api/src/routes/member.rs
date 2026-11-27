@@ -233,6 +233,14 @@ pub async fn update_member_role(
     // pass a workspace-admin check.
     crate::services::bots::ensure_editable(&tx, target_user_id, crate::services::bots::ManagedPolicy::Refuse).await?;
 
+    // A bot's role is its token's permissions and scope: a seat edited here would be a second source of
+    // truth that disagrees with the token.
+    if crate::services::bot_identity::is_bot_user(&tx, target_user_id).await? {
+        return Err(ApiError::Forbidden(
+            "a bot's role follows its token permissions; change them through the bot".to_string(),
+        ));
+    }
+
     if operator_role == "admin" && (target_role.role == "admin" || req.role == "admin") {
         return Err(ApiError::Forbidden(
             "only owners can assign or modify admin roles".to_string(),

@@ -80,7 +80,7 @@ enum OwnerLookup {
     Sprint,
     /// `comment_id` -> `GET /api/v1/comments/{id}`.
     Comment,
-    /// `object_id` -> `GET /api/v1/flow/objects/{id}`.
+    /// `object_id` -> `GET /api/v2/flow/objects/{id}`.
     ///
     /// Unlike every other lookup here, the owner this returns is *optional*: a Flow object
     /// may belong to no project at all (`v0.4-flow-alpha.md`'s `flow_objects.project_id` is
@@ -1502,7 +1502,7 @@ impl McpServer {
 
     async fn resolve_flow_conversion_owner(&self, tool_name: &str, args: &Value) -> Result<Option<String>, String> {
         let conversion_id = required_owner_argument(tool_name, OwnerLookup::FlowConversion, args)?;
-        let path = format!("/api/v1/flow/conversions/{conversion_id}/owner");
+        let path = format!("/api/v2/flow/conversions/{conversion_id}/owner");
         let response: Value = self
             .client
             .get(&path)
@@ -2083,7 +2083,7 @@ impl McpServer {
         if let Some((object_id, query)) = parse_flow_object_resource_uri(uri, "/schema") {
             return ResourceRead::from_api(
                 self.client
-                    .get::<Value>(&format!("/api/v1/flow/objects/{object_id}/schema{query}"))
+                    .get::<Value>(&format!("/api/v2/flow/objects/{object_id}/schema{query}"))
                     .await,
                 "Failed to read Flow object schema resource",
             );
@@ -2099,19 +2099,22 @@ impl McpServer {
         if let Some((collection_id, query)) = parse_collection_records_resource_uri(uri) {
             return ResourceRead::from_api(
                 self.client
-                    .get::<Value>(&format!("/api/v1/flow/collections/{collection_id}/records{query}"))
+                    .get::<Value>(&format!("/api/v2/flow/collections/{collection_id}/records{query}"))
                     .await,
                 "Failed to read Flow Collection records resource",
             );
         }
 
         if let Some((workspace_id, query)) = parse_navigator_resource_uri(uri) {
-            return ResourceRead::from_api(
-                self.client
-                    .get::<Value>(&format!("/api/v1/workspaces/{workspace_id}/flow/navigator{query}"))
-                    .await,
-                "Failed to read Flow navigator resource",
-            );
+            let navigator = match self.client.flow_scope_id(workspace_id).await {
+                Ok(scope) => {
+                    self.client
+                        .get::<Value>(&format!("/api/v2/flow/scopes/{scope}/navigator{query}"))
+                        .await
+                }
+                Err(error) => Err(error),
+            };
+            return ResourceRead::from_api(navigator, "Failed to read Flow navigator resource");
         }
 
         if let Some(key) = parse_scenario_template_uri(uri) {
