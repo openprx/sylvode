@@ -1729,6 +1729,7 @@ fn tool_call_audit_summary_uses_text_content() {
     let result = CallToolResult {
         content: vec![ToolContent::text("done")],
         is_error: None,
+        structured_content: None,
     };
 
     assert_eq!(summarize_tool_result(&result).as_deref(), Some("done"));
@@ -1936,4 +1937,328 @@ async fn static_guides_are_served_without_consulting_any_policy() -> TestResult 
     let body = serde_json::to_string(&response)?;
     assert!(body.contains("Common workflows"), "{body}");
     Ok(())
+}
+
+#[allow(clippy::indexing_slicing)]
+mod protocol_eras {
+    use super::*;
+
+    // ---- Protocol eras (M1) ---------------------------------------------------------------------
+
+    const MODERN_META: &str = "io.modelcontextprotocol/protocolVersion";
+
+    fn modern_params(extra: Value) -> Value {
+        let mut params = extra;
+        if let Some(fields) = params.as_object_mut() {
+            fields.insert("_meta".to_string(), json!({ MODERN_META: "2026-07-28" }));
+        }
+        params
+    }
+
+    async fn result_of(
+        server: &super::super::McpServer,
+        req: JsonRpcRequest,
+    ) -> Result<Value, Box<dyn std::error::Error>> {
+        server
+            .handle_request(req)
+            .await
+            .and_then(|response| response.result)
+            .ok_or_else(|| "the request did not return a result".into())
+    }
+
+    async fn error_code_of(
+        server: &super::super::McpServer,
+        req: JsonRpcRequest,
+    ) -> Result<i32, Box<dyn std::error::Error>> {
+        server
+            .handle_request(req)
+            .await
+            .and_then(|response| response.error)
+            .map(|error| error.code)
+            .ok_or_else(|| "the request did not return an error".into())
+    }
+
+    #[tokio::test]
+    async fn discover_answers_the_five_fields_without_any_api_call() -> TestResult {
+        // The client points at a port nothing listens on: any API call would fail the request.
+        let server = server("http://127.0.0.1:1".to_string())?;
+        let result = result_of(&server, request(1, "server/discover", None)).await?;
+        assert_eq!(result["resultType"], "complete");
+        assert_eq!(result["supportedVersions"], json!(["2026-07-28"]));
+        assert!(result["capabilities"].is_object());
+        assert!(result["ttlMs"].is_u64());
+        assert_eq!(result["ttlMs"], 3_600_000);
+        assert_eq!(result["cacheScope"], "private");
+        assert_eq!(
+            result["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
+            "sylvode-mcp-server"
+        );
+        assert_eq!(result["instructions"], json!(guides::SERVER_INSTRUCTIONS));
+        assert_eq!(result["capabilities"]["tools"], json!({}));
+        assert_eq!(
+            result["capabilities"]["resources"],
+            json!({"subscribe": false, "listChanged": false})
+        );
+        assert_eq!(
+            result["capabilities"]["extensions"]["io.sylvode/task-protocol"]["version"],
+            json!(crate::tools::entry::TASK_PROTOCOL_VERSION)
+        );
+        assert!(result["capabilities"].get("experimental").is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn discover_is_served_with_a_modern_meta_and_to_a_legacy_request() -> TestResult {
+        let server = server("http://127.0.0.1:1".to_string())?;
+        let with_meta = result_of(&server, request(1, "server/discover", Some(modern_params(json!({}))))).await?;
+        let without = result_of(&server, request(2, "server/discover", None)).await?;
+        assert_eq!(with_meta, without);
+        assert_eq!(
+            error_code_of(
+                &server,
+                request(
+                    3,
+                    "server/discover",
+                    Some(json!({"_meta": {MODERN_META: "1900-01-01"}}))
+                )
+            )
+            .await?,
+            -32022
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn initialize_echoes_each_known_legacy_version_and_defaults_otherwise() -> TestResult {
+        let server = server("http://127.0.0.1:1".to_string())?;
+        for version in ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"] {
+            let result = result_of(
+                &server,
+                request(1, "initialize", Some(json!({"protocolVersion": version}))),
+            )
+            .await?;
+            assert_eq!(result["protocolVersion"], version);
+        }
+        for params in [json!({"protocolVersion": "1900-01-01"}), json!({}), json!(null)] {
+            let result = result_of(&server, request(1, "initialize", Some(params))).await?;
+            assert_eq!(result["protocolVersion"], "2025-11-25");
+        }
+        assert_eq!(
+            result_of(&server, request(1, "initialize", None)).await?["protocolVersion"],
+            "2025-11-25"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn initialize_keeps_its_legacy_shape_without_resource_templates_key() -> TestResult {
+        let server = server("http://127.0.0.1:1".to_string())?;
+        let result = result_of(&server, request(1, "initialize", Some(json!({})))).await?;
+        let capabilities = &result["capabilities"];
+        assert_eq!(capabilities["tools"], json!({"listChanged": false}));
+        assert_eq!(
+            capabilities["resources"],
+            json!({"subscribe": false, "listChanged": false})
+        );
+        assert!(capabilities.get("resourceTemplates").is_none());
+        assert!(capabilities["experimental"]["sylvode/task-protocol"].is_object());
+        assert_eq!(result["serverInfo"]["name"], "sylvode-mcp-server");
+        assert!(result.get("resultType").is_none());
+        assert!(result.get("_meta").is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn modern_ping_and_initialize_are_method_not_found() -> TestResult {
+        let server = server("http://127.0.0.1:1".to_string())?;
+        for method in [
+            "ping",
+            "initialize",
+            "prompts/list",
+            "resources/subscribe",
+            "logging/setLevel",
+        ] {
+            assert_eq!(
+                error_code_of(&server, request(1, method, Some(modern_params(json!({}))))).await?,
+                -32601,
+                "{method}"
+            );
+        }
+        // Legacy ping is still answered.
+        assert_eq!(result_of(&server, request(1, "ping", None)).await?, json!({}));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_notification_never_gets_an_answer_in_either_era() -> TestResult {
+        let server = server("http://127.0.0.1:1".to_string())?;
+        for method in ["notifications/initialized", "notifications/cancelled", "tools/list"] {
+            for params in [None, Some(modern_params(json!({})))] {
+                let notification = JsonRpcRequest {
+                    jsonrpc: "2.0".to_string(),
+                    id: None,
+                    method: method.to_string(),
+                    params,
+                };
+                assert!(server.handle_request(notification).await.is_none(), "{method}");
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_unsupported_or_malformed_era_is_refused_with_the_request_id() -> TestResult {
+        let server = server("http://127.0.0.1:1".to_string())?;
+        let unsupported = server
+            .handle_request(request(
+                9,
+                "tools/list",
+                Some(json!({"_meta": {MODERN_META: "1900-01-01"}})),
+            ))
+            .await
+            .ok_or("no answer")?;
+        assert_eq!(unsupported.id, Some(json!(9)));
+        let error = unsupported.error.ok_or("no error")?;
+        assert_eq!(error.code, -32022);
+        assert_eq!(
+            error.data,
+            Some(json!({"supported": ["2026-07-28", "2025-11-25"], "requested": "1900-01-01"}))
+        );
+        assert_eq!(
+            error_code_of(
+                &server,
+                request(10, "tools/list", Some(json!({"_meta": {MODERN_META: 7}})))
+            )
+            .await?,
+            -32602
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn every_modern_list_and_read_result_carries_result_type_and_cache_fields() -> TestResult {
+        let router = Router::new().fallback(get(|| async { Json(json!({"code": 0, "data": []})) }));
+        let server = server(crate::client::test_api::spawn(router).await?)?;
+        let cases = [
+            ("tools/list", json!({}), "private", 60_000),
+            ("resources/list", json!({}), "public", 3_600_000),
+            ("resources/templates/list", json!({}), "public", 3_600_000),
+            (
+                "resources/read",
+                json!({"uri": "sylvode://skills/sylvode-mcp"}),
+                "public",
+                3_600_000,
+            ),
+            // A board read is never cached.
+            (
+                "resources/read",
+                json!({"uri": "sylvode://scenario-templates"}),
+                "private",
+                0,
+            ),
+        ];
+        for (method, params, scope, ttl) in cases {
+            let result = result_of(&server, request(1, method, Some(modern_params(params)))).await?;
+            assert_eq!(result["resultType"], "complete", "{method}");
+            assert_eq!(result["cacheScope"], scope, "{method}");
+            assert_eq!(result["ttlMs"], ttl, "{method}");
+            assert!(
+                result["_meta"]["io.modelcontextprotocol/serverInfo"].is_object(),
+                "{method}"
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn legacy_results_carry_no_modern_fields() -> TestResult {
+        let router = Router::new().fallback(get(|| async { Json(json!({"code": 0, "data": []})) }));
+        let server = server(crate::client::test_api::spawn(router).await?)?;
+        for (method, params) in [
+            ("tools/list", json!({})),
+            ("resources/list", json!({})),
+            ("resources/templates/list", json!({})),
+            ("resources/read", json!({"uri": "sylvode://scenario-templates"})),
+        ] {
+            let result = result_of(&server, request(1, method, Some(params))).await?;
+            for key in ["resultType", "ttlMs", "cacheScope", "_meta", "structuredContent"] {
+                assert!(result.get(key).is_none(), "{method} must not carry {key}");
+            }
+        }
+        Ok(())
+    }
+
+    /// The legacy `tools/list` answer is the bare `{"tools": [...]}` object, in the registry order the
+    /// golden listing pins.
+    #[tokio::test]
+    async fn legacy_tools_list_matches_the_golden_registry_order() -> TestResult {
+        let server = server("http://127.0.0.1:1".to_string())?;
+        let result = result_of(&server, request(1, "tools/list", None)).await?;
+        assert_eq!(result.as_object().map(serde_json::Map::len), Some(1));
+        let names: Vec<&str> = result["tools"]
+            .as_array()
+            .ok_or("tools is not an array")?
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect();
+        let golden: Value = serde_json::from_str(include_str!("../../tests/golden/list-tools.json"))?;
+        let expected: Vec<&str> = golden
+            .as_array()
+            .ok_or("golden is not an array")?
+            .iter()
+            .filter_map(|row| row["name"].as_str())
+            .collect();
+        assert_eq!(names, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn structured_content_is_set_for_json_object_and_array_text_only() {
+        let mut object = json!({"content": [{"type": "text", "text": "{\"a\":1}"}]});
+        super::super::set_structured_content(&mut object);
+        assert_eq!(object["structuredContent"], json!({"a": 1}));
+
+        let mut array = json!({"content": [{"type": "text", "text": "[1,2]"}]});
+        super::super::set_structured_content(&mut array);
+        assert_eq!(array["structuredContent"], json!([1, 2]));
+
+        for text in ["plain words", "42", "\"quoted\"", "null", "Error: boom"] {
+            let mut result = json!({"content": [{"type": "text", "text": text}]});
+            super::super::set_structured_content(&mut result);
+            assert!(result.get("structuredContent").is_none(), "{text}");
+        }
+        let mut image = json!({"content": [{"type": "image", "data": "{}"}]});
+        super::super::set_structured_content(&mut image);
+        assert!(image.get("structuredContent").is_none());
+    }
+
+    #[tokio::test]
+    async fn modern_tools_call_sets_structured_content_and_legacy_does_not() -> TestResult {
+        let router = Router::new().fallback(get(|| async {
+            Json(json!({"code": 0, "data": {"items": [], "total": 0}}))
+        }));
+        let server = server(crate::client::test_api::spawn(router).await?)?;
+        let params = json!({"name": "projects.list", "arguments": {}});
+        let modern = result_of(&server, request(1, "tools/call", Some(modern_params(params.clone())))).await?;
+        assert_eq!(modern["resultType"], "complete");
+        let text = modern["content"][0]["text"].as_str().ok_or("no text block")?;
+        assert_eq!(modern["structuredContent"], serde_json::from_str::<Value>(text)?);
+        assert!(modern.get("ttlMs").is_none());
+        let legacy = result_of(&server, request(2, "tools/call", Some(params))).await?;
+        assert!(legacy.get("structuredContent").is_none());
+        assert!(legacy.get("resultType").is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn flow_only_and_delegated_discover_carry_no_instructions_or_extensions() -> TestResult {
+        let flow = super::super::McpServer::new(
+            crate::client::test_api::client("http://127.0.0.1:1".to_string())?.flow_only(),
+            McpToolMode::Full,
+        );
+        let result = result_of(&flow, request(1, "server/discover", None)).await?;
+        assert_eq!(result["capabilities"], json!({"tools": {}}));
+        assert!(result.get("instructions").is_none());
+        Ok(())
+    }
 }

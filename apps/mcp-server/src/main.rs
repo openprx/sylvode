@@ -15,6 +15,7 @@ use axum::{
 use clap::{CommandFactory, Parser};
 use mcp_server::cli::{self, Cli, Commands};
 use mcp_server::client::OpenPrClient;
+use mcp_server::era::{self, Era};
 use mcp_server::oauth::{self, Caller, InboundAuth};
 use mcp_server::protocol::{self, JsonRpcRequest, JsonRpcResponse};
 use mcp_server::server::{McpServer, ToolSurface, requested_tool_mode};
@@ -387,11 +388,27 @@ async fn handle_jsonrpc(
         Ok(mode) => mode,
         Err(message) => return bad_tool_mode(&message),
     };
+    let era = match era::classify(&req) {
+        Ok(era) => era,
+        Err(error) => {
+            return req.id.map_or_else(
+                || (StatusCode::ACCEPTED, Json(json!({"status": "accepted"}))).into_response(),
+                |id| {
+                    (
+                        StatusCode::OK,
+                        Json(json!(JsonRpcResponse::error(Some(id), error.into_rpc_error()))),
+                    )
+                        .into_response()
+                },
+            );
+        }
+    };
     oauth::handle_rpc(
         &state.client,
         &state.inbound,
         caller,
         state.surface.with_mode(mode),
+        &era,
         req,
     )
     .await
@@ -548,7 +565,7 @@ async fn handle_sse_message(
     // is a protocol constant, never a credential or an argument.
     let method = req.method.clone();
     let server = McpServer::for_surface(state.client.acting_as(token), state.surface.with_mode(mode));
-    let response = server.handle_request(req).await;
+    let response = server.handle_request_in(&Era::Legacy, req).await;
     let Some(response) = response else {
         return (StatusCode::ACCEPTED, Json(json!({"status": "accepted"})));
     };

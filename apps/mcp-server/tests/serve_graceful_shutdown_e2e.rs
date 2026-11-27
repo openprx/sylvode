@@ -432,9 +432,17 @@ async fn stdio_transport_exits_zero_on_sigterm_while_waiting_for_input() -> Test
     });
     stdin.write_all(format!("{initialize}\n").as_bytes()).await?;
     stdin.flush().await?;
-    tokio::time::timeout(STOP_BOUND, lines.next_line())
+    let answer = tokio::time::timeout(STOP_BOUND, lines.next_line())
         .await??
         .ok_or("no initialize answer")?;
+    let answer: serde_json::Value = serde_json::from_str(&answer)?;
+    assert_eq!(
+        answer
+            .pointer("/result/protocolVersion")
+            .and_then(serde_json::Value::as_str),
+        Some("2024-11-05"),
+        "the requested legacy version is echoed: {answer}"
+    );
 
     send_signal(&child, "-TERM").await?;
     let (status, took) = wait_exit(&mut child).await?;

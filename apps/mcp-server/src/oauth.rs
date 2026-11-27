@@ -27,6 +27,7 @@
 //! formatted into a log line, an error or a tool result, and are never written anywhere.
 
 use crate::client::OpenPrClient;
+use crate::era::Era;
 use crate::oauth_scopes::{self, ToolDecision};
 use crate::protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 use crate::server::{McpServer, ToolSurface};
@@ -771,10 +772,11 @@ pub async fn handle_rpc(
     auth: &InboundAuth,
     caller: Caller,
     surface: ToolSurface,
+    era: &Era,
     request: JsonRpcRequest,
 ) -> Response {
     match caller {
-        Caller::Legacy(token) => respond(McpServer::for_surface(client.acting_as(token), surface), request).await,
+        Caller::Legacy(token) => respond(McpServer::for_surface(client.acting_as(token), surface), era, request).await,
         Caller::Delegated(delegated) => {
             let Some(state) = auth.delegated.as_ref() else {
                 // A delegated caller can only have been made by a layer that had delegated access.
@@ -804,13 +806,13 @@ pub async fn handle_rpc(
                 );
                 return refusal_response(request.id, refusal, &state.settings);
             }
-            respond(server, request).await
+            respond(server, era, request).await
         }
     }
 }
 
-async fn respond(server: McpServer, request: JsonRpcRequest) -> Response {
-    server.handle_request(request).await.map_or_else(
+async fn respond(server: McpServer, era: &Era, request: JsonRpcRequest) -> Response {
+    server.handle_request_in(era, request).await.map_or_else(
         || (StatusCode::ACCEPTED, Json(json!({"status": "accepted"}))).into_response(),
         |response| (StatusCode::OK, Json(json!(response))).into_response(),
     )

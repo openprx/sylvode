@@ -18,6 +18,7 @@ use axum::{
     routing::{get, post},
 };
 use mcp_server::client::{ClientConfig, OpenPrClient};
+use mcp_server::era::Era;
 use mcp_server::oauth::{
     BoxFuture, Caller, ContextOutcome, HttpTokenContextSource, InboundAuth, OAuthSettings, TokenContextSource,
     UnavailableReason, handle_rpc, inbound_auth, parse_token_context, well_known_routes,
@@ -188,6 +189,7 @@ async fn rpc(
         &state.inbound,
         caller,
         ToolSurface::new(mode, true),
+        &Era::Legacy,
         request,
     )
     .await

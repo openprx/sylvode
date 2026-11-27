@@ -195,6 +195,11 @@ async fn inbound_requests_need_a_caller_bot_token() -> TestResult {
             .is_some(),
         "authorized call did not return an initialize result: {payload}"
     );
+    assert_eq!(
+        payload.pointer("/result/protocolVersion").and_then(Value::as_str),
+        Some("2024-11-05"),
+        "the requested legacy version is echoed: {payload}"
+    );
 
     // The SSE routes are behind the same layer.
     for path in ["/sse", "/messages"] {

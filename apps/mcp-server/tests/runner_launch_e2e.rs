@@ -411,6 +411,7 @@ async fn chain(cli: &'static str, extra_config: &str, allow_write: bool, full: b
             initialized["result"]["capabilities"]["tools"].is_object(),
             "{initialized}"
         );
+        assert_eq!(initialized["result"]["protocolVersion"], "2024-11-05", "{initialized}");
 
         let names = client.tool_names().await?;
         // `search` lists the entry tools beside the task tools (the runner's allow list names

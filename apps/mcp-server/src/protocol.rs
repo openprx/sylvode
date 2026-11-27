@@ -73,6 +73,73 @@ impl JsonRpcError {
             data: None,
         }
     }
+
+    /// `-32020`: a modern HTTP request whose `Mcp-*` header is missing or disagrees with the body.
+    pub fn header_mismatch(header: &str, detail: &str) -> Self {
+        Self {
+            code: -32020,
+            message: "Header mismatch".to_string(),
+            data: Some(json!({ "header": header, "detail": detail })),
+        }
+    }
+
+    /// `-32021`: reserved for a missing client capability; nothing produces it yet.
+    pub fn missing_client_capability(name: &str) -> Self {
+        Self {
+            code: -32021,
+            message: "Missing client capability".to_string(),
+            data: Some(json!({ "capability": name })),
+        }
+    }
+
+    /// `-32022`: the protocol version a modern request names is not served.
+    pub fn unsupported_protocol_version(requested: &str) -> Self {
+        Self {
+            code: -32022,
+            message: "Unsupported protocol version".to_string(),
+            data: Some(json!({
+                "supported": crate::era::UNSUPPORTED_SUPPORTED_LIST,
+                "requested": requested,
+            })),
+        }
+    }
+
+    /// `-32002`: the legacy code for a resource that does not exist. `uri` is the requested text.
+    pub fn resource_not_found_legacy(uri: &str) -> Self {
+        Self {
+            code: -32002,
+            message: "Resource not found".to_string(),
+            data: Some(json!({ "uri": uri })),
+        }
+    }
+
+    /// `-32602`: the modern answer for a resource that does not exist. `uri` is the requested text.
+    pub fn resource_not_found(uri: &str) -> Self {
+        Self {
+            code: -32602,
+            message: "Resource not found".to_string(),
+            data: Some(json!({ "uri": uri })),
+        }
+    }
+
+    /// `-32602`: the caller may not read the resource. `reason` is one of `policy`, `forbidden`,
+    /// `not_available_to_connected_applications`.
+    pub fn resource_refused(uri: &str, reason: &str) -> Self {
+        Self {
+            code: -32602,
+            message: "Resource access refused".to_string(),
+            data: Some(json!({ "uri": uri, "reason": reason })),
+        }
+    }
+
+    /// `-32000`: the caller holds too many listen streams.
+    pub fn too_many_streams(limit: u32) -> Self {
+        Self {
+            code: -32000,
+            message: "Too many listen streams".to_string(),
+            data: Some(json!({ "limit": limit })),
+        }
+    }
 }
 
 impl JsonRpcResponse {
@@ -128,6 +195,9 @@ pub struct CallToolResult {
     /// clients treat every failed tool call as a success.
     #[serde(rename = "isError", skip_serializing_if = "Option::is_none")]
     pub is_error: Option<bool>,
+    /// The same JSON the first text block holds; set for modern-era callers only.
+    #[serde(rename = "structuredContent", default, skip_serializing_if = "Option::is_none")]
+    pub structured_content: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,6 +228,7 @@ impl CallToolResult {
         Self {
             content: vec![ToolContent::text(text)],
             is_error: None,
+            structured_content: None,
         }
     }
 
@@ -165,6 +236,7 @@ impl CallToolResult {
         Self {
             content: vec![ToolContent::error(msg)],
             is_error: Some(true),
+            structured_content: None,
         }
     }
 
@@ -187,6 +259,7 @@ impl CallToolResult {
         Self {
             content: vec![ToolContent::Text { text: body.to_string() }],
             is_error: Some(true),
+            structured_content: None,
         }
     }
 }

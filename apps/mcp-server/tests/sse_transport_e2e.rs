@@ -487,6 +487,11 @@ async fn an_authenticated_stream_announces_its_endpoint_and_answers_only_over_th
             .is_some(),
         "the pushed message carries no initialize result: {response}"
     );
+    assert_eq!(
+        response.pointer("/result/protocolVersion").and_then(Value::as_str),
+        Some("2024-11-05"),
+        "the requested legacy version is echoed: {response}"
+    );
 
     server.shutdown().await
 }

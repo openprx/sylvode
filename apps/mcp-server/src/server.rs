@@ -1,4 +1,5 @@
 use crate::client::{ListRecordsQuery, ListWorkItemsQuery, OpenPrClient};
+use crate::era::{self, CachePolicy, CacheScope, Era};
 use crate::guides;
 use crate::oauth::{DelegatedGrant, ToolRefusal, gate_tool_call, is_static_guide_resource};
 use crate::protocol::{CallToolParams, CallToolResult, JsonRpcError, JsonRpcRequest, JsonRpcResponse, ListToolsResult};
@@ -678,8 +679,29 @@ impl McpServer {
         gate_tool_call(grant, name, arguments).err()
     }
 
+    /// Handles one request, placing it in its era first (`era::classify`). Used by the stdio
+    /// transport and by tests; the HTTP transport classifies itself and calls
+    /// [`Self::handle_request_in`].
     pub async fn handle_request(&self, req: JsonRpcRequest) -> Option<JsonRpcResponse> {
-        tracing::info!(method = %req.method, id = ?req.id, "Handling MCP request");
+        match era::classify(&req) {
+            Ok(era) => self.handle_request_in(&era, req).await,
+            Err(error) => {
+                tracing::info!(method = %req.method, era = "unclassified", "Refusing an MCP request: {error:?}");
+                req.id
+                    .map(|id| JsonRpcResponse::error(Some(id), error.into_rpc_error()))
+            }
+        }
+    }
+
+    /// Handles one request of the given era. A notification never gets an answer.
+    pub async fn handle_request_in(&self, era: &Era, req: JsonRpcRequest) -> Option<JsonRpcResponse> {
+        tracing::info!(
+            method = %req.method,
+            era = era.label(),
+            client = %client_label(era, &req),
+            id_kind = id_kind(req.id.as_ref()),
+            "Handling MCP request"
+        );
 
         if req.jsonrpc != "2.0" {
             return Some(JsonRpcResponse::error(
@@ -688,13 +710,30 @@ impl McpServer {
             ));
         }
 
-        let is_notification = req.id.is_none();
-        if is_notification && req.method == "notifications/initialized" {
-            return None;
-        }
+        // Notifications (`notifications/initialized`, `notifications/cancelled`, ...) carry no
+        // answer; none of them has an effect on a per-request server.
+        req.id.as_ref()?;
 
+        let static_guide_read = req.method == "resources/read"
+            && req
+                .params
+                .as_ref()
+                .and_then(|params| params.get("uri"))
+                .and_then(Value::as_str)
+                .is_some_and(is_static_guide_resource);
+        let method = req.method.clone();
+        let response = self.dispatch(era, req).await;
+        Some(if era.is_modern() {
+            decorate_modern_response(&method, static_guide_read, response)
+        } else {
+            response
+        })
+    }
+
+    async fn dispatch(&self, era: &Era, req: JsonRpcRequest) -> JsonRpcResponse {
+        let modern = era.is_modern();
         if self.client.is_flow_only() && req.method.starts_with("resources/") {
-            let response = match req.method.as_str() {
+            return match req.method.as_str() {
                 "resources/list" => JsonRpcResponse::success(req.id, json!({"resources":[]})),
                 "resources/templates/list" => JsonRpcResponse::success(req.id, json!({"resourceTemplates":[]})),
                 _ => JsonRpcResponse::error(
@@ -704,12 +743,17 @@ impl McpServer {
                     ),
                 ),
             };
-            return if is_notification { None } else { Some(response) };
         }
 
-        let response = match req.method.as_str() {
-            "initialize" => self.handle_initialize(req.id),
-            "notifications/initialized" | "ping" => JsonRpcResponse::success(req.id, json!({})),
+        match req.method.as_str() {
+            "server/discover" => self.handle_discover(req.id),
+            // The modern era has no handshake and no ping.
+            "initialize" | "ping" if modern => JsonRpcResponse::error(
+                req.id,
+                JsonRpcError::method_not_found(format!("Unknown method: {}", req.method)),
+            ),
+            "initialize" => self.handle_initialize(req.id, req.params.as_ref()),
+            "ping" => JsonRpcResponse::success(req.id, json!({})),
             "tools/list" => self.handle_list_tools(req.id, req.params).await,
             "tools/call" => self.handle_call_tool(req.id, req.params).await,
             "resources/list" => self.handle_resources_list(req.id),
@@ -719,9 +763,7 @@ impl McpServer {
                 req.id,
                 JsonRpcError::method_not_found(format!("Unknown method: {}", req.method)),
             ),
-        };
-
-        if is_notification { None } else { Some(response) }
+        }
     }
 
     async fn handle_list_tools(&self, id: Option<Value>, params: Option<Value>) -> JsonRpcResponse {
@@ -1707,35 +1749,61 @@ impl McpServer {
         }
     }
 
-    #[allow(clippy::unused_self)]
-    fn handle_initialize(&self, id: Option<Value>) -> JsonRpcResponse {
-        let mut result = json!({
-            "protocolVersion": "2024-11-05",
-            "capabilities": {
-                "tools": {
-                    "listChanged": false
-                },
-                "resources": {
-                    "subscribe": false,
-                    "listChanged": false
-                },
-                "resourceTemplates": {
-                    "listChanged": false
-                }
-            },
-            "serverInfo": {
-                "name": "sylvode-mcp-server",
-                "version": env!("CARGO_PKG_VERSION")
+    /// The capabilities both handshakes announce, before the per-caller additions.
+    fn base_capabilities(&self, tools: &Value) -> Value {
+        if self.client.is_flow_only() {
+            json!({ "tools": tools })
+        } else {
+            json!({
+                "tools": tools,
+                "resources": { "subscribe": false, "listChanged": false }
+            })
+        }
+    }
+
+    /// `server/discover` (modern era): static, answers without any API call.
+    ///
+    /// The task protocol and the instructions are for a plain caller only: a delegated server has
+    /// no task tools and a Flow-only server none of this surface.
+    fn handle_discover(&self, id: Option<Value>) -> JsonRpcResponse {
+        let mut capabilities = self.base_capabilities(&json!({}));
+        let mut result = json!({ "supportedVersions": era::MODERN_VERSIONS });
+        if self.applicable_mode().is_some() {
+            if let Some(fields) = capabilities.as_object_mut() {
+                fields.insert(
+                    "extensions".to_string(),
+                    json!({ era::TASK_PROTOCOL_EXTENSION: { "version": tools::entry::TASK_PROTOCOL_VERSION } }),
+                );
             }
+            if let Some(fields) = result.as_object_mut() {
+                fields.insert("instructions".to_string(), json!(guides::SERVER_INSTRUCTIONS));
+            }
+        }
+        if let Some(fields) = result.as_object_mut() {
+            fields.insert("capabilities".to_string(), capabilities);
+        }
+        era::decorate_modern(
+            &mut result,
+            CachePolicy::Ttl {
+                ms: era::TTL_DISCOVER_MS,
+                scope: CacheScope::Private,
+            },
+        );
+        JsonRpcResponse::success(id, result)
+    }
+
+    /// Legacy `initialize`: echoes the requested protocol version when it is a known one.
+    fn handle_initialize(&self, id: Option<Value>, params: Option<&Value>) -> JsonRpcResponse {
+        let requested = params
+            .and_then(|params| params.get("protocolVersion"))
+            .and_then(Value::as_str);
+        let mut result = json!({
+            "protocolVersion": era::negotiate_legacy(requested),
+            "capabilities": self.base_capabilities(&json!({ "listChanged": false })),
+            "serverInfo": era::server_info()
         });
 
-        if self.client.is_flow_only()
-            && let Some(fields) = result.as_object_mut()
-        {
-            fields.insert("capabilities".into(), json!({"tools":{"listChanged":false}}));
-        }
-        // The task protocol and the instructions are for a plain caller only: a delegated server
-        // has no task tools and a Flow-only server none of this surface.
+        // The task protocol and the instructions are for a plain caller only.
         if self.applicable_mode().is_some()
             && let Some(fields) = result.as_object_mut()
         {
@@ -2419,6 +2487,82 @@ impl McpServer {
         }
 
         JsonRpcResponse::error(id, JsonRpcError::invalid_params(format!("Unknown resource URI: {uri}")))
+    }
+}
+
+/// The kind of a JSON-RPC id for the request log; the id itself is never logged.
+const fn id_kind(id: Option<&Value>) -> &'static str {
+    match id {
+        None => "none",
+        Some(Value::String(_)) => "string",
+        Some(Value::Number(_)) => "number",
+        Some(_) => "other",
+    }
+}
+
+/// The client name for the request log: from the modern `_meta` or the legacy `initialize`
+/// parameters, sanitised and truncated.
+fn client_label(era: &Era, req: &JsonRpcRequest) -> String {
+    let name = match era {
+        Era::Modern { client_info, .. } => client_info.as_ref().and_then(|info| info.get("name")),
+        Era::Legacy if req.method == "initialize" => req
+            .params
+            .as_ref()
+            .and_then(|params| params.get("clientInfo"))
+            .and_then(|info| info.get("name")),
+        Era::Legacy => None,
+    };
+    name.and_then(Value::as_str)
+        .map_or_else(String::new, |name| sanitize_for_error(name).chars().take(64).collect())
+}
+
+/// Adds the modern fields to a successful result: `resultType`, `serverInfo`, the cache policy of
+/// the method and, for `tools/call`, `structuredContent` when the first text block is JSON.
+fn decorate_modern_response(method: &str, static_guide_read: bool, mut response: JsonRpcResponse) -> JsonRpcResponse {
+    let Some(result) = response.result.as_mut() else {
+        return response;
+    };
+    let cache = match method {
+        "server/discover" => return response,
+        // No push exists yet, so a client cannot learn of a change sooner than the short TTL.
+        "tools/list" => CachePolicy::Ttl {
+            ms: era::TTL_TOOLS_NO_LISTEN_MS,
+            scope: CacheScope::Private,
+        },
+        "resources/list" | "resources/templates/list" => CachePolicy::Ttl {
+            ms: era::TTL_CATALOGUE_MS,
+            scope: CacheScope::Public,
+        },
+        "resources/read" if static_guide_read => CachePolicy::Ttl {
+            ms: era::TTL_CATALOGUE_MS,
+            scope: CacheScope::Public,
+        },
+        "resources/read" => CachePolicy::Ttl {
+            ms: era::TTL_BOARD_MS,
+            scope: CacheScope::Private,
+        },
+        _ => CachePolicy::None,
+    };
+    if method == "tools/call" {
+        set_structured_content(result);
+    }
+    era::decorate_modern(result, cache);
+    response
+}
+
+/// `structuredContent` = the first text block, when that text is a JSON object or array.
+fn set_structured_content(result: &mut Value) {
+    let structured = result
+        .get("content")
+        .and_then(Value::as_array)
+        .and_then(|blocks| blocks.first())
+        .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
+        .and_then(|block| block.get("text"))
+        .and_then(Value::as_str)
+        .and_then(|text| serde_json::from_str::<Value>(text).ok())
+        .filter(|value| value.is_object() || value.is_array());
+    if let (Some(structured), Some(fields)) = (structured, result.as_object_mut()) {
+        fields.insert("structuredContent".to_string(), structured);
     }
 }
 

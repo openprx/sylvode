@@ -149,7 +149,25 @@ The workspace commands (`projects`, `work-items`, `tools call` and the others) a
 `GET /sse` opens the stream and sends the session's `POST /messages?session_id=...` endpoint as its
 first event. With delegated access configured, the `http` transport also serves
 `GET /.well-known/oauth-protected-resource` and its path form; see
-[Delegated access](#delegated-access-oauth). The server declares MCP protocol version `2024-11-05`.
+[Delegated access](#delegated-access-oauth).
+
+### Protocol versions
+
+The server speaks two protocol eras on the same endpoints (`POST /mcp/rpc` and stdio).
+
+* **Legacy.** `initialize` echoes the version the client asks for when it is `2025-11-25`,
+  `2025-06-18`, `2025-03-26` or `2024-11-05`, and answers `2025-11-25` otherwise. `ping` and
+  `notifications/initialized` work as before. The legacy HTTP+SSE transport (`GET /sse`,
+  `POST /messages`) is legacy only.
+* **Modern (`2026-07-28`).** There is no handshake. A client may probe with `server/discover`
+  (no API call; the result carries `supportedVersions`, `capabilities`, `instructions`, `ttlMs`,
+  `cacheScope` and the server identity in `_meta`). A request is modern exactly when
+  `params._meta["io.modelcontextprotocol/protocolVersion"]` is present; the HTTP header
+  `MCP-Protocol-Version` alone never selects the era. Modern results carry `resultType`,
+  `_meta` server info and, for lists and reads, `ttlMs` and `cacheScope` (board data has
+  `ttlMs: 0`). A modern `tools/call` also sets `structuredContent` when the first text block is
+  a JSON object or array. A modern request naming another version is answered with `-32022`
+  (`data.supported`, `data.requested`); `ping` and `initialize` do not exist in this era.
 
 ## Authentication
 
