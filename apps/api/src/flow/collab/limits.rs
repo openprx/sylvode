@@ -94,9 +94,6 @@ pub const SNAPSHOT_TAIL_UPDATES_HARD_MAX: i64 = 1_024;
 /// `snapshot_tail_bytes_hard_max` (4 MiB).
 pub const SNAPSHOT_TAIL_BYTES_HARD_MAX: i64 = 4_194_304;
 
-/// `collab_tickets` TTL (`ADR-0007`: "TTL 固定 60 秒,不可续期").
-pub const TICKET_TTL_SECONDS: i64 = 60;
-
 /// Not itself a frozen `limits-v1.md` value -- that contract only says "rate/connection/queue 可按
 /// `retry_after_ms` 重试" without freezing a number for the connection ceilings
 /// (`user_connections`/`document_connections`/`workspace_connections`). A conservative fixed

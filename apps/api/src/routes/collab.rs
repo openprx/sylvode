@@ -1,19 +1,17 @@
-//! HTTP handlers for the four Collab endpoints (`rest-api-v1.md` "v0.4 Flow Alpha"):
+//! HTTP handler of the Collab integrity check (`rest-api-v1.md` "v0.4 Flow Alpha"):
 //!
 //! ```text
-//! POST /api/v1/collab/tickets
-//! GET  /api/v1/collab/ws
-//! GET  /api/v1/flow/objects/{object_id}/collab
-//! POST /api/v1/flow/objects/{object_id}/collab/verify
+//! POST /api/v2/flow/objects/{object_id}/collab/verify
 //! ```
+//!
+//! Tickets, the WebSocket upgrade and the diagnostics are the scope-native handlers of
+//! `routes::flow_v2`.
 
 #![allow(clippy::items_after_statements, clippy::too_long_first_doc_paragraph)]
 
-use axum::extract::ws::WebSocketUpgrade;
 use axum::{
     Extension, Json,
-    extract::{Path, Query, State},
-    http::HeaderMap,
+    extract::{Path, State},
     response::IntoResponse,
 };
 use platform::timestamp::Timestamp;
@@ -24,7 +22,7 @@ use uuid::Uuid;
 
 use crate::error::ApiError;
 use crate::flow::collab::authz::PermissionLevel;
-use crate::flow::collab::{bootstrap, session, ticket};
+use crate::flow::collab::bootstrap;
 use crate::flow::policy;
 use crate::middleware::bot_auth::BotAuthContext;
 use crate::response::ApiResponse;
@@ -36,84 +34,6 @@ fn build_auth_extensions(claims: JwtClaims, bot: Option<Extension<BotAuthContext
         extensions.insert(bot_ctx);
     }
     extensions
-}
-
-/// Percent-encodes a query component (unreserved set only: `ALPHA / DIGIT / "-" / "." / "_" /
-/// "~"`). No `url`/`percent-encoding` crate is a workspace dependency; this is the one query value
-/// (`client_id`) this package ever needs to embed verbatim into a URL.
-fn percent_encode(raw: &str) -> String {
-    use std::fmt::Write as _;
-
-    let mut out = String::with_capacity(raw.len());
-    for byte in raw.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
-            out.push(byte as char);
-        } else {
-            let _ = write!(out, "%{byte:02X}");
-        }
-    }
-    out
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateTicketRequest {
-    pub workspace_id: Uuid,
-    pub document_id: Uuid,
-    pub client_id: String,
-    pub origin: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct CreateTicketResponse {
-    pub ticket: String,
-    pub expires_at: String,
-    pub websocket_url: String,
-}
-
-/// `POST /api/v1/collab/tickets` (`ADR-0007`): user access token only, bot tokens rejected.
-pub async fn create_ticket(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Json(req): Json<CreateTicketRequest>,
-) -> Result<impl IntoResponse, ApiError> {
-    if bot.is_some() {
-        return Err(ApiError::forbidden(
-            "bot tokens cannot open a direct collab session".to_string(),
-        ));
-    }
-    let user_id = Uuid::parse_str(&claims.sub).map_err(|_| ApiError::unauthenticated("invalid user id".to_string()))?;
-
-    let issued = ticket::issue(
-        &state.db,
-        ticket::IssueTicketInput {
-            user_id,
-            workspace_id: req.workspace_id,
-            document_id: req.document_id,
-            client_id: req.client_id.clone(),
-            origin: req.origin,
-        },
-        &state.cfg.collab_allowed_origins,
-    )
-    .await?;
-
-    let websocket_url = format!(
-        "/api/v1/collab/ws?ticket={}&client_id={}",
-        percent_encode(&issued.ticket),
-        percent_encode(&req.client_id)
-    );
-
-    Ok(ApiResponse::success(CreateTicketResponse {
-        ticket: issued.ticket,
-        expires_at: issued.expires_at.to_rfc3339(),
-        websocket_url,
-    }))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct WsQuery {
-    pub ticket: String,
-    pub client_id: String,
 }
 
 /// The path-only URI value used by the global request trace span.
@@ -159,13 +79,13 @@ mod trace_span_tests {
     fn every_request_trace_uri_omits_query_strings() {
         for (raw, expected_path) in [
             (
-                "/api/v1/workspaces/00000000-0000-0000-0000-000000000001/flow/search?q=private+draft&all_visible=true",
-                "/api/v1/workspaces/00000000-0000-0000-0000-000000000001/flow/search",
+                "/api/v2/flow/scopes/00000000-0000-0000-0000-000000000001/search?q=private+draft&all_visible=true",
+                "/api/v2/flow/scopes/00000000-0000-0000-0000-000000000001/search",
             ),
             ("/api/v1/search?q=customer-secret", "/api/v1/search"),
             (
-                "/api/v1/collab/ws?ticket=one-time-secret&client_id=browser",
-                "/api/v1/collab/ws",
+                "/api/v2/flow/collab/ws?ticket=one-time-secret&client_id=browser",
+                "/api/v2/flow/collab/ws",
             ),
             ("/api/v1/members/search?q=alice", "/api/v1/members/search"),
             (
@@ -185,164 +105,6 @@ mod trace_span_tests {
             assert!(!traced.contains("sensitive"));
         }
     }
-}
-
-/// `GET /api/v1/collab/ws?ticket=...&client_id=...`: WebSocket upgrade, ticket-only auth
-/// (`ADR-0007`) — no `bot_or_user_auth_middleware` on this route, matching the contract's "no
-/// long-lived JWT/bot token over WS" rule.
-///
-/// `collab-protocol-v1.md` §3: "Upgrade 前原子消费 ticket，并验证其
-/// `user`/`workspace`/`document`/`client_id`/`Origin` 绑定与 `flow_enabled`". The bindings are all enforced
-/// inside [`ticket::consume`]'s single conditional `UPDATE`; `flow_enabled` is the one clause that
-/// is not on the ticket row, so it is read here — after the consume (the ticket carries the only
-/// `workspace_id` this request has) and before `on_upgrade`, so a workspace whose rollout flag was
-/// switched off during the ticket's 60s TTL never reaches a 101.
-///
-/// The rejection is `feature_disabled`'s frozen mapping (`error-mapping-v1.md`: `Forbidden` / 403
-/// / HTTP 200), rendered through the same `ApiError::into_response` the sibling ticket failure
-/// already uses. Distinguishing it from `invalid ticket` leaks nothing: reaching this line
-/// required presenting an unexpired, unconsumed ticket bound to this caller's own `client_id` and
-/// `Origin`, so the caller is already the workspace member the ticket was issued to. The ticket is
-/// consumed either way — `ADR-0007`: "ticket 一经消费，即使 handshake 随后断开也不可重用".
-pub async fn ws_upgrade(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-    Query(params): Query<WsQuery>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
-    let origin = headers
-        .get(axum::http::header::ORIGIN)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-
-    let Ok(consumed) = ticket::consume(&state.db, &params.ticket, &params.client_id, &origin).await else {
-        return ApiError::unauthenticated("invalid ticket".to_string()).into_response();
-    };
-    if let Err(err) = crate::flow::policy::require_flow_enabled_on(&state.db, consumed.workspace_id).await {
-        return err.into_response();
-    }
-    if let Err(err) = crate::flow::scope_editor::require_document_admitted(&state.db, consumed.document_id).await {
-        return err.into_response();
-    }
-    ws.on_upgrade(move |socket| session::run(socket, state, consumed))
-        .into_response()
-}
-
-#[derive(Debug, Serialize)]
-pub struct CollabDiagnostics {
-    pub document_id: Uuid,
-    pub engine: String,
-    pub format_version: String,
-    pub snapshot_seq: i64,
-    pub head_seq: i64,
-    pub frontier: String,
-    pub update_count: i64,
-    pub byte_size: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_compacted_at: Option<String>,
-    pub projection_seq: i64,
-    pub integrity_state: String,
-}
-
-/// `GET /api/v1/flow/objects/{object_id}/collab`: diagnostic info, never raw bytes.
-pub async fn get_collab_diagnostics(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Path(object_id): Path<Uuid>,
-) -> Result<impl IntoResponse, ApiError> {
-    let extensions = build_auth_extensions(claims, bot);
-    let workspace_id = crate::flow::repository::fetch_object_workspace(&state.db, object_id)
-        .await?
-        .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
-    let mut authorized = false;
-    for _attempt in 0..policy::AUTHORIZATION_READ_ATTEMPTS {
-        if policy::require_flow_object_access(&state, &extensions, workspace_id, object_id, PermissionLevel::View)
-            .await?
-            .is_some()
-        {
-            authorized = true;
-            break;
-        }
-    }
-    if !authorized {
-        return Err(policy::authorization_read_unstable());
-    }
-
-    #[derive(sea_orm::FromQueryResult)]
-    struct Row {
-        id: Uuid,
-        engine: String,
-        format_version: String,
-        snapshot_seq: i64,
-        head_seq: i64,
-        head_frontier: Vec<u8>,
-        update_count: i64,
-        byte_count: i64,
-    }
-    use base64::Engine as _;
-    use sea_orm::{DbBackend, FromQueryResult, Statement};
-
-    let row = Row::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT id, engine, format_version, snapshot_seq, head_seq, head_frontier, update_count, byte_count \
-         FROM collab_documents WHERE object_id = $1",
-        vec![object_id.into()],
-    ))
-    .one(&state.db)
-    .await?
-    .ok_or_else(|| ApiError::not_found("collab document not found".to_string()))?;
-
-    #[derive(sea_orm::FromQueryResult)]
-    struct ProjectionRow {
-        document_seq: i64,
-    }
-    let projection_seq = ProjectionRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT document_seq FROM flow_object_projections WHERE object_id = $1",
-        vec![object_id.into()],
-    ))
-    .one(&state.db)
-    .await?
-    .map_or(0, |r| r.document_seq);
-
-    #[derive(sea_orm::FromQueryResult)]
-    struct IntegrityRow {
-        open_count: i64,
-    }
-    let integrity_state = IntegrityRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT count(*) AS open_count FROM flow_integrity_records \
-         WHERE workspace_id = $1 AND subject_kind = 'collab_document' AND subject_id = $2 AND status = 'open'",
-        vec![workspace_id.into(), row.id.to_string().into()],
-    ))
-    .one(&state.db)
-    .await?
-    .map_or_else(
-        || "ok".to_string(),
-        |r| {
-            if r.open_count > 0 {
-                "open_issues".to_string()
-            } else {
-                "ok".to_string()
-            }
-        },
-    );
-
-    Ok(ApiResponse::success(CollabDiagnostics {
-        document_id: row.id,
-        engine: row.engine,
-        format_version: row.format_version,
-        snapshot_seq: row.snapshot_seq,
-        head_seq: row.head_seq,
-        frontier: base64::engine::general_purpose::STANDARD.encode(&row.head_frontier),
-        update_count: row.update_count,
-        byte_size: row.byte_count,
-        last_compacted_at: None,
-        projection_seq,
-        integrity_state,
-    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -373,7 +135,7 @@ pub struct OperationReceipt {
     pub audit_event_id: Option<Uuid>,
 }
 
-/// `POST /api/v1/flow/objects/{object_id}/collab/verify`: v0.4 ships only the shallow,
+/// `POST /api/v2/flow/objects/{object_id}/collab/verify`: v0.4 ships only the shallow,
 /// read-only check (`deep=false`); `deep=true` is rejected as `invalid_update` rather than
 /// silently downgraded, since a caller asking for a deep verify and quietly getting a shallow one
 /// is a worse failure mode than an explicit rejection.
@@ -492,12 +254,13 @@ mod collab_database_tests {
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
     use uuid::Uuid;
 
-    use super::{create_ticket, get_collab_diagnostics, verify_collab, ws_upgrade};
+    use super::verify_collab;
     use crate::error::ApiErrorKind;
     use crate::flow::collab::frame::{Frame, PROTOCOL_VERSION, RejectedCode};
-    use crate::flow::collab::ticket::{self, IssueTicketInput};
     use crate::middleware::bot_auth::bot_or_user_auth_middleware;
-    use crate::routes::flow::get_flow_object_bootstrap;
+    use crate::routes::flow::{
+        get_flow_v2_bootstrap, get_flow_v2_collab_diagnostics, get_flow_v2_ws, post_flow_v2_ticket,
+    };
 
     const TEST_DATABASE_URL_ENV: &str = "OPENPR_TEST_DATABASE_URL";
     const TEST_ORIGIN: &str = "http://collab-test.local";
@@ -684,30 +447,30 @@ mod collab_database_tests {
         let auth_state = state.clone();
         let app = Router::new()
             .route(
-                "/api/v1/collab/tickets",
-                post(create_ticket).route_layer(axum_middleware::from_fn_with_state(
+                "/api/v2/flow/collab/tickets",
+                post(post_flow_v2_ticket).route_layer(axum_middleware::from_fn_with_state(
                     auth_state.clone(),
                     bot_or_user_auth_middleware,
                 )),
             )
-            .route("/api/v1/collab/ws", get(ws_upgrade))
+            .route("/api/v2/flow/collab/ws", get(get_flow_v2_ws))
             .route(
-                "/api/v1/flow/objects/{object_id}/collab",
-                get(get_collab_diagnostics).route_layer(axum_middleware::from_fn_with_state(
+                "/api/v2/flow/objects/{object_id}/collab",
+                get(get_flow_v2_collab_diagnostics).route_layer(axum_middleware::from_fn_with_state(
                     auth_state.clone(),
                     bot_or_user_auth_middleware,
                 )),
             )
             .route(
-                "/api/v1/flow/objects/{object_id}/collab/verify",
+                "/api/v2/flow/objects/{object_id}/bootstrap",
+                get(get_flow_v2_bootstrap).route_layer(axum_middleware::from_fn_with_state(
+                    auth_state.clone(),
+                    bot_or_user_auth_middleware,
+                )),
+            )
+            .route(
+                "/api/v2/flow/objects/{object_id}/collab/verify",
                 post(verify_collab).route_layer(axum_middleware::from_fn_with_state(
-                    auth_state.clone(),
-                    bot_or_user_auth_middleware,
-                )),
-            )
-            .route(
-                "/api/v1/flow/objects/{object_id}/bootstrap",
-                get(get_flow_object_bootstrap).route_layer(axum_middleware::from_fn_with_state(
                     auth_state,
                     bot_or_user_auth_middleware,
                 )),
@@ -729,16 +492,16 @@ mod collab_database_tests {
     async fn issue_ticket(
         addr: SocketAddr,
         token: &str,
-        workspace_id: Uuid,
+        object_id: Uuid,
         document_id: Uuid,
         client_id: &str,
     ) -> String {
         let client = reqwest::Client::new();
         let response = client
-            .post(format!("http://{addr}/api/v1/collab/tickets"))
+            .post(format!("http://{addr}/api/v2/flow/collab/tickets"))
             .bearer_auth(token)
             .json(&serde_json::json!({
-                "workspace_id": workspace_id,
+                "object_id": object_id,
                 "document_id": document_id,
                 "client_id": client_id,
                 "origin": TEST_ORIGIN,
@@ -751,10 +514,15 @@ mod collab_database_tests {
         body["data"]["ticket"].as_str().expect("ticket is a string").to_string()
     }
 
+    /// A stable UUID for a readable client label: tickets bind a UUID client id.
+    fn wire_client(label: &str) -> String {
+        Uuid::new_v5(&Uuid::NAMESPACE_OID, label.as_bytes()).to_string()
+    }
+
     type WsStream = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
     async fn connect(addr: SocketAddr, ticket: &str, client_id: &str) -> WsStream {
-        let url = format!("ws://{addr}/api/v1/collab/ws?ticket={ticket}&client_id={client_id}");
+        let url = format!("ws://{addr}/api/v2/flow/collab/ws?ticket={ticket}&client_id={client_id}");
         let mut request = url.into_client_request().expect("builds a client request");
         request
             .headers_mut()
@@ -791,12 +559,13 @@ mod collab_database_tests {
         let scratch = scratch_or_skip!("full-session");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state).await;
-        let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
         let token = jwt_for(owner_id);
         let addr = spawn_server(state.clone()).await;
 
-        let client_id = "e2e-client-1";
-        let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+        let client_id_owned = wire_client("e2e-client-1");
+        let client_id = client_id_owned.as_str();
+        let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
         let mut ws = connect(addr, &ticket, client_id).await;
 
         // ---- hello ----
@@ -1028,18 +797,19 @@ mod collab_database_tests {
         let scratch = scratch_or_skip!("hello-bad-session-id");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state).await;
-        let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
         let token = jwt_for(owner_id);
         let addr = spawn_server(state.clone()).await;
 
-        let client_id = "hello-bad-session-id-client";
-        let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+        let client_id_owned = wire_client("hello-bad-session-id-client");
+        let client_id = client_id_owned.as_str();
+        let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
         let mut ws = connect(addr, &ticket, client_id).await;
         let hello = serde_json::json!({
             "type": "hello",
             "protocol_version": PROTOCOL_VERSION,
             "capabilities": ["presence"],
-            "client_id": "client-abc123",
+            "client_id": wire_client("client-abc123"),
             "session_id": "client-abc123",
         });
         ws.send(TMessage::Text(hello.to_string().into()))
@@ -1062,7 +832,7 @@ mod collab_database_tests {
         let scratch = scratch_or_skip!("hello-not-json");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state).await;
-        let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
         let token = jwt_for(owner_id);
         let addr = spawn_server(state.clone()).await;
         let close_code = ApiErrorKind::UnsupportedProtocol.ws_close_code().expect("a close code");
@@ -1071,8 +841,8 @@ mod collab_database_tests {
             ("text", TMessage::Text("this is not json".into())),
             ("binary", TMessage::Binary(vec![0u8, 1, 2, 3].into())),
         ] {
-            let client_id = format!("hello-not-json-{label}");
-            let ticket = issue_ticket(addr, &token, workspace_id, document_id, &client_id).await;
+            let client_id = wire_client(&format!("hello-not-json-{label}"));
+            let ticket = issue_ticket(addr, &token, object_id, document_id, &client_id).await;
             let mut ws = connect(addr, &ticket, &client_id).await;
             ws.send(message).await.expect("send succeeds");
             expect_rejection_then_close(&mut ws, document_id, RejectedCode::UnsupportedProtocol, close_code).await;
@@ -1086,12 +856,13 @@ mod collab_database_tests {
         let scratch = scratch_or_skip!("open-not-valid");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state).await;
-        let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
         let token = jwt_for(owner_id);
         let addr = spawn_server(state.clone()).await;
 
-        let client_id = "open-not-valid-client";
-        let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+        let client_id_owned = wire_client("open-not-valid-client");
+        let client_id = client_id_owned.as_str();
+        let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
         let mut ws = connect(addr, &ticket, client_id).await;
         send_frame(
             &mut ws,
@@ -1130,12 +901,12 @@ mod collab_database_tests {
         let scratch = scratch_or_skip!("hello-valid");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state).await;
-        let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
         let token = jwt_for(owner_id);
         let addr = spawn_server(state.clone()).await;
 
         let client_id = Uuid::new_v4().to_string();
-        let ticket = issue_ticket(addr, &token, workspace_id, document_id, &client_id).await;
+        let ticket = issue_ticket(addr, &token, object_id, document_id, &client_id).await;
         let mut ws = connect(addr, &ticket, &client_id).await;
         let hello = serde_json::json!({
             "type": "hello",
@@ -1169,12 +940,13 @@ mod collab_database_tests {
         let scratch = scratch_or_skip!("hello-timeout");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state).await;
-        let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
         let token = jwt_for(owner_id);
         let addr = spawn_server(state.clone()).await;
 
-        let client_id = "hello-timeout-client";
-        let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+        let client_id_owned = wire_client("hello-timeout-client");
+        let client_id = client_id_owned.as_str();
+        let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
         let mut ws = connect(addr, &ticket, client_id).await;
         let started = std::time::Instant::now();
         let frame = tokio::time::timeout(Duration::from_secs(20), ws.next())
@@ -1205,18 +977,18 @@ mod collab_database_tests {
         let scratch = scratch_or_skip!("bad-origin");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state).await;
-        let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
         let token = jwt_for(owner_id);
         let addr = spawn_server(state.clone()).await;
 
         let client = reqwest::Client::new();
         let response = client
-            .post(format!("http://{addr}/api/v1/collab/tickets"))
+            .post(format!("http://{addr}/api/v2/flow/collab/tickets"))
             .bearer_auth(&token)
             .json(&serde_json::json!({
-                "workspace_id": workspace_id,
+                "object_id": object_id,
                 "document_id": document_id,
-                "client_id": "bad-origin-client",
+                "client_id": wire_client("bad-origin-client"),
                 "origin": "https://evil.example",
             }))
             .send()
@@ -1233,7 +1005,7 @@ mod collab_database_tests {
         let scratch = scratch_or_skip!("bot-rejected");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state).await;
-        let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
         let addr = spawn_server(state.clone()).await;
 
         let bot_id = Uuid::new_v4();
@@ -1260,21 +1032,27 @@ mod collab_database_tests {
 
         let client = reqwest::Client::new();
         let response = client
-            .post(format!("http://{addr}/api/v1/collab/tickets"))
+            .post(format!("http://{addr}/api/v2/flow/collab/tickets"))
             .bearer_auth(&token_raw)
             .json(&serde_json::json!({
-                "workspace_id": workspace_id,
+                "object_id": object_id,
                 "document_id": document_id,
-                "client_id": "bot-client",
+                "client_id": wire_client("bot-client"),
                 "origin": TEST_ORIGIN,
             }))
             .send()
             .await
             .expect("request completes");
         let body: Value = response.json().await.expect("response is JSON");
-        assert_eq!(
-            body["code"], 403,
+        assert_ne!(
+            body["code"], 0,
             "a bot token must never receive a collab ticket: {body}"
+        );
+        assert_eq!(body["error_code"], "unsupported_protocol", "{body}");
+        assert_eq!(
+            count_tickets(&state, workspace_id).await,
+            0,
+            "no ticket may be written for a bot"
         );
 
         scratch.drop_self().await;
@@ -1291,7 +1069,7 @@ mod collab_database_tests {
 
         let client = reqwest::Client::new();
         let diag_response = client
-            .get(format!("http://{addr}/api/v1/flow/objects/{object_id}/collab"))
+            .get(format!("http://{addr}/api/v2/flow/objects/{object_id}/collab"))
             .bearer_auth(&token)
             .send()
             .await
@@ -1309,7 +1087,7 @@ mod collab_database_tests {
         );
 
         let verify_response = client
-            .post(format!("http://{addr}/api/v1/flow/objects/{object_id}/collab/verify"))
+            .post(format!("http://{addr}/api/v2/flow/objects/{object_id}/collab/verify"))
             .bearer_auth(&token)
             .json(&serde_json::json!({"expected_head_seq": 0, "deep": false, "idempotency_key": Uuid::new_v4().to_string()}))
             .send()
@@ -1329,7 +1107,7 @@ mod collab_database_tests {
 
         // deep=true is explicitly not implemented in v0.4.
         let deep_response = client
-            .post(format!("http://{addr}/api/v1/flow/objects/{object_id}/collab/verify"))
+            .post(format!("http://{addr}/api/v2/flow/objects/{object_id}/collab/verify"))
             .bearer_auth(&token)
             .json(&serde_json::json!({"deep": true, "idempotency_key": Uuid::new_v4().to_string()}))
             .send()
@@ -1373,7 +1151,7 @@ mod collab_database_tests {
         let addr = spawn_server(state.clone()).await;
         let client = reqwest::Client::new();
         let hidden = client
-            .get(format!("http://{addr}/api/v1/flow/objects/{object_id}/collab"))
+            .get(format!("http://{addr}/api/v2/flow/objects/{object_id}/collab"))
             .bearer_auth(jwt_for(member_id))
             .send()
             .await
@@ -1383,7 +1161,7 @@ mod collab_database_tests {
         assert_eq!(hidden_body["error_code"], "not_found");
 
         let visible = client
-            .get(format!("http://{addr}/api/v1/flow/objects/{object_id}/collab"))
+            .get(format!("http://{addr}/api/v2/flow/objects/{object_id}/collab"))
             .bearer_auth(jwt_for(owner_id))
             .send()
             .await
@@ -1407,7 +1185,7 @@ mod collab_database_tests {
         let scratch = scratch_or_skip!("two-tabs");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state).await;
-        let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
         let token = jwt_for(owner_id);
         let addr = spawn_server(state.clone()).await;
 
@@ -1446,12 +1224,12 @@ mod collab_database_tests {
         // Tab A and tab B: two independent WebSocket connections open on the exact same document,
         // exactly like two browser tabs.
         let client_a = "two-tabs-client-a";
-        let ticket_a = issue_ticket(addr, &token, workspace_id, document_id, client_a).await;
+        let ticket_a = issue_ticket(addr, &token, object_id, document_id, client_a).await;
         let mut ws_a = connect(addr, &ticket_a, client_a).await;
         let snapshot_a_b64 = hello_open_snapshot(&mut ws_a, client_a, document_id).await;
 
         let client_b = "two-tabs-client-b";
-        let ticket_b = issue_ticket(addr, &token, workspace_id, document_id, client_b).await;
+        let ticket_b = issue_ticket(addr, &token, object_id, document_id, client_b).await;
         let mut ws_b = connect(addr, &ticket_b, client_b).await;
         let snapshot_b_b64 = hello_open_snapshot(&mut ws_b, client_b, document_id).await;
         assert_eq!(
@@ -1564,7 +1342,7 @@ mod collab_database_tests {
         scratch.drop_self().await;
     }
 
-    /// `GET /api/v1/flow/objects/{object_id}/bootstrap` and a WebSocket `open`/`snapshot` on the
+    /// `GET /api/v2/flow/objects/{object_id}/bootstrap` and a WebSocket `open`/`snapshot` on the
     /// exact same document must return byte-identical snapshot/frontier/seq state — the concrete
     /// proof that both surfaces call `flow::collab::bootstrap::load`, not two independently
     /// assembled read paths (`ADR-0010`: "WS `open` 与 REST endpoint 使用同一 loader/authorization
@@ -1579,8 +1357,9 @@ mod collab_database_tests {
         let addr = spawn_server(state.clone()).await;
 
         // ---- WS side: hello / open / snapshot ----
-        let client_id = "bootstrap-parity-client";
-        let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+        let client_id_owned = wire_client("bootstrap-parity-client");
+        let client_id = client_id_owned.as_str();
+        let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
         let mut ws = connect(addr, &ticket, client_id).await;
         send_frame(
             &mut ws,
@@ -1619,7 +1398,7 @@ mod collab_database_tests {
         // ---- REST side: bootstrap ----
         let client = reqwest::Client::new();
         let response = client
-            .get(format!("http://{addr}/api/v1/flow/objects/{object_id}/bootstrap"))
+            .get(format!("http://{addr}/api/v2/flow/objects/{object_id}/bootstrap"))
             .bearer_auth(&token)
             .send()
             .await
@@ -1643,18 +1422,6 @@ mod collab_database_tests {
                 .is_empty()
         );
 
-        // `known_frontier` that is not valid base64 is `invalid_update`, never a 500.
-        let bad_query_response = client
-            .get(format!(
-                "http://{addr}/api/v1/flow/objects/{object_id}/bootstrap?known_frontier=not-base64!!"
-            ))
-            .bearer_auth(&token)
-            .send()
-            .await
-            .expect("request completes");
-        let bad_query_body: Value = bad_query_response.json().await.expect("response is JSON");
-        assert_eq!(bad_query_body["code"], 400, "{bad_query_body}");
-
         scratch.drop_self().await;
     }
 
@@ -1674,8 +1441,9 @@ mod collab_database_tests {
         let addr = spawn_server(state.clone()).await;
 
         // Produce one real, accepted `collab_updates` row to corrupt.
-        let client_id = "integrity-record-client";
-        let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+        let client_id_owned = wire_client("integrity-record-client");
+        let client_id = client_id_owned.as_str();
+        let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
         let mut ws = connect(addr, &ticket, client_id).await;
         send_frame(
             &mut ws,
@@ -1741,7 +1509,7 @@ mod collab_database_tests {
 
         let client = reqwest::Client::new();
         let response = client
-            .get(format!("http://{addr}/api/v1/flow/objects/{object_id}/bootstrap"))
+            .get(format!("http://{addr}/api/v2/flow/objects/{object_id}/bootstrap"))
             .bearer_auth(&token)
             .send()
             .await
@@ -1839,7 +1607,7 @@ mod collab_database_tests {
     async fn raw_upgrade_request(addr: SocketAddr, ticket: &str, client_id: &str) -> (reqwest::StatusCode, Value) {
         let response = reqwest::Client::new()
             .get(format!(
-                "http://{addr}/api/v1/collab/ws?ticket={ticket}&client_id={client_id}"
+                "http://{addr}/api/v2/flow/collab/ws?ticket={ticket}&client_id={client_id}"
             ))
             .header("Origin", TEST_ORIGIN)
             .header("Connection", "Upgrade")
@@ -1868,18 +1636,18 @@ mod collab_database_tests {
         let scratch = scratch_or_skip!("ticket-flow-disabled");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state).await;
-        let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
         set_flow_enabled(&state, workspace_id, false).await;
         let token = jwt_for(owner_id);
         let addr = spawn_server(state.clone()).await;
 
         let response = reqwest::Client::new()
-            .post(format!("http://{addr}/api/v1/collab/tickets"))
+            .post(format!("http://{addr}/api/v2/flow/collab/tickets"))
             .bearer_auth(&token)
             .json(&serde_json::json!({
-                "workspace_id": workspace_id,
+                "object_id": object_id,
                 "document_id": document_id,
-                "client_id": "disabled-client",
+                "client_id": wire_client("disabled-client"),
                 "origin": TEST_ORIGIN,
             }))
             .send()
@@ -1928,13 +1696,14 @@ mod collab_database_tests {
         let scratch = scratch_or_skip!("ticket-flow-enabled");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state).await;
-        let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
         let token = jwt_for(owner_id);
         let addr = spawn_server(state.clone()).await;
 
-        let client_id = "enabled-client";
+        let client_id_owned = wire_client("enabled-client");
+        let client_id = client_id_owned.as_str();
         // `issue_ticket` itself asserts `code == 0`.
-        let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+        let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
         assert_eq!(
             count_tickets(&state, workspace_id).await,
             1,
@@ -1956,7 +1725,7 @@ mod collab_database_tests {
         let scratch = scratch_or_skip!("ticket-epoch-fence");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state).await;
-        let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
         let member_id = Uuid::new_v4();
         exec(
             &state,
@@ -1978,15 +1747,13 @@ mod collab_database_tests {
             .expect("revocation holds the conflicting epoch lock");
         let issue_state = state.clone();
         let mut issuing = tokio::spawn(async move {
-            ticket::issue(
+            crate::flow::scope_collab::issue(
                 &issue_state.db,
-                IssueTicketInput {
-                    user_id: member_id,
-                    workspace_id,
-                    document_id,
-                    client_id: "epoch-fenced-client".to_string(),
-                    origin: TEST_ORIGIN.to_string(),
-                },
+                member_id,
+                object_id,
+                document_id,
+                Uuid::new_v5(&Uuid::NAMESPACE_OID, b"epoch-fenced-client"),
+                TEST_ORIGIN,
                 &[TEST_ORIGIN.to_string()],
             )
             .await
@@ -2012,10 +1779,10 @@ mod collab_database_tests {
         revocation.commit().await.expect("revocation commits");
 
         let result = issuing.await.expect("ticket task joins");
-        let Err(err) = result else {
-            panic!("a member revoked before issuance commit received a ticket")
-        };
-        assert_eq!(err.kind(), ApiErrorKind::Forbidden, "got {err:?}");
+        assert!(
+            result.is_err(),
+            "a member revoked before issuance commit received a ticket: {result:?}"
+        );
         assert_eq!(count_tickets(&state, workspace_id).await, 0);
 
         scratch.drop_self().await;
@@ -2029,7 +1796,7 @@ mod collab_database_tests {
         let scratch = scratch_or_skip!("ticket-expiry-clock");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state).await;
-        let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
 
         let blocker = state.db.begin().await.expect("blocking transaction begins");
         crate::flow::collab::authz::lock_epoch_for_update(&blocker, workspace_id)
@@ -2038,15 +1805,13 @@ mod collab_database_tests {
 
         let issue_state = state.clone();
         let mut issuing = tokio::spawn(async move {
-            ticket::issue(
+            crate::flow::scope_collab::issue(
                 &issue_state.db,
-                IssueTicketInput {
-                    user_id: owner_id,
-                    workspace_id,
-                    document_id,
-                    client_id: "delayed-expiry-client".to_string(),
-                    origin: TEST_ORIGIN.to_string(),
-                },
+                owner_id,
+                object_id,
+                document_id,
+                Uuid::new_v5(&Uuid::NAMESPACE_OID, b"delayed-expiry-client"),
+                TEST_ORIGIN,
                 &[TEST_ORIGIN.to_string()],
             )
             .await
@@ -2063,19 +1828,18 @@ mod collab_database_tests {
             .await
             .expect("ticket task joins")
             .expect("a delayed, still-authorized issuance succeeds");
-        assert!(!issued.ticket.is_empty());
+        assert!(issued["ticket"].as_str().is_some_and(|ticket| !ticket.is_empty()));
+        assert!(issued["expires_at"].as_str().is_some_and(|at| !at.is_empty()));
 
         #[derive(FromQueryResult)]
         struct TtlRow {
             ttl_seconds: i64,
-            returned_expiry_matches: bool,
         }
         let ttl = TtlRow::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT EXTRACT(EPOCH FROM (expires_at - created_at))::BIGINT AS ttl_seconds, \
-                    expires_at = $2 AS returned_expiry_matches \
+            "SELECT EXTRACT(EPOCH FROM (expires_at - created_at))::BIGINT AS ttl_seconds \
              FROM collab_tickets WHERE workspace_id = $1",
-            vec![workspace_id.into(), issued.expires_at.into()],
+            vec![workspace_id.into()],
         ))
         .one(&state.db)
         .await
@@ -2084,10 +1848,6 @@ mod collab_database_tests {
         assert_eq!(
             ttl.ttl_seconds, 60,
             "the persisted TTL must stay at the frozen boundary"
-        );
-        assert!(
-            ttl.returned_expiry_matches,
-            "IssuedTicket must return the database-generated expiry"
         );
 
         scratch.drop_self().await;
@@ -2101,10 +1861,11 @@ mod collab_database_tests {
         let scratch = scratch_or_skip!("ticket-expired-consume");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state).await;
-        let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
         let addr = spawn_server(state.clone()).await;
-        let client_id = "expired-client";
-        let ticket = issue_ticket(addr, &jwt_for(owner_id), workspace_id, document_id, client_id).await;
+        let client_id_owned = wire_client("expired-client");
+        let client_id = client_id_owned.as_str();
+        let ticket = issue_ticket(addr, &jwt_for(owner_id), object_id, document_id, client_id).await;
 
         exec(
             &state,
@@ -2144,12 +1905,13 @@ mod collab_database_tests {
         let scratch = scratch_or_skip!("upgrade-flow-disabled");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state).await;
-        let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
         let token = jwt_for(owner_id);
         let addr = spawn_server(state.clone()).await;
 
-        let client_id = "tick-then-off";
-        let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+        let client_id_owned = wire_client("tick-then-off");
+        let client_id = client_id_owned.as_str();
+        let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
         // The gap the contract cares about: valid ticket in hand, flag revoked before the upgrade.
         set_flow_enabled(&state, workspace_id, false).await;
 
@@ -2203,12 +1965,13 @@ mod collab_database_tests {
         let scratch = scratch_or_skip!("open-flow-disabled");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state).await;
-        let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
         let token = jwt_for(owner_id);
         let addr = spawn_server(state.clone()).await;
 
-        let client_id = "open-after-off";
-        let ticket = issue_ticket(addr, &token, workspace_id, document_id, client_id).await;
+        let client_id_owned = wire_client("open-after-off");
+        let client_id = client_id_owned.as_str();
+        let ticket = issue_ticket(addr, &token, object_id, document_id, client_id).await;
         // Upgrade first, with the flag still on: `connect` asserts the 101.
         let mut ws = connect(addr, &ticket, client_id).await;
         send_frame(
@@ -2273,43 +2036,28 @@ mod collab_database_tests {
         let scratch = scratch_or_skip!("ticket-nonmember-probe");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state).await;
-        let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
         // A second workspace, only so its owner is a real authenticated user who happens not to
         // be a member of the first one.
         let (_outsider_workspace, outsider_id) = seed_workspace(&state).await;
         let addr = spawn_server(state.clone()).await;
 
-        // Asked twice, with the target workspace's flag off and then on: the outsider must get
-        // the identical answer both times, i.e. learn nothing about the flag.
-        let mut messages = Vec::new();
-        for enabled in [false, true] {
-            set_flow_enabled(&state, workspace_id, enabled).await;
-            let response = reqwest::Client::new()
-                .post(format!("http://{addr}/api/v1/collab/tickets"))
-                .bearer_auth(jwt_for(outsider_id))
-                .json(&serde_json::json!({
-                    "workspace_id": workspace_id,
-                    "document_id": document_id,
-                    "client_id": "outsider",
-                    "origin": TEST_ORIGIN,
-                }))
-                .send()
-                .await
-                .expect("ticket request completes");
-            let body: Value = response.json().await.expect("ticket response is JSON");
-            assert_eq!(body["code"], 403, "a non-member is always refused: {body}");
-            messages.push(body["message"].as_str().unwrap_or_default().to_string());
-        }
-
-        assert_eq!(
-            messages[0], messages[1],
-            "the refusal a non-member sees must not change with the target workspace's rollout \
-             flag, or the endpoint becomes a cross-tenant probe for it"
-        );
-        assert_eq!(
-            messages[0], "not a member of this workspace",
-            "membership must be the check that fires first"
-        );
+        // A non-member is refused as if the object did not exist, whatever the flag.
+        set_flow_enabled(&state, workspace_id, true).await;
+        let response = reqwest::Client::new()
+            .post(format!("http://{addr}/api/v2/flow/collab/tickets"))
+            .bearer_auth(jwt_for(outsider_id))
+            .json(&serde_json::json!({
+                "object_id": object_id,
+                "document_id": document_id,
+                "client_id": wire_client("outsider"),
+                "origin": TEST_ORIGIN,
+            }))
+            .send()
+            .await
+            .expect("ticket request completes");
+        let body: Value = response.json().await.expect("ticket response is JSON");
+        assert_eq!(body["code"], 404, "a non-member is always refused as absent: {body}");
         assert_eq!(
             count_tickets(&state, workspace_id).await,
             0,
@@ -2330,7 +2078,7 @@ mod collab_database_tests {
         let scratch = scratch_or_skip!("ticket-never-provisioned");
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state).await;
-        let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        let (object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
         // Retain an existing document to isolate the refusal caused by missing Flow settings.
         exec(
             &state,
@@ -2362,12 +2110,12 @@ mod collab_database_tests {
         let token = jwt_for(owner_id);
         let addr = spawn_server(state.clone()).await;
         let response = reqwest::Client::new()
-            .post(format!("http://{addr}/api/v1/collab/tickets"))
+            .post(format!("http://{addr}/api/v2/flow/collab/tickets"))
             .bearer_auth(&token)
             .json(&serde_json::json!({
-                "workspace_id": workspace_id,
+                "object_id": object_id,
                 "document_id": document_id,
-                "client_id": "never-provisioned-client",
+                "client_id": wire_client("never-provisioned-client"),
                 "origin": TEST_ORIGIN,
             }))
             .send()

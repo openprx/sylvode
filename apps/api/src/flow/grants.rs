@@ -98,37 +98,6 @@ impl PrincipalKind {
 // ---------------------------------------------------------------------------------------------
 
 #[derive(Debug, Serialize)]
-pub struct GrantItem {
-    pub principal_kind: String,
-    pub principal_id: Uuid,
-    pub level: String,
-    pub granted_by: Option<Uuid>,
-    pub created_at: platform::timestamp::Timestamp,
-}
-
-#[derive(Debug, Serialize)]
-pub struct InheritedGrantItem {
-    pub object_id: Uuid,
-    pub principal_kind: String,
-    pub principal_id: Uuid,
-    pub level: String,
-}
-
-/// `GET /flow/objects/{object_id}/grants`.
-///
-/// `items`/`inherited` are the full roster and are only populated for a caller holding
-/// `full_access` on the object ("对象 `view` 起可读自身 effective，`full_access` 才可读完整名单");
-/// a `view`/`comment`/`edit` caller gets its own `effective_level` and the boundary flag and
-/// nothing else, so the endpoint cannot be used to enumerate who else can see a page.
-#[derive(Debug, Serialize)]
-pub struct GrantsView {
-    pub items: Vec<GrantItem>,
-    pub inherit_from_parent: bool,
-    pub inherited: Vec<InheritedGrantItem>,
-    pub effective_level: String,
-}
-
-#[derive(Debug, Serialize)]
 pub struct CallerPermissionChange {
     pub before_level: String,
     pub after_level: String,
@@ -303,12 +272,9 @@ fn validate_grants(requested: &[GrantRequest]) -> Result<Vec<Grant>, ApiError> {
 
 #[derive(FromQueryResult)]
 struct GrantRow {
-    object_id: Uuid,
     principal_kind: String,
     principal_id: Uuid,
     level: String,
-    granted_by: Option<Uuid>,
-    created_at: platform::timestamp::Timestamp,
 }
 
 async fn grants_on<C: ConnectionTrait>(conn: &C, object_ids: &[Uuid]) -> Result<Vec<GrantRow>, ApiError> {
@@ -317,7 +283,7 @@ async fn grants_on<C: ConnectionTrait>(conn: &C, object_ids: &[Uuid]) -> Result<
     }
     Ok(GrantRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT object_id, principal_kind, principal_id, level, granted_by, created_at \
+        "SELECT principal_kind, principal_id, level \
            FROM flow_object_grants WHERE object_id = ANY($1) \
           ORDER BY object_id, principal_kind, principal_id",
         vec![object_ids.to_vec().into()],
@@ -557,76 +523,6 @@ fn permission_changes(
 // ---------------------------------------------------------------------------------------------
 // Read path
 // ---------------------------------------------------------------------------------------------
-
-/// `GET /flow/objects/{object_id}/grants`.
-///
-/// # Errors
-/// `NotFound` when the object is absent, foreign, malformed, or the caller holds nothing on it;
-/// these answers deliberately collapse so the endpoint cannot reveal that a share list exists.
-/// Propagates database read failures.
-pub async fn get_grants(
-    state: &AppState,
-    workspace_id: Uuid,
-    object_id: Uuid,
-    caller: &Caller,
-) -> Result<GrantsView, ApiError> {
-    let effective = authz::effective_permission(
-        &state.db,
-        workspace_id,
-        object_id,
-        &caller.principal_kind,
-        caller.actor_id,
-        &caller.role,
-    )
-    .await
-    .map_err(super::policy::collapse_object_denial)?;
-    if effective < PermissionLevel::View {
-        return Err(super::policy::object_not_found());
-    }
-
-    let chain = authz::inheritance_chain(&state.db, workspace_id, object_id)
-        .await
-        .map_err(super::policy::collapse_object_denial)?;
-    let inherit_from_parent = chain.boundary_index != Some(0);
-
-    if effective < PermissionLevel::FullAccess {
-        // Own effective level and the boundary flag only — never the roster.
-        return Ok(GrantsView {
-            items: Vec::new(),
-            inherit_from_parent,
-            inherited: Vec::new(),
-            effective_level: effective.as_wire().to_string(),
-        });
-    }
-
-    let own = grants_on(&state.db, &[object_id]).await?;
-    let ancestors = chain.contributing_ancestors().to_vec();
-    let inherited = grants_on(&state.db, &ancestors).await?;
-
-    Ok(GrantsView {
-        items: own
-            .into_iter()
-            .map(|row| GrantItem {
-                principal_kind: row.principal_kind,
-                principal_id: row.principal_id,
-                level: row.level,
-                granted_by: row.granted_by,
-                created_at: row.created_at,
-            })
-            .collect(),
-        inherit_from_parent,
-        inherited: inherited
-            .into_iter()
-            .map(|row| InheritedGrantItem {
-                object_id: row.object_id,
-                principal_kind: row.principal_kind,
-                principal_id: row.principal_id,
-                level: row.level,
-            })
-            .collect(),
-        effective_level: effective.as_wire().to_string(),
-    })
-}
 
 // ---------------------------------------------------------------------------------------------
 // Write path
@@ -1377,7 +1273,7 @@ mod database_tests {
     };
     use uuid::Uuid;
 
-    use super::{Caller, GrantRequest, SetGrantsInput, SetInheritanceInput, get_grants, set_grants, set_inheritance};
+    use super::{Caller, GrantRequest, SetGrantsInput, SetInheritanceInput, set_grants, set_inheritance};
     use crate::error::{ApiError, ApiErrorKind};
     use crate::flow::collab::authz::{self, GRANTS_PER_REQUEST_MAX, OBJECT_GRANTS_MAX, PermissionLevel};
     use crate::flow::command::{
@@ -3188,54 +3084,6 @@ mod database_tests {
             explicit_roster(&scratch.db, page).await,
             vec![("bot".to_string(), survivor, "view".to_string())],
             "the result count is the request count on this surface too"
-        );
-
-        scratch.drop_self().await;
-    }
-
-    /// The `GET` roster is only visible to a `full_access` caller; everyone else sees their own
-    /// effective level and the boundary flag, and nothing that would enumerate other principals.
-    #[tokio::test]
-    async fn the_grants_roster_is_only_readable_with_full_access() {
-        let scratch = scratch_or_skip!("grants_read");
-        let state = state_for(scratch.db.clone());
-        let fx = seed_workspace(&scratch.db).await;
-        let parent = create(&state, &fx, "page", None).await;
-        let child = create(&state, &fx, "page", Some(parent)).await;
-
-        set_grants(
-            &state,
-            fx.workspace_id,
-            SetGrantsInput {
-                object_id: parent,
-                caller: user(fx.owner_id, "owner"),
-                grants: vec![grant_of("user", fx.member_id, "edit")],
-                confirm_self_lockout: false,
-                dry_run: false,
-                idempotency_key: Uuid::new_v4().to_string(),
-            },
-        )
-        .await
-        .expect("owner grants on the parent");
-
-        let as_owner = get_grants(&state, fx.workspace_id, child, &user(fx.owner_id, "owner"))
-            .await
-            .expect("owner reads");
-        assert_eq!(as_owner.effective_level, "full_access");
-        assert!(as_owner.inherit_from_parent);
-        assert_eq!(
-            as_owner.inherited.len(),
-            1,
-            "the ancestor grant must appear in `inherited`"
-        );
-
-        let as_member = get_grants(&state, fx.workspace_id, child, &user(fx.member_id, "member"))
-            .await
-            .expect("member reads its own effective level");
-        assert_eq!(as_member.effective_level, "edit");
-        assert!(
-            as_member.items.is_empty() && as_member.inherited.is_empty(),
-            "a non-full_access caller must not be able to enumerate the roster"
         );
 
         scratch.drop_self().await;

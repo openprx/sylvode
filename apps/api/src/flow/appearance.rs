@@ -8,7 +8,6 @@
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -133,108 +132,6 @@ pub fn decode_image(data_base64: &str) -> Result<(&'static str, Vec<u8>), ApiErr
     Ok((content_type, bytes))
 }
 
-pub async fn set_appearance(
-    db: &DatabaseConnection,
-    workspace_id: Uuid,
-    object_id: Uuid,
-    actor_id: Uuid,
-    actor_is_bot: bool,
-    appearance: &PageAppearance,
-) -> Result<PageAppearance, ApiError> {
-    if !actor_is_bot {
-        if super::scope::identity(db, object_id).await?.workspace_id != Some(workspace_id) {
-            return Err(ApiError::not_found("flow object not found"));
-        }
-        return super::scope_assets::set(db, object_id, actor_id, appearance.clone(), None).await;
-    }
-    validate_appearance(appearance)?;
-    ensure_active_page(db, workspace_id, object_id).await?;
-    for asset_id in referenced_assets(appearance) {
-        ensure_asset_owned(db, workspace_id, object_id, asset_id).await?;
-    }
-    let stored = serde_json::to_value(appearance).map_err(|_| ApiError::internal())?;
-    let updated_by = if actor_is_bot { None } else { Some(actor_id) };
-    let row = AppearanceRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "UPDATE flow_objects SET appearance = $3, updated_at = now(), updated_by = $4 \
-         WHERE id = $1 AND workspace_id = $2 AND lifecycle_status = 'active' \
-         RETURNING appearance",
-        vec![object_id.into(), workspace_id.into(), stored.into(), updated_by.into()],
-    ))
-    .one(db)
-    .await?
-    .ok_or_else(|| ApiError::invalid_update("only an active page can change its appearance".to_string()))?;
-    Ok(parse_stored(&row.appearance))
-}
-
-pub async fn upload_asset(
-    db: &DatabaseConnection,
-    workspace_id: Uuid,
-    object_id: Uuid,
-    actor_id: Uuid,
-    actor_is_bot: bool,
-    data_base64: &str,
-) -> Result<AppearanceAssetCreated, ApiError> {
-    if !actor_is_bot {
-        if super::scope::identity(db, object_id).await?.workspace_id != Some(workspace_id) {
-            return Err(ApiError::not_found("flow object not found"));
-        }
-        return super::scope_assets::upload(db, object_id, actor_id, data_base64, None).await;
-    }
-    ensure_active_page(db, workspace_id, object_id).await?;
-    let (content_type, bytes) = decode_image(data_base64)?;
-    let id = Uuid::new_v4();
-    let byte_len = bytes.len();
-    let byte_size = i32::try_from(byte_len).map_err(|_| ApiError::internal())?;
-    let created_by = if actor_is_bot { None } else { Some(actor_id) };
-    db.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "INSERT INTO flow_appearance_assets \
-            (id, workspace_id, object_id, content_type, byte_size, bytes, created_by) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7)",
-        vec![
-            id.into(),
-            workspace_id.into(),
-            object_id.into(),
-            content_type.into(),
-            byte_size.into(),
-            bytes.into(),
-            created_by.into(),
-        ],
-    ))
-    .await?;
-    Ok(AppearanceAssetCreated {
-        asset_id: id,
-        content_type: content_type.to_string(),
-        byte_size: byte_len,
-    })
-}
-
-pub async fn read_asset(
-    db: &DatabaseConnection,
-    workspace_id: Uuid,
-    object_id: Uuid,
-    asset_id: Uuid,
-) -> Result<AppearanceAssetBytes, ApiError> {
-    let row = AssetRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT content_type, bytes FROM flow_appearance_assets \
-         WHERE id = $1 AND object_id = $2 AND workspace_id = $3",
-        vec![asset_id.into(), object_id.into(), workspace_id.into()],
-    ))
-    .one(db)
-    .await?
-    .ok_or_else(|| ApiError::not_found("flow appearance asset not found".to_string()))?;
-    let content_type = static_content_type(&row.content_type).ok_or_else(|| {
-        tracing::warn!("flow appearance asset has an unexpected content type");
-        ApiError::internal()
-    })?;
-    Ok(AppearanceAssetBytes {
-        content_type,
-        bytes: row.bytes,
-    })
-}
-
 pub(crate) fn referenced_assets(appearance: &PageAppearance) -> Vec<Uuid> {
     let mut ids = Vec::new();
     if let Some(PageIcon::Image { asset_id }) = appearance.icon {
@@ -244,49 +141,6 @@ pub(crate) fn referenced_assets(appearance: &PageAppearance) -> Vec<Uuid> {
         ids.push(asset_id);
     }
     ids
-}
-
-async fn ensure_asset_owned(
-    db: &DatabaseConnection,
-    workspace_id: Uuid,
-    object_id: Uuid,
-    asset_id: Uuid,
-) -> Result<(), ApiError> {
-    let found = db
-        .query_one(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT 1 FROM flow_appearance_assets WHERE id = $1 AND object_id = $2 AND workspace_id = $3",
-            vec![asset_id.into(), object_id.into(), workspace_id.into()],
-        ))
-        .await?;
-    if found.is_none() {
-        return Err(ApiError::invalid_update(
-            "appearance image was not uploaded for this page".to_string(),
-        ));
-    }
-    Ok(())
-}
-
-async fn ensure_active_page(db: &DatabaseConnection, workspace_id: Uuid, object_id: Uuid) -> Result<(), ApiError> {
-    #[derive(FromQueryResult)]
-    struct Row {
-        object_type: String,
-        lifecycle_status: String,
-    }
-    let row = Row::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT object_type, lifecycle_status FROM flow_objects WHERE id = $1 AND workspace_id = $2",
-        vec![object_id.into(), workspace_id.into()],
-    ))
-    .one(db)
-    .await?
-    .ok_or_else(|| ApiError::not_found("flow object not found".to_string()))?;
-    if row.object_type != "page" || row.lifecycle_status != "active" {
-        return Err(ApiError::invalid_update(
-            "only an active page can change its appearance".to_string(),
-        ));
-    }
-    Ok(())
 }
 
 fn validate_emoji(emoji: &str) -> Result<(), ApiError> {
@@ -347,17 +201,6 @@ pub(crate) fn static_content_type(value: &str) -> Option<&'static str> {
         "image/gif" => Some("image/gif"),
         _ => None,
     }
-}
-
-#[derive(Debug, FromQueryResult)]
-struct AppearanceRow {
-    appearance: Value,
-}
-
-#[derive(Debug, FromQueryResult)]
-struct AssetRow {
-    content_type: String,
-    bytes: Vec<u8>,
 }
 
 #[cfg(test)]

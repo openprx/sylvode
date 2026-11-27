@@ -766,70 +766,6 @@ pub async fn create_reference(
     })
 }
 
-pub async fn list_references(
-    state: &AppState,
-    extensions: &Extensions,
-    source_object_id: Uuid,
-) -> Result<ReferenceList, ApiError> {
-    let (source, actor) = source_actor(state, extensions, source_object_id, PermissionLevel::View).await?;
-    let enabled = bridge_enabled(&state.db, source.workspace_id).await?;
-    let rows = ReferenceRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT id, workspace_id, source_object_id, target_type, target_id, display, removed_at \
-         FROM flow_bridge_references WHERE workspace_id = $1 AND source_object_id = $2 AND removed_at IS NULL \
-         ORDER BY created_at, id",
-        vec![source.workspace_id.into(), source.id.into()],
-    ))
-    .all(&state.db)
-    .await?;
-    let mut items = Vec::with_capacity(rows.len());
-    for row in rows {
-        if let Some(target) = reference_target(&row.target_type, row.target_id)
-            && ensure_actor_level(state, &actor, target, BotLevel::Read).await.is_err()
-        {
-            items.push(BridgeReferenceView::Unavailable);
-            continue;
-        }
-        let Some(target) = target_view(&state.db, row.workspace_id, &row.target_type, row.target_id).await? else {
-            items.push(BridgeReferenceView::Unavailable);
-            continue;
-        };
-        let Some(permission) = target_permission(&state.db, &actor, &target).await? else {
-            continue;
-        };
-        let summary = if row.target_type == "form_record" {
-            permission
-                .denied_read_fields
-                .iter()
-                .fold(target.summary, |mut values, key| {
-                    if let Some(object) = values.as_object_mut() {
-                        object.remove(key);
-                    }
-                    values
-                })
-        } else {
-            target.summary
-        };
-        let permission_state = if enabled {
-            permission.state
-        } else {
-            read_only_state(permission.state)
-        };
-        items.push(BridgeReferenceView::Available {
-            reference_id: row.id,
-            source_object_id: row.source_object_id,
-            target_type: row.target_type,
-            target_id: row.target_id,
-            title: target.title,
-            status: target.status,
-            summary,
-            display: row.display,
-            permission_state: Box::new(permission_state),
-        });
-    }
-    Ok(ReferenceList { items })
-}
-
 pub async fn remove_reference(
     state: &AppState,
     extensions: &Extensions,
@@ -892,7 +828,7 @@ pub async fn remove_reference(
     })
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConversionPreviewInput {
     pub source_object_id: Uuid,

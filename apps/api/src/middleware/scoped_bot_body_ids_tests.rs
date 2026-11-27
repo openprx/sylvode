@@ -95,16 +95,6 @@ const ACCOUNTED: &[(&str, &str, Account)] = &[
         Exempt("field ids of the collection of the route's own object"),
     ),
     (
-        "CreateCommentBody",
-        "block_id",
-        Exempt("a block of the route's own page"),
-    ),
-    (
-        "CreateCommentBody",
-        "parent_id",
-        Exempt("flow/comments.rs resolves the parent comment within the same object"),
-    ),
-    (
         "PackageExportRequest",
         "project_id",
         Exempt("the object export refuses a project_id (routes/flow.rs); the scope export is scope-native"),
@@ -596,7 +586,7 @@ fn the_accounting_is_true() {
                     })
                     .unwrap_or_else(|| panic!("no fn {handler}"));
                 assert!(
-                    text.contains("user(&claims") || text.contains("user(&claims,"),
+                    text.contains("user(&claims") || text.contains("user_or_absent(&claims"),
                     "{name}.{field} is marked scope-native, but {handler} does not call user()"
                 );
             }

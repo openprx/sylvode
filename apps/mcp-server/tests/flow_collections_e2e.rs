@@ -18,7 +18,7 @@ use api::{
         projection,
     },
     middleware::bot_auth::bot_or_user_auth_middleware,
-    routes::flow::post_flow_object_command,
+    routes::flow::post_flow_v2_command,
 };
 use axum::{
     Json, Router,
@@ -783,10 +783,7 @@ async fn root_blocks(state: &AppState, document_id: Uuid) -> TestResultValue<Vec
 
 fn command_router(state: AppState) -> Router {
     Router::new()
-        .route(
-            "/api/v2/flow/objects/{object_id}/commands",
-            post(post_flow_object_command),
-        )
+        .route("/api/v2/flow/objects/{object_id}/commands", post(post_flow_v2_command))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             bot_or_user_auth_middleware,

@@ -903,17 +903,7 @@ pub struct InheritanceChain {
     pub boundary_index: Option<usize>,
 }
 
-impl InheritanceChain {
-    /// The ancestor ids whose grants actually contribute to this object's effective permission —
-    /// empty when the object is itself the authorization boundary.
-    #[must_use]
-    pub fn contributing_ancestors(&self) -> &[Uuid] {
-        let end = self
-            .boundary_index
-            .map_or(self.ids.len(), |index| index.saturating_add(1));
-        self.ids.get(1..end).unwrap_or(&[])
-    }
-}
+impl InheritanceChain {}
 
 /// Resolves `object_id`'s inheritance chain with the same fail-closed walk [`effective_permission`]
 /// uses.

@@ -85,11 +85,6 @@ impl AuthorizedFlowObject {
             PrincipalKind::Bot => "bot",
         }
     }
-
-    #[must_use]
-    pub(super) const fn context(&self) -> &FlowReadContext {
-        &self.context
-    }
 }
 
 impl FlowReadContext {
@@ -330,35 +325,6 @@ fn epoch_change_plans() -> &'static parking_lot::Mutex<std::collections::HashMap
     static PLANS: std::sync::OnceLock<parking_lot::Mutex<std::collections::HashMap<Uuid, EpochChangePlan>>> =
         std::sync::OnceLock::new();
     PLANS.get_or_init(|| parking_lot::Mutex::new(std::collections::HashMap::new()))
-}
-
-/// Installs a workspace-scoped, deterministic race for real-database route tests. Production
-/// builds contain neither the registry nor this injection seam.
-#[cfg(test)]
-pub(crate) fn plan_epoch_changes_for_test(workspace_id: Uuid, checks_before_change: usize, changes: usize) {
-    epoch_change_plans().lock().insert(
-        workspace_id,
-        EpochChangePlan {
-            checks_before_change,
-            remaining_changes: changes,
-            object_to_revoke: None,
-        },
-    );
-}
-
-/// Schedules a real object-level revocation at the selected epoch check. The boundary change and
-/// epoch advance happen before the check returns, so the route must discard the already-built
-/// response and authorize the next attempt from scratch.
-#[cfg(test)]
-pub(crate) fn plan_object_revocation_for_test(workspace_id: Uuid, object_id: Uuid, checks_before_change: usize) {
-    epoch_change_plans().lock().insert(
-        workspace_id,
-        EpochChangePlan {
-            checks_before_change,
-            remaining_changes: 1,
-            object_to_revoke: Some(object_id),
-        },
-    );
 }
 
 #[cfg(test)]

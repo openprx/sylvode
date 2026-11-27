@@ -114,6 +114,12 @@ name.
   paths; the tool arguments are unchanged, and the results now have the v2 shapes. The collaboration
   ticket request and the WebSocket query take `client_id` as a UUID, and the ticket route is
   `POST /api/v2/flow/collab/tickets`.
+- **A bot's role follows its token.** The Flow authorization of a workspace bot takes its role from
+  the token's permissions and scope, the same as every workspace route, so a bot limited to projects is
+  never an administrator. `PATCH /workspaces/{id}/members/{user_id}` refuses to change the role of a bot,
+  and switching a bot's project access keeps its seat in line with its token. `GET
+  /api/v2/flow/workspaces/{id}/scope` lists only the roots of the projects a limited bot can read, and a
+  bot cannot tell a personal or foreign Flow target from a missing one.
 
 - **Work item comments, activity and agent tasks are newest first and paged.** `GET /issues/{id}/comments`
   (default 20, max 100), `GET /issues/{id}/activities` (default 30, max 100; the fixed limit of 100 is

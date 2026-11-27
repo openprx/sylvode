@@ -34,8 +34,6 @@
 //! policy filtering. Its `observed` detail intentionally reports the fixed safe limit, not the real
 //! examined count, matching WP-10's non-disclosure convention.
 
-use std::fmt::Write as _;
-
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL;
 use platform::app::AppState;
@@ -54,28 +52,14 @@ use crate::error::{ApiError, ApiErrorKind};
 use crate::events::{BusinessEventInput, FlowDispatchSpec, FlowEventOutcome, insert_flow_event};
 use crate::middleware::scoped_bot::{Level as BotLevel, Secondary, ensure_bot_level};
 
-use super::collab::{authz, limits};
+use super::collab::authz;
 use super::command::{ExecuteCommandInput, accepted_change_from_row, actor_user_id};
-use super::model::{AcceptedChange, RelatedObjectView, RelationListResponse, RelationView};
+use super::model::AcceptedChange;
 use super::move_object::GovernanceCommandType;
-use super::{policy, repository};
+use super::repository;
 
-const RELATION_SCAN_BATCH_SIZE: u64 = 100;
 const CURSOR_VERSION: u8 = 1;
 const CURSOR_AAD: &[u8] = b"openpr.flow.relations.cursor.v1";
-
-fn check_relation_scan_budget(examined: u64) -> Result<(), ApiError> {
-    if examined > limits::AUTHORIZED_SCAN_ROWS_MAX {
-        return Err(ApiError::limit_exceeded(
-            "relation authorization scan budget exceeded",
-            "scan_budget",
-            Some(json!(limits::AUTHORIZED_SCAN_ROWS_MAX)),
-            Some(json!(limits::AUTHORIZED_SCAN_ROWS_MAX)),
-            None,
-        ));
-    }
-    Ok(())
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -646,24 +630,6 @@ pub struct ListRelationsParams {
     pub limit: Option<u64>,
 }
 
-#[derive(Debug, FromQueryResult)]
-struct RelationReadRow {
-    id: Uuid,
-    workspace_id: Uuid,
-    relation_type: String,
-    source_object_id: Uuid,
-    position_key: String,
-    properties: Value,
-    created_at: Timestamp,
-    source_workspace_id: Option<Uuid>,
-    target_workspace_id: Option<Uuid>,
-    other_id: Option<Uuid>,
-    other_object_type: Option<String>,
-    other_title: Option<String>,
-    other_lifecycle_status: Option<String>,
-    other_project_id: Option<Uuid>,
-}
-
 fn cursor_key(secret: &str) -> Result<LessSafeKey, ApiError> {
     let mut digest = Sha256::new();
     digest.update(CURSOR_AAD);
@@ -727,206 +693,6 @@ pub(crate) fn decode_cursor(secret: &str, raw: &str) -> Result<(Timestamp, Uuid)
     ))
 }
 
-async fn fetch_relation_batch<C: ConnectionTrait>(
-    conn: &C,
-    object_id: Uuid,
-    direction: RelationDirection,
-    relation_type: Option<&str>,
-    after: Option<(Timestamp, Uuid)>,
-    limit: u64,
-) -> Result<Vec<RelationReadRow>, ApiError> {
-    let mut values: Vec<sea_orm::Value> = vec![object_id.into()];
-    let direction_predicate = match direction {
-        RelationDirection::Outgoing => "r.source_object_id = $1",
-        RelationDirection::Incoming => "r.target_object_id = $1",
-        RelationDirection::Both => "(r.source_object_id = $1 OR r.target_object_id = $1)",
-    };
-    let mut sql = format!(
-        "SELECT r.id, r.workspace_id, r.relation_type, r.source_object_id, r.target_object_id, \
-         r.position_key, r.properties, r.created_at, source.workspace_id AS source_workspace_id, \
-         target.workspace_id AS target_workspace_id, other.id AS other_id, \
-         other.object_type AS other_object_type, projection.title AS other_title, \
-         other.lifecycle_status AS other_lifecycle_status, other.project_id AS other_project_id \
-         FROM flow_relations r \
-         LEFT JOIN flow_objects source ON source.id = r.source_object_id \
-         LEFT JOIN flow_objects target ON target.id = r.target_object_id \
-         LEFT JOIN flow_objects other ON other.id = CASE WHEN r.source_object_id = $1 THEN r.target_object_id ELSE r.source_object_id END \
-         LEFT JOIN flow_object_projections projection ON projection.object_id = other.id \
-         WHERE {direction_predicate}"
-    );
-    if let Some(value) = relation_type {
-        values.push(value.into());
-        let _ = write!(sql, " AND r.relation_type = ${}", values.len());
-    }
-    if let Some((created_at, id)) = after {
-        values.push(created_at.into());
-        let created = values.len();
-        values.push(id.into());
-        let id_index = values.len();
-        let _ = write!(sql, " AND (r.created_at, r.id) > (${created}, ${id_index})");
-    }
-    values.push(limit.into());
-    let _ = write!(sql, " ORDER BY r.created_at ASC, r.id ASC LIMIT ${}", values.len());
-    Ok(
-        RelationReadRow::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres, sql, values))
-            .all(conn)
-            .await?,
-    )
-}
-
-async fn record_relation_integrity(state: &AppState, workspace_id: Uuid, relation_id: Uuid) -> ApiError {
-    let result = repository::insert_integrity_record(
-        &state.db,
-        repository::IntegrityRecordInput {
-            workspace_id,
-            kind: "cross_workspace_relation",
-            subject_kind: "flow_relation",
-            subject_id: &relation_id.to_string(),
-            detected_by: "flow.query.relations",
-            details_redacted: json!({ "relation_id": relation_id }),
-        },
-    )
-    .await;
-    if let Err(err) = result {
-        tracing::error!(%err, %relation_id, "failed to record relation integrity alert");
-    }
-    ApiError::invalid_update_with_details(
-        "cross-workspace relation integrity violation",
-        json!({ "reason": crate::error::CROSS_WORKSPACE_RELATION_REASON }),
-    )
-}
-
-async fn check_relation_integrity(state: &AppState, workspace_id: Uuid, row: &RelationReadRow) -> Result<(), ApiError> {
-    if row.workspace_id != workspace_id
-        || row.source_workspace_id != Some(workspace_id)
-        || row.target_workspace_id != Some(workspace_id)
-        || row.other_id.is_none()
-        || row.other_title.is_none()
-    {
-        return Err(record_relation_integrity(state, workspace_id, row.id).await);
-    }
-    Ok(())
-}
-
-/// Lists relations for an already-authorized root object.
-///
-/// Candidate rows are fetched without caller filters, authorized, and only then matched against
-/// `direction`/`relation_type` (`ADR-0018` RF-1). An unfiltered view deliberately preserves a
-/// denied target as `Unavailable`; a filtered view drops it before either predicate can reveal a
-/// property of the hidden relation. Fixed batches plus the 1000-row scan guard bound the
-/// post-authorization overfetch. As in WP-10, a violation reports the fixed limit as `observed`,
-/// never the actual scan count.
-pub async fn list_relations(
-    state: &AppState,
-    access: &policy::AuthorizedFlowObject,
-    params: ListRelationsParams,
-) -> Result<Option<RelationListResponse>, ApiError> {
-    let limit = super::query::validate_limit(params.limit)?;
-    let limit_usize = usize::try_from(limit).unwrap_or(usize::MAX);
-    let needed = limit_usize.saturating_add(1);
-    let filtered_view = params.relation_type.is_some() || params.direction != RelationDirection::Both;
-    let mut after = params
-        .cursor
-        .as_deref()
-        .map(|cursor| decode_cursor(state.cfg.jwt_secret.expose(), cursor))
-        .transpose()?;
-    let mut examined = 0u64;
-    let mut accepted: Vec<(RelationReadRow, bool)> = Vec::with_capacity(needed);
-    while accepted.len() < needed {
-        let batch = fetch_relation_batch(
-            &state.db,
-            access.object_id(),
-            RelationDirection::Both,
-            None,
-            after,
-            RELATION_SCAN_BATCH_SIZE,
-        )
-        .await?;
-        let batch_len = batch.len();
-        if batch_len == 0 {
-            break;
-        }
-        for row in &batch {
-            examined = examined.saturating_add(1);
-            check_relation_scan_budget(examined)?;
-            check_relation_integrity(state, access.workspace_id(), row).await?;
-        }
-        let other_ids: Vec<Uuid> = batch.iter().filter_map(|row| row.other_id).collect();
-        let Some(visible) =
-            policy::authorize_flow_objects(state, access.context(), &other_ids, authz::PermissionLevel::View).await?
-        else {
-            return Ok(None);
-        };
-        for (row, is_visible) in batch.into_iter().zip(visible) {
-            after = Some((row.created_at, row.id));
-            if !is_visible {
-                if !filtered_view {
-                    accepted.push((row, false));
-                }
-                continue;
-            }
-            let direction_matches = match params.direction {
-                RelationDirection::Outgoing => row.source_object_id == access.object_id(),
-                RelationDirection::Incoming => row.source_object_id != access.object_id(),
-                RelationDirection::Both => true,
-            };
-            let type_matches = params
-                .relation_type
-                .as_deref()
-                .is_none_or(|relation_type| row.relation_type == relation_type);
-            if direction_matches && type_matches {
-                accepted.push((row, true));
-            }
-            if accepted.len() >= needed {
-                break;
-            }
-        }
-        if batch_len < usize::try_from(RELATION_SCAN_BATCH_SIZE).unwrap_or(usize::MAX) {
-            break;
-        }
-    }
-    if !policy::ensure_epoch_current(state, access.context()).await? {
-        return Ok(None);
-    }
-    let next_cursor = if accepted.len() > limit_usize {
-        accepted.truncate(limit_usize);
-        accepted
-            .last()
-            .map(|(row, _)| encode_cursor(state.cfg.jwt_secret.expose(), row.created_at, row.id))
-            .transpose()?
-    } else {
-        None
-    };
-    let items = accepted
-        .into_iter()
-        .map(|(row, is_visible)| -> Result<RelationView, ApiError> {
-            if !is_visible {
-                return Ok(RelationView::Unavailable);
-            }
-            Ok(RelationView::Visible {
-                relation_id: row.id,
-                relation_type: row.relation_type,
-                direction: if row.source_object_id == access.object_id() {
-                    "outgoing".to_string()
-                } else {
-                    "incoming".to_string()
-                },
-                position_key: (!row.position_key.is_empty()).then_some(row.position_key),
-                properties: row.properties,
-                created_at: row.created_at.to_rfc3339(),
-                other_object: Box::new(RelatedObjectView {
-                    id: row.other_id.ok_or_else(ApiError::internal)?,
-                    object_type: row.other_object_type.ok_or_else(ApiError::internal)?,
-                    title: row.other_title.ok_or_else(ApiError::internal)?,
-                    lifecycle_status: row.other_lifecycle_status.ok_or_else(ApiError::internal)?,
-                    project_id: row.other_project_id,
-                }),
-            })
-        })
-        .collect::<Result<Vec<_>, ApiError>>()?;
-    Ok(Some(RelationListResponse { items, next_cursor }))
-}
-
 #[cfg(test)]
 #[allow(clippy::indexing_slicing)]
 mod tests {
@@ -971,13 +737,6 @@ mod tests {
     }
 
     #[test]
-    fn unavailable_serializes_to_exactly_one_field() {
-        let value = serde_json::to_value(RelationView::Unavailable).expect("serializes");
-        assert_eq!(value, json!({ "visibility": "unavailable" }));
-        assert_eq!(value.as_object().map(serde_json::Map::len), Some(1));
-    }
-
-    #[test]
     fn relation_governance_commands_are_zero_document_cardinality() {
         for command in [GovernanceCommandType::Link, GovernanceCommandType::Unlink] {
             assert_eq!(
@@ -985,14 +744,6 @@ mod tests {
                 super::super::command::ExistingDocumentCardinality::Zero
             );
         }
-    }
-
-    #[test]
-    fn relation_scan_budget_accepts_exact_boundary_and_rejects_one_more() {
-        assert!(super::check_relation_scan_budget(limits::AUTHORIZED_SCAN_ROWS_MAX).is_ok());
-        let err = super::check_relation_scan_budget(limits::AUTHORIZED_SCAN_ROWS_MAX + 1)
-            .expect_err("one row beyond the fixed scan budget must reject, never return a short page");
-        assert_eq!(err.kind(), crate::error::ApiErrorKind::LimitExceeded);
     }
 }
 
@@ -1006,26 +757,20 @@ mod tests {
     clippy::too_many_lines
 )]
 mod database_tests {
-    use axum::{body::to_bytes, http::Extensions, response::IntoResponse};
-    use base64::Engine as _;
+    use axum::{body::to_bytes, response::IntoResponse};
+
     use platform::{
         app::AppState,
-        auth::{JwtClaims, TokenType},
         config::{AppConfig, Secret},
     };
     use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, FromQueryResult, Statement};
     use serde_json::{Value, json};
     use uuid::Uuid;
 
-    use super::{
-        BASE64_URL, CURSOR_VERSION, ListRelationsParams, RelationDirection, RelationReadRow, check_relation_integrity,
-        decode_cursor, list_relations,
-    };
     use crate::error::ApiErrorKind;
-    use crate::flow::collab::authz::PermissionLevel;
+
     use crate::flow::command::{CreateObjectInput, ExecuteCommandInput, create_object, execute_command};
     use crate::flow::event_origin::{CommandOrigin, EventSurface};
-    use crate::flow::policy;
 
     const TEST_DATABASE_URL_ENV: &str = "OPENPR_TEST_DATABASE_URL";
 
@@ -1239,11 +984,6 @@ mod database_tests {
         source: Value,
         correlation_id: Option<Uuid>,
         causation_id: Option<Uuid>,
-    }
-
-    #[derive(FromQueryResult)]
-    struct RelationCursorProbe {
-        created_at: platform::timestamp::Timestamp,
     }
 
     async fn event(state: &AppState, event_type: &str) -> EventProbe {
@@ -1547,364 +1287,6 @@ mod database_tests {
         scratch.drop_self().await;
     }
 
-    fn claims(user_id: Uuid) -> JwtClaims {
-        JwtClaims {
-            sub: user_id.to_string(),
-            email: format!("{user_id}@relations.test"),
-            token_type: TokenType::Access,
-            iat: 0,
-            exp: 0,
-            sv: 0,
-        }
-    }
-
-    async fn read_access(
-        state: &AppState,
-        workspace_id: Uuid,
-        object_id: Uuid,
-        user_id: Uuid,
-    ) -> policy::AuthorizedFlowObject {
-        let mut extensions = Extensions::new();
-        extensions.insert(claims(user_id));
-        policy::require_flow_object_access(state, &extensions, workspace_id, object_id, PermissionLevel::View)
-            .await
-            .expect("authorization runs")
-            .expect("epoch is stable")
-    }
-
-    #[tokio::test]
-    async fn relation_read_paginates_and_unavailable_is_the_exact_one_field_union() {
-        let scratch = scratch_or_skip!("read_union");
-        let state = state_for(scratch.db.clone());
-        let (workspace_id, owner_id, member_id) = seed_workspace(&state).await;
-        let source = page(&state, workspace_id, owner_id, "Source").await;
-        let visible_target = page(&state, workspace_id, owner_id, "Visible").await;
-        let hidden_target = page(&state, workspace_id, owner_id, "Hidden").await;
-        let hidden_link = execute_command(
-            &state,
-            relation_command(
-                source,
-                owner_id,
-                "owner",
-                "link",
-                json!({"target_object_id":hidden_target,"relation_type":"beta","properties":{"secret":hidden_target}}),
-                Uuid::new_v4().to_string(),
-            ),
-        )
-        .await
-        .expect("hidden fixture relation links");
-        let hidden_relation_id = hidden_link.command_result.as_ref().expect("link result")["relation"]["relation_id"]
-            .as_str()
-            .expect("relation id is text")
-            .parse::<Uuid>()
-            .expect("relation id is a UUID");
-        let visible_link = execute_command(
-            &state,
-            relation_command(
-                source,
-                owner_id,
-                "owner",
-                "link",
-                json!({"target_object_id":visible_target,"relation_type":"alpha","properties":{"secret":visible_target}}),
-                Uuid::new_v4().to_string(),
-            ),
-        )
-        .await
-        .expect("visible fixture relation links");
-        let visible_relation_id = visible_link.command_result.as_ref().expect("link result")["relation"]["relation_id"]
-            .as_str()
-            .expect("relation id is text")
-            .parse::<Uuid>()
-            .expect("relation id is a UUID");
-        exec(
-            &state,
-            "UPDATE flow_relations SET created_at = CASE WHEN id=$1 THEN '2026-01-01T00:00:00Z'::timestamptz \
-             WHEN id=$2 THEN '2026-01-01T00:00:01Z'::timestamptz ELSE created_at END WHERE id=ANY($3)",
-            vec![
-                hidden_relation_id.into(),
-                visible_relation_id.into(),
-                vec![hidden_relation_id, visible_relation_id].into(),
-            ],
-        )
-        .await;
-        let hidden_cursor = RelationCursorProbe::find_by_statement(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT created_at FROM flow_relations WHERE id=$1",
-            vec![hidden_relation_id.into()],
-        ))
-        .one(&state.db)
-        .await
-        .expect("relation cursor query runs")
-        .expect("hidden relation exists");
-        exec(
-            &state,
-            "UPDATE flow_objects SET inherit_from_parent=false WHERE id=$1",
-            vec![hidden_target.into()],
-        )
-        .await;
-        exec(
-            &state,
-            "UPDATE flow_workspace_settings SET authz_epoch=authz_epoch+1 WHERE workspace_id=$1",
-            vec![workspace_id.into()],
-        )
-        .await;
-        let access = read_access(&state, workspace_id, source, member_id).await;
-        let first = list_relations(
-            &state,
-            &access,
-            ListRelationsParams {
-                direction: RelationDirection::Both,
-                relation_type: None,
-                cursor: None,
-                limit: Some(1),
-            },
-        )
-        .await
-        .expect("query succeeds")
-        .expect("epoch stable");
-        assert_eq!(first.items.len(), 1);
-        let cursor = first.next_cursor.expect("another row exists");
-        assert_eq!(
-            serde_json::to_value(&first.items[0]).expect("unavailable item serializes"),
-            json!({"visibility":"unavailable"}),
-            "the page boundary must exercise an unavailable relation"
-        );
-        let decoded_cursor = decode_cursor(state.cfg.jwt_secret.expose(), &cursor)
-            .expect("the server must authenticate and decrypt the opaque relation cursor");
-        assert_eq!(
-            decoded_cursor,
-            (hidden_cursor.created_at, hidden_relation_id),
-            "the opaque cursor must resume after the unavailable row without exposing it"
-        );
-        let raw_cursor = BASE64_URL.decode(&cursor).expect("cursor is base64url");
-        assert_eq!(raw_cursor.first().copied(), Some(CURSOR_VERSION));
-        let hidden_id_text = hidden_relation_id.to_string();
-        let hidden_time_text = hidden_cursor.created_at.to_rfc3339();
-        assert!(
-            !raw_cursor
-                .windows(hidden_id_text.len())
-                .any(|window| window == hidden_id_text.as_bytes()),
-            "opaque cursor must not contain the unavailable relation id"
-        );
-        assert!(
-            !raw_cursor
-                .windows(hidden_time_text.len())
-                .any(|window| window == hidden_time_text.as_bytes()),
-            "opaque cursor must not contain the unavailable relation creation time"
-        );
-        let access = read_access(&state, workspace_id, source, member_id).await;
-        let second = list_relations(
-            &state,
-            &access,
-            ListRelationsParams {
-                direction: RelationDirection::Both,
-                relation_type: None,
-                cursor: Some(cursor),
-                limit: Some(1),
-            },
-        )
-        .await
-        .expect("second page succeeds")
-        .expect("epoch stable");
-        assert_eq!(second.items.len(), 1);
-        assert!(second.next_cursor.is_none());
-        let values: Vec<Value> = first
-            .items
-            .into_iter()
-            .chain(second.items)
-            .map(|item| serde_json::to_value(item).expect("relation serializes"))
-            .collect();
-        assert!(values.iter().any(|item| item["visibility"] == "visible"));
-        let unavailable = values
-            .iter()
-            .find(|item| item["visibility"] == "unavailable")
-            .expect("hidden target retains an unavailable placeholder");
-        assert_eq!(unavailable, &json!({"visibility":"unavailable"}));
-        assert_eq!(unavailable.as_object().map(serde_json::Map::len), Some(1));
-        let visible = values.iter().find(|item| item["visibility"] == "visible").unwrap();
-        let visible_keys: std::collections::BTreeSet<&str> =
-            visible.as_object().unwrap().keys().map(String::as_str).collect();
-        assert_eq!(
-            visible_keys,
-            [
-                "created_at",
-                "direction",
-                "other_object",
-                "properties",
-                "relation_id",
-                "relation_type",
-                "visibility",
-            ]
-            .into_iter()
-            .collect(),
-            "the visible union must not grow caller-invented fields"
-        );
-        assert_eq!(visible["direction"], "outgoing");
-        assert_eq!(visible["other_object"]["id"], visible_target.to_string());
-        scratch.drop_self().await;
-    }
-
-    /// `ADR-0018` RF-2's oracle fixture: the only `classified_as` relation points at an object
-    /// this member cannot view. The unfiltered disclosure remains one opaque placeholder, while
-    /// asking for that exact type must reveal nothing at all.
-    #[tokio::test]
-    async fn filtered_relation_view_drops_unauthorized_rows_before_type_or_direction_matching() {
-        let scratch = scratch_or_skip!("filtered_no_oracle");
-        let state = state_for(scratch.db.clone());
-        let (workspace_id, owner_id, member_id) = seed_workspace(&state).await;
-        let source = page(&state, workspace_id, owner_id, "Source").await;
-        let hidden_target = page(&state, workspace_id, owner_id, "Hidden classified target").await;
-        execute_command(
-            &state,
-            relation_command(
-                source,
-                owner_id,
-                "owner",
-                "link",
-                json!({"target_object_id":hidden_target,"relation_type":"classified_as"}),
-                Uuid::new_v4().to_string(),
-            ),
-        )
-        .await
-        .expect("hidden relation fixture links");
-        exec(
-            &state,
-            "UPDATE flow_objects SET inherit_from_parent=false WHERE id=$1",
-            vec![hidden_target.into()],
-        )
-        .await;
-        exec(
-            &state,
-            "UPDATE flow_workspace_settings SET authz_epoch=authz_epoch+1 WHERE workspace_id=$1",
-            vec![workspace_id.into()],
-        )
-        .await;
-
-        let unfiltered = list_relations(
-            &state,
-            &read_access(&state, workspace_id, source, member_id).await,
-            ListRelationsParams {
-                direction: RelationDirection::Both,
-                relation_type: None,
-                cursor: None,
-                limit: None,
-            },
-        )
-        .await
-        .expect("unfiltered relation query succeeds")
-        .expect("epoch remains stable");
-        assert_eq!(
-            unfiltered.items.len(),
-            1,
-            "the fixture must cross the disclosure boundary"
-        );
-        assert_eq!(
-            serde_json::to_value(&unfiltered.items[0]).expect("placeholder serializes"),
-            json!({"visibility":"unavailable"})
-        );
-
-        for params in [
-            ListRelationsParams {
-                direction: RelationDirection::Both,
-                relation_type: Some("classified_as".to_string()),
-                cursor: None,
-                limit: None,
-            },
-            ListRelationsParams {
-                direction: RelationDirection::Outgoing,
-                relation_type: None,
-                cursor: None,
-                limit: None,
-            },
-        ] {
-            let filtered = list_relations(
-                &state,
-                &read_access(&state, workspace_id, source, member_id).await,
-                params,
-            )
-            .await
-            .expect("filtered relation query succeeds")
-            .expect("epoch remains stable");
-            assert!(
-                filtered.items.is_empty(),
-                "an unauthorized relation must not produce a placeholder in a filtered view"
-            );
-            assert!(filtered.next_cursor.is_none());
-        }
-        scratch.drop_self().await;
-    }
-
-    #[tokio::test]
-    async fn relation_read_covers_incoming_and_both_directions() {
-        let scratch = scratch_or_skip!("read_directions");
-        let state = state_for(scratch.db.clone());
-        let (workspace_id, owner_id, _) = seed_workspace(&state).await;
-        let root = page(&state, workspace_id, owner_id, "Root").await;
-        let outgoing_target = page(&state, workspace_id, owner_id, "Outgoing target").await;
-        let incoming_source = page(&state, workspace_id, owner_id, "Incoming source").await;
-        for (source, target, relation_type) in [
-            (root, outgoing_target, "outgoing_test"),
-            (incoming_source, root, "incoming_test"),
-        ] {
-            execute_command(
-                &state,
-                relation_command(
-                    source,
-                    owner_id,
-                    "owner",
-                    "link",
-                    json!({"target_object_id":target,"relation_type":relation_type}),
-                    Uuid::new_v4().to_string(),
-                ),
-            )
-            .await
-            .expect("direction fixture relation links");
-        }
-
-        let incoming = list_relations(
-            &state,
-            &read_access(&state, workspace_id, root, owner_id).await,
-            ListRelationsParams {
-                direction: RelationDirection::Incoming,
-                relation_type: None,
-                cursor: None,
-                limit: None,
-            },
-        )
-        .await
-        .expect("incoming query succeeds")
-        .expect("epoch is stable");
-        assert_eq!(incoming.items.len(), 1);
-        let incoming_value = serde_json::to_value(&incoming.items[0]).expect("incoming item serializes");
-        assert_eq!(incoming_value["direction"], "incoming");
-        assert_eq!(incoming_value["other_object"]["id"], incoming_source.to_string());
-
-        let both = list_relations(
-            &state,
-            &read_access(&state, workspace_id, root, owner_id).await,
-            ListRelationsParams {
-                direction: RelationDirection::Both,
-                relation_type: None,
-                cursor: None,
-                limit: None,
-            },
-        )
-        .await
-        .expect("both-direction query succeeds")
-        .expect("epoch is stable");
-        assert_eq!(both.items.len(), 2);
-        let directions: std::collections::BTreeSet<String> = both
-            .items
-            .iter()
-            .map(|item| serde_json::to_value(item).expect("relation serializes")["direction"].to_string())
-            .collect();
-        assert_eq!(
-            directions,
-            ["\"incoming\"".to_string(), "\"outgoing\"".to_string()].into()
-        );
-        scratch.drop_self().await;
-    }
-
     #[tokio::test]
     async fn concurrent_same_key_different_links_commit_exactly_one_relation() {
         let scratch = scratch_or_skip!("idempotency_race");
@@ -1971,86 +1353,5 @@ mod database_tests {
     #[derive(FromQueryResult)]
     struct CountRow {
         count: i64,
-    }
-
-    #[tokio::test]
-    async fn inconsistent_relation_query_result_records_integrity_and_returns_no_data() {
-        let scratch = scratch_or_skip!("relation_read_integrity");
-        let state = state_for(scratch.db.clone());
-        let (workspace, _, _) = seed_workspace(&state).await;
-        let row = RelationReadRow {
-            id: Uuid::new_v4(),
-            workspace_id: workspace,
-            relation_type: "link".into(),
-            source_object_id: Uuid::new_v4(),
-            position_key: "m".into(),
-            properties: json!({}),
-            created_at: platform::timestamp::Timestamp::now(),
-            source_workspace_id: Some(workspace),
-            target_workspace_id: Some(Uuid::new_v4()),
-            other_id: Some(Uuid::new_v4()),
-            other_object_type: Some("page".into()),
-            other_title: Some("private".into()),
-            other_lifecycle_status: Some("active".into()),
-            other_project_id: None,
-        };
-        let error = check_relation_integrity(&state, workspace, &row)
-            .await
-            .expect_err("a foreign target makes the complete relation row invalid");
-        assert_eq!(error.kind(), ApiErrorKind::InvalidUpdate);
-        assert!(String::from_utf8_lossy(&error_wire(error).await).contains("cross_workspace_relation"));
-        let alerts = CountRow::find_by_statement(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT count(*) AS count FROM flow_integrity_records
-             WHERE workspace_id=$1 AND kind='cross_workspace_relation' AND subject_id=$2",
-            vec![workspace.into(), row.id.to_string().into()],
-        ))
-        .one(&state.db)
-        .await
-        .expect("integrity query runs")
-        .expect("count row");
-        assert_eq!(alerts.count, 1);
-        scratch.drop_self().await;
-    }
-
-    #[tokio::test]
-    async fn database_rejects_cross_workspace_relation_without_exposing_foreign_target() {
-        let scratch = scratch_or_skip!("integrity");
-        let state = state_for(scratch.db.clone());
-        let (workspace_a, owner_a, _) = seed_workspace(&state).await;
-        let (workspace_b, owner_b, _) = seed_workspace(&state).await;
-        let source = page(&state, workspace_a, owner_a, "Source").await;
-        let target = page(&state, workspace_b, owner_b, "Foreign target").await;
-
-        let error = state
-            .db
-            .execute(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "INSERT INTO flow_relations (id,workspace_id,relation_type,source_object_id,target_object_id)
-                 VALUES ($1,$2,'link',$3,$4)",
-                vec![Uuid::new_v4().into(), workspace_a.into(), source.into(), target.into()],
-            ))
-            .await
-            .expect_err("the migrated database rejects a foreign target");
-        assert!(
-            matches!(error.sql_err(), Some(sea_orm::SqlErr::ForeignKeyConstraintViolation(_))),
-            "{error}"
-        );
-
-        let page = list_relations(
-            &state,
-            &read_access(&state, workspace_a, source, owner_a).await,
-            ListRelationsParams {
-                direction: RelationDirection::Both,
-                relation_type: None,
-                cursor: None,
-                limit: None,
-            },
-        )
-        .await
-        .expect("the source's relations remain readable")
-        .expect("epoch is stable");
-        assert!(page.items.is_empty());
-        scratch.drop_self().await;
     }
 }

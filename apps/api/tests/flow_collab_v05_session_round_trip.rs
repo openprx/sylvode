@@ -93,7 +93,7 @@ use uuid::Uuid;
 use api::flow::collab::frame::{Frame, PROTOCOL_VERSION};
 use api::flow::event_origin::{CommandOrigin, EventSurface};
 use api::middleware::bot_auth::bot_or_user_auth_middleware;
-use api::routes::collab::{create_ticket, ws_upgrade};
+use api::routes::flow::{get_flow_v2_ws, post_flow_v2_ticket};
 
 // ---------------------------------------------------------------------------------------------
 // Frozen targets. Every number here is transcribed from the contract repository; none is invented
@@ -506,13 +506,13 @@ async fn spawn_server(state: AppState) -> SocketAddr {
     let auth_state = state.clone();
     let app = Router::new()
         .route(
-            "/api/v1/collab/tickets",
-            post(create_ticket).route_layer(axum_middleware::from_fn_with_state(
+            "/api/v2/flow/collab/tickets",
+            post(post_flow_v2_ticket).route_layer(axum_middleware::from_fn_with_state(
                 auth_state,
                 bot_or_user_auth_middleware,
             )),
         )
-        .route("/api/v1/collab/ws", get(ws_upgrade))
+        .route("/api/v2/flow/collab/ws", get(get_flow_v2_ws))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -530,16 +530,25 @@ async fn spawn_server(state: AppState) -> SocketAddr {
 // WebSocket client plumbing
 // ---------------------------------------------------------------------------------------------
 
+/// A stable UUID for a readable client label: tickets bind a UUID client id. A label that is already a
+/// UUID is kept.
+fn wire_client(label: &str) -> String {
+    if Uuid::parse_str(label).is_ok() {
+        return label.to_string();
+    }
+    Uuid::new_v5(&Uuid::NAMESPACE_OID, label.as_bytes()).to_string()
+}
+
 type WsStream = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
-async fn issue_ticket(addr: SocketAddr, token: &str, workspace_id: Uuid, document_id: Uuid, client_id: &str) -> String {
+async fn issue_ticket(addr: SocketAddr, token: &str, object_id: Uuid, document_id: Uuid, client_id: &str) -> String {
     let response = reqwest::Client::new()
-        .post(format!("http://{addr}/api/v1/collab/tickets"))
+        .post(format!("http://{addr}/api/v2/flow/collab/tickets"))
         .bearer_auth(token)
         .json(&json!({
-            "workspace_id": workspace_id,
+            "object_id": object_id,
             "document_id": document_id,
-            "client_id": client_id,
+            "client_id": wire_client(client_id),
             "origin": TEST_ORIGIN,
         }))
         .send()
@@ -551,7 +560,10 @@ async fn issue_ticket(addr: SocketAddr, token: &str, workspace_id: Uuid, documen
 }
 
 async fn connect(addr: SocketAddr, ticket: &str, client_id: &str) -> WsStream {
-    let url = format!("ws://{addr}/api/v1/collab/ws?ticket={ticket}&client_id={client_id}");
+    let url = format!(
+        "ws://{addr}/api/v2/flow/collab/ws?ticket={ticket}&client_id={}",
+        wire_client(client_id)
+    );
     let mut request = url.into_client_request().expect("builds a client request");
     request
         .headers_mut()
@@ -605,7 +617,7 @@ async fn open_fresh(
         &Frame::Hello {
             protocol_version: PROTOCOL_VERSION,
             capabilities: vec![],
-            client_id: client_id.to_string(),
+            client_id: wire_client(client_id),
             session_id: Uuid::new_v4(),
         },
     )
@@ -668,7 +680,7 @@ async fn open_resuming(
         &Frame::Hello {
             protocol_version: PROTOCOL_VERSION,
             capabilities: vec![],
-            client_id: client_id.to_string(),
+            client_id: wire_client(client_id),
             session_id: Uuid::new_v4(),
         },
     )
@@ -825,7 +837,7 @@ struct ClientOutcome {
 
 struct Fixture {
     addr: SocketAddr,
-    workspace_id: Uuid,
+    object_id: Uuid,
     document_id: Uuid,
     tokens: Vec<String>,
     round_barrier: Arc<Barrier>,
@@ -845,7 +857,7 @@ impl Fixture {
         let client_id = format!("v05-session-client-{index}");
         let resuming = index < RESUMING_CLIENTS;
 
-        let ticket = issue_ticket(self.addr, &token, self.workspace_id, self.document_id, &client_id).await;
+        let ticket = issue_ticket(self.addr, &token, self.object_id, self.document_id, &client_id).await;
         // The snapshot position is never a resume point here: a reconnect only ever happens
         // after this client's own `accepted` in the same round, so the position it resumes from is
         // always the one built below.
@@ -989,7 +1001,7 @@ impl Fixture {
             if resuming {
                 let _ = ws.close(None).await;
                 drop(ws);
-                let ticket = issue_ticket(self.addr, &token, self.workspace_id, self.document_id, &client_id).await;
+                let ticket = issue_ticket(self.addr, &token, self.object_id, self.document_id, &client_id).await;
                 match open_resuming(self.addr, &ticket, &client_id, self.document_id, &position).await {
                     Ok(resumed) => {
                         ws = resumed;
@@ -1001,7 +1013,7 @@ impl Fixture {
                         // single-use, so reusing it here would fail the *upgrade* and crash this
                         // harness instead of reporting the resume refusal it is trying to record.
                         let retry_ticket =
-                            issue_ticket(self.addr, &token, self.workspace_id, self.document_id, &client_id).await;
+                            issue_ticket(self.addr, &token, self.object_id, self.document_id, &client_id).await;
                         let (fresh, fresh_engine, _) =
                             open_fresh(self.addr, &retry_ticket, &client_id, self.document_id).await;
                         ws = fresh;
@@ -1093,13 +1105,13 @@ async fn v05_multi_user_session_workload_round_trip_p95() {
 
     let state = state_for(scratch.db.clone());
     let (workspace_id, members) = seed_workspace(&state.db, CONCURRENT_CLIENTS).await;
-    let (_object_id, document_id) = create_page(&state, workspace_id, members[0]).await;
+    let (object_id, document_id) = create_page(&state, workspace_id, members[0]).await;
     let head_seq_before = read_head_seq(&state.db, document_id).await;
     let addr = spawn_server(state.clone()).await;
 
     let fixture = Arc::new(Fixture {
         addr,
-        workspace_id,
+        object_id,
         document_id,
         tokens: members.iter().map(|user_id| jwt_for(*user_id)).collect(),
         round_barrier: Arc::new(Barrier::new(CONCURRENT_CLIENTS)),
