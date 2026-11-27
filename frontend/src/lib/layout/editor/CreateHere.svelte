@@ -20,6 +20,7 @@
 	} from '../types';
 	import {
 		errorLines,
+		fromInstalledPackages,
 		offeredScopes,
 		parseSpec,
 		placeable,
@@ -50,7 +51,7 @@
 		onclose: () => void;
 	} = $props();
 
-	type Mode = 'existing' | 'json';
+	type Mode = 'existing' | 'json' | 'market';
 
 	const scopes = $derived(offeredScopes(descriptor, context, workspaceId, $authStore.user?.role));
 	let scopeKey = $state<string | null>(null);
@@ -69,6 +70,11 @@
 	let existingLoading = $state(false);
 	let pickedId = $state<string | null>(null);
 	let pickedSpec = $state.raw<LayoutSpec | null>(null);
+
+	// From market: layouts of installed packages that validate in this slot. The server places
+	// them with the installation and refuses a user placement of one, so they are read-only here.
+	let marketLayouts = $state.raw<LayoutSummary[]>([]);
+	let marketLoading = $state(false);
 
 	// JSON editor.
 	let jsonText = $state(
@@ -112,6 +118,51 @@
 			.finally(() => {
 				if (!cancelled) existingLoading = false;
 			});
+		return () => {
+			cancelled = true;
+		};
+	});
+
+	$effect(() => {
+		if (mode !== 'market') return;
+		const current = scope;
+		if (!current) return;
+		let cancelled = false;
+		marketLoading = true;
+		const kinds: ScopeKind[] = [current.kind];
+		const scopeIds: Record<string, string> = { [current.kind]: current.id };
+		if (current.kind !== 'workspace' && descriptor.scope_kinds.includes('workspace')) {
+			kinds.push('workspace');
+			scopeIds.workspace = workspaceId;
+		}
+		void (async () => {
+			try {
+				const lists = await Promise.all(
+					kinds.map((kind) => layoutApi.listLayouts(kind, scopeIds[kind]))
+				);
+				const candidates = fromInstalledPackages(
+					lists.flatMap((result) => (result.code === 0 && result.data ? result.data.items : []))
+				);
+				const fits = await Promise.all(
+					candidates.map(async (item) => {
+						const record = await layoutApi.getLayout(item.id);
+						if (record.code !== 0 || !record.data) return null;
+						const verdictOf = await layoutApi.validate({
+							spec: record.data.spec,
+							slot_id: slotId,
+							scope_kind: current.kind,
+							scope_id: current.id
+						});
+						return verdictOf.code === 0 && verdictOf.data?.valid ? item : null;
+					})
+				);
+				if (!cancelled) marketLayouts = fits.filter((item): item is LayoutSummary => item !== null);
+			} catch {
+				if (!cancelled) marketLayouts = [];
+			} finally {
+				if (!cancelled) marketLoading = false;
+			}
+		})();
 		return () => {
 			cancelled = true;
 		};
@@ -176,6 +227,7 @@
 	const canPlace = $derived(
 		!busy &&
 			scope !== null &&
+			mode !== 'market' &&
 			(mode === 'existing' ? pickedId !== null : jsonSpec !== null && !validating)
 	);
 
@@ -230,6 +282,9 @@
 			label: $t(`layout.editor.scope.${item.kind}`)
 		}))
 	);
+	const marketOptions = $derived(
+		marketLayouts.map((item) => ({ value: item.id, label: item.layout_key, meta: item.scope_kind }))
+	);
 	const layoutOptions = $derived(
 		existing.map((item) => ({ value: item.id, label: item.layout_key, meta: item.scope_kind }))
 	);
@@ -264,18 +319,31 @@
 				<Button
 					variant={mode === 'existing' ? 'primary' : 'secondary'}
 					aria-pressed={mode === 'existing'}
-					onclick={() => (mode = 'existing')}
+					onclick={() => {
+						mode = 'existing';
+						void pick(null);
+					}}
 				>
 					{$t('layout.editor.modeExisting')}
 				</Button>
 				<Button
 					variant={mode === 'json' ? 'primary' : 'secondary'}
 					aria-pressed={mode === 'json'}
-					onclick={() => (mode = 'json')}
+					onclick={() => {
+						mode = 'json';
+						void pick(null);
+					}}
 				>
 					{$t('layout.editor.modeJson')}
 				</Button>
-				<Button variant="secondary" disabled disabledReason={$t('layout.editor.marketLater')}>
+				<Button
+					variant={mode === 'market' ? 'primary' : 'secondary'}
+					aria-pressed={mode === 'market'}
+					onclick={() => {
+						mode = 'market';
+						void pick(null);
+					}}
+				>
 					{$t('layout.editor.modeMarket')}
 				</Button>
 			</div>
@@ -283,7 +351,25 @@
 
 		<div class="grid min-w-0 gap-3 lg:grid-cols-2">
 			<div class="min-w-0">
-				{#if mode === 'existing'}
+				{#if mode === 'market'}
+					<p class="mb-2 text-xs text-fg-muted" data-layout-editor-market-note>
+						{$t('market.fromMarketNote')}
+					</p>
+					{#if marketLoading}
+						<p class="text-sm text-fg-muted">{$t('layout.editor.loading')}</p>
+					{:else if marketOptions.length === 0}
+						<p class="text-sm text-fg-muted" data-layout-editor-market-empty>
+							{$t('market.fromMarketEmpty')}
+						</p>
+					{:else}
+						<Select
+							label={$t('market.fromMarketPick')}
+							value={pickedId}
+							options={marketOptions}
+							onchange={(value) => void pick(value)}
+						/>
+					{/if}
+				{:else if mode === 'existing'}
 					{#if existingLoading}
 						<p class="text-sm text-fg-muted">{$t('layout.editor.loading')}</p>
 					{:else if layoutOptions.length === 0}

@@ -98,6 +98,7 @@ export interface PackageSummary {
 	version: string;
 	kind: string;
 	tier: string;
+	publisher: { id: string; key_id: string } | null;
 	custom_code: boolean;
 	summary: Record<string, string> | null;
 }
@@ -122,8 +123,14 @@ export interface InvocationRow {
 export type BindChoice = { form_id: string } | { create: true };
 
 export const marketApi = {
-	packages(workspaceId: string): Promise<ApiResult<{ items: PackageSummary[] }>> {
-		return apiClient.get(`/api/v1/workspaces/${enc(workspaceId)}/packages?per_page=200`);
+	packages(
+		workspaceId: string,
+		filter: { kind?: string; q?: string } = {}
+	): Promise<ApiResult<{ items: PackageSummary[] }>> {
+		const query = new URLSearchParams({ per_page: '200' });
+		if (filter.kind) query.set('kind', filter.kind);
+		if (filter.q) query.set('q', filter.q);
+		return apiClient.get(`/api/v1/workspaces/${enc(workspaceId)}/packages?${query.toString()}`);
 	},
 	list(workspaceId: string): Promise<ApiResult<{ items: Installation[] }>> {
 		return apiClient.get(`/api/v1/workspaces/${enc(workspaceId)}/installations`);
@@ -205,6 +212,11 @@ export function allRequests(requests: PreviewRequest[]): boolean[] {
 export interface PackageDetail extends PackageSummary {
 	analysis: {
 		forms: { bind: string; create: boolean; requires_fields: Record<string, string> }[];
+		requests: { id: string; risk: string | null; form_hint: string | null }[];
+		actions: { name: string; label: Record<string, string> | null }[];
+		rules: { name: string; stages: string[]; field_types: string[] }[];
+		layouts: { key: string; slots: string[] }[];
+		pages: { route: string; layout: string; audience: string }[];
 	};
 }
 

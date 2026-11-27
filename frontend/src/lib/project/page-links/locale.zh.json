@@ -76,7 +76,6 @@
 			"modeExisting": "使用已有布局",
 			"modeJson": "编写 JSON",
 			"modeMarket": "从市场选择",
-			"marketLater": "市场上线后可用。",
 			"loading": "加载中...",
 			"noLayouts": "这里还没有布局,请用 JSON 编写一个。",
 			"pickLabel": "布局",

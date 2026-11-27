@@ -113,6 +113,13 @@ export function refusalLines(result: {
 	return [[result.error_code, result.message].filter(Boolean).join('  ')];
 }
 
+/** Layouts that belong to an installed package: placed by their installation, never by a user. */
+export function fromInstalledPackages<T extends { status: string; installation_id: string | null }>(
+	items: readonly T[]
+): T[] {
+	return items.filter((item) => item.status === 'active' && item.installation_id !== null);
+}
+
 /** Layouts a user can place from a scope: active, written by people (not an install package). */
 export function placeable<T extends { status: string; installation_id: string | null }>(
 	items: readonly T[]

@@ -24,8 +24,22 @@
 		type PackageDetail,
 		type PackageSummary
 	} from './api';
+	import { dataAccess, publicPages, riskTone } from './logic';
 
-	let { workspaceId }: { workspaceId: string } = $props();
+	let {
+		workspaceId,
+		embedded = false,
+		installDigest = null
+	}: {
+		workspaceId: string;
+		/** Inside the Market page: the page title is the market's. */
+		embedded?: boolean;
+		/** A package chosen on the Discover tab: the install dialog opens with it. */
+		installDigest?: string | null;
+	} = $props();
+
+	/** The installation routes are for owners and administrators; a member's list is refused. */
+	let admin = $state(false);
 
 	let loading = $state(true);
 	let installations = $state<Installation[]>([]);
@@ -47,13 +61,21 @@
 	let review = $state<InstallPreview | null>(null);
 	let reviewing = $state<Installation | null>(null);
 	let ticked = $state<boolean[]>([]);
+	let reviewDetail = $state<PackageDetail | null>(null);
 
 	// Invocation log dialog.
 	let logOpen = $state(false);
 	let logFor = $state<Installation | null>(null);
 	let log = $state<InvocationRow[]>([]);
 
-	onMount(load);
+	onMount(async () => {
+		await load();
+		if (installDigest && admin) {
+			openRequest();
+			digest = installDigest;
+			await choosePackage();
+		}
+	});
 
 	async function load() {
 		loading = true;
@@ -61,7 +83,10 @@
 			marketApi.list(workspaceId),
 			marketApi.packages(workspaceId)
 		]);
-		if (list.code !== 0) toast.error(describeResult(list, get(t)('market.loadFailed')));
+		admin = list.code === 0;
+		if (list.code !== 0 && list.code !== 403) {
+			toast.error(describeResult(list, get(t)('market.loadFailed')));
+		}
 		installations = list.data?.items ?? [];
 		packages = pkgs.data?.items ?? [];
 		loading = false;
@@ -145,6 +170,7 @@
 	async function openReview(installation: Installation) {
 		reviewing = installation;
 		review = null;
+		reviewDetail = null;
 		reviewOpen = true;
 		const response = await marketApi.review(installation.id);
 		if (response.code !== 0 || !response.data) {
@@ -154,6 +180,8 @@
 		}
 		review = response.data;
 		ticked = allRequests(response.data.requests);
+		const found = await marketDetailApi.package(workspaceId, response.data.package.digest);
+		reviewDetail = found.code === 0 ? found.data : null;
 	}
 
 	function toggle(index: number, on: boolean) {
@@ -251,6 +279,12 @@
 		return text === key ? capability : text;
 	}
 
+	function tierLabel(tier: string): string {
+		const key = `market.tier.${tier}`;
+		const text = get(t)(key);
+		return text === key ? tier : text;
+	}
+
 	function createdList(values: string[]): string {
 		return values.join(', ');
 	}
@@ -265,15 +299,26 @@
 <div class="space-y-6 p-6">
 	<div class="flex items-start justify-between gap-4">
 		<div>
-			<h1 class="text-2xl font-semibold text-fg">{$t('market.title')}</h1>
+			{#if !embedded}
+				<h1 class="text-2xl font-semibold text-fg">{$t('market.title')}</h1>
+			{/if}
 			<p class="mt-1 max-w-2xl text-sm text-fg-muted">{$t('market.lead')}</p>
 		</div>
-		<Button variant="primary" onclick={openRequest}>{$t('market.request')}</Button>
+		{#if admin}
+			<Button variant="primary" onclick={openRequest}>{$t('market.request')}</Button>
+		{/if}
 	</div>
 
 	{#if loading}
 		<div class="rounded-card border border-line bg-raised p-6 text-fg-muted">
 			{$t('market.loading')}
+		</div>
+	{:else if !admin}
+		<div
+			class="rounded-card border border-line bg-raised p-10 text-center text-fg-muted"
+			data-market-admin-only
+		>
+			{$t('market.adminOnly')}
 		</div>
 	{:else if installations.length === 0}
 		<div class="rounded-card border border-line bg-raised p-10 text-center text-fg-muted">
@@ -284,7 +329,7 @@
 			<table class="min-w-full divide-y divide-line">
 				<thead class="bg-nav">
 					<tr>
-						{#each ['colPackage', 'colVersion', 'colScope', 'colStatus'] as column (column)}
+						{#each ['colPackage', 'colVersion', 'colGeneration', 'colScope', 'colStatus'] as column (column)}
 							<th
 								class="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
 								>{$t(`market.${column}`)}</th
@@ -305,6 +350,12 @@
 								{#if pendingOf(installation) && active}
 									<span class="ml-1 text-warning">→ {pendingOf(installation)?.package.version}</span
 									>
+								{/if}
+							</td>
+							<td class="px-4 py-3 text-sm text-fg-muted">
+								{installation.active_generation ?? '-'}
+								{#if pendingOf(installation)}
+									<span class="ml-1 text-warning">→ {pendingOf(installation)?.generation}</span>
 								{/if}
 							</td>
 							<td class="px-4 py-3 text-sm text-fg-muted">
@@ -419,7 +470,7 @@
 				{/if}
 
 				{#if checked}
-					{@render previewBody(checked, false)}
+					{@render previewBody(checked, false, detail)}
 				{/if}
 			{/if}
 		{/if}
@@ -441,7 +492,7 @@
 	maxWidthClass="max-w-2xl"
 >
 	{#if review}
-		{@render previewBody(review, true)}
+		{@render previewBody(review, true, reviewDetail)}
 	{:else}
 		<p class="text-sm text-fg-muted">{$t('market.loading')}</p>
 	{/if}
@@ -488,12 +539,18 @@
 	<p class="mt-3 text-xs text-fg-muted">{$t('market.logNote')}</p>
 </Modal>
 
-{#snippet previewBody(preview: InstallPreview, selectable: boolean)}
+{#snippet previewBody(preview: InstallPreview, selectable: boolean, info: PackageDetail | null)}
 	<div class="space-y-4">
-		<div class="text-sm text-fg-muted">
-			{$t('market.version', { values: { version: preview.package.version } })}
+		<div class="flex flex-wrap items-center gap-2 text-sm text-fg-muted" data-market-trust>
+			<span>{$t('market.version', { values: { version: preview.package.version } })}</span>
+			{#if info}
+				<StatusChip>{tierLabel(info.tier)}</StatusChip>
+				{#if info.publisher}
+					<span>{$t('market.publisher', { values: { name: info.publisher.id } })}</span>
+				{/if}
+			{/if}
 			{#if preview.package.custom_code}
-				<span class="ml-2 text-warning">{$t('market.customCode')}</span>
+				<span class="text-warning">{$t('market.customCode')}</span>
 			{/if}
 		</div>
 
@@ -542,7 +599,9 @@
 									{/if}
 								</div>
 								<div class="text-xs text-fg-muted">
-									{$t(`market.risk.${request.risk}`)}
+									<StatusChip tone={riskTone(request.risk)}
+										>{$t(`market.risk.${request.risk}`)}</StatusChip
+									>
 									{#if request.selector.form}
 										· {$t('market.onForm', { values: { form: request.selector.form } })}
 									{:else if request.form_bind}
@@ -564,6 +623,42 @@
 				{/if}
 			{/if}
 		</div>
+
+		{#if preview.requests.length > 0}
+			<div class="text-sm text-fg" data-market-data-access>
+				<div class="font-medium">{$t('market.dataAccess')}</div>
+				<ul class="mt-1 space-y-1 text-fg-muted">
+					{#each dataAccess(preview.requests, words) as row, at (at)}
+						<li>
+							<span class="text-fg"
+								>{row.target
+									? $t('market.onForm', { values: { form: row.target } })
+									: $t(
+											(preview.installation?.scope.kind ?? scopeKind) === 'project'
+												? 'market.wholeProject'
+												: 'market.wholeWorkspace'
+										)}</span
+							>
+							{#if row.reads.length}<div>
+									{$t('market.dataReads', { values: { list: row.reads.join(', ') } })}
+								</div>{/if}
+							{#if row.writes.length}<div>
+									{$t('market.dataWrites', { values: { list: row.writes.join(', ') } })}
+								</div>{/if}
+						</li>
+					{/each}
+				</ul>
+			</div>
+		{/if}
+
+		{#if info && publicPages(info).length > 0}
+			<div class="rounded-card border border-warning p-3 text-sm text-fg" data-market-public>
+				<div class="font-medium">{$t('market.publicExposure')}</div>
+				<p class="mt-1 text-fg-muted">
+					{$t('market.publicPages', { values: { list: publicPages(info).join(', ') } })}
+				</p>
+			</div>
+		{/if}
 
 		<div class="text-sm text-fg">
 			<div class="font-medium">{$t('market.creates')}</div>
