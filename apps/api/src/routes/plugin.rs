@@ -1303,8 +1303,7 @@ mod invocation_record_database_tests {
             "record.created",
             json!({}),
         )
-        .await
-        .expect("an event handler failure does not fail the caller");
+        .await;
         let row = recorded(&scratch.db, plugin_id).await;
 
         assert_eq!(row.status, "timeout", "{row:?}");

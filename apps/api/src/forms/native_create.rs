@@ -328,7 +328,7 @@ pub async fn finish_record_creation(
             "form.record.created",
             creation.event_payload.clone(),
         )
-        .await?;
+        .await;
         recalculate_parent_records_for_child(state, creation.record_id, creation.created_by).await?;
     }
     find_record(state, creation.record_id).await

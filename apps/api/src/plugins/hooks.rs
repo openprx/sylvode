@@ -257,14 +257,14 @@ pub async fn run_event_handler_hooks(
     record_id: Option<Uuid>,
     event_type: &str,
     payload: Value,
-) -> Result<(), ApiError> {
+) {
     // Same contract as `invoke_plugin`: the lookup, the guest, and the invocation row run on a
     // task scheduled before this future awaits, so cancelling the request that triggered the
     // hook cannot skip the row.
     let state = state.clone();
     let form_key = form_key.to_string();
     let event_type = event_type.to_string();
-    tokio::spawn(async move {
+    let joined = tokio::spawn(async move {
         run_event_handler_hooks_detached(
             state,
             workspace_id,
@@ -277,11 +277,20 @@ pub async fn run_event_handler_hooks(
         )
         .await
     })
-    .await
-    .map_err(|err| {
-        tracing::error!(error = %err, "plugin event-handler task failed");
-        ApiError::Internal
-    })?
+    .await;
+    // The write is committed by now: a failure here is logged, never returned, so it cannot turn a
+    // committed write into an error answer or skip the caller's remaining post-commit steps
+    // (AUD-L1.1-F2).
+    match joined {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => tracing::error!(
+            %form_id,
+            error = %err,
+            sqlstate = ?err.database_sqlstate(),
+            "plugin event handlers failed after the write committed"
+        ),
+        Err(err) => tracing::error!(%form_id, error = %err, "plugin event-handler task failed"),
+    }
 }
 
 async fn run_event_handler_hooks_detached(
@@ -714,6 +723,25 @@ mod tests {
     use crate::plugins::{limits, manifest::PluginHook};
     use serde_json::json;
     use uuid::Uuid;
+
+    /// After the write has committed, an event-handler failure (here: the plugin lookup cannot
+    /// reach the database) is logged and the call still completes, so the caller goes on to its
+    /// remaining post-commit steps (AUD-L1.1-F2).
+    #[tokio::test]
+    async fn an_event_handler_lookup_failure_does_not_reach_the_caller() {
+        let state = crate::extensions::host::test_state();
+        super::run_event_handler_hooks(
+            &state,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "orders",
+            None,
+            "form.record.created",
+            json!({}),
+        )
+        .await;
+    }
 
     /// A reserved slot is visible to the hooks of the task that runs inside the scope, only for the
     /// plugin it was reserved for, and not outside the scope.

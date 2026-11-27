@@ -3765,7 +3765,7 @@ pub async fn recalculate_form_record(
         "form.record.recalculated",
         event_payload,
     )
-    .await?;
+    .await;
     let parents = recalculate_parent_records_for_child(&state, record_id, updated_by).await?;
     carried.retain(|item| !denied_read_fields.contains(&item.error.key));
     carried.extend(parents_carried_for_reader(&state, parents, &role).await?);
@@ -4217,7 +4217,7 @@ async fn update_record_for_form_internal(
         "form.record.updated",
         event_payload,
     )
-    .await?;
+    .await;
     let parents = recalculate_parent_records_for_child(state, record_id, updated_by).await?;
 
     Ok((find_record(state, record_id).await?, parents))
