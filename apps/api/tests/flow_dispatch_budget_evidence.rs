@@ -399,6 +399,7 @@ fn install_config(receiver_port: u16) -> Result<(), String> {
         oauth: None,
         inbound: platform::config::InboundConfig::default(),
         packages: platform::config::PackagesConfig::default(),
+        extensions: platform::config::ExtensionsConfig::default(),
         email: None,
     })
 }

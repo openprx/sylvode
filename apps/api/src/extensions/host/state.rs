@@ -15,17 +15,23 @@ use crate::extensions::dispatch::{self, CallEnv, CallError};
 /// Table elements a guest may hold.
 const TABLE_ELEMENTS: usize = 65_536;
 
-/// Memory limits of one invocation. Growth past the world's limit ends the invocation with
+/// Memory limits of one invocation. The limit is on the **sum** of every linear memory (and every
+/// garbage-collected heap, which grows through the same callback) of the instance, so a component
+/// with several memories gets the world's limit once. Growth past it ends the invocation with
 /// `plugin_memory_limit` at once, so a guest cannot swallow the failure and carry on.
 pub struct Limiter {
     max_memory: usize,
+    /// Bytes now held by all memories of the store.
+    total: usize,
 }
 
 impl ResourceLimiter for Limiter {
-    fn memory_growing(&mut self, _current: usize, desired: usize, _maximum: Option<usize>) -> wasmtime::Result<bool> {
-        if desired > self.max_memory {
+    fn memory_growing(&mut self, current: usize, desired: usize, _maximum: Option<usize>) -> wasmtime::Result<bool> {
+        let next = self.total.saturating_sub(current).saturating_add(desired);
+        if next > self.max_memory {
             Err(wasmtime::Error::new(HostError::new(RefusalCode::PluginMemoryLimit)))
         } else {
+            self.total = next;
             Ok(true)
         }
     }
@@ -79,6 +85,7 @@ impl HostState {
         Self {
             limiter: Limiter {
                 max_memory: limits.memory,
+                total: 0,
             },
             env,
             info,

@@ -70,6 +70,8 @@ pub struct InvocationRecord {
     /// not part of the table of 0138; they show a denied call that the guest then handled.
     pub host_denials: u32,
     pub last_denial: Option<String>,
+    /// Set by the temporary dev route: the instance admin who ran the invocation as another user.
+    pub dev_admin: Option<String>,
 }
 
 /// Writes the record to the log. Only the fields above; nothing the guest wrote.

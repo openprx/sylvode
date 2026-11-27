@@ -446,3 +446,36 @@ async fn the_rate_per_user_is_enforced_for_actions() {
     assert_eq!(refused, 1, "{codes:?}");
     assert_eq!(codes.last(), Some(&RefusalCode::PluginConcurrencyLimit));
 }
+
+/// Two memories of 40 MiB each are 80 MiB in one instance, over the 64 MiB limit of an action: the
+/// limit is on the sum of the instance's memories, not on each one.
+#[tokio::test]
+async fn several_memories_share_one_memory_limit() {
+    let component = |second: u32| {
+        wat::parse_str(format!(
+            r#"(component
+                (core module $m
+                  (memory (export "memory") 640)
+                  (memory {second})
+                  (func (export "run") (param i32 i32 i32 i32) (result i32) i32.const 0)
+                  (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32) i32.const 0))
+                (core instance $i (instantiate $m))
+                (type $err0 (record (field "code" string)))
+                (export $err "action-error" (type $err0))
+                (type $answer (result string (error $err)))
+                (func $run (param "action" string) (param "input" string) (result $answer)
+                  (canon lift (core func $i "run") (memory (core memory $i "memory")) (realloc (core func $i "cabi_realloc"))))
+                (export "run" (func $run)))"#
+        ))
+        .expect("wat")
+    };
+    let refused = run(&component(640), World::Action, "go", "{}", &grants(&[])).await;
+    assert_eq!(code(&refused).0, RefusalCode::PluginMemoryLimit);
+    assert_eq!(refused.record.outcome, "limit");
+    // 40 MiB and 16 MiB fit: the same shape under the limit is not refused for its memory.
+    let fits = run(&component(256), World::Action, "go", "{}", &grants(&[])).await;
+    assert_ne!(
+        fits.result.as_ref().err().map(|error| error.code),
+        Some(RefusalCode::PluginMemoryLimit)
+    );
+}

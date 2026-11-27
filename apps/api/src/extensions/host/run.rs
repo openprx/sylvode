@@ -155,6 +155,7 @@ pub(super) async fn invoke_with(
         log_lines: telemetry.log_lines,
         host_denials: telemetry.denials,
         last_denial: telemetry.last_denial,
+        dev_admin: None,
     };
     emit(&record);
     Invocation { result, record }
@@ -293,9 +294,11 @@ async fn execute(
     if world == World::Action {
         gates().rate(who.actor, Instant::now())?;
     }
-    let _admission = gates().admit(world, who.installation_id)?;
+    // Compile (or fetch) before taking any slot: a compile in progress must not hold an instance
+    // or a memory reservation.
     let engine = engine()?;
     let component = compile_cache().get(engine, component_bytes).await?;
+    let _admission = gates().admit(world, who.installation_id)?;
     let plan = plan(grants);
     check_shape(engine, &component, world, plan)?;
 

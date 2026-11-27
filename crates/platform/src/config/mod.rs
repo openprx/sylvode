@@ -46,6 +46,7 @@
 mod cidr;
 mod email;
 mod error;
+mod extensions;
 mod inbound;
 mod oauth;
 mod packages;
@@ -60,6 +61,7 @@ use uuid::Uuid;
 pub use cidr::IpCidr;
 pub use email::{DEFAULT_EMAIL_DIGEST_HOUR_UTC, EmailConfig, EmailTls, MAX_EMAIL_DIGEST_HOUR_UTC};
 pub use error::{ConfigError, EXAMPLE_CONFIG_PATH};
+pub use extensions::ExtensionsConfig;
 pub use inbound::InboundConfig;
 pub use oauth::{
     DEFAULT_ACCESS_TOKEN_TTL_SECONDS, DEFAULT_AUTHORIZATION_CODE_TTL_SECONDS, DEFAULT_EVENT_BACKFILL_MAX_AGE_HOURS,
@@ -232,6 +234,8 @@ pub struct OpenPrConfig {
     pub inbound: InboundConfig,
     /// `[packages]`: the built-in publisher key and the built-in package directory.
     pub packages: PackagesConfig,
+    /// `[extensions]`: settings of the plugin host.
+    pub extensions: ExtensionsConfig,
     /// `[email]`: `Some` only when `enabled = true`, with every value it needs validated.
     pub email: Option<EmailConfig>,
 }

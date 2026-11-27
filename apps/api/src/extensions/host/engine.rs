@@ -36,6 +36,9 @@ static ENGINE: LazyLock<Result<Engine, String>> = LazyLock::new(|| {
         .epoch_interruption(true)
         .max_wasm_stack(WASM_STACK)
         .wasm_threads(false)
+        .wasm_gc(false)
+        .wasm_function_references(false)
+        .wasm_stack_switching(false)
         .wasm_component_model_async(false);
     let engine = Engine::new(&config).map_err(|error| error.to_string())?;
     // The clock runs on its own thread, not on the runtime: tests start and stop runtimes while the
@@ -88,7 +91,7 @@ impl CompileCache {
     /// [`COMPILE_TIMEOUT`] (the permit stays with the thread until it ends, so the bound holds).
     ///
     /// # Errors
-    /// `plugin_invalid_component` for bytes that do not compile, a timeout, or a busy compiler.
+    /// `plugin_invalid_component` for bytes that do not compile, or a wait or compile past the timeout.
     pub async fn get(&self, engine: &Engine, bytes: &[u8]) -> Result<Component, HostError> {
         let invalid = || HostError::new(RefusalCode::PluginInvalidComponent);
         let digest: [u8; 32] = Sha256::digest(bytes).into();
@@ -104,9 +107,11 @@ impl CompileCache {
         };
         let compiled = cell
             .get_or_try_init(|| async {
-                let permit = Arc::clone(&self.compiling)
-                    .acquire_owned()
+                // The wait for a compile slot is bounded like the compile itself, and no instance or
+                // memory slot is held while waiting (admission comes after the compile).
+                let permit = tokio::time::timeout(COMPILE_TIMEOUT, Arc::clone(&self.compiling).acquire_owned())
                     .await
+                    .map_err(|_| invalid())?
                     .map_err(|_| invalid())?;
                 let engine = engine.clone();
                 let bytes = bytes.to_vec();

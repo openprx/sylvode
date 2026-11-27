@@ -92,8 +92,8 @@ impl InternalCall {
 }
 
 /// The claims of an internal call: the invoking user, live. A user who is gone or deactivated, or
-/// whose sessions were revoked since the invocation started (logout-all, password reset), is
-/// refused `403 forbidden` and the invocation ends.
+/// whose sessions were revoked since the invocation started (logout-all, password reset), or who is
+/// not a person (a bot or AI user), is refused `403 forbidden` and the invocation ends.
 ///
 /// # Errors
 /// `Forbidden` as above; a database failure.
@@ -102,7 +102,7 @@ pub async fn internal_claims(state: &AppState, call: &InternalCall) -> Result<Jw
         .db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT email, is_active, session_version FROM users WHERE id = $1",
+            "SELECT email, is_active, session_version, entity_type FROM users WHERE id = $1",
             vec![call.actor.into()],
         ))
         .await
@@ -112,7 +112,10 @@ pub async fn internal_claims(state: &AppState, call: &InternalCall) -> Result<Jw
     let email: String = row.try_get("", "email").map_err(|_| ApiError::Internal)?;
     let active: bool = row.try_get("", "is_active").map_err(|_| ApiError::Internal)?;
     let version: i64 = row.try_get("", "session_version").map_err(|_| ApiError::Internal)?;
-    if !active || version != call.session_version {
+    let entity_type: String = row.try_get("", "entity_type").map_err(|_| ApiError::Internal)?;
+    // Only a person acts through a plugin: a bot or AI user would run with plain user claims and
+    // skip the bot context's project scoping.
+    if !active || entity_type != "human" || version != call.session_version {
         return Err(forbidden());
     }
     Ok(JwtClaims {

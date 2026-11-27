@@ -149,10 +149,17 @@ pub async fn call(
     };
     let http = build_request(internal, call_index, entry, &request, &params)?;
     let router = ROUTER.get().ok_or(CallError::Unavailable)?;
-    let response = tokio::time::timeout(timeout, router.clone().oneshot(http))
-        .await
-        .map_err(|_| CallError::Unavailable)?
-        .map_err(|_| CallError::Unavailable)?;
+    // The router runs on its own task: the host function is polled on the guest's fiber stack, which
+    // is small, and the axum stack, the database driver and the handlers must not run on it.
+    let mut task = tokio::spawn(router.clone().oneshot(http));
+    let response = match tokio::time::timeout(timeout, &mut task).await {
+        Ok(Ok(Ok(response))) => response,
+        Err(_) => {
+            task.abort();
+            return Err(CallError::Unavailable);
+        }
+        _ => return Err(CallError::Unavailable),
+    };
     let bytes = to_bytes(response.into_body(), CALL_BODY_MAX + 4096)
         .await
         .map_err(|_| CallError::Limit("payload_too_large".to_string()))?;

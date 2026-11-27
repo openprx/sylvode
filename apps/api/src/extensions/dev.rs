@@ -64,7 +64,7 @@ pub struct DevInvokeRequest {
 /// A bad request, or a database failure.
 pub async fn dev_invoke(
     State(state): State<AppState>,
-    Extension(_admin): Extension<JwtClaims>,
+    Extension(admin): Extension<JwtClaims>,
     Json(request): Json<DevInvokeRequest>,
 ) -> Result<Json<ApiResponse<Value>>, ApiError> {
     let world = match request.world.as_str() {
@@ -80,14 +80,16 @@ pub async fn dev_invoke(
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
             "SELECT m.role FROM workspace_members m JOIN users u ON u.id = m.user_id \
-             WHERE m.workspace_id = $1 AND m.user_id = $2 AND u.is_active",
+             WHERE m.workspace_id = $1 AND m.user_id = $2 AND u.is_active AND u.entity_type = 'human'",
             vec![request.workspace_id.into(), request.as_user_id.into()],
         ))
         .await
         .map_err(ApiError::internal_database_failure)?
         .and_then(|row| row.try_get::<String>("", "role").ok())
         .and_then(|role| WorkspaceRole::from_str(&role))
-        .ok_or_else(|| ApiError::BadRequest("as_user_id is not an active member of the workspace".to_string()))?;
+        .ok_or_else(|| {
+            ApiError::BadRequest("as_user_id is not an active person who is a member of the workspace".to_string())
+        })?;
     let grants: Vec<Grant> = request
         .grants
         .into_iter()
@@ -118,7 +120,17 @@ pub async fn dev_invoke(
         },
         installation,
     };
-    let outcome = invoke(
+    // The records the plugin writes carry `as_user_id` as their actor; this line names the admin.
+    tracing::warn!(
+        target: "sv::extensions",
+        admin = %admin.sub,
+        as_user = %request.as_user_id,
+        workspace = %request.workspace_id,
+        installation = %installation_id,
+        world = world.name(),
+        "dev invoke"
+    );
+    let mut outcome = invoke(
         &state,
         &principal,
         &component,
@@ -128,6 +140,7 @@ pub async fn dev_invoke(
         &GrantSet { requested, grants },
     )
     .await;
+    outcome.record.dev_admin = Some(admin.sub.clone());
     let data = match outcome.result {
         Ok(output) => json!({"ok": true, "output": output, "record": outcome.record}),
         Err(error) => json!({
