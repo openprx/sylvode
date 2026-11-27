@@ -12,6 +12,10 @@ name.
 
 ### Added
 
+- **Intranet HTTPS toolkit.** `deploy/tls/sylvode-tls.sh` creates a private CA limited to the
+  server's own IP addresses and names, issues and renews the server certificate and prints the
+  Sylvode and proxy settings; `trust-client.sh` and `trust-client.ps1` install that CA on macOS,
+  Linux and Windows clients after a fingerprint check. See docs/install.md.
 - **Runner: one session per bot, across projects.** `[[runner.tmux.sessions]]` (`bot`, `cli`,
   `name`) makes the runner type the tasks of a bot for a CLI, from every project the bot is
   connected to, into one existing tmux session, for example an operator's lead session with several
@@ -90,6 +94,12 @@ name.
 - `GET /api/v1/comments/{id}`, `GET /api/v1/form-attachments/{attachment_id}`, sprint `progress`.
 
 ### Changed
+
+- **Work item comments, activity and agent tasks are newest first and paged.** `GET /issues/{id}/comments`
+  (default 20, max 100), `GET /issues/{id}/activities` (default 30, max 100; the fixed limit of 100 is
+  gone) and `GET /issues/{id}/ai-tasks` (default 5, max 50, now in the paged shape) take `page` and
+  `per_page`; the MCP tool `comments.list` takes them too. On the work item page the agent tasks panel
+  sits in the right column above the activity, and each list loads more on request.
 
 - **The task view no longer carries `execution.session_name`.** The runner never read it, and it
   is wrong for a bot's own session; the connection view keeps the derived `<KEY>-<cli>` name.
@@ -324,6 +334,15 @@ name.
   which no event could produce, were removed.
 
 ### Fixed
+
+- **Project-scoped bots reaching other projects through a second object in the request.** Flow
+  conversions took the project from a body field the handler ignored; moves, relations, references and
+  body asset copies checked only Flow page permissions for the other object. Every additional project,
+  form, record or Flow object a request names is now checked against the bot's level in its project,
+  and work item page links hide titles of pages in projects the bot cannot read.
+- **Work item activity was mostly empty.** Creation, title, description and due date edits, label
+  changes and added comments (including bot replies) were never recorded. Every work item change now
+  writes its activity entry in the same transaction, and the page refreshes the list after each change.
 
 - **Web UI served over plain HTTP on a non-localhost address.** Flow live editing never started
   there and said nothing. Without `crypto.randomUUID` the client sent a client id that was not a UUID,

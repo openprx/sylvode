@@ -91,7 +91,8 @@ Whatever proxy you use:
   works for sign-in (with `auth.allow_insecure_cookies`), live editing and copying, but it sends
   every credential and document in clear text, and the browser withholds the features that need a
   secure context. What changes is listed in
-  [install.md](install.md#serving-the-web-ui-over-plain-http).
+  [install.md](install.md#serving-the-web-ui-over-plain-http). On a private network without public
+  DNS, see [install.md](install.md#https-on-a-private-network).
 
 The MCP server is not proxied by `nginx.conf`. MCP clients reach its port directly or through a
 tunnel, and authenticate with their own workspace bot tokens.

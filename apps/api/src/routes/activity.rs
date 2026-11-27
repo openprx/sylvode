@@ -16,7 +16,7 @@ use uuid::Uuid;
 use crate::middleware::bot_auth::{BotAuthContext, require_workspace_access};
 use crate::{
     error::ApiError,
-    response::{ApiResponse, PaginatedData},
+    response::{ApiResponse, PageQuery, PaginatedData},
     services::{
         issue_view::{PageCaller, activity_pages},
         mentions::{self, Audience, Person},
@@ -273,13 +273,19 @@ pub async fn get_project_activities(
     Ok(ApiResponse::success(PaginatedData::from_items(response)))
 }
 
-/// GET /`api/v1/issues/:issue_id/activities` - Get issue activity feed
+/// Entries of one page of a work item's activity, and the most one request may ask for.
+const ISSUE_ACTIVITIES_PER_PAGE: i64 = 30;
+const MAX_ISSUE_ACTIVITIES_PER_PAGE: i64 = 100;
+
+/// GET /`api/v1/issues/:issue_id/activities` - Get issue activity feed, newest first, paged
 pub async fn get_issue_activities(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
     Path(issue_id): Path<Uuid>,
+    Query(page_query): Query<PageQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
+    let paging = page_query.resolve(ISSUE_ACTIVITIES_PER_PAGE, MAX_ISSUE_ACTIVITIES_PER_PAGE);
     let _user_id = Uuid::parse_str(&claims.sub).map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))?;
     let mut extensions = axum::http::Extensions::new();
     extensions.insert(claims);
@@ -334,8 +340,8 @@ pub async fn get_issue_activities(
             LEFT JOIN users u ON u.id = COALESCE(a.user_id, a.actor_id)
             LEFT JOIN workspace_members m ON m.workspace_id = $3 AND m.user_id = u.id
             WHERE (a.issue_id = $1) OR (a.resource_type = 'issue' AND a.resource_id = $1)
-            ORDER BY a.created_at DESC
-            LIMIT 100
+            ORDER BY a.created_at DESC, a.id DESC
+            LIMIT $4 OFFSET $5
         ",
         // A connected application sees an actor's name only while the actor is a member of the
         // connected workspace.
@@ -343,10 +349,26 @@ pub async fn get_issue_activities(
             issue_id.into(),
             crate::oauth::delegated::current().is_some().into(),
             issue.workspace_id.into(),
+            paging.per_page.into(),
+            paging.offset().into(),
         ],
     ))
     .all(&state.db)
     .await?;
+
+    #[derive(Debug, FromQueryResult)]
+    struct ActivityCount {
+        total: i64,
+    }
+    let total = ActivityCount::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT COUNT(*)::bigint AS total FROM activities a \
+         WHERE (a.issue_id = $1) OR (a.resource_type = 'issue' AND a.resource_id = $1)",
+        vec![issue_id.into()],
+    ))
+    .one(&state.db)
+    .await?
+    .map_or(0, |row| row.total);
 
     let mut response: Vec<IssueActivityResponse> = activities
         .into_iter()
@@ -366,7 +388,7 @@ pub async fn get_issue_activities(
     let people = people_of_entries(&state.db, issue.workspace_id, &response).await?;
 
     Ok(ApiResponse::success(IssueActivityList {
-        page: PaginatedData::from_items(response),
+        page: PaginatedData::page(response, total, paging),
         people,
     }))
 }

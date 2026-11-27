@@ -16,7 +16,7 @@ use uuid::Uuid;
 use crate::{
     error::ApiError,
     middleware::bot_auth::BotAuthContext,
-    response::{ApiResponse, PaginatedData},
+    response::{ApiResponse, PageQuery, PaginatedData},
     services::{
         ai_task_service::{
             AiTaskRow, AiTaskWithProtocol, CreateAiTaskInput, DispatchOrigin, create_ai_task, load_protocol_row,
@@ -260,8 +260,14 @@ pub async fn list_project_ai_tasks(
     }))
 }
 
-/// At most this many tasks are listed for one issue.
-const ISSUE_TASK_LIMIT: i64 = 50;
+/// Tasks of one issue in a page of the list, and the most one request may ask for.
+const ISSUE_TASKS_PER_PAGE: i64 = 5;
+const MAX_ISSUE_TASKS_PER_PAGE: i64 = 50;
+
+#[derive(FromQueryResult)]
+struct TaskCount {
+    total: i64,
+}
 /// At most this many events are listed for one task: its newest, oldest first within the window.
 const TASK_EVENT_LIMIT: i64 = 100;
 /// A string inside an event payload is cut to this many characters.
@@ -300,7 +306,7 @@ fn cut_long_strings(payload: Value) -> Value {
     }
 }
 
-/// `GET /api/v1/issues/{issue_id}/ai-tasks`: the agent tasks of one issue, newest first.
+/// `GET /api/v1/issues/{issue_id}/ai-tasks`: the agent tasks of one issue, newest first, paged.
 ///
 /// Each task carries its newest [`TASK_EVENT_LIMIT`] events oldest first, and `events_omitted`
 /// telling that older ones were left out. Members of the issue's project and bots of its workspace may read it.
@@ -309,7 +315,9 @@ pub async fn list_issue_ai_tasks(
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
     Path(issue_id): Path<Uuid>,
+    Query(page_query): Query<PageQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
+    let paging = page_query.resolve(ISSUE_TASKS_PER_PAGE, MAX_ISSUE_TASKS_PER_PAGE);
     let scope = IssueScopeRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "SELECT wi.project_id, p.workspace_id FROM work_items wi \
@@ -334,13 +342,30 @@ pub async fn list_issue_ai_tasks(
              WHERE project_id = $1 \
                AND ((reference_type = 'work_item' AND reference_id = $2) \
                     OR (reference_type = 'comment' AND payload->>'issue_id' = $2::text)) \
-             ORDER BY created_at DESC, id LIMIT $3",
+             ORDER BY created_at DESC, id DESC LIMIT $3 OFFSET $4",
             task_with_protocol_columns()
         ),
-        vec![scope.project_id.into(), issue_id.into(), ISSUE_TASK_LIMIT.into()],
+        vec![
+            scope.project_id.into(),
+            issue_id.into(),
+            paging.per_page.into(),
+            paging.offset().into(),
+        ],
     ))
     .all(&state.db)
     .await?;
+
+    let total = TaskCount::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT COUNT(*)::bigint AS total FROM ai_tasks \
+         WHERE project_id = $1 \
+           AND ((reference_type = 'work_item' AND reference_id = $2) \
+                OR (reference_type = 'comment' AND payload->>'issue_id' = $2::text))",
+        vec![scope.project_id.into(), issue_id.into()],
+    ))
+    .one(&state.db)
+    .await?
+    .map_or(0, |row| row.total);
 
     let task_ids: Vec<Uuid> = tasks.iter().map(|entry| entry.task.id).collect();
     let events = TaskEventRow::find_by_statement(Statement::from_sql_and_values(
@@ -381,7 +406,7 @@ pub async fn list_issue_ai_tasks(
             item
         })
         .collect::<Vec<_>>();
-    Ok(ApiResponse::success(items))
+    Ok(ApiResponse::success(PaginatedData::page(items, total, paging)))
 }
 
 pub async fn create_project_ai_task(
@@ -771,6 +796,7 @@ mod list_filter_database_tests {
 mod issue_timeline_tests {
     use super::{ListAiTasksQuery, list_issue_ai_tasks, list_project_ai_tasks};
     use crate::error::ApiError;
+    use crate::response::PageQuery;
     use crate::routes::context::tenant_fixture::{
         bot_context_for, claims_for, exec, seed_bot_user, seed_tenant, seed_work_item, state_for,
     };
@@ -792,11 +818,13 @@ mod issue_timeline_tests {
         Ok(serde_json::from_slice(&bytes).expect("the body is JSON"))
     }
 
-    async fn timeline(
+    async fn timeline_page(
         db: &sea_orm::DatabaseConnection,
         user: Uuid,
         bot: Option<crate::middleware::bot_auth::BotAuthContext>,
         issue: Uuid,
+        page: Option<i64>,
+        per_page: Option<i64>,
     ) -> Result<Value, ApiError> {
         body(
             list_issue_ai_tasks(
@@ -804,10 +832,20 @@ mod issue_timeline_tests {
                 Extension(claims_for(user)),
                 bot.map(Extension),
                 Path(issue),
+                Query(PageQuery { page, per_page }),
             )
             .await,
         )
         .await
+    }
+
+    async fn timeline(
+        db: &sea_orm::DatabaseConnection,
+        user: Uuid,
+        bot: Option<crate::middleware::bot_auth::BotAuthContext>,
+        issue: Uuid,
+    ) -> Result<Value, ApiError> {
+        timeline_page(db, user, bot, issue, None, None).await
     }
 
     #[tokio::test]
@@ -882,7 +920,8 @@ mod issue_timeline_tests {
         let answer = timeline(db, tenant.member_id, None, issue)
             .await
             .expect("a member reads");
-        let items = answer["data"].as_array().expect("a list");
+        let items = answer["data"]["items"].as_array().expect("a list");
+        assert_eq!(answer["data"]["total"], 2);
         assert_eq!(items.len(), 2, "the unrelated issue's task is not listed");
         assert_eq!(items[0]["id"], mention.to_string(), "newest first");
         assert_eq!(items[1]["id"], assignment.to_string());
@@ -909,6 +948,54 @@ mod issue_timeline_tests {
     }
 
     #[tokio::test]
+    async fn the_timeline_is_paged_newest_first() {
+        let scratch = scratch_or_skip!("timeline_paging");
+        let db = &scratch.db;
+        let tenant = seed_tenant(db, "tp").await;
+        let bot = seed_bot_user(db, &tenant).await;
+        let issue = seed_work_item(db, &tenant, "Fix").await;
+        let mut ids = Vec::new();
+        for age in (1..=7).rev() {
+            let id = seed_task_for(
+                db,
+                &tenant,
+                bot,
+                "completed",
+                1,
+                0,
+                ("issue_assigned", Some("work_item"), Some(issue)),
+                json!({}),
+            )
+            .await;
+            exec(
+                db,
+                "UPDATE ai_tasks SET created_at = now() - make_interval(hours => $2) WHERE id = $1",
+                vec![id.into(), age.into()],
+            )
+            .await;
+            ids.push(id);
+        }
+        // `ids` runs oldest to newest: the first page is the newest five.
+        let first = timeline_page(db, tenant.member_id, None, issue, None, None)
+            .await
+            .expect("page 1");
+        let items = first["data"]["items"].as_array().expect("items");
+        assert_eq!(items.len(), 5, "five by default");
+        assert_eq!(items[0]["id"], ids[6].to_string());
+        assert_eq!(items[4]["id"], ids[2].to_string());
+        assert_eq!(first["data"]["total"], 7);
+        assert_eq!(first["data"]["total_pages"], 2);
+        let second = timeline_page(db, tenant.member_id, None, issue, Some(2), None)
+            .await
+            .expect("page 2");
+        let items = second["data"]["items"].as_array().expect("items");
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["id"], ids[1].to_string());
+        assert_eq!(items[1]["id"], ids[0].to_string());
+        scratch.drop_self().await;
+    }
+
+    #[tokio::test]
     async fn the_timeline_is_for_members_and_bots_of_the_workspace() {
         let scratch = scratch_or_skip!("timeline_access");
         let db = &scratch.db;
@@ -931,7 +1018,8 @@ mod issue_timeline_tests {
         )
         .await
         .expect("a bot of the workspace reads");
-        assert_eq!(own["data"], json!([]));
+        assert_eq!(own["data"]["items"], json!([]));
+        assert_eq!(own["data"]["total"], 0);
         let foreign = timeline(
             db,
             foreign_bot,

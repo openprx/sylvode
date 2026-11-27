@@ -1411,9 +1411,29 @@ impl OpenPrClient {
 
     // ---- Comments ----
 
-    pub async fn list_comments(&self, issue_id: &str) -> Result<Value, String> {
-        self.get(&format!("/api/v1/issues/{}/comments", urlencoding::encode(issue_id)))
-            .await
+    pub async fn list_comments(
+        &self,
+        issue_id: &str,
+        page: Option<u32>,
+        per_page: Option<u32>,
+    ) -> Result<Value, String> {
+        let mut query = Vec::new();
+        if let Some(page) = page {
+            query.push(format!("page={page}"));
+        }
+        if let Some(per_page) = per_page {
+            query.push(format!("per_page={per_page}"));
+        }
+        let query = if query.is_empty() {
+            String::new()
+        } else {
+            format!("?{}", query.join("&"))
+        };
+        self.get(&format!(
+            "/api/v1/issues/{}/comments{query}",
+            urlencoding::encode(issue_id)
+        ))
+        .await
     }
 
     pub async fn create_comment(&self, issue_id: &str, body: Value) -> Result<Value, String> {

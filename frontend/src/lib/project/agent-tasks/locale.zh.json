@@ -13,6 +13,8 @@
 		"reason": "失败原因",
 		"reply": "回复",
 		"showMore": "展开",
+		"loadMoreFailed": "无法加载更多任务，请重试。",
+		"loadMore": "显示更多任务（还有 {count} 个）",
 		"showLess": "收起",
 		"events": "事件链",
 		"showEvents": "查看事件（{count}）",

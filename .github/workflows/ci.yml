@@ -51,6 +51,9 @@ jobs:
       - name: SQLite exception guard controls
         run: bash scripts/test-verify-inactive-sqlite.sh
 
+      - name: Shellcheck deploy/tls
+        run: shellcheck deploy/tls/*.sh deploy/tls/tests/*.sh
+
       - name: Start script configuration checks
         run: bash scripts/test-start-config.sh
 
@@ -251,7 +254,7 @@ jobs:
                        flow-package-import flow-v0.4 flow-static-build flow-outbox flow-offline-recovery flow-apply-busy \
                        shell-routing shell-state shell-keyboard surface-host project-nav shell-redirects surface-embed \
                        component-adapters toast-routing workbench-tabs forms-page forms-csv-export plugin-creator-review-focus oauth workspace-role sprint-rules workflow-state due-date \
-                       agent-tasks connection-managed connection-section connection-list uuid flow-handshake-failure features; do
+                       agent-tasks issue-detail connection-managed connection-section connection-list uuid flow-handshake-failure features; do
             echo "::group::test:$suite"
             bun run "test:$suite"
             echo "::endgroup::"

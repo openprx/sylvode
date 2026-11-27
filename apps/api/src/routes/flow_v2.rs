@@ -2282,6 +2282,11 @@ pub async fn post_flow_v2_conversion_preview(
             }
         }
     }
+    // The destination fields were folded into the mapping above; the request type takes none of them.
+    if let Some(fields) = input.as_object_mut() {
+        fields.remove("destination_project_id");
+        fields.remove("destination_workspace_id");
+    }
     let request = serde_json::from_value(input).map_err(|_| ApiError::invalid_update("invalid conversion preview"))?;
     let extensions = super::build_auth_extensions(claims, bot);
     Ok(
@@ -2495,6 +2500,14 @@ pub async fn post_flow_v2_body_asset_copy(
     headers: axum::http::HeaderMap,
     Json(input): Json<BodyAssetCopy>,
 ) -> Result<impl IntoResponse, ApiError> {
+    // The source page is a second object of this request: a scoped bot must be able to read it.
+    crate::middleware::scoped_bot::ensure_bot_level(
+        &state.db,
+        bot.as_ref().map(|bot| bot.0.bot_id),
+        crate::middleware::scoped_bot::Secondary::FlowObject(input.source_object_id),
+        crate::middleware::scoped_bot::Level::Read,
+    )
+    .await?;
     Ok(ApiResponse::success(
         crate::flow::body_assets::copy_into(
             &state.db,

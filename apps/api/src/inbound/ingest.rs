@@ -44,6 +44,7 @@ use crate::{
     error::ApiError,
     services::{
         ai_task_service::runner_bot_block,
+        issues::write_activity,
         work_item_service::{NewWorkItem, insert_work_item},
         workflow_service::{EffectiveWorkflow, resolve_effective_workflow_for_project},
     },
@@ -702,22 +703,7 @@ async fn open_alert<C: ConnectionTrait>(
     }
 
     let detail = json!({ "source": source.name, "source_id": source.id, "rule": rule.name, "rule_id": rule.id });
-    tx.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "INSERT INTO activities (id, workspace_id, project_id, issue_id, user_id, action, detail, created_at, \
-         resource_type, resource_id, event_type, actor_id, payload) \
-         VALUES ($1, $2, $3, $4, $5, 'alert_opened', $6::jsonb, $7, 'issue', $4, 'alert_opened', $5, $6::jsonb)",
-        vec![
-            Uuid::new_v4().into(),
-            source.workspace_id.into(),
-            source.project_id.into(),
-            work_item_id.into(),
-            acting.into(),
-            detail.into(),
-            now.into(),
-        ],
-    ))
-    .await?;
+    write_activity(tx, work_item_id, acting, "alert_opened", &detail, now).await?;
 
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,

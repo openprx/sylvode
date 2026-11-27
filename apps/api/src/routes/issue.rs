@@ -27,7 +27,7 @@ use crate::{
         },
         issues::{
             IssueRef, NotifyAssignment, NotifyChange, insert_activity, notify_assignment, notify_priority_change,
-            notify_state_change,
+            notify_state_change, record_label_change,
         },
         work_item_service::{NewWorkItem, insert_work_item},
         workflow_service::{allowed_state_values, default_project_state, resolve_effective_workflow_for_project},
@@ -1005,6 +1005,37 @@ pub async fn update_issue(
 
     let mut changes: Vec<ActivityChange> = Vec::new();
 
+    if let Some(new_title) = requested_title.as_ref()
+        && new_title != &current_issue.title
+    {
+        changes.push(ActivityChange {
+            action: "title_changed",
+            detail: serde_json::json!({ "from": current_issue.title.clone(), "to": updated.title.clone() }),
+        });
+    }
+
+    // The text of a description can be long: the entry says it changed, the item holds the text.
+    if let Some(new_description) = requested_description.as_ref()
+        && new_description != &current_issue.description
+    {
+        changes.push(ActivityChange {
+            action: "description_changed",
+            detail: serde_json::json!({}),
+        });
+    }
+
+    if let Some(new_due_at) = requested_due_at
+        && new_due_at != current_issue.due_at
+    {
+        changes.push(ActivityChange {
+            action: "due_date_changed",
+            detail: serde_json::json!({
+                "from": current_issue.due_at.map(platform::timestamp::Timestamp::to_rfc3339),
+                "to": new_due_at.map(platform::timestamp::Timestamp::to_rfc3339)
+            }),
+        });
+    }
+
     if let Some(new_assignee) = requested_assignee
         && new_assignee != current_issue.assignee_id
     {
@@ -1436,7 +1467,7 @@ pub async fn add_labels_to_issue(
     .ok_or_else(|| ApiError::NotFound("work item not found or access denied".to_string()))?;
     require_workspace_access(&state, &extensions, owner.workspace_id).await?;
 
-    let added = attach_labels_to_issue(&state.db, issue_id, owner.workspace_id, &payload.label_ids).await?;
+    let added = attach_labels_to_issue(&state.db, issue_id, owner.workspace_id, user_id, &payload.label_ids).await?;
 
     // One `label.added` for each label that was really attached; one that was already there is not
     // a change.
@@ -1476,6 +1507,7 @@ async fn attach_labels_to_issue(
     db: &sea_orm::DatabaseConnection,
     issue_id: Uuid,
     workspace_id: Uuid,
+    actor_id: Uuid,
     label_ids: &[Uuid],
 ) -> Result<Vec<Uuid>, ApiError> {
     // Verify issue belongs to the caller's workspace
@@ -1522,6 +1554,7 @@ async fn attach_labels_to_issue(
             ))
             .await?;
         if inserted.is_some() && !added.contains(label_id) {
+            record_label_change(&tx, issue_id, actor_id, *label_id, true).await?;
             added.push(*label_id);
         }
     }
@@ -1555,7 +1588,14 @@ mod tenant_scoping_tests {
         let my_label = seed_label(&scratch.db, &a, "mine").await;
         let their_label = seed_label(&scratch.db, &b, "their secret label").await;
 
-        let result = attach_labels_to_issue(&scratch.db, my_issue, a.workspace_id, &[my_label, their_label]).await;
+        let result = attach_labels_to_issue(
+            &scratch.db,
+            my_issue,
+            a.workspace_id,
+            a.member_id,
+            &[my_label, their_label],
+        )
+        .await;
         match &result {
             Err(ApiError::NotFound(_)) => {}
             other => panic!("a foreign label in the batch should answer NotFound, got {other:?}"),
@@ -1585,7 +1625,7 @@ mod tenant_scoping_tests {
         let first = seed_label(&scratch.db, &a, "first").await;
         let second = seed_label(&scratch.db, &a, "second").await;
 
-        attach_labels_to_issue(&scratch.db, my_issue, a.workspace_id, &[first, second])
+        attach_labels_to_issue(&scratch.db, my_issue, a.workspace_id, a.member_id, &[first, second])
             .await
             .expect("labels of the caller's own workspace attach");
 

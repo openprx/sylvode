@@ -5789,6 +5789,9 @@ mod database_tests {
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state).await;
         let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        // The shape ceilings are decided by the limit check of the apply, not by CPU: apply in
+        // process so a slow machine cannot trip the window's CPU ceiling while the page is built.
+        super::in_process_apply::enable(document_id);
 
         let cache = WarmCache::new();
         let coordinator = DocumentCoordinator::new();
@@ -6058,6 +6061,9 @@ mod database_tests {
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state).await;
         let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        // The shape ceilings are decided by the limit check of the apply, not by CPU: apply in
+        // process so a slow machine cannot trip the window's CPU ceiling while the page is built.
+        super::in_process_apply::enable(document_id);
 
         let cache = WarmCache::new();
         let coordinator = DocumentCoordinator::new();
@@ -6141,6 +6147,9 @@ mod database_tests {
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state).await;
         let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        // The shape ceilings are decided by the limit check of the apply, not by CPU: apply in
+        // process so a slow machine cannot trip the window's CPU ceiling while the page is built.
+        super::in_process_apply::enable(document_id);
 
         let cache = WarmCache::new();
         let coordinator = DocumentCoordinator::new();
@@ -6237,6 +6246,9 @@ mod database_tests {
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state).await;
         let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        // The shape ceilings are decided by the limit check of the apply, not by CPU: apply in
+        // process so a slow machine cannot trip the window's CPU ceiling while the page is built.
+        super::in_process_apply::enable(document_id);
 
         let cache = WarmCache::new();
         let coordinator = DocumentCoordinator::new();
@@ -6321,6 +6333,9 @@ mod database_tests {
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state).await;
         let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        // The shape ceilings are decided by the limit check of the apply, not by CPU: apply in
+        // process so a slow machine cannot trip the window's CPU ceiling while the page is built.
+        super::in_process_apply::enable(document_id);
 
         let cache = WarmCache::new();
         let coordinator = DocumentCoordinator::new();
@@ -6473,6 +6488,9 @@ mod database_tests {
         let state = state_for(scratch.db.clone());
         let (workspace_id, owner_id) = seed_workspace(&state).await;
         let (_object_id, document_id) = create_page(&state, workspace_id, owner_id).await;
+        // The shape ceilings are decided by the limit check of the apply, not by CPU: apply in
+        // process so a slow machine cannot trip the window's CPU ceiling while the page is built.
+        super::in_process_apply::enable(document_id);
 
         let cache = WarmCache::new();
         let coordinator = DocumentCoordinator::new();

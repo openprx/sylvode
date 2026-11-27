@@ -7,7 +7,7 @@ pub fn list_comments_tool() -> ToolDefinition {
     ToolDefinition {
         annotations: None,
         name: "comments.list".to_string(),
-        description: "List all comments on a work item. `author` and `mentions` of each comment are person objects \
+        description: "List the comments of a work item, newest first, one page at a time (20 by default; `total_pages` in the answer tells how many pages there are). `author` and `mentions` of each comment are person objects \
 {id, name|null, is_bot, state}; show the name, never the id (state removed with name null is a removed user)."
             .to_string(),
         input_schema: json!({
@@ -17,6 +17,17 @@ pub fn list_comments_tool() -> ToolDefinition {
                     "type": "string",
                     "description": "UUID of the work item",
                     "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                },
+                "page": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Page number, from 1 (default 1)"
+                },
+                "per_page": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "description": "Comments per page (default 20, at most 100)"
                 }
             },
             "required": ["work_item_id"]
@@ -27,6 +38,8 @@ pub fn list_comments_tool() -> ToolDefinition {
 #[derive(Debug, Deserialize)]
 struct ListCommentsInput {
     work_item_id: String,
+    page: Option<u32>,
+    per_page: Option<u32>,
 }
 
 pub async fn list_comments(client: &OpenPrClient, args: serde_json::Value) -> CallToolResult {
@@ -35,7 +48,10 @@ pub async fn list_comments(client: &OpenPrClient, args: serde_json::Value) -> Ca
         Err(e) => return CallToolResult::error(format!("Invalid input: {e}")),
     };
 
-    match client.list_comments(&input.work_item_id).await {
+    match client
+        .list_comments(&input.work_item_id, input.page, input.per_page)
+        .await
+    {
         Ok(comments) => {
             let json = serde_json::to_string_pretty(&comments).unwrap_or_default();
             CallToolResult::success(json)
@@ -235,5 +251,22 @@ mod tests {
         assert_eq!(out["data"][0]["author"]["state"], "removed");
         assert_eq!(out["data"][0]["author"]["name"], Value::Null);
         assert_eq!(out["data"][0]["mentions"][0]["is_bot"], false);
+    }
+
+    /// `page` and `per_page` reach the API as query parameters; without them none is sent.
+    #[tokio::test]
+    async fn list_forwards_the_page_request() {
+        use axum::extract::RawQuery;
+        let router = Router::new().route(
+            "/api/v1/issues/{id}/comments",
+            get(|RawQuery(query): RawQuery| async move {
+                Json(json!({"code": 0, "message": "ok", "data": {"query": query.unwrap_or_default()}}))
+            }),
+        );
+        let client = test_api::client(test_api::spawn(router).await.expect("api")).expect("client");
+        let paged = text(&list_comments(&client, json!({ "work_item_id": UUID, "page": 2, "per_page": 50 })).await);
+        assert_eq!(paged["data"]["query"], "page=2&per_page=50");
+        let plain = text(&list_comments(&client, json!({ "work_item_id": UUID })).await);
+        assert_eq!(plain["data"]["query"], "");
     }
 }

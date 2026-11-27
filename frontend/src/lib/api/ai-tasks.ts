@@ -148,7 +148,16 @@ export function narrowAiTask(value: unknown): AiTask | null {
 	};
 }
 
-/** The response data is a bare array of tasks; one malformed task makes the whole answer invalid. */
+/** One page of tasks, newest first, in the `PaginatedData` shape. */
+export interface AiTaskPage {
+	items: AiTask[];
+	total: number;
+	page: number;
+	per_page: number;
+	total_pages: number;
+}
+
+/** A task list entry that is malformed makes the whole answer invalid. */
 export function narrowAiTaskList(value: unknown): AiTask[] | null {
 	if (!Array.isArray(value)) return null;
 	const tasks: AiTask[] = [];
@@ -160,16 +169,35 @@ export function narrowAiTaskList(value: unknown): AiTask[] | null {
 	return tasks;
 }
 
+export function narrowAiTaskPage(value: unknown): AiTaskPage | null {
+	if (!isRecord(value)) return null;
+	const items = narrowAiTaskList(value.items);
+	const total = int(value, 'total');
+	const page = int(value, 'page');
+	const perPage = int(value, 'per_page');
+	const totalPages = int(value, 'total_pages');
+	if (
+		items === null ||
+		total === null ||
+		page === null ||
+		perPage === null ||
+		totalPages === null
+	) {
+		return null;
+	}
+	return { items, total, page, per_page: perPage, total_pages: totalPages };
+}
+
 export const aiTasksApi = {
-	/** Tasks of one work item, newest first, up to 50 with the newest 100 events of each. */
-	async listForIssue(issueId: string): Promise<ApiResult<AiTask[]>> {
+	/** One page of the tasks of a work item, newest first, each with its newest 100 events. */
+	async listForIssue(issueId: string, page = 1, perPage = 5): Promise<ApiResult<AiTaskPage>> {
 		const result = await apiClient.get<unknown>(
-			`/api/v1/issues/${encodeURIComponent(issueId)}/ai-tasks`
+			`/api/v1/issues/${encodeURIComponent(issueId)}/ai-tasks?page=${page}&per_page=${perPage}`
 		);
 		if (result.code !== 0) {
 			return { ...result, data: null };
 		}
-		const tasks = narrowAiTaskList(result.data);
+		const tasks = narrowAiTaskPage(result.data);
 		if (tasks === null) {
 			return transportFailure(500, 'transport.invalidResponse');
 		}
