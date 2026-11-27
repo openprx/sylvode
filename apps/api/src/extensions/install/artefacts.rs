@@ -104,8 +104,8 @@ pub async fn create_layouts(
     Ok(created)
 }
 
-/// Creates the site pages of `manifest` for generation `generation` in the project's site, which is
-/// created as a `draft` when the project has none. A page serves nothing until the site is published
+/// Creates the site pages of `manifest` for generation `generation` in a site of the installation (a new
+/// `draft` site for its first pages). A page serves nothing until the site is published
 /// and a binding gives its form visitor access (contract C3 §6): the package never opens a form to
 /// the public by itself.
 ///
@@ -127,7 +127,7 @@ pub async fn create_pages(
     let project_id = scope
         .project_id
         .ok_or_else(|| ApiError::bad_request_coded("pages_need_project", "site pages are installed into a project"))?;
-    let site_id = site_of_project(tx, scope.workspace_id, project_id, created_by).await?;
+    let site_id = site_of_installation(tx, scope.workspace_id, project_id, installation_id, created_by).await?;
     for (position, page) in manifest.pages.iter().enumerate() {
         let layout_id = layouts.get(&page.layout).ok_or_else(ApiError::internal)?;
         let nav = page.nav.as_ref().and_then(|nav| serde_json::to_value(nav).ok());
@@ -163,17 +163,20 @@ pub async fn create_pages(
     Ok(())
 }
 
-/// The project's oldest site, or a new `draft` one named after the project.
-async fn site_of_project(
+/// The site that already holds pages of this installation (an upgrade adds its pages beside the
+/// earlier generation's), or a new `draft` site named after the project. A package never adds pages
+/// to a site somebody else runs, and never publishes one.
+async fn site_of_installation(
     tx: &impl ConnectionTrait,
     workspace_id: Uuid,
     project_id: Uuid,
+    installation_id: Uuid,
     created_by: Uuid,
 ) -> Result<Uuid, ApiError> {
     let existing = Id::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT id FROM sites WHERE project_id = $1 ORDER BY created_at, id LIMIT 1",
-        vec![project_id.into()],
+        "SELECT site_id AS id FROM site_pages WHERE installation_id = $1 ORDER BY generation DESC, id LIMIT 1",
+        vec![installation_id.into()],
     ))
     .one(tx)
     .await?;

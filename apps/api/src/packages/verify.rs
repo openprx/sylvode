@@ -233,12 +233,38 @@ pub(super) async fn verify_blob(
     let package = unverified.verify(|_| lookup).map_err(Refusal::from)?;
     let key_row = row.map(|r| r.id).ok_or_else(ApiError::internal)?;
     let custom_frame = check_layouts(&package)?;
+    check_project_type(db, &package).await?;
     let custom_code = package.manifest.computed_custom_code() || custom_frame;
     Ok(Verified {
         package,
         key_row,
         custom_code,
     })
+}
+
+/// The project type a package's `project` block names must exist (checked at upload and at boot).
+async fn check_project_type(db: &DatabaseConnection, package: &VerifiedPackage) -> Result<(), ApiError> {
+    let Some(type_key) = package
+        .manifest
+        .project
+        .as_ref()
+        .and_then(|project| project.type_key.as_ref())
+    else {
+        return Ok(());
+    };
+    let known = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT 1 FROM project_types WHERE key = $1",
+            vec![type_key.clone().into()],
+        ))
+        .await?
+        .is_some();
+    if known {
+        Ok(())
+    } else {
+        Err(Refusal::new("manifest_invalid", "project.type_key names no project type").into())
+    }
 }
 
 #[cfg(test)]

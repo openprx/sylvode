@@ -58,6 +58,13 @@ pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
                 )),
         )
         .route(
+            "/api/v1/workspaces/{workspace_id}/project-templates/preview",
+            get(routes::project::preview_project_template).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
             "/api/v1/projects/{project_id}/template-install",
             post(routes::project::install_project_template).route_layer(axum_middleware::from_fn_with_state(
                 auth_state.clone(),

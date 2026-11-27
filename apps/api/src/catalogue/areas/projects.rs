@@ -76,6 +76,7 @@ pub static ENTRIES: &[Entry] = &[
     bot("projects.resources.delete", Delete, "/api/v1/projects/{project_id}/resources/{resource_id}", Project(Find::Project("project_id")), Destructive),
     bot("projects.resources.read/list", Get, "/api/v1/projects/{project_id}/resources", Project(Find::Project("project_id")), Read),
     bot("projects.resources.update", Patch, "/api/v1/projects/{project_id}/resources/{resource_id}", Project(Find::Project("project_id")), Write),
+    bot("projects.projects.read/template_preview", Get, "/api/v1/workspaces/{workspace_id}/project-templates/preview", WorkspaceAdmin, Read),
     console("projects.templates.install", Post, "/api/v1/projects/{project_id}/template-install", Project(Find::Project("project_id")), Admin),
     bot("tasks.change_hints.read", Get, "/api/v1/bot/change-hints", Own, Read),
     bot("tasks.protocol.read", Get, "/api/v1/ai/protocol", Global, Read),
@@ -103,7 +104,7 @@ mod tests {
         assert_eq!(
             bot_class_counts(ENTRIES),
             BTreeMap::from([
-                ("admin", 13),
+                ("admin", 14),
                 ("no project", 10),
                 ("own resource", 1),
                 ("filtered", 1),

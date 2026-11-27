@@ -197,6 +197,7 @@ GET /api/v1/workspaces/{workspace_id}/nav NoProject - false
 GET /api/v1/workspaces/{workspace_id}/nav/config NoProject - false
 GET /api/v1/workspaces/{workspace_id}/packages Refused - false
 GET /api/v1/workspaces/{workspace_id}/packages/{digest} Refused - false
+GET /api/v1/workspaces/{workspace_id}/project-templates/preview Admin - false
 GET /api/v1/workspaces/{workspace_id}/project-types Admin - false
 GET /api/v1/workspaces/{workspace_id}/projects Filtered - false
 GET /api/v1/workspaces/{workspace_id}/users Admin - false

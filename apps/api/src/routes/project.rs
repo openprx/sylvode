@@ -9,6 +9,7 @@
 use axum::{
     Extension, Json,
     extract::{Path, Query, State},
+    http::HeaderMap,
     response::IntoResponse,
 };
 use platform::{app::AppState, auth::JwtClaims};
@@ -19,11 +20,10 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::{
-    catalogue::{Refusal, RefusalCode},
     error::ApiError,
     events::{BusinessEventInput, insert_business_event},
-    extensions::install::{access, template},
-    middleware::bot_auth::{BotAuthContext, require_workspace_access},
+    extensions::install::{access, approve, template},
+    middleware::bot_auth::{BotAuthContext, require_workspace_access, require_workspace_access_from_auth},
     response::{ApiResponse, PaginatedData},
     routes::decision_domain,
     webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks},
@@ -94,6 +94,7 @@ pub async fn create_project(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
     Path(workspace_id): Path<Uuid>,
+    headers: HeaderMap,
     Json(req): Json<CreateProjectRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let user_id = Uuid::parse_str(&claims.sub).map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))?;
@@ -110,7 +111,7 @@ pub async fn create_project(
     }
 
     // Check workspace membership
-    let role = get_workspace_role(&state, workspace_id, user_id).await?;
+    let _role = get_workspace_role(&state, workspace_id, user_id).await?;
 
     // Check if key already exists in workspace
     let existing = state
@@ -131,23 +132,21 @@ pub async fn create_project(
     let project_id = Uuid::new_v4();
     let now = platform::timestamp::Timestamp::now();
     let description = req.description.unwrap_or_default();
-    // A template package is installed through the installation flow, which only owners and admins use.
+    // A template package goes through the installation flow, which only a person who owns or
+    // administers the workspace uses; everything is refused before anything is written.
     let chosen = match req.template_package.as_deref() {
         Some(key) => {
-            if !matches!(role.as_str(), "owner" | "admin") {
-                return Err(Refusal::new(RefusalCode::InstallationAdminOnly, None).into());
-            }
+            access::admin_user(&state, &claims, workspace_id).await?;
             Some(template::prepare(&state, workspace_id, key.trim()).await?)
         }
         None => None,
     };
-    let type_key = req.type_key.unwrap_or_else(|| {
-        if chosen.is_some() {
-            "custom_form"
-        } else {
-            "code_project"
-        }
-        .to_string()
+    // The caller's type wins over the package's; a template without one makes a form project.
+    let type_key = req.type_key.clone().unwrap_or_else(|| {
+        chosen
+            .as_ref()
+            .map_or("code_project", |prepared| prepared.type_key().unwrap_or("custom_form"))
+            .to_string()
     });
     ensure_project_type_exists(&state, &type_key).await?;
     let mut type_settings = req.type_settings.unwrap_or_else(|| json!({}));
@@ -211,16 +210,22 @@ pub async fn create_project(
         },
     )
     .await?;
+    if let Some(prepared) = &chosen {
+        // Workflow, labels, installation, forms and pages share the project's transaction: a failure
+        // anywhere leaves no project behind.
+        let locale = preferred_locale(&headers);
+        let outcome = async {
+            template::apply_project_block(&tx, prepared, workspace_id, project_id, &req.name, &req.key, &locale)
+                .await?;
+            template::install_prepared_in(&state, &tx, user_id, workspace_id, project_id, prepared).await
+        }
+        .await;
+        approve::refresh_rules(&state).await;
+        outcome?;
+    }
     tx.commit().await?;
 
     decision_domain::initialize_default_domains_for_project(&state, project_id).await?;
-    if let Some(prepared) = chosen {
-        // The project exists now; when the template cannot be installed it must not stay half made.
-        if let Err(error) = template::install_prepared(&state, user_id, workspace_id, project_id, prepared).await {
-            remove_failed_project(&state, project_id).await;
-            return Err(error);
-        }
-    }
 
     trigger_webhooks(
         state.clone(),
@@ -312,19 +317,61 @@ pub async fn install_project_template(
     })))
 }
 
-/// Deletes a project whose template could not be installed. A failure here is logged: the caller
-/// already has the install error to report.
-async fn remove_failed_project(state: &AppState, project_id: Uuid) {
-    let outcome = async {
-        let tx = state.db.begin().await?;
-        delete_project_row(&tx, project_id).await?;
-        tx.commit().await?;
-        Ok::<(), ApiError>(())
+#[derive(Debug, Deserialize)]
+pub struct TemplatePreviewQuery {
+    pub package_key: String,
+    pub type_key: Option<String>,
+}
+
+/// GET /api/v1/workspaces/:workspace_id/project-templates/preview
+///
+/// What creating a project from a built-in template package would apply (type, workflow states,
+/// labels, forms, pages). Writes nothing; a private or unknown package is `not_found`.
+pub async fn preview_project_template(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path(workspace_id): Path<Uuid>,
+    headers: HeaderMap,
+    Query(query): Query<TemplatePreviewQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let bot = bot.map(|Extension(context)| context);
+    let (_, role, is_bot) = require_workspace_access_from_auth(&state, &claims, bot.as_ref(), workspace_id)
+        .await
+        .map_err(|_| ApiError::not_found("workspace not found"))?;
+    let type_key = query.type_key.as_deref().map(str::trim).filter(|key| !key.is_empty());
+    if let Some(key) = type_key {
+        let grammar = key.len() <= 48
+            && key.starts_with(|c: char| c.is_ascii_lowercase())
+            && key
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+        if !grammar {
+            return Err(ApiError::BadRequest("type_key is not a project type key".to_string()));
+        }
     }
-    .await;
-    if let Err(error) = outcome {
-        tracing::error!(%project_id, ?error, "a project whose template failed to install was not removed");
-    }
+    let auto_approve = !is_bot && matches!(role.as_str(), "owner" | "admin");
+    let preview = template::preview_create(
+        &state,
+        workspace_id,
+        query.package_key.trim(),
+        type_key,
+        auto_approve,
+        &preferred_locale(&headers),
+    )
+    .await?;
+    Ok(ApiResponse::success(preview))
+}
+
+/// The primary language of the first `Accept-Language` entry, lower-case, or `en`.
+fn preferred_locale(headers: &HeaderMap) -> String {
+    headers
+        .get(axum::http::header::ACCEPT_LANGUAGE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split([',', ';', '-']).next())
+        .map(|tag| tag.trim().to_ascii_lowercase())
+        .filter(|tag| (2..=3).contains(&tag.len()) && tag.bytes().all(|b| b.is_ascii_lowercase()))
+        .unwrap_or_else(|| "en".to_string())
 }
 
 /// `page` / `per_page` for [`list_projects`]. Both optional: a request carrying neither keeps the
@@ -930,4 +977,29 @@ async fn get_workspace_role(state: &AppState, workspace_id: Uuid, user_id: Uuid)
     .ok_or_else(|| ApiError::NotFound("workspace not found or access denied".to_string()))?;
 
     Ok(row.role)
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::{HeaderMap, HeaderValue, header::ACCEPT_LANGUAGE};
+
+    use super::preferred_locale;
+
+    fn locale_of(value: Option<&str>) -> String {
+        let mut headers = HeaderMap::new();
+        if let Some(value) = value {
+            headers.insert(ACCEPT_LANGUAGE, HeaderValue::from_str(value).expect("header"));
+        }
+        preferred_locale(&headers)
+    }
+
+    #[test]
+    fn the_template_locale_is_the_primary_language_or_english() {
+        assert_eq!(locale_of(None), "en");
+        assert_eq!(locale_of(Some("zh-CN,zh;q=0.9,en;q=0.8")), "zh");
+        assert_eq!(locale_of(Some("EN-us")), "en");
+        assert_eq!(locale_of(Some("*")), "en");
+        assert_eq!(locale_of(Some("")), "en");
+        assert_eq!(locale_of(Some("x1")), "en");
+    }
 }

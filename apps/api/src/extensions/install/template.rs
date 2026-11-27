@@ -11,13 +11,12 @@
 //! A template never writes form permissions, project agent policy or roles (contract C3 §5.3).
 
 use platform::app::AppState;
-use sea_orm::{DbBackend, FromQueryResult, Statement, TransactionTrait};
+use sea_orm::{ConnectionTrait, DatabaseTransaction, DbBackend, FromQueryResult, Statement, TransactionTrait};
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
-use super::approve::{ApproveRequest, approve};
+use super::approve::{ApproveRequest, approve_in, refresh_rules};
 use super::store;
-use super::validate;
 use crate::error::ApiError;
 use crate::packages::open;
 
@@ -118,38 +117,38 @@ pub async fn prepare(state: &AppState, workspace_id: Uuid, package_key: &str) ->
     })
 }
 
-/// Installs a prepared template into `project_id` and approves it, as `admin` (a workspace owner or
-/// admin who is a person; the caller has checked that).
+/// Installs a prepared template into `project_id` and approves it, as `admin`, inside the caller's
+/// transaction (the project may be a row of it). The caller commits, then rebuilds the rule registry
+/// with [`approve::refresh_rules`](super::approve::refresh_rules).
 ///
 /// # Errors
 /// `install_invalid`, `installation_exists`, `form_key_taken`, `layout_key_taken`, `slot_occupied`,
 /// `page_route_taken` from the installation flow; a database failure.
-pub async fn install_prepared(
+pub async fn install_prepared_in(
     state: &AppState,
+    tx: &DatabaseTransaction,
     admin: Uuid,
     workspace_id: Uuid,
     project_id: Uuid,
-    prepared: Prepared,
+    prepared: &Prepared,
 ) -> Result<Installed, ApiError> {
-    let Prepared {
-        stored,
-        opened,
-        bind_map,
-    } = prepared;
-    let manifest = &opened.package.manifest;
-    let checked = validate::check(state, workspace_id, Some(project_id), &opened, &bind_map).await?;
-    if !checked.valid() {
-        return Err(validate::invalid(&checked.problems));
-    }
-
-    let tx = state.db.begin().await?;
+    let manifest = &prepared.opened.package.manifest;
     let installation =
-        store::insert_installation(&tx, workspace_id, Some(project_id), &manifest.id, "user", admin).await?;
-    store::insert_generation(&tx, installation.id, 1, stored.id, &[], &bind_map, "user", admin).await?;
-    tx.commit().await?;
-
-    approve(
+        store::insert_installation(tx, workspace_id, Some(project_id), &manifest.id, "user", admin).await?;
+    store::insert_generation(
+        tx,
+        installation.id,
+        1,
+        prepared.stored.id,
+        &[],
+        &prepared.bind_map,
+        "user",
+        admin,
+    )
+    .await?;
+    approve_in(
         state,
+        tx,
         admin,
         installation.id,
         &ApproveRequest {
@@ -160,7 +159,7 @@ pub async fn install_prepared(
     .await?;
 
     // Approval records the form each `create` bind produced in the generation's bind map.
-    let generation = store::generation(&state.db, installation.id, 1)
+    let generation = store::generation(tx, installation.id, 1)
         .await?
         .ok_or_else(ApiError::internal)?;
     let forms = generation
@@ -179,6 +178,218 @@ pub async fn install_prepared(
         version: manifest.version.clone(),
         forms,
     })
+}
+
+/// Installs a prepared template into an existing project in one transaction. The package's
+/// `project` block is not applied to an existing project.
+///
+/// # Errors
+/// As [`install_prepared_in`].
+pub async fn install_prepared(
+    state: &AppState,
+    admin: Uuid,
+    workspace_id: Uuid,
+    project_id: Uuid,
+    prepared: Prepared,
+) -> Result<Installed, ApiError> {
+    let outcome = async {
+        let tx = state.db.begin().await?;
+        let installed = install_prepared_in(state, &tx, admin, workspace_id, project_id, &prepared).await?;
+        tx.commit().await?;
+        Ok(installed)
+    }
+    .await;
+    refresh_rules(state).await;
+    outcome
+}
+
+/// The name of an i18n map for `locale`, falling back to `en`.
+fn localised<'a>(map: &'a std::collections::BTreeMap<String, String>, locale: &str) -> &'a str {
+    map.get(locale).or_else(|| map.get("en")).map_or("", String::as_str)
+}
+
+impl Prepared {
+    /// The project type the package names, if any.
+    #[must_use]
+    pub fn type_key(&self) -> Option<&str> {
+        self.opened
+            .package
+            .manifest
+            .project
+            .as_ref()
+            .and_then(|project| project.type_key.as_deref())
+    }
+
+    /// The workflow id created for the project when the package has workflow states.
+    fn project_block(&self) -> Option<&sv_package::ProjectBlock> {
+        self.opened.package.manifest.project.as_ref()
+    }
+}
+
+/// Creates the workflow and the labels of the package's `project` block for a project that is being
+/// created, and points the project at the workflow. Returns whether a workflow was created. Runs on
+/// the create's transaction; the labels are the workspace's, matched by `lower(name)`, and an existing
+/// label is kept as it is.
+///
+/// # Errors
+/// A database failure.
+pub async fn apply_project_block(
+    tx: &DatabaseTransaction,
+    prepared: &Prepared,
+    workspace_id: Uuid,
+    project_id: Uuid,
+    project_name: &str,
+    project_key: &str,
+    locale: &str,
+) -> Result<bool, ApiError> {
+    let Some(block) = prepared.project_block() else {
+        return Ok(false);
+    };
+    let package_key = &prepared.opened.package.manifest.id;
+    let mut created = false;
+    if let Some(states) = &block.workflow_states {
+        let workflow_id = Uuid::new_v4();
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO workflows (id, workspace_id, name, description, is_system_default, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, false, now(), now())",
+            vec![
+                workflow_id.into(),
+                workspace_id.into(),
+                format!("{project_name} ({project_key})").into(),
+                format!("Created from template {package_key}").into(),
+            ],
+        ))
+        .await?;
+        for (index, state) in states.iter().enumerate() {
+            let position = i32::try_from(index + 1).map_err(|_| ApiError::internal())?;
+            tx.execute(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "INSERT INTO workflow_states (id, workflow_id, key, display_name, category, position, color, \
+                                              is_initial, is_terminal, created_at, updated_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), now())",
+                vec![
+                    Uuid::new_v4().into(),
+                    workflow_id.into(),
+                    state.key.clone().into(),
+                    localised(&state.name, locale).to_owned().into(),
+                    state.category.clone().into(),
+                    position.into(),
+                    state.color.clone().into(),
+                    state.initial.into(),
+                    matches!(state.category.as_str(), "completed" | "cancelled").into(),
+                ],
+            ))
+            .await?;
+        }
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE projects SET workflow_id = $2 WHERE id = $1",
+            vec![project_id.into(), workflow_id.into()],
+        ))
+        .await?;
+        created = true;
+    }
+    for label in block.labels.iter().flatten() {
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO labels (id, workspace_id, name, color, description, created_at) \
+             VALUES ($1, $2, $3, $4, $5, now()) ON CONFLICT (workspace_id, lower(name)) DO NOTHING",
+            vec![
+                Uuid::new_v4().into(),
+                workspace_id.into(),
+                localised(&label.name, locale).to_owned().into(),
+                label.color.clone().into(),
+                format!("Created from template {package_key}").into(),
+            ],
+        ))
+        .await?;
+    }
+    Ok(created)
+}
+
+/// What creating a project from a template would apply, for the create-from-template preview. Writes
+/// nothing and carries no ids.
+///
+/// # Errors
+/// As [`prepare`]; `bad_request` for a malformed or unknown `type_key`.
+pub async fn preview_create(
+    state: &AppState,
+    workspace_id: Uuid,
+    package_key: &str,
+    caller_type_key: Option<&str>,
+    auto_approve: bool,
+    locale: &str,
+) -> Result<Value, ApiError> {
+    let prepared = prepare(state, workspace_id, package_key).await?;
+    let manifest = &prepared.opened.package.manifest;
+    if let Some(type_key) = caller_type_key {
+        let known = state
+            .db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT 1 FROM project_types WHERE key = $1",
+                vec![type_key.to_owned().into()],
+            ))
+            .await?
+            .is_some();
+        if !known {
+            return Err(ApiError::BadRequest("project type does not exist".to_string()));
+        }
+    }
+    let (type_key, source) = match (caller_type_key, prepared.type_key()) {
+        (Some(key), _) => (key.to_owned(), "caller"),
+        (None, Some(key)) => (key.to_owned(), "manifest"),
+        (None, None) => ("custom_form".to_owned(), "default"),
+    };
+    let block = prepared.project_block();
+    let states: Vec<Value> = block
+        .and_then(|block| block.workflow_states.as_ref())
+        .into_iter()
+        .flatten()
+        .map(|state| {
+            json!({
+                "key": state.key,
+                "name": localised(&state.name, locale),
+                "category": state.category,
+                "initial": state.initial,
+                "terminal": matches!(state.category.as_str(), "completed" | "cancelled"),
+                "color": state.color,
+            })
+        })
+        .collect();
+    let mut labels = Vec::new();
+    for label in block.and_then(|block| block.labels.as_ref()).into_iter().flatten() {
+        let name = localised(&label.name, locale);
+        let exists = state
+            .db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT 1 FROM labels WHERE workspace_id = $1 AND lower(name) = lower($2)",
+                vec![workspace_id.into(), name.to_owned().into()],
+            ))
+            .await?
+            .is_some();
+        labels.push(json!({ "name": name, "color": label.color, "exists": exists }));
+    }
+    Ok(json!({
+        "package": {
+            "package_key": manifest.id,
+            "version": manifest.version,
+            "kind": serde_json::to_value(manifest.kind).unwrap_or(Value::Null),
+        },
+        "project_settings": "applied",
+        "auto_approve": auto_approve,
+        "type_key": {"value": type_key, "source": source},
+        "workflow": {
+            "source": if states.is_empty() { "workspace_default" } else { "template" },
+            "states": states,
+        },
+        "labels": labels,
+        "forms": manifest.binds.values().filter_map(|bind| bind.create_from.as_deref()).collect::<Vec<_>>(),
+        "pages": manifest.pages.iter().map(|page| page.route.as_str()).collect::<Vec<_>>(),
+        "layouts": manifest.layouts.iter().map(|layout| layout.key.as_str()).collect::<Vec<_>>(),
+    }))
 }
 
 /// [`prepare`] and [`install_prepared`] in one call.
@@ -319,6 +530,37 @@ mod tests {
                 assert!(manifest.requests.is_empty());
                 assert!(manifest.binds.values().all(|bind| bind.create_from.is_some()));
             }
+        }
+    }
+
+    /// The project blocks of the built-in packages are what the old scenario templates had: a type,
+    /// five or six states ending in a completed one, and four labels, each named in both languages.
+    #[test]
+    fn the_scenario_templates_keep_their_type_states_and_labels() {
+        let expected = [
+            ("code-delivery", "code_project", 6),
+            ("contract-review", "custom_form", 5),
+            ("equipment-maintenance", "custom_form", 5),
+            ("quality-corrective-action", "custom_form", 5),
+            ("customer-delivery", "custom_form", 5),
+            ("restaurant-ordering", "custom_form", 5),
+        ];
+        let packages = packages();
+        for (name, type_key, states) in expected {
+            let (_, opened) = packages.iter().find(|(n, _)| n == name).expect("package");
+            let block = opened.package.manifest.project.as_ref().expect("project block");
+            assert_eq!(block.type_key.as_deref(), Some(type_key), "{name}");
+            let workflow = block.workflow_states.as_ref().expect("states");
+            assert_eq!(workflow.len(), states, "{name}");
+            assert_eq!(workflow.iter().filter(|s| s.initial).count(), 1, "{name}");
+            assert!(workflow.iter().any(|s| s.category == "completed"), "{name}");
+            let labels = block.labels.as_ref().expect("labels");
+            assert_eq!(labels.len(), 4, "{name}");
+            assert!(
+                labels
+                    .iter()
+                    .all(|l| l.name.contains_key("en") && l.name.contains_key("zh"))
+            );
         }
     }
 

@@ -84,6 +84,9 @@ pub fn preview(
         "rules": manifest.rules.iter().map(|rule| json!({"name": rule.name, "stages": rule.stages, "field_types": rule.field_types})).collect::<Vec<_>>(),
         "requests": requests,
         "public": [],
+        // A package's `project` block is applied only when a project is created from a built-in
+        // template; installing into an existing project never touches its settings.
+        "project_settings": "not_applied",
         "existing": {
             "installation_id": existing.installation_id,
             "active_generation": existing.active_generation,

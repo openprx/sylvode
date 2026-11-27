@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use platform::app::AppState;
-use sea_orm::{ConnectionTrait, DbBackend, Statement, TransactionTrait};
+use sea_orm::{ConnectionTrait, DatabaseTransaction, DbBackend, Statement, TransactionTrait};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -162,25 +162,28 @@ async fn form_in_scope(
         .is_some())
 }
 
-/// Approves `request.generation` of the installation as `admin`.
-///
-/// # Errors
-/// `installation_revoked`, `installation_generation_stale`, `installation_package_revoked`,
-/// `install_invalid` (the package no longer fits), the grant refusals, `form_key_taken`,
-/// `layout_key_taken`, `slot_occupied`, or a database failure.
-pub async fn approve(
+/// What an approval needs before it writes: the stored package, its verified bytes and the checks.
+struct Prepared {
+    stored: open::StoredPackage,
+    opened: open::Opened,
+    checked: Check,
+}
+
+/// Loads and checks what `request.generation` of the installation brings; `conn` is the database or
+/// the transaction that holds the installation.
+async fn prepare(
     state: &AppState,
-    admin: Uuid,
+    conn: &impl ConnectionTrait,
     installation_id: Uuid,
     request: &ApproveRequest,
-) -> Result<(), ApiError> {
-    let tx_probe = store::load_installation(&state.db, installation_id)
+) -> Result<Prepared, ApiError> {
+    let tx_probe = store::load_installation(conn, installation_id)
         .await?
         .ok_or_else(|| ApiError::not_found("installation not found"))?;
-    let generation = store::generation(&state.db, installation_id, request.generation)
+    let generation = store::generation(conn, installation_id, request.generation)
         .await?
         .ok_or_else(|| refuse(RefusalCode::InstallationGenerationStale))?;
-    let stored = open::find_by_row(&state.db, tx_probe.workspace_id, generation.package_row_id)
+    let stored = open::find_by_row(conn, tx_probe.workspace_id, generation.package_row_id)
         .await?
         .ok_or_else(|| ApiError::not_found("package not found"))?;
     if !stored.installable || stored.key_status != "active" {
@@ -206,12 +209,60 @@ pub async fn approve(
         &manifest.id,
         &manifest.rules,
     );
-    let outcome = write(state, admin, installation_id, request, &opened, &checked, &stored).await;
-    // The registry is rebuilt from what the database now holds, whatever the outcome was.
+    Ok(Prepared {
+        stored,
+        opened,
+        checked,
+    })
+}
+
+/// Rebuilds the plugin rule registry from what the database now holds.
+pub async fn refresh_rules(state: &AppState) {
     if let Err(error) = rules::refresh(&state.db).await {
         tracing::warn!(target: "sv::extensions", %error, "the plugin rule registry was not refreshed");
     }
+}
+
+/// Approves `request.generation` of the installation as `admin`.
+///
+/// # Errors
+/// `installation_revoked`, `installation_generation_stale`, `installation_package_revoked`,
+/// `install_invalid` (the package no longer fits), the grant refusals, `form_key_taken`,
+/// `layout_key_taken`, `slot_occupied`, or a database failure.
+pub async fn approve(
+    state: &AppState,
+    admin: Uuid,
+    installation_id: Uuid,
+    request: &ApproveRequest,
+) -> Result<(), ApiError> {
+    let outcome = async {
+        let prepared = prepare(state, &state.db, installation_id, request).await?;
+        let tx = state.db.begin().await?;
+        write(&tx, admin, installation_id, request, &prepared).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+    .await;
+    // The registry is rebuilt from what the database now holds, whatever the outcome was.
+    refresh_rules(state).await;
     outcome
+}
+
+/// [`approve`] inside a transaction the caller opened and commits: the installation and its
+/// generation may be rows of that transaction. The caller rebuilds the rule registry afterwards
+/// ([`refresh_rules`]), whatever the outcome was.
+///
+/// # Errors
+/// As [`approve`].
+pub async fn approve_in(
+    state: &AppState,
+    tx: &DatabaseTransaction,
+    admin: Uuid,
+    installation_id: Uuid,
+    request: &ApproveRequest,
+) -> Result<(), ApiError> {
+    let prepared = prepare(state, tx, installation_id, request).await?;
+    write(tx, admin, installation_id, request, &prepared).await
 }
 
 /// Refuses `installation_package_revoked` unless the package's key is active and the package still
@@ -236,25 +287,27 @@ pub async fn ensure_key_active(
 }
 
 async fn write(
-    state: &AppState,
+    tx: &DatabaseTransaction,
     admin: Uuid,
     installation_id: Uuid,
     request: &ApproveRequest,
-    opened: &open::Opened,
-    checked: &Check,
-    stored: &open::StoredPackage,
+    prepared: &Prepared,
 ) -> Result<(), ApiError> {
-    let tx = state.db.begin().await?;
-    let installation = store::lock_installation(&tx, installation_id)
+    let Prepared {
+        stored,
+        opened,
+        checked,
+    } = prepared;
+    let installation = store::lock_installation(tx, installation_id)
         .await?
         .ok_or_else(|| ApiError::not_found("installation not found"))?;
     // The key was checked before the (slow) verification; check it again under a lock that makes a
     // concurrent revocation wait, so a revoked key never ends up with an active installation.
-    ensure_key_active(&tx, installation.workspace_id, stored).await?;
+    ensure_key_active(tx, installation.workspace_id, stored).await?;
     if installation.status == "revoked" {
         return Err(refuse(RefusalCode::InstallationRevoked));
     }
-    let generation = store::generation(&tx, installation_id, request.generation)
+    let generation = store::generation(tx, installation_id, request.generation)
         .await?
         .ok_or_else(|| refuse(RefusalCode::InstallationGenerationStale))?;
     let reapproval = generation.status == "approved" && installation.active_generation == Some(generation.generation);
@@ -291,7 +344,7 @@ async fn write(
             }
             let form_id = Uuid::new_v4();
             create_form_in_transaction(
-                &tx,
+                tx,
                 NativeFormCreateRequest {
                     form_id: Some(form_id),
                     workspace_id: installation.workspace_id,
@@ -323,7 +376,7 @@ async fn write(
             }
         }
     }
-    let grants = validate_grants(&tx, &installation, &generation, &request.grants, &forms_of_binds).await?;
+    let grants = validate_grants(tx, &installation, &generation, &request.grants, &forms_of_binds).await?;
 
     if !reapproval {
         tx.execute(Statement::from_sql_and_values(
@@ -340,7 +393,7 @@ async fn write(
         ))
         .await?;
     }
-    store::review_generation(&tx, generation.id, "approved", admin).await?;
+    store::review_generation(tx, generation.id, "approved", admin).await?;
     // `active` unless an administrator disabled it; a lost approver or a revoked key is cured by this
     // approval (the package verified again above).
     tx.execute(Statement::from_sql_and_values(
@@ -353,14 +406,14 @@ async fn write(
         vec![installation_id.into(), generation.generation.into()],
     ))
     .await?;
-    store::replace_grants(&tx, generation.id, &grants, admin).await?;
+    store::replace_grants(tx, generation.id, &grants, admin).await?;
     if !reapproval {
         let scope = PlacementScope {
             workspace_id: installation.workspace_id,
             project_id: installation.project_id,
         };
         let layouts = create_layouts(
-            &tx,
+            tx,
             &opened.package.manifest,
             &opened.package.files,
             scope,
@@ -370,7 +423,7 @@ async fn write(
         )
         .await?;
         create_pages(
-            &tx,
+            tx,
             &opened.package.manifest,
             &layouts,
             scope,
@@ -380,6 +433,5 @@ async fn write(
         )
         .await?;
     }
-    tx.commit().await?;
     Ok(())
 }
