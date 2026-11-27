@@ -246,6 +246,26 @@ pub fn signature_audit_source_for_reader(source: &Value, denied_read_fields: &BT
     json!({ "signature_media": { "version": "v1", "entries": entries } })
 }
 
+/// `source` as a reader may see it: every key kept, except that `signature_media.entries` holds
+/// only the entries of readable signature fields (see [`signature_audit_source_for_reader`]).
+pub fn record_source_for_reader(mut source: Value, denied_read_fields: &BTreeSet<String>) -> Value {
+    if denied_read_fields.is_empty() {
+        return source;
+    }
+    let filtered = signature_audit_source_for_reader(&source, denied_read_fields);
+    if let Some(object) = source.as_object_mut()
+        && let Some(media) = object.get_mut("signature_media").and_then(Value::as_object_mut)
+    {
+        let entries = filtered
+            .get("signature_media")
+            .and_then(|media| media.get("entries"))
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new()));
+        media.insert("entries".to_string(), entries);
+    }
+    source
+}
+
 /// Summarises the signature lifecycle of the signature fields the reader may read.
 pub fn signature_lifecycle_summary(
     schema: &Value,
@@ -925,9 +945,10 @@ mod tests {
         SignatureAuditVerificationSummary, annotate_signature_audit_entries, append_signature_audit_source,
         cleanup_expired_replaced_signature_audit_entries_with_storage, cleanup_expired_signature_values_with_storage,
         decode_signature_data_url, expired_signature_object_key, materialize_signature_values_with_existing_storage,
-        materialize_signature_values_with_storage, signature_lifecycle_summary, signature_object_key_from_url,
-        signature_retention_days, signature_sha256_hex, signature_workflow_verification_summary,
-        verify_signature_audit_entry_with_storage, verify_signature_audit_source_with_storage,
+        materialize_signature_values_with_storage, record_source_for_reader, signature_lifecycle_summary,
+        signature_object_key_from_url, signature_retention_days, signature_sha256_hex,
+        signature_workflow_verification_summary, verify_signature_audit_entry_with_storage,
+        verify_signature_audit_source_with_storage,
     };
     use crate::{error::ApiError, services::object_storage::ObjectStorage};
     use platform::timestamp::Timestamp;
@@ -935,6 +956,27 @@ mod tests {
     use std::{fs, path::PathBuf};
     use time::Duration;
     use uuid::Uuid;
+
+    #[test]
+    fn record_source_drops_signature_entries_of_denied_fields_and_keeps_other_keys() {
+        let source = json!({
+            "type": "web",
+            "signature_media": {"version": "v1", "entries": [
+                {"field_key": "secret_sig", "object_key": "signatures/signature-secret_sig-1.png"},
+                {"field_key": "open_sig", "object_key": "signatures/signature-open_sig-2.png"},
+                {"object_key": "signatures/unattributed.png"}
+            ]}
+        });
+        let denied = ["secret_sig".to_string()].into_iter().collect();
+
+        let filtered = record_source_for_reader(source, &denied);
+
+        assert_eq!(filtered["type"], "web");
+        let entries = filtered["signature_media"]["entries"].as_array().expect("entries");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["field_key"], "open_sig");
+        assert!(!filtered.to_string().contains("secret_sig"));
+    }
 
     #[test]
     fn decodes_png_signature_data_url() {

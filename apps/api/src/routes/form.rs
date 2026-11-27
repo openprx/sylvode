@@ -43,7 +43,7 @@ use crate::{
             role_record_scope_predicate_sql, validate_permission_action, validate_permission_policy,
         },
         projections::refresh_record_projection,
-        read_policy::{QueryReadGuard, reader_title},
+        read_policy::{QueryReadGuard, RecordReadPolicy, reader_title, render_record_title, title_display_value},
         record_comments::{
             CreateRecordCommentRequest, InsertRecordCommentInput, ListRecordCommentsQuery, count_record_comments,
             find_record_comment, insert_record_comment, list_record_comments, record_comment_page,
@@ -79,8 +79,9 @@ use crate::{
         signature_media::{
             annotate_signature_audit_entries, append_signature_audit_source,
             cleanup_expired_replaced_signature_audit_entries, cleanup_expired_signature_values,
-            materialize_signature_values_with_existing_audit, signature_audit_source_for_reader,
-            signature_lifecycle_summary, signature_workflow_verification_summary, verify_signature_audit_source,
+            materialize_signature_values_with_existing_audit, record_source_for_reader,
+            signature_audit_source_for_reader, signature_lifecycle_summary, signature_workflow_verification_summary,
+            verify_signature_audit_source,
         },
         validation::{
             validate_and_normalize_recalculated_values, validate_and_normalize_values,
@@ -1338,6 +1339,7 @@ pub async fn list_form_records(
     .await?;
 
     let denied_read_fields = denied_read_field_keys(&state, form.id, &role).await?;
+    let read_policy = record_read_policy(&state, &form, &role).await?;
     let read_guard = QueryReadGuard {
         denied_read_fields: &denied_read_fields,
         title_template: &form.title_template,
@@ -1405,7 +1407,7 @@ pub async fn list_form_records(
     .await?;
     let items = items
         .into_iter()
-        .map(|record| filter_record_response_values(record, &form.title_template, &denied_read_fields))
+        .map(|record| filter_record_response_values(record, &read_policy))
         .collect();
 
     Ok(ApiResponse::success(PaginatedData {
@@ -1651,13 +1653,14 @@ async fn export_records_for_form(
     .all(&state.db)
     .await?;
 
+    let read_policy = record_read_policy(state, form, role).await?;
     let rows = records
         .iter()
         .map(|record| {
+            let readable_values = read_policy.redact_relation_snapshots(record.values.clone());
             let mut values = BTreeMap::new();
             for field in &selected_fields {
-                let display = record
-                    .values
+                let display = readable_values
                     .get(&field.key)
                     .map(export_display_value)
                     .unwrap_or_default();
@@ -2713,13 +2716,13 @@ async fn import_form_record_rows(
             },
         )
         .await?;
-        let denied_read_fields = denied_read_field_keys(state, form.id, role).await?;
-        created.push(filter_record_response_values(
-            record,
-            &form.title_template,
-            &denied_read_fields,
-        ));
+        created.push(record);
     }
+    let read_policy = record_read_policy(state, form, role).await?;
+    let created = created
+        .into_iter()
+        .map(|record| filter_record_response_values(record, &read_policy))
+        .collect::<Vec<_>>();
 
     Ok(ImportRecordsResponse {
         form_id: form.id,
@@ -3382,11 +3385,10 @@ pub async fn create_form_record(
     let (actor_id, role, is_bot) =
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "record.create").await?;
     let record = create_record_for_form(&state, &form, actor_id, &role, is_bot, req).await?;
-    let denied_read_fields = denied_read_field_keys(&state, form.id, &role).await?;
+    let read_policy = record_read_policy(&state, &form, &role).await?;
     Ok(ApiResponse::success(filter_record_response_values(
         record,
-        &form.title_template,
-        &denied_read_fields,
+        &read_policy,
     )))
 }
 
@@ -3435,7 +3437,7 @@ pub async fn preview_form_record_recalculation(
     let form = find_form(&state, form_id).await?;
     let (_, role, _) = require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "record.create").await?;
     ensure_field_write_policy_allows(&state, form.id, &role, &req.values).await?;
-    ensure_read_only_fields_untouched(&form.schema, &req.values, None)?;
+    ensure_read_only_fields_untouched(&form.schema, &req.values, None, &BTreeSet::new())?;
     let with_defaults = apply_default_values(&form.schema, req.values)?;
     let calculated = calculate_values(&state, &form, None, with_defaults).await?;
     let normalized = validate_and_normalize_values(&form.schema, calculated.clone())?;
@@ -3459,7 +3461,7 @@ pub async fn get_form_record(
     let (actor_id, role, _) =
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "form.view").await?;
     ensure_record_scope_allows_created_by(&state, form.id, &role, actor_id, record.created_by).await?;
-    let denied_read_fields = denied_read_field_keys(&state, form.id, &role).await?;
+    let read_policy = record_read_policy(&state, &form, &role).await?;
     let mut extensions = axum::http::Extensions::new();
     extensions.insert(claims);
     if let Some(Extension(bot_ctx)) = bot {
@@ -3473,7 +3475,7 @@ pub async fn get_form_record(
         crate::flow::bridge::record_flow_lineage(&state, &extensions, record.workspace_id, record.id).await?
     };
     Ok(ApiResponse::success(RecordDetailResponse {
-        record: filter_record_response_values(record, &form.title_template, &denied_read_fields),
+        record: filter_record_response_values(record, &read_policy),
         flow_lineage,
     }))
 }
@@ -3577,11 +3579,10 @@ pub async fn recalculate_form_record(
     recalculate_parent_records_for_child(&state, record_id, updated_by).await?;
 
     let record = find_record(&state, record_id).await?;
-    let denied_read_fields = denied_read_field_keys(&state, form.id, &role).await?;
+    let read_policy = record_read_policy(&state, &form, &role).await?;
     Ok(ApiResponse::success(filter_record_response_values(
         record,
-        &form.title_template,
-        &denied_read_fields,
+        &read_policy,
     )))
 }
 
@@ -3725,11 +3726,10 @@ pub async fn update_form_record(
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "record.update").await?;
     ensure_record_scope_allows_created_by(&state, form.id, &role, actor_id, record.created_by).await?;
     let record = update_record_for_form(&state, &form, record, actor_id, &role, is_bot, req).await?;
-    let denied_read_fields = denied_read_field_keys(&state, form.id, &role).await?;
+    let read_policy = record_read_policy(&state, &form, &role).await?;
     Ok(ApiResponse::success(filter_record_response_values(
         record,
-        &form.title_template,
-        &denied_read_fields,
+        &read_policy,
     )))
 }
 
@@ -3819,15 +3819,30 @@ async fn update_record_for_form_internal(
     let values = match req.values {
         Some(values) => {
             ensure_field_write_policy_allows(state, form.id, role, &values).await?;
-            ensure_read_only_fields_untouched(&form.schema, &values, Some(&record.values))?;
+            let denied_read_fields = denied_read_field_keys(state, form.id, role).await?;
+            ensure_read_only_fields_untouched(&form.schema, &values, Some(&record.values), &denied_read_fields)?;
+            let submitted_denied = values
+                .as_object()
+                .map(|submitted| {
+                    submitted
+                        .keys()
+                        .filter(|key| denied_read_fields.contains(*key))
+                        .cloned()
+                        .collect::<BTreeSet<_>>()
+                })
+                .unwrap_or_default();
             let values_with_formula =
                 run_formula_hooks(state, form.workspace_id, form.project_id, form.id, &form.key, values).await?;
             let calculated =
                 calculate_values_with_existing(state, form, Some(record_id), Some(&record.values), values_with_formula)
                     .await?;
             let with_autonumber = apply_autonumber_values(&tx, form, Some(&record.values), calculated).await?;
-            let normalized =
-                validate_and_normalize_values_with_existing_report(&form.schema, with_autonumber, &record.values)?;
+            let normalized = validate_and_normalize_values_with_existing_report(
+                &form.schema,
+                with_autonumber,
+                &record.values,
+                &submitted_denied,
+            )?;
             if !normalized.unmet_required_fields.is_empty() {
                 // Required fields that were already empty before this write. The update is allowed
                 // through so the record stays repairable, but the gap is recorded rather than
@@ -4037,11 +4052,10 @@ pub async fn restore_form_record(
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "record.delete").await?;
     ensure_record_scope_allows_created_by(&state, form.id, &role, actor_id, record.created_by).await?;
     let restored = restore_record_for_form(&state, &form, record, actor_id, is_bot, query.idempotency_key).await?;
-    let denied_read_fields = denied_read_field_keys(&state, form.id, &role).await?;
+    let read_policy = record_read_policy(&state, &form, &role).await?;
     Ok(ApiResponse::success(filter_record_response_values(
         restored,
-        &form.title_template,
-        &denied_read_fields,
+        &read_policy,
     )))
 }
 
@@ -4299,7 +4313,7 @@ pub async fn list_relation_targets(
         item.display.clone_from(&item.title);
         if let Some(display_field) = display_field.as_ref()
             && !denied_read_fields.contains(display_field)
-            && let Some(display) = item.values.get(display_field).map(display_value)
+            && let Some(display) = item.values.get(display_field).map(title_display_value)
         {
             item.display = display;
         }
@@ -4400,7 +4414,7 @@ pub async fn list_record_children(
         let child_form = find_form(&state, row.form_id).await?;
         let (_, child_role, _) =
             require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &child_form, "form.view").await?;
-        let denied_read_fields = denied_read_field_keys(&state, child_form.id, &child_role).await?;
+        let read_policy = record_read_policy(&state, &child_form, &child_role).await?;
         let record = RecordResponse {
             id: row.record_id,
             workspace_id: row.workspace_id,
@@ -4420,7 +4434,7 @@ pub async fn list_record_children(
             link_id: row.link_id,
             relation_key: row.relation_key,
             relation_type: row.relation_type,
-            record: filter_record_response_values(record, &child_form.title_template, &denied_read_fields),
+            record: filter_record_response_values(record, &read_policy),
         });
     }
 
@@ -4495,11 +4509,11 @@ pub async fn create_child_record(
         is_bot,
     )
     .await?;
-    let denied_read_fields = denied_read_field_keys(&state, child_form.id, &child_role).await?;
+    let read_policy = record_read_policy(&state, &child_form, &child_role).await?;
 
     Ok(ApiResponse::success(ChildRecordMutationResponse {
         link,
-        record: filter_record_response_values(child_record, &child_form.title_template, &denied_read_fields),
+        record: filter_record_response_values(child_record, &read_policy),
     }))
 }
 
@@ -4558,11 +4572,11 @@ pub async fn update_child_record(
         },
     )
     .await?;
-    let denied_read_fields = denied_read_field_keys(&state, child_form.id, &child_role).await?;
+    let read_policy = record_read_policy(&state, &child_form, &child_role).await?;
 
     Ok(ApiResponse::success(ChildRecordMutationResponse {
         link,
-        record: filter_record_response_values(updated, &child_form.title_template, &denied_read_fields),
+        record: filter_record_response_values(updated, &read_policy),
     }))
 }
 
@@ -4607,11 +4621,11 @@ pub async fn archive_child_record(
     };
     let link = find_parent_child_link(&state, record_id, child_record_id, relation_key.as_deref()).await?;
     let archived = archive_record_for_form(&state, &child_form, child_record, actor_id, is_bot, None).await?;
-    let denied_read_fields = denied_read_field_keys(&state, child_form.id, &child_role).await?;
+    let read_policy = record_read_policy(&state, &child_form, &child_role).await?;
 
     Ok(ApiResponse::success(ChildRecordMutationResponse {
         link,
-        record: filter_record_response_values(archived, &child_form.title_template, &denied_read_fields),
+        record: filter_record_response_values(archived, &read_policy),
     }))
 }
 
@@ -4656,11 +4670,11 @@ pub async fn restore_child_record(
     };
     let link = find_parent_child_link(&state, record_id, child_record_id, relation_key.as_deref()).await?;
     let restored = restore_record_for_form(&state, &child_form, child_record, actor_id, is_bot, None).await?;
-    let denied_read_fields = denied_read_field_keys(&state, child_form.id, &child_role).await?;
+    let read_policy = record_read_policy(&state, &child_form, &child_role).await?;
 
     Ok(ApiResponse::success(ChildRecordMutationResponse {
         link,
-        record: filter_record_response_values(restored, &child_form.title_template, &denied_read_fields),
+        record: filter_record_response_values(restored, &read_policy),
     }))
 }
 
@@ -6150,7 +6164,8 @@ async fn preview_import_row(
     ensure_field_write_policy_allows(state, form.id, role, &row.values)
         .await
         .map_err(|error| error.to_string())?;
-    ensure_read_only_fields_untouched(&form.schema, &row.values, None).map_err(|error| error.to_string())?;
+    ensure_read_only_fields_untouched(&form.schema, &row.values, None, &BTreeSet::new())
+        .map_err(|error| error.to_string())?;
     let row_values = apply_default_values(&form.schema, row.values.clone()).map_err(|error| error.to_string())?;
     let source = ensure_json_object(
         row.source.clone().unwrap_or_else(
@@ -6232,21 +6247,75 @@ fn ensure_form_permission_manager(role: &str) -> Result<(), ApiError> {
 }
 
 /// Applies field read permissions to a record before it leaves the API: denied values are
-/// stripped and the title is rendered again from readable fields only.
-fn filter_record_response_values(
-    mut record: RecordResponse,
-    title_template: &str,
-    denied_read_fields: &BTreeSet<String>,
-) -> RecordResponse {
+/// stripped, the title is rendered again from readable fields only, signature audit entries of
+/// denied fields leave `source`, and relation snapshots of restricted target forms lose their title.
+fn filter_record_response_values(mut record: RecordResponse, policy: &RecordReadPolicy) -> RecordResponse {
+    let denied = &policy.denied_read_fields;
     record.title = reader_title(
-        title_template,
+        &policy.title_template,
         record.id,
         std::mem::take(&mut record.title),
         &record.values,
-        denied_read_fields,
+        denied,
     );
-    record.values = filter_values_for_read_policy(record.values, denied_read_fields);
+    record.values = policy.redact_relation_snapshots(filter_values_for_read_policy(record.values, denied));
+    record.source = record_source_for_reader(record.source, denied);
     record
+}
+
+/// Builds the read policy of `role` on `form`, including which relation fields point at a form that
+/// hides fields from this role (an unresolvable target counts as restricted).
+async fn record_read_policy(state: &AppState, form: &FormResponse, role: &str) -> Result<RecordReadPolicy, ApiError> {
+    let denied_read_fields = denied_read_field_keys(state, form.id, role).await?;
+    let mut restricted_relation_fields = BTreeSet::new();
+    if !role_is_form_admin(role) {
+        let fields = parse_fields(&form.schema).map_err(ApiError::BadRequest)?;
+        let mut target_restricted: BTreeMap<String, bool> = BTreeMap::new();
+        for field in fields.iter().filter(|field| field.field_type == "relation") {
+            let Ok(config) = relation_target_config(&form.schema, Some(&field.key), None) else {
+                restricted_relation_fields.insert(field.key.clone());
+                continue;
+            };
+            let restricted = if let Some(restricted) = target_restricted.get(&config.form_key) {
+                *restricted
+            } else {
+                let restricted = relation_target_restricts_reader(state, form, &config.form_key, role).await?;
+                target_restricted.insert(config.form_key.clone(), restricted);
+                restricted
+            };
+            if restricted {
+                restricted_relation_fields.insert(field.key.clone());
+            }
+        }
+    }
+    Ok(RecordReadPolicy {
+        title_template: form.title_template.clone(),
+        denied_read_fields,
+        restricted_relation_fields,
+    })
+}
+
+async fn relation_target_restricts_reader(
+    state: &AppState,
+    form: &FormResponse,
+    target_form_key: &str,
+    role: &str,
+) -> Result<bool, ApiError> {
+    let target = RecordIdRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id FROM project_forms WHERE workspace_id = $1 AND project_id = $2 AND key = $3",
+        vec![
+            form.workspace_id.into(),
+            form.project_id.into(),
+            target_form_key.to_string().into(),
+        ],
+    ))
+    .one(&state.db)
+    .await?;
+    let Some(target) = target else {
+        return Ok(true);
+    };
+    Ok(!denied_read_field_keys(state, target.id, role).await?.is_empty())
 }
 
 /// Applies field level read permissions to an event before it leaves the API.
@@ -7331,35 +7400,9 @@ fn normalize_event_type(raw: &str) -> Result<String, ApiError> {
     Ok(event_type)
 }
 
+/// The stored title of a record: the single-pass renderer with every field readable.
 pub(crate) fn render_title(template: &str, record_id: Uuid, values: &Value) -> String {
-    let mut title = template.replace("{id}", &record_id.to_string());
-    if let Some(object) = values.as_object() {
-        for (key, value) in object {
-            let replacement = display_value(value);
-            title = title.replace(&format!("{{{key}}}"), &replacement);
-        }
-    }
-    if title.trim().is_empty() || title == "{id}" {
-        record_id.to_string()
-    } else {
-        title
-    }
-}
-
-fn display_value(value: &Value) -> String {
-    if let Some(value) = value.as_str() {
-        return value.to_string();
-    }
-    if let Some(decimal) = value.get("decimal").and_then(Value::as_str) {
-        if let Some(currency) = value.get("currency").and_then(Value::as_str) {
-            return format!("{decimal} {currency}");
-        }
-        return decimal.to_string();
-    }
-    if let Some(value) = value.get("value").and_then(Value::as_i64) {
-        return value.to_string();
-    }
-    value.to_string()
+    render_record_title(template, record_id, values, &BTreeSet::new())
 }
 
 fn total_pages(total: i64, per_page: i64) -> i64 {
