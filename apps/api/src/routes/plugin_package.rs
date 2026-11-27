@@ -1278,7 +1278,7 @@ async fn execute(
         .await
         {
             Ok(_) => {}
-            Err(ApiError::BadRequest(_)) => {
+            Err(ApiError::BadRequest(_) | ApiError::Coded { status: 400, .. }) => {
                 // The Form transaction has rolled back. Record only the failure classification.
                 return failure(state, &commit.execution, "form_rejected", duration_ms, fuel_consumed)
                     .await

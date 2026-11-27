@@ -4,6 +4,8 @@
 //! its native events, and its own lineage atomically. Validation and plugin hooks stay identical
 //! to direct Forms creation; this module is deliberately independent of Axum extractors.
 
+use std::collections::BTreeSet;
+
 use platform::app::AppState;
 use sea_orm::{ConnectionTrait, DatabaseTransaction, DbBackend, Statement};
 use serde_json::{Value, json};
@@ -137,7 +139,7 @@ pub async fn create_record_in_transaction(
     }
 
     ensure_field_write_policy_allows(state, form.id, role, &req.values).await?;
-    ensure_read_only_fields_untouched(&form.schema, &req.values, None)?;
+    ensure_read_only_fields_untouched(&form.schema, &req.values, None, &BTreeSet::new())?;
     let with_defaults = apply_default_values(&form.schema, req.values)?;
     let values_with_formula = run_formula_hooks(
         state,

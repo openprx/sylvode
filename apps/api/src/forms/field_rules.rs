@@ -14,13 +14,21 @@
 //!
 //! Violations are collected per field and reported with a stable code; the value, the bound and
 //! the pattern are never echoed. A rule is checked when a write sets or changes a value, so a
-//! stored value that predates a rule does not block unrelated writes to the same record.
+//! stored value that predates a rule does not block unrelated writes to the same record. A stored
+//! rule that cannot hold (saved before these checks existed) is skipped on write with a warning;
+//! schema saves refuse it. Rules are parsed and compiled once per schema content and cached.
 
-use std::collections::BTreeMap;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::{Arc, LazyLock},
+};
 
+use hashlink::LruCache;
+use parking_lot::Mutex;
 use regex_automata::meta::Regex;
 use rust_decimal::Decimal;
 use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 
 use super::{
     schema::{FormField, normalize_key, parse_fields},
@@ -34,6 +42,8 @@ pub const FIELD_RULES_FAILED: &str = "field_rules_failed";
 const MAX_PATTERN_LENGTH: usize = 512;
 const PATTERN_NFA_SIZE_LIMIT: usize = 1 << 20;
 const MAX_MAX_LENGTH: u64 = 1_000_000;
+/// Most fields of one schema that may carry a `validation.pattern`.
+pub const MAX_PATTERN_FIELDS: usize = 64;
 
 /// Why a field refused a write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,14 +120,59 @@ pub fn field_rules_error(violations: &[FieldRuleViolation]) -> ApiError {
     }
 }
 
-/// Checks the rule declarations of a schema: bounds parse, the pattern compiles within its
-/// limits, `max_length` is a positive integer and each default value is a valid value of its
-/// field that passes the field's own rules.
+/// The parsed rules of one schema, shared by every check of a write through [`write_rules`].
+#[derive(Debug, Default)]
+struct RuleSet {
+    fields: Vec<FormField>,
+    rules: BTreeMap<String, FieldRules>,
+}
+
+impl RuleSet {
+    fn rules_of<'a>(&'a self, field: &FormField) -> Option<&'a FieldRules> {
+        self.rules.get(&field.key)
+    }
+}
+
+/// How a rule declaration that cannot hold is treated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParseMode {
+    /// Schema save: refuse it.
+    Strict,
+    /// Write path: skip that one rule and log it, so a stored schema that predates the server rules
+    /// (a JS-only pattern, `max_length: 0`) never makes its form unwritable.
+    Tolerant,
+}
+
+const RULE_CACHE_CAPACITY: usize = 128;
+
+static RULE_CACHE: LazyLock<Mutex<LruCache<[u8; 32], Arc<RuleSet>>>> =
+    LazyLock::new(|| Mutex::new(LruCache::new(RULE_CACHE_CAPACITY)));
+
+/// The write-path rules of `schema`, parsed and compiled once per schema content.
+fn write_rules(schema: &Value) -> Result<Arc<RuleSet>, ApiError> {
+    let digest: [u8; 32] = Sha256::digest(serde_json::to_vec(schema).map_err(|_| ApiError::Internal)?).into();
+    if let Some(rules) = RULE_CACHE.lock().get(&digest) {
+        return Ok(Arc::clone(rules));
+    }
+    let rules = Arc::new(parse_rule_set(schema, ParseMode::Tolerant).map_err(ApiError::BadRequest)?);
+    RULE_CACHE.lock().insert(digest, Arc::clone(&rules));
+    Ok(rules)
+}
+
+/// Checks the rule declarations of a schema: bounds parse (dates take text bounds), the pattern
+/// compiles on its own and within its limits, at most [`MAX_PATTERN_FIELDS`] fields carry a pattern,
+/// `max_length` is a positive integer and each default value is a valid value of its field that
+/// passes the field's own rules.
 pub fn validate_schema_field_rules(schema: &Value) -> Result<(), String> {
-    let fields = parse_fields(schema)?;
-    let rules = parse_field_rules(schema)?;
-    for field in &fields {
-        let Some(field_rules) = rules.get(&field.key) else {
+    let set = parse_rule_set(schema, ParseMode::Strict)?;
+    let patterned = set.rules.values().filter(|rules| rules.pattern.is_some()).count();
+    if patterned > MAX_PATTERN_FIELDS {
+        return Err(format!(
+            "at most {MAX_PATTERN_FIELDS} fields may carry validation.pattern"
+        ));
+    }
+    for field in &set.fields {
+        let Some(field_rules) = set.rules_of(field) else {
             continue;
         };
         if let (Some(Bound::Number(min)), Some(Bound::Number(max))) = (&field_rules.min, &field_rules.max)
@@ -125,12 +180,12 @@ pub fn validate_schema_field_rules(schema: &Value) -> Result<(), String> {
         {
             return Err(format!("field '{}' validation.min exceeds validation.max", field.key));
         }
-        if let Some(default_value) = &field_rules.default_value {
-            let normalized = normalize_default_value(field, default_value)
-                .map_err(|_| format!("field '{}' default_value is not a valid value", field.key))?;
-            if !value_violations(field, field_rules, &normalized).is_empty() {
-                return Err(format!("field '{}' default_value breaks the field rules", field.key));
-            }
+        if matches!(field.field_type.as_str(), "date" | "datetime")
+            && [&field_rules.min, &field_rules.max]
+                .into_iter()
+                .any(|bound| matches!(bound, Some(Bound::Number(_))))
+        {
+            return Err(format!("field '{}' date bounds must be ISO date strings", field.key));
         }
     }
     Ok(())
@@ -141,10 +196,9 @@ pub fn apply_default_values(schema: &Value, values: Value) -> Result<Value, ApiE
     let Value::Object(mut object) = values else {
         return Ok(values);
     };
-    let fields = parse_fields(schema).map_err(ApiError::BadRequest)?;
-    let rules = parse_field_rules(schema).map_err(ApiError::BadRequest)?;
-    for field in &fields {
-        let Some(default_value) = rules.get(&field.key).and_then(|rules| rules.default_value.as_ref()) else {
+    let set = write_rules(schema)?;
+    for field in &set.fields {
+        let Some(default_value) = set.rules_of(field).and_then(|rules| rules.default_value.as_ref()) else {
             continue;
         };
         if is_missing(object.get(&field.key)) {
@@ -157,13 +211,16 @@ pub fn apply_default_values(schema: &Value, values: Value) -> Result<Value, ApiE
 /// Refuses a write that sets or changes a `policy.read_only` field.
 ///
 /// `submitted` is the caller's own value map, before formulas and defaults. On create a value equal
-/// to the field's default is accepted (clients prefill it); on update a value equal to the stored
-/// one is accepted (clients send back every field). An empty value is a clear, accepted only when
-/// nothing is stored.
+/// to the field's default is accepted (clients prefill it; the default is part of the schema). On
+/// update a value equal to the stored one is accepted (clients send back every field), except for a
+/// field the caller may not read: there any non-empty value is refused, so the answer never says
+/// whether a guess matched the hidden value. An empty value is a clear, accepted only when nothing
+/// is stored.
 pub fn ensure_read_only_fields_untouched(
     schema: &Value,
     submitted: &Value,
     existing: Option<&Value>,
+    denied_read_fields: &BTreeSet<String>,
 ) -> Result<(), ApiError> {
     let Some(submitted) = submitted.as_object() else {
         return Ok(());
@@ -171,17 +228,24 @@ pub fn ensure_read_only_fields_untouched(
     if submitted.is_empty() {
         return Ok(());
     }
-    let fields = parse_fields(schema).map_err(ApiError::BadRequest)?;
-    let rules = parse_field_rules(schema).map_err(ApiError::BadRequest)?;
+    let set = write_rules(schema)?;
     let mut violations = Vec::new();
-    for field in &fields {
-        let Some(field_rules) = rules.get(&field.key).filter(|rules| rules.read_only) else {
+    for field in &set.fields {
+        let Some(field_rules) = set.rules_of(field).filter(|rules| rules.read_only) else {
             continue;
         };
         let Some(raw) = submitted.get(&field.key) else {
             continue;
         };
-        if !read_only_write_allowed(field, field_rules, raw, existing) {
+        let allowed = if existing.is_some() && denied_read_fields.contains(&field.key) {
+            is_missing(Some(raw))
+                && existing
+                    .map(|existing| is_missing(existing.get(&field.key)))
+                    .unwrap_or(true)
+        } else {
+            read_only_write_allowed(field, field_rules, raw, existing)
+        };
+        if !allowed {
             violations.push(FieldRuleViolation {
                 field_key: field.key.clone(),
                 code: FieldRuleCode::ReadOnly,
@@ -198,9 +262,16 @@ pub fn ensure_read_only_fields_untouched(
 /// Checks `validation.*` on the normalized values of a write.
 ///
 /// A field is checked when it holds a value that this write set or changed (every value on create,
-/// `existing` is `None`).
-pub fn check_field_rules(schema: &Value, normalized: &Value, existing: Option<&Value>) -> Result<(), ApiError> {
-    let violations = field_rule_violations(schema, normalized, existing)?;
+/// `existing` is `None`). A key in `always_check` is checked even when equal to the stored value:
+/// the update path passes the submitted read-denied keys, so a refusal never reveals whether a
+/// guess matched the hidden stored value.
+pub fn check_field_rules(
+    schema: &Value,
+    normalized: &Value,
+    existing: Option<&Value>,
+    always_check: &BTreeSet<String>,
+) -> Result<(), ApiError> {
+    let violations = field_rule_violations(schema, normalized, existing, always_check)?;
     if violations.is_empty() {
         Ok(())
     } else {
@@ -216,15 +287,15 @@ pub fn field_rule_violations(
     schema: &Value,
     normalized: &Value,
     existing: Option<&Value>,
+    always_check: &BTreeSet<String>,
 ) -> Result<Vec<FieldRuleViolation>, ApiError> {
     let Some(values) = normalized.as_object() else {
         return Ok(Vec::new());
     };
-    let fields = parse_fields(schema).map_err(ApiError::BadRequest)?;
-    let rules = parse_field_rules(schema).map_err(ApiError::BadRequest)?;
+    let set = write_rules(schema)?;
     let mut violations = Vec::new();
-    for field in &fields {
-        let Some(field_rules) = rules.get(&field.key) else {
+    for field in &set.fields {
+        let Some(field_rules) = set.rules_of(field) else {
             continue;
         };
         let Some(value) = values.get(&field.key) else {
@@ -233,7 +304,7 @@ pub fn field_rule_violations(
         if is_missing(Some(value)) {
             continue;
         }
-        if existing.and_then(|existing| existing.get(&field.key)) == Some(value) {
+        if !always_check.contains(&field.key) && existing.and_then(|existing| existing.get(&field.key)) == Some(value) {
             continue;
         }
         violations.extend(
@@ -348,28 +419,55 @@ fn normalize_default_value(field: &FormField, default_value: &Value) -> Result<V
     normalize_field_value(field, &default_for_input(field, default_value), None)
 }
 
-fn parse_field_rules(schema: &Value) -> Result<BTreeMap<String, FieldRules>, String> {
+fn parse_rule_set(schema: &Value, mode: ParseMode) -> Result<RuleSet, String> {
+    let fields = parse_fields(schema)?;
     let mut rules = BTreeMap::new();
-    let Some(fields) = schema.get("fields").and_then(Value::as_array) else {
-        return Ok(rules);
-    };
-    for field in fields {
-        let Some(object) = field.as_object() else {
-            continue;
-        };
+    let raw_fields = schema
+        .get("fields")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for object in raw_fields.iter().filter_map(Value::as_object) {
         let Some(key) = object.get("key").and_then(Value::as_str) else {
             continue;
         };
         let key = normalize_key(key)?;
-        let field_rules = parse_rules_object(&key, object)?;
+        let Some(field) = fields.iter().find(|field| field.key == key) else {
+            continue;
+        };
+        let mut field_rules = parse_rules_object(&key, object, mode)?;
+        if let Some(default_value) = field_rules.default_value.as_ref() {
+            let valid = normalize_default_value(field, default_value)
+                .is_ok_and(|normalized| value_violations(field, &field_rules, &normalized).is_empty());
+            if !valid {
+                tolerate(
+                    mode,
+                    &key,
+                    "default_value",
+                    "default_value is not a valid value under the field rules",
+                )?;
+                field_rules.default_value = None;
+            }
+        }
         if !field_rules.is_empty() {
             rules.insert(key, field_rules);
         }
     }
-    Ok(rules)
+    Ok(RuleSet { fields, rules })
 }
 
-fn parse_rules_object(key: &str, object: &Map<String, Value>) -> Result<FieldRules, String> {
+/// Strict: the error. Tolerant: a warning naming the field and the rule (never its content).
+fn tolerate(mode: ParseMode, key: &str, rule: &str, message: &str) -> Result<(), String> {
+    match mode {
+        ParseMode::Strict => Err(format!("field '{key}' {message}")),
+        ParseMode::Tolerant => {
+            tracing::warn!(field_key = %key, rule = %rule, "stored form field rule is invalid; skipped on write");
+            Ok(())
+        }
+    }
+}
+
+fn parse_rules_object(key: &str, object: &Map<String, Value>, mode: ParseMode) -> Result<FieldRules, String> {
     let mut rules = FieldRules {
         default_value: object.get("default_value").filter(|value| !value.is_null()).cloned(),
         read_only: object
@@ -379,40 +477,29 @@ fn parse_rules_object(key: &str, object: &Map<String, Value>) -> Result<FieldRul
             .unwrap_or(false),
         ..FieldRules::default()
     };
-    let Some(validation) = object.get("validation") else {
+    let Some(validation) = object.get("validation").filter(|validation| !validation.is_null()) else {
         return Ok(rules);
     };
-    if validation.is_null() {
+    let Some(validation) = validation.as_object() else {
+        tolerate(mode, key, "validation", "validation must be an object")?;
         return Ok(rules);
-    }
-    let validation = validation
-        .as_object()
-        .ok_or_else(|| format!("field '{key}' validation must be an object"))?;
-    rules.min = parse_bound(key, "min", validation.get("min"))?;
-    rules.max = parse_bound(key, "max", validation.get("max"))?;
-    rules.max_length = match validation.get("max_length") {
-        None | Some(Value::Null) => None,
-        Some(value) => {
-            let max_length = value
-                .as_u64()
-                .filter(|max_length| (1..=MAX_MAX_LENGTH).contains(max_length))
-                .ok_or_else(|| format!("field '{key}' validation.max_length must be a positive integer"))?;
-            Some(usize::try_from(max_length).map_err(|_| format!("field '{key}' validation.max_length is too large"))?)
-        }
     };
-    rules.pattern = match validation.get("pattern") {
-        None | Some(Value::Null) => None,
-        Some(value) => {
-            let pattern = value
-                .as_str()
-                .ok_or_else(|| format!("field '{key}' validation.pattern must be a string"))?;
-            if pattern.is_empty() {
-                None
-            } else {
-                Some(compile_pattern(key, pattern)?)
-            }
-        }
-    };
+    rules.min = parse_bound(key, "min", validation.get("min")).or_else(|message| {
+        tolerate(mode, key, "validation.min", &message)?;
+        Ok::<_, String>(None)
+    })?;
+    rules.max = parse_bound(key, "max", validation.get("max")).or_else(|message| {
+        tolerate(mode, key, "validation.max", &message)?;
+        Ok::<_, String>(None)
+    })?;
+    rules.max_length = parse_max_length(validation.get("max_length")).or_else(|message| {
+        tolerate(mode, key, "validation.max_length", &message)?;
+        Ok::<_, String>(None)
+    })?;
+    rules.pattern = parse_pattern(validation.get("pattern")).or_else(|message| {
+        tolerate(mode, key, "validation.pattern", &message)?;
+        Ok::<_, String>(None)
+    })?;
     Ok(rules)
 }
 
@@ -423,7 +510,7 @@ fn parse_bound(key: &str, name: &str, value: Option<&Value>) -> Result<Option<Bo
             .to_string()
             .parse::<Decimal>()
             .map(|number| Some(Bound::Number(number)))
-            .map_err(|_| format!("field '{key}' validation.{name} is not a valid number")),
+            .map_err(|_| format!("validation.{name} is not a valid number")),
         Some(Value::String(text)) => {
             let text = text.trim();
             if text.is_empty() {
@@ -434,18 +521,47 @@ fn parse_bound(key: &str, name: &str, value: Option<&Value>) -> Result<Option<Bo
                     .map_or_else(|_| Bound::Text(text.to_string()), Bound::Number),
             ))
         }
-        Some(_) => Err(format!("field '{key}' validation.{name} must be a number or a string")),
+        Some(_) => Err(format!("validation.{name} of '{key}' must be a number or a string")),
     }
 }
 
-fn compile_pattern(key: &str, pattern: &str) -> Result<Regex, String> {
-    if pattern.len() > MAX_PATTERN_LENGTH {
-        return Err(format!("field '{key}' validation.pattern is too long"));
+fn parse_max_length(value: Option<&Value>) -> Result<Option<usize>, String> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .filter(|max_length| (1..=MAX_MAX_LENGTH).contains(max_length))
+            .and_then(|max_length| usize::try_from(max_length).ok())
+            .map(Some)
+            .ok_or_else(|| "validation.max_length must be a positive integer".to_string()),
     }
-    Regex::builder()
-        .configure(Regex::config().nfa_size_limit(Some(PATTERN_NFA_SIZE_LIMIT)))
-        .build(&format!("^(?:{pattern})$"))
-        .map_err(|_| format!("field '{key}' validation.pattern is not a valid pattern"))
+}
+
+fn parse_pattern(value: Option<&Value>) -> Result<Option<Regex>, String> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(pattern)) if pattern.is_empty() => Ok(None),
+        Some(Value::String(pattern)) => compile_pattern(pattern).map(Some),
+        Some(_) => Err("validation.pattern must be a string".to_string()),
+    }
+}
+
+/// Compiles a pattern that must match the whole value.
+///
+/// The raw pattern is compiled on its own first, so one with unbalanced groups (`a)|(b`) is refused
+/// instead of closing the wrapper group and escaping the anchors.
+fn compile_pattern(pattern: &str) -> Result<Regex, String> {
+    if pattern.len() > MAX_PATTERN_LENGTH {
+        return Err("validation.pattern is too long".to_string());
+    }
+    let build = |source: &str| {
+        Regex::builder()
+            .configure(Regex::config().nfa_size_limit(Some(PATTERN_NFA_SIZE_LIMIT)))
+            .build(source)
+            .map_err(|_| "validation.pattern is not a valid pattern".to_string())
+    };
+    build(pattern)?;
+    build(&format!("^(?:{pattern})$"))
 }
 
 #[cfg(test)]
@@ -457,6 +573,78 @@ mod tests {
     };
     use crate::error::ApiError;
     use serde_json::{Value, json};
+    use std::collections::BTreeSet;
+
+    fn none() -> BTreeSet<String> {
+        BTreeSet::new()
+    }
+
+    #[test]
+    fn a_read_denied_read_only_field_refuses_any_value_on_update() {
+        let schema = schema();
+        let existing = json!({"state": "approved"});
+        let denied: BTreeSet<String> = ["state".to_string()].into_iter().collect();
+
+        let error = ensure_read_only_fields_untouched(&schema, &json!({"state": "approved"}), Some(&existing), &denied)
+            .expect_err("a matching guess must be refused like any other");
+        assert_eq!(codes(error), vec![("state".to_string(), "read_only".to_string())]);
+        assert!(
+            ensure_read_only_fields_untouched(&schema, &json!({"state": "rejected"}), Some(&existing), &denied)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn submitted_read_denied_values_are_checked_even_when_unchanged() {
+        let normalized = json!({"quantity": {"type": "integer", "value": 11}});
+        let existing = normalized.clone();
+        let denied: BTreeSet<String> = ["quantity".to_string()].into_iter().collect();
+
+        assert!(check_field_rules(&schema(), &normalized, Some(&existing), &none()).is_ok());
+        assert!(check_field_rules(&schema(), &normalized, Some(&existing), &denied).is_err());
+    }
+
+    #[test]
+    fn a_stored_invalid_rule_is_skipped_on_write_but_refused_on_schema_save() {
+        let schema = json!({"fields": [
+            {"field_id": "fld_legacy_01", "key": "code", "type": "text",
+             "validation": {"pattern": "(?<=x)y", "max_length": 0}, "default_value": "ok"},
+            {"field_id": "fld_qty_0001", "key": "qty", "type": "integer", "validation": {"max": 3}}
+        ]});
+
+        assert!(validate_schema_field_rules(&schema).is_err());
+        assert!(check_field_rules(&schema, &json!({"code": "anything at all"}), None, &none()).is_ok());
+        assert!(check_field_rules(&schema, &json!({"qty": {"type": "integer", "value": 4}}), None, &none()).is_err());
+        assert_eq!(apply_default_values(&schema, json!({})).unwrap()["code"], "ok");
+    }
+
+    #[test]
+    fn an_unbalanced_pattern_cannot_escape_the_anchors() {
+        let field = json!({"field_id": "fld_code_0001", "key": "code", "type": "text",
+                           "validation": {"pattern": "a)|(b"}});
+
+        assert!(validate_schema_field_rules(&json!({"fields": [field]})).is_err());
+        let anchored = json!({"fields": [{"field_id": "fld_code_0001", "key": "code", "type": "text",
+                                          "validation": {"pattern": "a|b"}}]});
+        assert!(check_field_rules(&anchored, &json!({"code": "a"}), None, &none()).is_ok());
+        assert!(check_field_rules(&anchored, &json!({"code": "xa"}), None, &none()).is_err());
+        assert!(check_field_rules(&anchored, &json!({"code": "bx"}), None, &none()).is_err());
+    }
+
+    #[test]
+    fn date_bounds_must_be_text_and_patterned_fields_are_capped() {
+        let numeric_date = json!({"fields": [{"field_id": "fld_day_00001", "key": "day", "type": "date",
+                                              "validation": {"min": 20260101}}]});
+        assert!(validate_schema_field_rules(&numeric_date).is_err());
+
+        let fields = (0..=super::MAX_PATTERN_FIELDS)
+            .map(|index| {
+                json!({"field_id": format!("fld_pattern_{index:04}"), "key": format!("f{index}"),
+                                "type": "text", "validation": {"pattern": "[a-z]+"}})
+            })
+            .collect::<Vec<_>>();
+        assert!(validate_schema_field_rules(&json!({"fields": fields})).is_err());
+    }
 
     fn schema() -> Value {
         json!({
@@ -507,7 +695,7 @@ mod tests {
             "day": "2025-12-31"
         });
 
-        let error = check_field_rules(&schema(), &normalized, None).expect_err("rules must refuse");
+        let error = check_field_rules(&schema(), &normalized, None, &none()).expect_err("rules must refuse");
         let message = error.to_string();
         let codes = codes(error);
 
@@ -530,14 +718,14 @@ mod tests {
         });
         let existing = json!({"price": {"type": "number", "decimal": "0.1"}});
 
-        assert!(check_field_rules(&schema(), &normalized, Some(&existing)).is_ok());
+        assert!(check_field_rules(&schema(), &normalized, Some(&existing), &none()).is_ok());
     }
 
     #[test]
     fn recalculation_reports_violations_without_refusing() {
         let normalized = json!({"quantity": {"type": "integer", "value": 11}});
 
-        let carried = field_rule_violations(&schema(), &normalized, None).expect("violations are reported");
+        let carried = field_rule_violations(&schema(), &normalized, None, &none()).expect("violations are reported");
 
         assert_eq!(carried.len(), 1);
         assert_eq!(carried_summary(&carried), "quantity:above_max");
@@ -557,17 +745,19 @@ mod tests {
         let schema = schema();
         let existing = json!({"state": "approved"});
 
-        assert!(ensure_read_only_fields_untouched(&schema, &json!({"state": "approved"}), Some(&existing)).is_ok());
-        assert!(ensure_read_only_fields_untouched(&schema, &json!({"quantity": 3}), Some(&existing)).is_ok());
-        assert!(ensure_read_only_fields_untouched(&schema, &json!({"state": "new"}), None).is_ok());
-        assert!(ensure_read_only_fields_untouched(&schema, &json!({"state": null}), None).is_ok());
+        assert!(
+            ensure_read_only_fields_untouched(&schema, &json!({"state": "approved"}), Some(&existing), &none()).is_ok()
+        );
+        assert!(ensure_read_only_fields_untouched(&schema, &json!({"quantity": 3}), Some(&existing), &none()).is_ok());
+        assert!(ensure_read_only_fields_untouched(&schema, &json!({"state": "new"}), None, &none()).is_ok());
+        assert!(ensure_read_only_fields_untouched(&schema, &json!({"state": null}), None, &none()).is_ok());
 
         for (submitted, stored) in [
             (json!({"state": "rejected"}), Some(&existing)),
             (json!({"state": null}), Some(&existing)),
             (json!({"state": "approved"}), None),
         ] {
-            let error = ensure_read_only_fields_untouched(&schema, &submitted, stored).expect_err("read-only");
+            let error = ensure_read_only_fields_untouched(&schema, &submitted, stored, &none()).expect_err("read-only");
             assert_eq!(codes(error), vec![("state".to_string(), "read_only".to_string())]);
         }
     }
