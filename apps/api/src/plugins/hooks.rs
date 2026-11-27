@@ -9,11 +9,14 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::{
+    catalogue::{Refusal, RefusalCode},
     error::ApiError,
     events::{BusinessEventInput, insert_business_event},
-    forms::schema::parse_fields,
+    forms::{permissions::ensure_field_write_policy_allows, schema::parse_fields},
     plugins::{
+        limits,
         manifest::{PluginHook, PluginRuntimePolicy, parse_manifest},
+        redact,
         runtime::{PluginInvocationStatus, PluginRuntimeError, PluginRuntimeOutput, invoke_wasm_plugin},
     },
 };
@@ -92,13 +95,11 @@ pub async fn run_field_validator_hooks(
                     validator_rejection_message,
                 )
                 .await?;
+                // The guest's own text never reaches the caller.
                 match run {
-                    Ok((_, Some(error))) => {
-                        return Err(ApiError::BadRequest(format!("field validator rejected value: {error}")));
-                    }
                     Ok((_, None)) => {}
-                    Err(error) => {
-                        return Err(ApiError::BadRequest(format!("field validator plugin failed: {error}")));
+                    Ok((_, Some(_))) | Err(_) => {
+                        return Err(Refusal::new(RefusalCode::LegacyPluginValidationFailed, None).into());
                     }
                 }
             }
@@ -108,12 +109,17 @@ pub async fn run_field_validator_hooks(
     Ok(())
 }
 
+/// Runs the `formula` hooks of the project over `values`. A patch is applied only when the acting
+/// `role` may write each key under the form's field write policy and, when the hook declares a
+/// `field_key`, the patch touches that key alone; otherwise the write is refused
+/// `legacy_plugin_patch_denied`. Every write path passes its requester's role.
 pub async fn run_formula_hooks(
     state: &AppState,
     workspace_id: Uuid,
     project_id: Uuid,
     form_id: Uuid,
     form_key: &str,
+    role: &str,
     values: Value,
 ) -> Result<Value, ApiError> {
     let mut values = values;
@@ -164,10 +170,11 @@ pub async fn run_formula_hooks(
             match run {
                 Ok((output, _)) => {
                     let patch = formula_patch_from_output(&output.output, hook.field_key.as_deref())?;
+                    ensure_patch_allowed(state, form_id, role, hook.field_key.as_deref(), &patch).await?;
                     merge_patch(&mut values, patch)?;
                 }
-                Err(error) => {
-                    return Err(ApiError::BadRequest(format!("formula plugin failed: {error}")));
+                Err(_) => {
+                    return Err(ApiError::BadRequest("formula plugin failed".to_string()));
                 }
             }
         }
@@ -292,8 +299,10 @@ async fn run_and_record_hook(
 ) -> Result<HookRun, ApiError> {
     let state = state.clone();
     let plugin = Arc::clone(plugin);
+    let permit = limits::try_acquire(plugin.id)?;
     tokio::spawn(async move {
-        match invoke_wasm_plugin(wasm_bytes, input.clone(), runtime).await {
+        let _permit = permit;
+        match invoke_wasm_plugin(wasm_bytes, input.clone(), limits::clamp(runtime)).await {
             Ok(output) => {
                 let refused = rejection(&output.output);
                 insert_hook_invocation(&state, &plugin, hook_kind, input, output.clone(), refused.clone()).await?;
@@ -339,6 +348,37 @@ fn validator_rejection_message(output: &Value) -> Option<String> {
             .unwrap_or("validator returned ok=false")
             .to_string(),
     )
+}
+
+fn patch_denied() -> ApiError {
+    Refusal::new(RefusalCode::LegacyPluginPatchDenied, None).into()
+}
+
+/// A patch is an object, and when the hook declares a `field_key` it holds that key alone.
+fn patch_within_hook_field(hook_field_key: Option<&str>, patch: &Value) -> bool {
+    patch
+        .as_object()
+        .is_some_and(|keys| hook_field_key.is_none_or(|own| keys.keys().all(|key| key == own)))
+}
+
+/// A formula patch may touch only the hook's own field when it declares one, and only keys the
+/// caller may write under the form's field write policy; checked before the merge.
+async fn ensure_patch_allowed(
+    state: &AppState,
+    form_id: Uuid,
+    role: &str,
+    hook_field_key: Option<&str>,
+    patch: &Value,
+) -> Result<(), ApiError> {
+    if !patch_within_hook_field(hook_field_key, patch) {
+        return Err(patch_denied());
+    }
+    ensure_field_write_policy_allows(state, form_id, role, patch)
+        .await
+        .map_err(|error| match error {
+            ApiError::Forbidden(_) => patch_denied(),
+            other => other,
+        })
 }
 
 fn formula_patch_from_output(output: &Value, field_key: Option<&str>) -> Result<Value, ApiError> {
@@ -399,7 +439,7 @@ async fn insert_hook_invocation(
     hook_kind: &str,
     input: Value,
     output: PluginRuntimeOutput,
-    error_message: Option<String>,
+    refusal: Option<String>,
 ) -> Result<(), ApiError> {
     insert_invocation(
         state,
@@ -407,14 +447,14 @@ async fn insert_hook_invocation(
         InvocationInsert {
             hook_kind,
             // A validator that ran and returned `ok: false` rejected the value: it failed.
-            status: if error_message.is_some() {
+            status: if refusal.is_some() {
                 PluginInvocationStatus::Failed
             } else {
                 PluginInvocationStatus::Completed
             },
             input,
             output: output.output,
-            error_message,
+            error_code: refusal.map(|_| redact::ERROR_VALIDATION_FAILED),
             duration_ms: i64::try_from(output.duration_ms).unwrap_or(i64::MAX),
             fuel_consumed: output.fuel_consumed.and_then(|value| i64::try_from(value).ok()),
         },
@@ -437,7 +477,10 @@ async fn insert_failed_hook_invocation(
             status: error.kind.into(),
             input,
             output: json!({}),
-            error_message: Some(error.message.clone()),
+            error_code: Some(match error.kind {
+                crate::plugins::runtime::PluginFailureKind::Timeout => redact::ERROR_TIMEOUT,
+                crate::plugins::runtime::PluginFailureKind::Failed => redact::ERROR_FAILED,
+            }),
             duration_ms: i64::try_from(error.duration_ms).unwrap_or(i64::MAX),
             fuel_consumed: error.fuel_consumed.and_then(|value| i64::try_from(value).ok()),
         },
@@ -450,7 +493,7 @@ struct InvocationInsert<'a> {
     status: PluginInvocationStatus,
     input: Value,
     output: Value,
-    error_message: Option<String>,
+    error_code: Option<&'static str>,
     duration_ms: i64,
     fuel_consumed: Option<i64>,
 }
@@ -477,9 +520,9 @@ async fn insert_invocation(
             plugin.key.clone().into(),
             invocation.hook_kind.to_string().into(),
             invocation.status.as_str().into(),
-            invocation.input.into(),
-            invocation.output.into(),
-            invocation.error_message.into(),
+            redact::digest_object(&invocation.input).into(),
+            redact::digest_object(&invocation.output).into(),
+            invocation.error_code.into(),
             invocation.duration_ms.into(),
             invocation.fuel_consumed.into(),
         ],
@@ -528,7 +571,8 @@ async fn insert_invocation(
 #[cfg(test)]
 mod tests {
     use super::{
-        formula_patch_from_output, hook_matches_field, hook_matches_form, merge_patch, validator_rejection_message,
+        formula_patch_from_output, hook_matches_field, hook_matches_form, merge_patch, patch_within_hook_field,
+        validator_rejection_message,
     };
     use crate::plugins::manifest::PluginHook;
     use serde_json::json;
@@ -564,6 +608,21 @@ mod tests {
         );
         assert!(validator_rejection_message(&json!({"ok": true})).is_none());
         assert!(validator_rejection_message(&json!({})).is_none());
+    }
+
+    /// A formula hook that declares its field may write that field only; one that declares none
+    /// is left to the write policy.
+    #[test]
+    fn a_patch_stays_within_the_hooks_own_field() {
+        assert!(patch_within_hook_field(Some("total"), &json!({"total": "1"})));
+        assert!(patch_within_hook_field(Some("total"), &json!({})));
+        assert!(!patch_within_hook_field(
+            Some("total"),
+            &json!({"total": "1", "status": "paid"})
+        ));
+        assert!(!patch_within_hook_field(Some("total"), &json!({"status": "paid"})));
+        assert!(patch_within_hook_field(None, &json!({"status": "paid"})));
+        assert!(!patch_within_hook_field(None, &json!([1])));
     }
 
     #[test]

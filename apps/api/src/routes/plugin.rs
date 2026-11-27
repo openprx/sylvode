@@ -13,14 +13,17 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::{
+    catalogue::{Refusal, RefusalCode},
     error::ApiError,
     events::{BusinessEventInput, insert_business_event},
     middleware::bot_auth::{BotAuthContext, require_workspace_access_from_auth},
     plugins::{
+        limits,
         manifest::parse_manifest,
+        redact,
         runtime::{
-            MAX_MODULE_BYTES, PluginInvocationStatus, PluginRuntimeError, PluginRuntimeOutput, invoke_wasm_plugin,
-            validate_wasm_module_blocking,
+            MAX_MODULE_BYTES, PluginFailureKind, PluginInvocationStatus, PluginRuntimeError, PluginRuntimeOutput,
+            invoke_wasm_plugin, validate_wasm_module_blocking,
         },
     },
     response::{ApiResponse, PaginatedData},
@@ -79,6 +82,7 @@ struct PluginRuntimeRow {
     status: String,
 }
 
+/// One invocation as the API answers it: the digests and sizes of what ran, never the values.
 #[derive(Debug, Serialize, FromQueryResult)]
 pub struct PluginInvocationResponse {
     pub id: Uuid,
@@ -88,13 +92,34 @@ pub struct PluginInvocationResponse {
     pub plugin_key: String,
     pub hook_kind: String,
     pub status: String,
-    pub input: Value,
-    pub output: Value,
-    pub error_message: Option<String>,
+    pub input_digest: Option<String>,
+    pub input_size: Option<i64>,
+    pub output_digest: Option<String>,
+    pub output_size: Option<i64>,
+    /// A fixed code, never the guest's text.
+    pub error_code: Option<String>,
     pub duration_ms: i64,
     pub fuel_consumed: Option<i64>,
     pub created_at: platform::timestamp::Timestamp,
 }
+
+/// The answer of an invocation: the live output goes to the caller, and the row that is kept is
+/// described by its digests.
+#[derive(Debug, Serialize)]
+pub struct PluginInvokeResponse {
+    #[serde(flatten)]
+    pub invocation: PluginInvocationResponse,
+    pub output: Value,
+}
+
+/// The columns of [`PluginInvocationResponse`]; the stored `input` and `output` hold
+/// `{"digest","size"}` objects, and rows blanked by migration 0133 have neither.
+const INVOCATION_COLUMNS: &str = r"id, workspace_id, project_id, plugin_id, plugin_key, hook_kind, status,
+        input->>'digest' AS input_digest,
+        CASE WHEN jsonb_typeof(input->'size') = 'number' THEN (input->>'size')::bigint END AS input_size,
+        output->>'digest' AS output_digest,
+        CASE WHEN jsonb_typeof(output->'size') = 'number' THEN (output->>'size')::bigint END AS output_size,
+        error_message AS error_code, duration_ms, fuel_consumed, created_at";
 
 #[derive(Debug, FromQueryResult)]
 struct CountRow {
@@ -153,8 +178,8 @@ pub async fn install_project_plugin(
     Path(project_id): Path<Uuid>,
     Json(req): Json<InstallPluginRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let (workspace_id, actor_id, is_bot) =
-        ensure_project_actor(&state, &claims, bot.as_ref().map(|b| &b.0), project_id).await?;
+    let (workspace_id, actor_id) =
+        ensure_project_admin(&state, &claims, bot.as_ref().map(|b| &b.0), project_id).await?;
     let manifest = parse_manifest(&req.manifest).map_err(ApiError::BadRequest)?;
     let manifest_value = serde_json::to_value(&manifest).map_err(|_| ApiError::Internal)?;
     let (wasm_bytes, wasm_sha256) = decode_and_validate_wasm(req.wasm_base64.as_deref()).await?;
@@ -163,7 +188,7 @@ pub async fn install_project_plugin(
     let tx = state.db.begin().await?;
     // Activating a version disables the other active version of the key, in the same transaction.
     if status == "active" {
-        disable_other_active_versions(&tx, project_id, &manifest.key, None, actor_id, is_bot).await?;
+        disable_other_active_versions(&tx, project_id, &manifest.key, None, actor_id).await?;
     }
     let row = PluginResponse::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -185,7 +210,7 @@ pub async fn install_project_plugin(
             wasm_bytes.into(),
             wasm_sha256.into(),
             status.into(),
-            if is_bot { None::<Uuid> } else { Some(actor_id) }.into(),
+            Some(actor_id).into(),
         ],
     ))
     .one(&tx)
@@ -196,8 +221,8 @@ pub async fn install_project_plugin(
         &tx,
         &row,
         "plugin.installed",
-        if is_bot { None } else { Some(actor_id) },
-        json!({ "type": if is_bot { "bot" } else { "user" }, "actor_id": actor_id }),
+        Some(actor_id),
+        json!({ "type": "user", "actor_id": actor_id }),
         json!({
             "plugin_id": row.id,
             "plugin_key": row.key,
@@ -231,21 +256,12 @@ pub async fn update_plugin(
     Json(req): Json<UpdatePluginRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let existing = get_plugin_response(&state, plugin_id).await?;
-    let (actor_id, _, is_bot) =
-        require_workspace_access_from_auth(&state, &claims, bot.as_ref().map(|b| &b.0), existing.workspace_id).await?;
+    let actor_id = require_legacy_admin(&state, &claims, bot.as_ref().map(|b| &b.0), existing.workspace_id).await?;
     let status = normalize_plugin_status(req.status.as_deref())?;
 
     let tx = state.db.begin().await?;
     if status == "active" {
-        disable_other_active_versions(
-            &tx,
-            existing.project_id,
-            &existing.key,
-            Some(plugin_id),
-            actor_id,
-            is_bot,
-        )
-        .await?;
+        disable_other_active_versions(&tx, existing.project_id, &existing.key, Some(plugin_id), actor_id).await?;
     }
     let row = PluginResponse::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -263,8 +279,8 @@ pub async fn update_plugin(
         &tx,
         &row,
         "plugin.updated",
-        if is_bot { None } else { Some(actor_id) },
-        json!({ "type": if is_bot { "bot" } else { "user" }, "actor_id": actor_id }),
+        Some(actor_id),
+        json!({ "type": "user", "actor_id": actor_id }),
         json!({
             "plugin_id": row.id,
             "plugin_key": row.key,
@@ -305,7 +321,7 @@ async fn invoke_plugin_detached(
     bot: Option<Extension<BotAuthContext>>,
     plugin_id: Uuid,
     req: InvokePluginRequest,
-) -> Result<PluginInvocationResponse, ApiError> {
+) -> Result<PluginInvokeResponse, ApiError> {
     let mut row = get_plugin_runtime_row(&state, plugin_id).await?;
     let (actor_id, _, is_bot) =
         require_workspace_access_from_auth(&state, &claims, bot.as_ref().map(|b| &b.0), row.workspace_id).await?;
@@ -332,7 +348,7 @@ async fn invoke_plugin_detached(
                 status: PluginInvocationStatus::Failed,
                 input: req.input,
                 output: json!({}),
-                error_message: Some("plugin has no wasm module".to_string()),
+                error_code: Some(redact::ERROR_NO_MODULE),
                 duration_ms: 0,
                 fuel_consumed: None,
             },
@@ -347,7 +363,10 @@ async fn invoke_plugin_detached(
         )
         .await?;
         tx.commit().await?;
-        return Ok(invocation);
+        return Ok(PluginInvokeResponse {
+            invocation,
+            output: json!({}),
+        });
     };
 
     let input = json!({
@@ -355,22 +374,36 @@ async fn invoke_plugin_detached(
         "plugin_key": row.key,
         "payload": req.input,
     });
-    let result = invoke_wasm_plugin(wasm_bytes, input.clone(), manifest.capabilities.runtime).await;
+    let permit = limits::try_acquire(row.id)?;
+    let result = invoke_wasm_plugin(wasm_bytes, input.clone(), limits::clamp(manifest.capabilities.runtime)).await;
+    drop(permit);
     let tx = state.db.begin().await?;
-    let invocation = match result {
-        Ok(output) => insert_success_invocation(&tx, &row, &hook_kind, input, output).await?,
-        Err(err) => insert_failed_invocation(&tx, &row, &hook_kind, input, err).await?,
+    let (invocation, live_output) = match result {
+        Ok(output) => {
+            let live_output = output.output.clone();
+            (
+                insert_success_invocation(&tx, &row, &hook_kind, input, output).await?,
+                live_output,
+            )
+        }
+        Err(err) => (
+            insert_failed_invocation(&tx, &row, &hook_kind, input, err).await?,
+            json!({}),
+        ),
     };
     insert_plugin_invoked_event(
         &tx,
         &row,
         &invocation,
-        if is_bot { None } else { Some(actor_id) },
-        json!({ "type": if is_bot { "bot" } else { "user" }, "actor_id": actor_id }),
+        Some(actor_id),
+        json!({ "type": "user", "actor_id": actor_id }),
     )
     .await?;
     tx.commit().await?;
-    Ok(invocation)
+    Ok(PluginInvokeResponse {
+        invocation,
+        output: live_output,
+    })
 }
 
 pub async fn list_plugin_invocations(
@@ -381,7 +414,11 @@ pub async fn list_plugin_invocations(
     Query(query): Query<ListPluginsQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let plugin = get_plugin_response(&state, plugin_id).await?;
-    require_workspace_access_from_auth(&state, &claims, bot.as_ref().map(|b| &b.0), plugin.workspace_id).await?;
+    let (_, role, _) =
+        require_workspace_access_from_auth(&state, &claims, bot.as_ref().map(|b| &b.0), plugin.workspace_id).await?;
+    if !is_workspace_admin(&role) {
+        return Err(legacy_admin_only());
+    }
     let page = query.page.unwrap_or(1).max(1);
     let per_page = query.per_page.unwrap_or(50).clamp(1, 200);
     let offset = (page - 1) * per_page;
@@ -393,12 +430,13 @@ pub async fn list_plugin_invocations(
     .await?;
     let items = PluginInvocationResponse::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        r"SELECT id, workspace_id, project_id, plugin_id, plugin_key, hook_kind, status,
-                  input, output, error_message, duration_ms, fuel_consumed, created_at
+        &format!(
+            "SELECT {INVOCATION_COLUMNS}
              FROM plugin_invocations
             WHERE plugin_id = $1
             ORDER BY created_at DESC
-            LIMIT $2 OFFSET $3",
+            LIMIT $2 OFFSET $3"
+        ),
         vec![plugin_id.into(), per_page.into(), offset.into()],
     ))
     .all(&state.db)
@@ -420,6 +458,47 @@ async fn ensure_project_access(
     project_id: Uuid,
 ) -> Result<Uuid, ApiError> {
     Ok(ensure_project_actor(state, claims, bot, project_id).await?.0)
+}
+
+fn legacy_admin_only() -> ApiError {
+    Refusal::new(RefusalCode::LegacyPluginAdminOnly, None).into()
+}
+
+fn is_workspace_admin(role: &str) -> bool {
+    matches!(role, "owner" | "admin")
+}
+
+/// The acting user of an install or an update: a workspace owner or admin user. Every bot and every
+/// member is refused `legacy_plugin_admin_only`, whatever the bot's permission.
+async fn require_legacy_admin(
+    state: &AppState,
+    claims: &JwtClaims,
+    bot: Option<&BotAuthContext>,
+    workspace_id: Uuid,
+) -> Result<Uuid, ApiError> {
+    let (actor_id, role, is_bot) = require_workspace_access_from_auth(state, claims, bot, workspace_id).await?;
+    if is_bot || !is_workspace_admin(&role) {
+        return Err(legacy_admin_only());
+    }
+    Ok(actor_id)
+}
+
+async fn ensure_project_admin(
+    state: &AppState,
+    claims: &JwtClaims,
+    bot: Option<&BotAuthContext>,
+    project_id: Uuid,
+) -> Result<(Uuid, Uuid), ApiError> {
+    let row = ProjectWorkspace::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT workspace_id FROM projects WHERE id = $1",
+        vec![project_id.into()],
+    ))
+    .one(&state.db)
+    .await?
+    .ok_or_else(|| ApiError::NotFound("project not found".to_string()))?;
+    let actor_id = require_legacy_admin(state, claims, bot, row.workspace_id).await?;
+    Ok((row.workspace_id, actor_id))
 }
 
 async fn ensure_project_actor(
@@ -485,7 +564,7 @@ where
             status: PluginInvocationStatus::Completed,
             input,
             output: output.output,
-            error_message: None,
+            error_code: None,
             duration_ms: i64::try_from(output.duration_ms).unwrap_or(i64::MAX),
             fuel_consumed: output.fuel_consumed.and_then(|value| i64::try_from(value).ok()),
         },
@@ -513,7 +592,10 @@ where
             status: error.kind.into(),
             input,
             output: json!({}),
-            error_message: Some(error.message),
+            error_code: Some(match error.kind {
+                PluginFailureKind::Timeout => redact::ERROR_TIMEOUT,
+                PluginFailureKind::Failed => redact::ERROR_FAILED,
+            }),
             duration_ms: i64::try_from(error.duration_ms).unwrap_or(i64::MAX),
             fuel_consumed: error.fuel_consumed.and_then(|value| i64::try_from(value).ok()),
         },
@@ -527,7 +609,7 @@ struct NewInvocation<'a> {
     status: PluginInvocationStatus,
     input: Value,
     output: Value,
-    error_message: Option<String>,
+    error_code: Option<&'static str>,
     duration_ms: i64,
     fuel_consumed: Option<i64>,
 }
@@ -542,13 +624,14 @@ where
 {
     PluginInvocationResponse::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        r"INSERT INTO plugin_invocations (
+        format!(
+            "INSERT INTO plugin_invocations (
                 workspace_id, project_id, plugin_id, plugin_key, hook_kind, status,
                 input, output, error_message, duration_ms, fuel_consumed
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            RETURNING id, workspace_id, project_id, plugin_id, plugin_key, hook_kind, status,
-                      input, output, error_message, duration_ms, fuel_consumed, created_at",
+            RETURNING {INVOCATION_COLUMNS}"
+        ),
         vec![
             plugin.workspace_id.into(),
             plugin.project_id.into(),
@@ -556,9 +639,9 @@ where
             plugin.key.clone().into(),
             invocation.hook_kind.to_string().into(),
             invocation.status.as_str().into(),
-            invocation.input.into(),
-            invocation.output.into(),
-            invocation.error_message.into(),
+            redact::digest_object(&invocation.input).into(),
+            redact::digest_object(&invocation.output).into(),
+            invocation.error_code.into(),
             invocation.duration_ms.into(),
             invocation.fuel_consumed.into(),
         ],
@@ -713,7 +796,6 @@ async fn disable_other_active_versions<C: ConnectionTrait>(
     key: &str,
     except: Option<Uuid>,
     actor_id: Uuid,
-    is_bot: bool,
 ) -> Result<(), ApiError> {
     let disabled = PluginResponse::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -732,8 +814,8 @@ async fn disable_other_active_versions<C: ConnectionTrait>(
             tx,
             &row,
             "plugin.updated",
-            if is_bot { None } else { Some(actor_id) },
-            json!({ "type": if is_bot { "bot" } else { "user" }, "actor_id": actor_id }),
+            Some(actor_id),
+            json!({ "type": "user", "actor_id": actor_id }),
             json!({
                 "plugin_id": row.id,
                 "plugin_key": row.key,
@@ -1042,13 +1124,8 @@ mod invocation_record_database_tests {
             "timeout" => assert_eq!(row.event_status.as_deref(), Some("timeout"), "{row:?}"),
             "failed" => {
                 assert_eq!(row.event_status.as_deref(), Some("failed"), "{row:?}");
-                assert_eq!(row.fuel_consumed, Some(1_000_000_000), "{row:?}");
-                assert!(
-                    row.error_message
-                        .as_deref()
-                        .is_some_and(|error| { error.contains("all fuel consumed") }),
-                    "{row:?}"
-                );
+                assert_eq!(row.fuel_consumed, Some(50_000_000), "{row:?}");
+                assert_eq!(row.error_message.as_deref(), Some("plugin_failed"), "{row:?}");
             }
             _ => panic!("a cancelled runaway guest must record a resource limit: {row:?}"),
         }
@@ -1129,7 +1206,7 @@ mod invocation_record_database_tests {
         let row = recorded(&scratch.db, plugin_id).await;
 
         assert_eq!(row.status, "timeout", "{row:?}");
-        assert_eq!(row.error_message.as_deref(), Some("wasm execution timeout after 100ms"));
+        assert_eq!(row.error_message.as_deref(), Some("plugin_timeout"));
         assert!(row.duration_ms >= 100, "{row:?}");
         assert!(row.fuel_consumed.is_some_and(|fuel| fuel > 0), "{row:?}");
         assert_eq!(row.event_status.as_deref(), Some("timeout"), "{row:?}");
@@ -1168,12 +1245,7 @@ mod invocation_record_database_tests {
         invoke(&state, &tenant, trapping).await;
         let row = recorded(&scratch.db, trapping).await;
         assert_eq!(row.status, "failed", "{row:?}");
-        assert!(
-            row.error_message
-                .as_deref()
-                .is_some_and(|message| message.starts_with("plugin invocation trapped")),
-            "{row:?}"
-        );
+        assert_eq!(row.error_message.as_deref(), Some("plugin_failed"), "{row:?}");
         assert!(row.duration_ms > 0, "{row:?}");
         assert!(row.fuel_consumed.is_some_and(|fuel| fuel >= 50_000_000), "{row:?}");
         assert_eq!(row.event_status.as_deref(), Some("failed"), "{row:?}");
@@ -1182,12 +1254,7 @@ mod invocation_record_database_tests {
         invoke(&state, &tenant, exhausted).await;
         let row = recorded(&scratch.db, exhausted).await;
         assert_eq!(row.status, "failed", "{row:?}");
-        assert!(
-            row.error_message
-                .as_deref()
-                .is_some_and(|message| message.contains("fuel")),
-            "{row:?}"
-        );
+        assert_eq!(row.error_message.as_deref(), Some("plugin_failed"), "{row:?}");
         assert_eq!(row.fuel_consumed, Some(10), "{row:?}");
 
         let broken = install(
@@ -1202,12 +1269,7 @@ mod invocation_record_database_tests {
         invoke(&state, &tenant, broken).await;
         let row = recorded(&scratch.db, broken).await;
         assert_eq!(row.status, "failed", "{row:?}");
-        assert!(
-            row.error_message
-                .as_deref()
-                .is_some_and(|message| message.starts_with("invalid wasm module")),
-            "{row:?}"
-        );
+        assert_eq!(row.error_message.as_deref(), Some("plugin_failed"), "{row:?}");
         assert_eq!(row.fuel_consumed, None, "{row:?}");
         scratch.drop_self().await;
     }
@@ -1243,7 +1305,7 @@ mod invocation_record_database_tests {
         let row = recorded(&scratch.db, plugin_id).await;
 
         assert_eq!(row.status, "timeout", "{row:?}");
-        assert_eq!(row.error_message.as_deref(), Some("wasm execution timeout after 100ms"));
+        assert_eq!(row.error_message.as_deref(), Some("plugin_timeout"));
         assert!(row.duration_ms >= 100, "{row:?}");
         assert!(row.fuel_consumed.is_some_and(|fuel| fuel > 0), "{row:?}");
         assert_eq!(row.event_status.as_deref(), Some("timeout"), "{row:?}");

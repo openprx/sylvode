@@ -36,7 +36,12 @@ mod tests {
     fn the_classes_of_the_area() {
         assert_eq!(
             bot_class_counts(ENTRIES),
-            BTreeMap::from([("filtered", 1), ("no project", 10), ("project-resolved", 1), ("refused", 1)]),
+            BTreeMap::from([
+                ("filtered", 1),
+                ("no project", 10),
+                ("project-resolved", 1),
+                ("refused", 1)
+            ]),
             "the classes of the layouts routes changed"
         );
     }

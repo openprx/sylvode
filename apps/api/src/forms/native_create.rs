@@ -147,6 +147,7 @@ pub async fn create_record_in_transaction(
         form.project_id,
         form.id,
         &form.key,
+        role,
         with_defaults,
     )
     .await?;

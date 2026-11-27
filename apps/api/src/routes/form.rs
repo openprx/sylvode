@@ -3821,8 +3821,16 @@ async fn update_record_for_form_internal(
                         .collect::<BTreeSet<_>>()
                 })
                 .unwrap_or_default();
-            let values_with_formula =
-                run_formula_hooks(state, form.workspace_id, form.project_id, form.id, &form.key, values).await?;
+            let values_with_formula = run_formula_hooks(
+                state,
+                form.workspace_id,
+                form.project_id,
+                form.id,
+                &form.key,
+                role,
+                values,
+            )
+            .await?;
             let calculated =
                 calculate_values_with_existing(state, form, Some(record_id), Some(&record.values), values_with_formula)
                     .await?;
@@ -6177,6 +6185,7 @@ async fn preview_import_row(
         form.project_id,
         form.id,
         &form.key,
+        role,
         row_values,
     )
     .await
