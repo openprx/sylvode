@@ -22,13 +22,58 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+/// The human principal of a request. A workspace bot is refused: the caller is on a surface that only
+/// a person reaches (a personal scope, a collaboration ticket, a bootstrap).
 pub(super) fn user(claims: &JwtClaims, bot: Option<&Extension<BotAuthContext>>) -> Result<Uuid, ApiError> {
     if bot.is_some() {
         return Err(ApiError::unsupported_protocol(
-            "scope-native user operations do not accept workspace bot credentials; use the legacy adapter",
+            "this Flow operation does not accept workspace bot credentials",
         ));
     }
     Uuid::parse_str(&claims.sub).map_err(|_| ApiError::unauthenticated("invalid user identity"))
+}
+
+/// What a request names, to find the workspace a bot is judged against.
+#[derive(Clone, Copy)]
+pub(super) enum Subject {
+    Object(Uuid),
+    Scope(Uuid),
+}
+
+/// The principal of a request on workspace-bound content.
+///
+/// A person is the user of the token. A workspace bot is accepted only on a target bound to a
+/// workspace: the bot's workspace and `flow_enabled` are checked with the same policy the workspace
+/// handlers use, and the actor is the bot's own user id, so events and audit name the bot. A personal
+/// scope is never reachable with a bot credential, and a target of another workspace is refused as
+/// absent when it names an object.
+pub(super) async fn principal(
+    state: &AppState,
+    claims: &JwtClaims,
+    bot: Option<&Extension<BotAuthContext>>,
+    subject: Subject,
+) -> Result<Uuid, ApiError> {
+    let Some(Extension(context)) = bot else {
+        return user(claims, None);
+    };
+    let workspace = match subject {
+        Subject::Object(object) => scope::identity(&state.db, object).await?.workspace_id,
+        Subject::Scope(scope_id) => scope::legacy_workspace(&state.db, scope_id).await?,
+    };
+    let Some(workspace) = workspace else {
+        return Err(ApiError::unsupported_protocol(
+            "workspace bot credentials do not reach personal Flow scopes",
+        ));
+    };
+    let mut extensions = axum::http::Extensions::new();
+    extensions.insert(claims.clone());
+    extensions.insert(context.clone());
+    let access = crate::flow::policy::require_flow_workspace_access(state, &extensions, workspace).await;
+    match (subject, access) {
+        (Subject::Object(_), Err(err)) => Err(crate::flow::policy::collapse_object_denial(err)),
+        (_, Err(err)) => Err(err),
+        (_, Ok((actor, _, _))) => Ok(actor),
+    }
 }
 pub async fn get_flow_v2_capabilities(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
     Ok(ApiResponse::success(scope::capabilities(&state.db).await?))
@@ -63,7 +108,7 @@ pub async fn get_flow_v2_object(
     Path(object): Path<Uuid>,
     Query(params): Query<super::GetFlowObjectQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let user = user(&claims, bot.as_ref())?;
+    let user = principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?;
     let mut view = if let Some(seq) = params.at_seq {
         crate::flow::scope_history::object_at(&state, object, user, seq).await?
     } else {
@@ -99,7 +144,6 @@ pub async fn post_flow_v2_object(
     bot: Option<Extension<BotAuthContext>>,
     Json(input): Json<scope::CreateInput>,
 ) -> Result<Response, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
     if let Some(workspace) = scope::legacy_workspace(&state.db, input.scope_id).await? {
         let extensions = super::build_auth_extensions(claims, bot);
         let (actor, _, is_bot) =
@@ -140,6 +184,7 @@ pub async fn post_flow_v2_object(
         .await?;
         return Ok(ApiResponse::success(value).into_response());
     }
+    let actor = user(&claims, bot.as_ref())?;
     Ok(ApiResponse::success(scope::create_personal(&state.db, actor, input).await?).into_response())
 }
 #[derive(Default, Deserialize)]
@@ -195,7 +240,7 @@ pub async fn get_flow_v2_objects(
     if params.depth.is_some() {
         return Err(ApiError::invalid_update("depth applies only to navigator queries"));
     }
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = principal(&state, &claims, bot.as_ref(), Subject::Scope(scope_id)).await?;
     if params.unprojected && params.project_id.is_some() {
         return Err(ApiError::invalid_update(
             "project_id and unprojected are mutually exclusive",
@@ -261,7 +306,7 @@ pub async fn get_flow_v2_navigator(
             "navigator supports only project_id, depth and include_archived",
         ));
     }
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = principal(&state, &claims, bot.as_ref(), Subject::Scope(scope_id)).await?;
     accessible_scope(&state, scope_id, actor).await?;
     let roots = scope::roots(&state.db, scope_id).await?;
     let root = roots
@@ -356,7 +401,7 @@ pub async fn post_flow_v2_command(
     Path(object): Path<Uuid>,
     Json(mut req): Json<super::ExecuteFlowCommandRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?;
     let identity = scope::identity(&state.db, object).await?;
     req.command.payload = crate::flow::body_assets::normalize_command_payload(
         &state.db,
@@ -402,13 +447,13 @@ pub async fn post_flow_v2_command(
     }
     if let Some(workspace) = identity.workspace_id {
         let extensions = super::build_auth_extensions(claims, bot);
-        let (_, role, _) = crate::flow::policy::resolve_flow_principal(&state, &extensions, workspace).await?;
+        let (_, role, is_bot) = crate::flow::policy::resolve_flow_principal(&state, &extensions, workspace).await?;
         let result = crate::flow::command::execute_command(
             &state,
             crate::flow::command::ExecuteCommandInput {
                 object_id: object,
                 actor_id: actor,
-                principal_kind: "user".to_string(),
+                principal_kind: if is_bot { "bot" } else { "user" }.to_string(),
                 role,
                 command_type: req.command.command_type,
                 payload: req.command.payload,
@@ -604,7 +649,7 @@ pub struct ScopeTicketRequest {
     editor_model: u32,
     object_id: Uuid,
     document_id: Uuid,
-    client_id: String,
+    client_id: Uuid,
     origin: String,
     #[serde(default)]
     authorization_notifications: bool,
@@ -629,7 +674,7 @@ pub async fn post_flow_v2_ticket(
             user(&claims, bot.as_ref())?,
             req.object_id,
             req.document_id,
-            &req.client_id,
+            req.client_id,
             &req.origin,
             &state.cfg.collab_allowed_origins,
             req.authorization_notifications,
@@ -637,17 +682,28 @@ pub async fn post_flow_v2_ticket(
         .await?,
     ))
 }
+/// The upgrade query: the one-time ticket and the UUID the ticket was issued for.
+#[derive(Deserialize)]
+pub struct ScopeWsQuery {
+    ticket: String,
+    client_id: Uuid,
+}
 pub async fn get_flow_v2_ws(
     ws: axum::extract::ws::WebSocketUpgrade,
     State(state): State<AppState>,
-    Query(params): Query<crate::routes::collab::WsQuery>,
+    params: Result<Query<ScopeWsQuery>, axum::extract::rejection::QueryRejection>,
     headers: axum::http::HeaderMap,
 ) -> Response {
+    // A client id that is not a UUID cannot belong to any ticket: refuse it with the frame every
+    // other handshake failure uses.
+    let Ok(Query(params)) = params else {
+        return ApiError::unauthenticated("invalid ticket").into_response();
+    };
     let origin = headers
         .get(axum::http::header::ORIGIN)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    match crate::flow::scope_collab::consume(&state.db, &params.ticket, &params.client_id, origin).await {
+    match crate::flow::scope_collab::consume(&state.db, &params.ticket, params.client_id, origin).await {
         Ok(context) => ws
             .max_message_size(crate::flow::collab::limits::WEBSOCKET_FRAME_BYTES_MAX)
             .max_frame_size(crate::flow::collab::limits::WEBSOCKET_FRAME_BYTES_MAX)
@@ -708,7 +764,7 @@ pub async fn get_flow_v2_diff(
     Path(object): Path<Uuid>,
     Query(params): Query<super::FlowObjectDiffQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?;
     scope::authorize(&state.db, object, actor, PermissionLevel::View).await?;
     let from = params
         .from_seq
@@ -729,7 +785,7 @@ pub async fn get_flow_v2_history(
     Path(object): Path<Uuid>,
     Query(query): Query<super::FlowObjectHistoryQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?;
     let proof = scope::authorize(&state.db, object, actor, PermissionLevel::View).await?;
     let rows = state.db.query_all(Statement::from_sql_and_values(DbBackend::Postgres,
         "SELECT seq,actor,origin,message,semantic_summary,created_at FROM (
@@ -766,7 +822,13 @@ pub async fn get_flow_v2_comments(
     bot: Option<Extension<BotAuthContext>>,
     Path(object): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let proof = scope::authorize(&state.db, object, user(&claims, bot.as_ref())?, PermissionLevel::View).await?;
+    let proof = scope::authorize(
+        &state.db,
+        object,
+        principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
+        PermissionLevel::View,
+    )
+    .await?;
     let comments = crate::flow::comments::list_comments(&state.db, object).await?;
     if !scope::proof_current(&state.db, &proof).await? {
         return Err(crate::flow::policy::authorization_read_unstable());
@@ -779,7 +841,7 @@ pub async fn get_flow_v2_grants(
     bot: Option<Extension<BotAuthContext>>,
     Path(object): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?;
     let proof = scope::authorize(&state.db, object, actor, PermissionLevel::View).await?;
     let rows=state.db.query_all(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT principal_kind,principal_id,level,granted_by,created_at FROM flow_object_grants WHERE object_id=$1 AND scope_id=$2 ORDER BY principal_kind,principal_id",vec![object.into(),proof.scope_id.into()])).await?;
     let mut grants = Vec::new();
@@ -814,7 +876,6 @@ pub async fn put_flow_v2_grants(
     Path(object): Path<Uuid>,
     Json(input): Json<super::SetGrantsRequest>,
 ) -> Result<Response, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
     if scope::identity(&state.db, object).await?.workspace_id.is_some() {
         return Ok(
             super::put_flow_object_grants(State(state), Extension(claims), bot, Path(object), Json(input))
@@ -822,6 +883,7 @@ pub async fn put_flow_v2_grants(
                 .into_response(),
         );
     }
+    let actor = user(&claims, bot.as_ref())?;
     Ok(ApiResponse::success(
         crate::flow::scope_acl::mutate(
             &state.db,
@@ -846,7 +908,6 @@ pub async fn put_flow_v2_inheritance(
     Path(object): Path<Uuid>,
     Json(input): Json<super::SetInheritanceRequest>,
 ) -> Result<Response, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
     if scope::identity(&state.db, object).await?.workspace_id.is_some() {
         return Ok(
             super::put_flow_object_inheritance(State(state), Extension(claims), bot, Path(object), Json(input))
@@ -854,6 +915,7 @@ pub async fn put_flow_v2_inheritance(
                 .into_response(),
         );
     }
+    let actor = user(&claims, bot.as_ref())?;
     Ok(ApiResponse::success(
         crate::flow::scope_acl::mutate(
             &state.db,
@@ -881,7 +943,7 @@ pub async fn get_flow_v2_search(
     Path(scope_id): Path<Uuid>,
     Query(query): Query<super::FlowSearchQuery>,
 ) -> Result<Response, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = principal(&state, &claims, bot.as_ref(), Subject::Scope(scope_id)).await?;
     let owner_scope = accessible_scope(&state, scope_id, actor).await?;
     let selectors =
         usize::from(query.project_id.is_some()) + usize::from(query.unprojected) + usize::from(query.all_visible);
@@ -1002,7 +1064,7 @@ pub async fn get_flow_v2_projection_lag(
     Path(scope_id): Path<Uuid>,
     Query(params): Query<crate::flow::scope_navigation_query::QueryParams>,
 ) -> Result<Response, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = principal(&state, &claims, bot.as_ref(), Subject::Scope(scope_id)).await?;
     if let Some(workspace) = scope::legacy_workspace(&state.db, scope_id).await? {
         return Ok(super::get_flow_projection_lag(
             State(state),
@@ -1031,7 +1093,7 @@ pub async fn get_flow_v2_trash(
     Path(scope_id): Path<Uuid>,
     Query(params): Query<crate::flow::scope_navigation_query::QueryParams>,
 ) -> Result<Response, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = principal(&state, &claims, bot.as_ref(), Subject::Scope(scope_id)).await?;
     if let Some(workspace) = scope::legacy_workspace(&state.db, scope_id).await? {
         return Ok(super::get_flow_trash(
             State(state),
@@ -1135,7 +1197,6 @@ pub async fn post_flow_v2_export(
             json!({"reason":"invalid_package_object_types"}),
         ));
     }
-    let actor = user(&claims, bot.as_ref())?;
     let identity = scope::identity(&state.db, object).await?;
     if identity.workspace_id.is_some() && identity.object_type != "record" {
         return Ok(
@@ -1144,6 +1205,7 @@ pub async fn post_flow_v2_export(
                 .into_response(),
         );
     }
+    let actor = principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?;
     Ok(ApiResponse::success(
         crate::flow::scope_export::create(
             &state.db,
@@ -1164,13 +1226,13 @@ pub async fn get_flow_v2_export(
     bot: Option<Extension<BotAuthContext>>,
     Path(job): Path<Uuid>,
 ) -> Result<Response, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
-    let row = crate::flow::scope_export::get(&state.db, job, actor).await?;
-    if !crate::flow::scope_export::uses_scoped_access(&row) {
+    if crate::flow::scope_export::is_workspace_job(&state.db, job).await? {
         return Ok(super::get_flow_export(State(state), Extension(claims), bot, Path(job))
             .await?
             .into_response());
     }
+    let actor = user(&claims, bot.as_ref())?;
+    let row = crate::flow::scope_export::get(&state.db, job, actor).await?;
     Ok(ApiResponse::success(crate::flow::scope_export::receipt(&row)).into_response())
 }
 pub async fn get_flow_v2_export_artifact(
@@ -1179,15 +1241,15 @@ pub async fn get_flow_v2_export_artifact(
     bot: Option<Extension<BotAuthContext>>,
     Path(job): Path<Uuid>,
 ) -> Result<Response, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
-    let row = crate::flow::scope_export::get(&state.db, job, actor).await?;
-    if !crate::flow::scope_export::uses_scoped_access(&row) {
+    if crate::flow::scope_export::is_workspace_job(&state.db, job).await? {
         return Ok(
             super::get_flow_export_artifact(State(state), Extension(claims), bot, Path(job))
                 .await?
                 .into_response(),
         );
     }
+    let actor = user(&claims, bot.as_ref())?;
+    crate::flow::scope_export::get(&state.db, job, actor).await?;
     let (bytes, hash, format) = crate::flow::scope_export::download(&state.db, job, actor).await?;
     let mut headers = axum::http::HeaderMap::new();
 
@@ -1269,7 +1331,12 @@ pub async fn get_flow_v2_references(
     Path(object): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
     Ok(ApiResponse::success(
-        crate::flow::bridge::list_scope_references(&state, user(&claims, bot.as_ref())?, object).await?,
+        crate::flow::bridge::list_scope_references(
+            &state,
+            principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
+            object,
+        )
+        .await?,
     ))
 }
 
@@ -1281,8 +1348,13 @@ pub async fn get_flow_v2_collection(
     Query(query): Query<super::DescribeCollectionQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     Ok(ApiResponse::success(
-        crate::flow::scope_collections::describe(&state, collection, user(&claims, bot.as_ref())?, query.at_seq)
-            .await?,
+        crate::flow::scope_collections::describe(
+            &state,
+            collection,
+            principal(&state, &claims, bot.as_ref(), Subject::Object(collection)).await?,
+            query.at_seq,
+        )
+        .await?,
     ))
 }
 pub async fn get_flow_v2_schema(
@@ -1292,7 +1364,7 @@ pub async fn get_flow_v2_schema(
     Path(object): Path<Uuid>,
     Query(query): Query<super::DescribeCollectionQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?;
     scope::authorize(&state.db, object, actor, PermissionLevel::View).await?;
     let collection = crate::flow::collections::owning_collection_id(&state.db, object)
         .await?
@@ -1308,7 +1380,7 @@ pub async fn get_flow_v2_records(
     Path(collection): Path<Uuid>,
     Query(params): Query<super::GetCollectionRecordsQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = principal(&state, &claims, bot.as_ref(), Subject::Object(collection)).await?;
     scope::authorize(&state.db, collection, actor, PermissionLevel::View).await?;
     let request = crate::flow::collections::RecordQueryPayload {
         filter: super::parse_json_query(params.filter, "filter")?,
@@ -1331,7 +1403,13 @@ pub async fn post_flow_v2_record_query(
     Json(request): Json<crate::flow::collections::RecordQueryPayload>,
 ) -> Result<impl IntoResponse, ApiError> {
     Ok(ApiResponse::success(
-        crate::flow::scope_collections::query(&state, collection, user(&claims, bot.as_ref())?, &request).await?,
+        crate::flow::scope_collections::query(
+            &state,
+            collection,
+            principal(&state, &claims, bot.as_ref(), Subject::Object(collection)).await?,
+            &request,
+        )
+        .await?,
     ))
 }
 pub async fn post_flow_v2_record(
@@ -1683,7 +1761,7 @@ pub async fn post_flow_v2_comment(
         crate::flow::scope_social::create_comment(
             &state.db,
             object,
-            user(&claims, bot.as_ref())?,
+            principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
             input,
             optional_intent(&headers)?,
         )
@@ -1712,7 +1790,7 @@ pub async fn patch_flow_v2_comment(
             &state.db,
             object,
             comment,
-            user(&claims, bot.as_ref())?,
+            principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
             &input.body,
             input.mentions,
             optional_intent(&headers)?,
@@ -1731,7 +1809,7 @@ pub async fn delete_flow_v2_comment(
         &state.db,
         object,
         comment,
-        user(&claims, bot.as_ref())?,
+        principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
         optional_intent(&headers)?,
     )
     .await?;
@@ -1750,7 +1828,7 @@ pub async fn resolve_flow_v2_comment(
             &state.db,
             object,
             comment,
-            user(&claims, bot.as_ref())?,
+            principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
             input.resolved,
             optional_intent(&headers)?,
         )
@@ -1774,7 +1852,7 @@ pub async fn put_flow_v2_appearance(
         crate::flow::scope_assets::set(
             &state.db,
             object,
-            user(&claims, bot.as_ref())?,
+            principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
             input,
             optional_intent(&headers)?,
         )
@@ -1793,7 +1871,7 @@ pub async fn post_flow_v2_asset(
         crate::flow::scope_assets::upload(
             &state.db,
             object,
-            user(&claims, bot.as_ref())?,
+            principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
             &input.data_base64,
             optional_intent(&headers)?,
         )
@@ -1806,7 +1884,13 @@ pub async fn get_flow_v2_asset(
     bot: Option<Extension<BotAuthContext>>,
     Path((object, asset)): Path<(Uuid, Uuid)>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let asset = crate::flow::scope_assets::read(&state.db, object, asset, user(&claims, bot.as_ref())?).await?;
+    let asset = crate::flow::scope_assets::read(
+        &state.db,
+        object,
+        asset,
+        principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
+    )
+    .await?;
     let mut headers = axum::http::HeaderMap::new();
     headers.insert(
         axum::http::header::CONTENT_TYPE,
@@ -1834,7 +1918,12 @@ pub async fn get_flow_v2_share_links(
     Path(object): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
     Ok(ApiResponse::success(
-        crate::flow::scope_shares::list(&state.db, object, user(&claims, bot.as_ref())?).await?,
+        crate::flow::scope_shares::list(
+            &state.db,
+            object,
+            principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
+        )
+        .await?,
     ))
 }
 pub async fn post_flow_v2_share_link(
@@ -1845,7 +1934,13 @@ pub async fn post_flow_v2_share_link(
     Json(input): Json<ScopeShareCreate>,
 ) -> Result<impl IntoResponse, ApiError> {
     Ok(ApiResponse::success(
-        crate::flow::scope_shares::create(&state.db, object, user(&claims, bot.as_ref())?, input.expires_at).await?,
+        crate::flow::scope_shares::create(
+            &state.db,
+            object,
+            principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
+            input.expires_at,
+        )
+        .await?,
     ))
 }
 pub async fn revoke_flow_v2_share_link(
@@ -1855,7 +1950,13 @@ pub async fn revoke_flow_v2_share_link(
     Path((object, link)): Path<(Uuid, Uuid)>,
 ) -> Result<impl IntoResponse, ApiError> {
     Ok(ApiResponse::success(
-        crate::flow::scope_shares::revoke(&state.db, object, link, user(&claims, bot.as_ref())?).await?,
+        crate::flow::scope_shares::revoke(
+            &state.db,
+            object,
+            link,
+            principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
+        )
+        .await?,
     ))
 }
 pub async fn get_flow_v2_public_share(
@@ -1903,8 +2004,13 @@ pub async fn get_flow_v2_mentions(
     Query(input): Query<ScopeMentionQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     Ok(ApiResponse::success(
-        crate::flow::scope_social::mention_candidates(&state.db, object, user(&claims, bot.as_ref())?, &input.q)
-            .await?,
+        crate::flow::scope_social::mention_candidates(
+            &state.db,
+            object,
+            principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
+            &input.q,
+        )
+        .await?,
     ))
 }
 
@@ -1951,7 +2057,7 @@ pub async fn get_flow_v2_relations(
         crate::flow::scope_relations::list(
             &state,
             object,
-            user(&claims, bot.as_ref())?,
+            principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?,
             crate::flow::relations::ListRelationsParams {
                 direction: crate::flow::relations::RelationDirection::parse(input.direction.as_deref())?,
                 relation_type: input.relation_type,
@@ -2225,7 +2331,6 @@ pub async fn post_flow_v2_conversion_preview(
     bot: Option<Extension<BotAuthContext>>,
     Json(mut input): Json<Value>,
 ) -> Result<Response, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
     let object = input
         .field("source_object_id")
         .as_str()
@@ -2241,6 +2346,7 @@ pub async fn post_flow_v2_conversion_preview(
         .or(identity.workspace_id)
         .ok_or_else(|| ApiError::invalid_update("explicit destination_workspace_id required"))?;
     if identity.workspace_id != Some(destination) {
+        let actor = user(&claims, bot.as_ref())?;
         *input.field_mut("destination_workspace_id")? = json!(destination);
         let request =
             serde_json::from_value(input).map_err(|_| ApiError::invalid_update("invalid scoped conversion preview"))?;
@@ -2300,11 +2406,15 @@ pub async fn post_flow_v2_conversion(
     bot: Option<Extension<BotAuthContext>>,
     Json(input): Json<crate::flow::bridge::ConversionCommitInput>,
 ) -> Result<Response, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
     let (_, scoped) = scope_conversion_identity(&state, input.preview_id, false).await?;
+    let actor = if scoped {
+        Some(user(&claims, bot.as_ref())?)
+    } else {
+        None
+    };
     let extensions = super::build_auth_extensions(claims, bot);
     let origin = super::request_origin(&extensions);
-    let result = if scoped {
+    let result = if let Some(actor) = actor {
         crate::flow::bridge::commit_scope_conversion(&state, actor, input, origin).await?
     } else {
         crate::flow::bridge::commit_conversion(&state, &extensions, input, origin).await?
@@ -2317,10 +2427,14 @@ pub async fn get_flow_v2_conversion(
     bot: Option<Extension<BotAuthContext>>,
     Path(job): Path<Uuid>,
 ) -> Result<Response, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
     let (_, scoped) = scope_conversion_identity(&state, job, true).await?;
+    let actor = if scoped {
+        Some(user(&claims, bot.as_ref())?)
+    } else {
+        None
+    };
     let extensions = super::build_auth_extensions(claims, bot);
-    let result = if scoped {
+    let result = if let Some(actor) = actor {
         crate::flow::bridge::scope_conversion_status(&state, actor, job).await?
     } else {
         crate::flow::bridge::conversion_status(&state, &extensions, job).await?
@@ -2334,11 +2448,15 @@ pub async fn post_flow_v2_conversion_retry(
     Path(job): Path<Uuid>,
     Json(input): Json<crate::flow::bridge::ConversionRetryInput>,
 ) -> Result<Response, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
     let (_, scoped) = scope_conversion_identity(&state, job, true).await?;
+    let actor = if scoped {
+        Some(user(&claims, bot.as_ref())?)
+    } else {
+        None
+    };
     let extensions = super::build_auth_extensions(claims, bot);
     let origin = super::request_origin(&extensions);
-    let result = if scoped {
+    let result = if let Some(actor) = actor {
         crate::flow::bridge::retry_scope_conversion(&state, actor, job, input, origin).await?
     } else {
         crate::flow::bridge::retry_conversion(&state, &extensions, job, input, origin).await?
@@ -2351,11 +2469,11 @@ pub async fn get_flow_v2_conversion_owner(
     bot: Option<Extension<BotAuthContext>>,
     Path(id): Path<Uuid>,
 ) -> Result<Response, ApiError> {
-    let actor = user(&claims, bot.as_ref())?;
     let row=state.db.query_one(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT source_object_id,workspace_id,actor_id FROM flow_conversion_previews WHERE id=$1 UNION ALL SELECT source_object_id,workspace_id,actor_id FROM flow_conversion_jobs WHERE id=$1 LIMIT 1",vec![id.into()])).await?.ok_or_else(||ApiError::not_found("conversion not found"))?;
     let object = row.try_get("", "source_object_id")?;
     let identity = scope::identity(&state.db, object).await?;
     if identity.workspace_id != Some(row.try_get("", "workspace_id")?) {
+        let actor = user(&claims, bot.as_ref())?;
         scope::authorize(&state.db, object, actor, PermissionLevel::View).await?;
         if actor != row.try_get::<Uuid>("", "actor_id")? {
             return Err(ApiError::not_found("conversion not found"));
@@ -2420,7 +2538,7 @@ pub async fn get_flow_v2_collab_diagnostics(
             "diagnostic DTO includes sizes; include_sizes must be true or omitted",
         ));
     }
-    let actor = user(&claims, bot.as_ref())?;
+    let actor = principal(&state, &claims, bot.as_ref(), Subject::Object(object)).await?;
     let proof = scope::authorize(&state.db, object, actor, PermissionLevel::View).await?;
     let row=state.db.query_one(Statement::from_sql_and_values(DbBackend::Postgres,
         "SELECT d.id,d.engine,d.format_version,d.snapshot_seq,d.head_seq,d.head_frontier,d.update_count,d.byte_count,p.document_seq AS projection_seq,(SELECT count(*) FROM flow_integrity_records i WHERE i.scope_id=o.scope_id AND i.subject_kind='collab_document' AND i.subject_id=d.id::text AND i.status='open') AS open_issues FROM flow_objects o JOIN collab_documents d ON d.object_id=o.id JOIN flow_object_projections p ON p.object_id=o.id WHERE o.id=$1",vec![object.into()])).await?.ok_or_else(||ApiError::not_found("Flow document not found"))?;

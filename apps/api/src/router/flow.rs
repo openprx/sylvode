@@ -388,6 +388,13 @@ pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
             )),
         )
         .route(
+            "/api/v2/flow/objects/{object_id}/collab/verify",
+            post(routes::collab::verify_collab).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
             "/api/v2/flow/objects/{object_id}/operations",
             post(routes::flow::post_flow_v2_operation).route_layer(axum_middleware::from_fn_with_state(
                 auth_state.clone(),

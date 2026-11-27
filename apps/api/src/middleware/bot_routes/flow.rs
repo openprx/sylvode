@@ -127,6 +127,7 @@ pub static ROUTES: &[RunnerRoute] = &[
     r("DELETE", "/api/v2/flow/objects/{object_id}/child-reservations/{reservation_id}", Class::Project(Find::FlowObject("object_id"))),
     r("GET", "/api/v2/flow/objects/{object_id}/child-reservations/{reservation_id}", Class::Project(Find::FlowObject("object_id"))),
     r("GET", "/api/v2/flow/objects/{object_id}/collab", Class::Project(Find::FlowObject("object_id"))),
+    r("POST", "/api/v2/flow/objects/{object_id}/collab/verify", Class::Project(Find::FlowObject("object_id"))),
     r("POST", "/api/v2/flow/objects/{object_id}/commands", Class::Project(Find::FlowObject("object_id"))),
     r("GET", "/api/v2/flow/objects/{object_id}/comments", Class::Project(Find::FlowObject("object_id"))),
     rc("POST", "/api/v2/flow/objects/{object_id}/comments", Class::Project(Find::FlowObject("object_id"))),
@@ -187,7 +188,7 @@ mod tests {
                 ("admin", 15),
                 ("no project", 1),
                 ("own resource", 1),
-                ("project-resolved", 132),
+                ("project-resolved", 133),
                 ("refused", 16)
             ]),
             "the classes of the flow routes changed"

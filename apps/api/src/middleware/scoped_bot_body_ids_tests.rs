@@ -110,8 +110,16 @@ const ACCOUNTED: &[(&str, &str, Account)] = &[
         Exempt("the object export refuses a project_id (routes/flow.rs); the scope export is scope-native"),
     ),
     // Scope-native routes: the handler refuses bot credentials.
-    ("NewComment", "block_id", ScopeNative("post_flow_v2_comment")),
-    ("NewComment", "parent_id", ScopeNative("post_flow_v2_comment")),
+    (
+        "NewComment",
+        "block_id",
+        Exempt("a block of the route's own page: normalized and registered against that object only"),
+    ),
+    (
+        "NewComment",
+        "parent_id",
+        Exempt("flow/comments.rs resolves the parent comment within the same object"),
+    ),
     (
         "MountInput",
         "destination_project_id",

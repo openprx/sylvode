@@ -169,17 +169,10 @@ async fn direct_guest_ticket_matches_read_acl_and_revocation_fences_commit() {
     let guest_view = scope::object_view(db, object, guest).await.unwrap();
     assert!(guest_view.get("parent_id").is_none());
     let origin = "http://127.0.0.1:18080";
-    let ticket = scope_collab::issue(
-        db,
-        guest,
-        object,
-        document,
-        "guest-client",
-        origin,
-        &[origin.to_string()],
-    )
-    .await
-    .unwrap();
+    let guest_client = Uuid::new_v4();
+    let ticket = scope_collab::issue(db, guest, object, document, guest_client, origin, &[origin.to_string()])
+        .await
+        .unwrap();
     assert!(ticket.field("websocket_path").as_str().unwrap().contains("?ticket="));
     assert_eq!(count(db, "workspace_members").await, 0);
     let tx = db.begin().await.unwrap();
@@ -196,7 +189,7 @@ async fn direct_guest_ticket_matches_read_acl_and_revocation_fences_commit() {
     assert!(scope::fence(&tx, &proof).await.is_err());
     tx.rollback().await.unwrap();
     assert!(
-        scope_collab::consume(db, ticket.field("ticket").as_str().unwrap(), "guest-client", origin)
+        scope_collab::consume(db, ticket.field("ticket").as_str().unwrap(), guest_client, origin)
             .await
             .is_err()
     );
@@ -1195,19 +1188,21 @@ async fn authorization_notifications_are_explicitly_bound_to_the_one_use_ticket(
     )
     .unwrap();
     let origin = "http://127.0.0.1:18080";
-    let old = scope_collab::issue(db, owner, page, document, "old-client", origin, &[origin.into()])
+    let old_client = Uuid::new_v4();
+    let new_client = Uuid::new_v4();
+    let old = scope_collab::issue(db, owner, page, document, old_client, origin, &[origin.into()])
         .await
         .unwrap();
     assert_eq!(*old.field("authorization_notifications"), false);
-    let old = scope_collab::consume(db, old.field("ticket").as_str().unwrap(), "old-client", origin)
+    let old = scope_collab::consume(db, old.field("ticket").as_str().unwrap(), old_client, origin)
         .await
         .unwrap();
     assert!(!old.authorization_notifications);
-    let new = scope_collab::issue_with_options(db, owner, page, document, "new-client", origin, &[origin.into()], true)
+    let new = scope_collab::issue_with_options(db, owner, page, document, new_client, origin, &[origin.into()], true)
         .await
         .unwrap();
     assert_eq!(*new.field("authorization_notifications"), true);
-    let context = scope_collab::consume(db, new.field("ticket").as_str().unwrap(), "new-client", origin)
+    let context = scope_collab::consume(db, new.field("ticket").as_str().unwrap(), new_client, origin)
         .await
         .unwrap();
     assert!(context.authorization_notifications);
@@ -1215,7 +1210,7 @@ async fn authorization_notifications_are_explicitly_bound_to_the_one_use_ticket(
     assert_eq!(context.object_id, page);
     assert_eq!(context.document_id, document);
     assert!(
-        scope_collab::consume(db, new.field("ticket").as_str().unwrap(), "new-client", origin)
+        scope_collab::consume(db, new.field("ticket").as_str().unwrap(), new_client, origin)
             .await
             .is_err()
     );
