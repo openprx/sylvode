@@ -1188,3 +1188,95 @@ async fn a_server_shutdown_ends_open_streams_with_the_shutdown_event() {
     );
     rig.finish().await;
 }
+
+#[tokio::test]
+async fn a_lost_listener_connection_tells_every_open_stream_to_re_read_with_lagged() {
+    let Some(rig) = Rig::standard("hints_listener_lost").await else {
+        return;
+    };
+    let (a, b) = (rig.bot().await, rig.bot().await);
+    let mut first = rig.open(&a).await;
+    let mut second = rig.open(&b).await;
+
+    // Kill the listener's backend from outside: the connection drops without any error the
+    // listener would report as a failure of its own, and what was notified meanwhile is lost.
+    let killed = rig
+        .db()
+        .query_one(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT count(pg_terminate_backend(pid)) AS killed FROM pg_stat_activity \
+             WHERE datname = current_database() AND pid <> pg_backend_pid() AND query ILIKE 'LISTEN%'",
+        ))
+        .await
+        .expect("query")
+        .expect("row")
+        .try_get::<i64>("", "killed")
+        .expect("count");
+    assert_eq!(killed, 1, "exactly the listener's backend was terminated");
+
+    for sse in [&mut first, &mut second] {
+        let messages = sse.read_to_end(Duration::from_secs(5)).await;
+        assert_eq!(
+            messages.last().expect("a closing frame").event.as_deref(),
+            Some("lagged"),
+            "{messages:?}"
+        );
+    }
+    // The listener came back: a new stream gets hints again.
+    let item = rig.item("after the loss").await;
+    let mut fresh = rig.open(&a).await;
+    rig.touch(item).await;
+    assert_eq!(fresh.event("issue", PATIENCE).await, json!({"id": item.to_string()}));
+    rig.finish().await;
+}
+
+#[tokio::test]
+async fn a_bot_that_loses_read_permission_has_its_open_stream_ended_and_gets_no_more_hints() {
+    let Some(rig) = Rig::standard("hints_read_removed").await else {
+        return;
+    };
+    let bot = rig.bot().await;
+    let mut sse = rig.open(&bot).await;
+    let item = rig.item("watched").await;
+    rig.touch(item).await;
+    assert_eq!(sse.event("issue", PATIENCE).await, json!({"id": item.to_string()}));
+
+    // `write` implies `read`: the stream stays open.
+    exec(
+        rig.db(),
+        "UPDATE workspace_bots SET permissions = '[\"write\"]'::jsonb WHERE id = $1",
+        vec![bot.id.into()],
+    )
+    .await;
+    assert_eq!(sse.event("access_changed", PATIENCE).await, json!({}));
+    rig.touch(item).await;
+    assert_eq!(sse.event("issue", PATIENCE).await, json!({"id": item.to_string()}));
+
+    exec(
+        rig.db(),
+        "UPDATE workspace_bots SET permissions = '[]'::jsonb WHERE id = $1",
+        vec![bot.id.into()],
+    )
+    .await;
+    let started = Instant::now();
+    let messages = sse.read_to_end(Duration::from_secs(4)).await;
+    assert!(
+        started.elapsed() < Duration::from_millis(2500),
+        "pushed, not found by the tick"
+    );
+    let messages: Vec<Msg> = messages
+        .into_iter()
+        .filter(|m| m.event.as_deref() != Some("access_changed"))
+        .collect();
+    let events: Vec<_> = messages.iter().filter_map(|m| m.event.as_deref()).collect();
+    assert_eq!(events.last(), Some(&"revoked"), "{events:?}");
+    assert!(
+        !events.contains(&"issue") && !events.contains(&"tools"),
+        "no hint after the permission is gone: {events:?}"
+    );
+    // The middleware refuses the same bot's next request, so a reconnect is refused.
+    let response = rig.open_status(Some(&bot.token)).await;
+    let body: Value = response.json().await.expect("an envelope");
+    assert_eq!(body["code"], 403, "{body}");
+    rig.finish().await;
+}

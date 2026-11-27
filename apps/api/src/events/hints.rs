@@ -59,7 +59,7 @@ use tokio::time::Instant;
 use uuid::Uuid;
 
 use crate::error::ApiError;
-use crate::middleware::bot_auth::{BotAuthContext, sha256_hex};
+use crate::middleware::bot_auth::{BotAuthContext, BotPermission, bot_permissions_allow, sha256_hex};
 use crate::middleware::scoped_bot::{ProjectFilter, readable_projects};
 use crate::routes::auth::{extract_bearer_token, extract_cookie_token};
 
@@ -406,8 +406,14 @@ impl HintHub {
             self.ready.send_replace(true);
             loop {
                 tokio::select! {
-                    received = listener.recv() => match received {
-                        Ok(notification) => self.dispatch(notification.channel(), notification.payload()),
+                    // `try_recv`, not `recv`: `recv` reconnects silently after a lost connection,
+                    // and what was notified in the gap is gone. `Ok(None)` reports exactly that.
+                    received = listener.try_recv() => match received {
+                        Ok(Some(notification)) => self.dispatch(notification.channel(), notification.payload()),
+                        Ok(None) => {
+                            tracing::warn!("change hint LISTEN connection lost; streams are told to re-read");
+                            self.signal(Signal::Reset);
+                        }
                         Err(error) => {
                             tracing::warn!(error = %error, "change hint LISTEN dropped; reconnecting");
                             self.ready.send_replace(false);
@@ -456,7 +462,16 @@ struct TokenRow {
     id: Uuid,
     is_active: bool,
     user_active: bool,
+    permissions: serde_json::Value,
     remaining_ms: Option<i64>,
+}
+
+fn can_read(permissions: &serde_json::Value) -> bool {
+    let names: Vec<String> = permissions
+        .as_array()
+        .map(|list| list.iter().filter_map(|name| name.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    bot_permissions_allow(&names, BotPermission::Read)
 }
 
 /// The bot-token lookup of `bot_or_user_auth_middleware`, by `token_hash`: the same predicate
@@ -464,7 +479,7 @@ struct TokenRow {
 async fn check_token(db: &DatabaseConnection, token_hash: &str, bot_id: Uuid) -> Result<TokenState, DbErr> {
     let row = TokenRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT b.id, b.is_active, COALESCE(u.is_active, true) AS user_active, \
+        "SELECT b.id, b.is_active, COALESCE(u.is_active, true) AS user_active, b.permissions, \
                 CASE WHEN b.expires_at IS NULL THEN NULL \
                      ELSE (EXTRACT(EPOCH FROM (b.expires_at - now())) * 1000)::bigint END AS remaining_ms \
          FROM workspace_bots b LEFT JOIN users u ON u.id = b.id \
@@ -476,6 +491,9 @@ async fn check_token(db: &DatabaseConnection, token_hash: &str, bot_id: Uuid) ->
     Ok(match row {
         None => TokenState::Revoked,
         Some(row) if row.id != bot_id || !row.is_active || !row.user_active => TokenState::Revoked,
+        // The stream is a read of the bot's data: a token that lost `read` (and `write`, `admin`)
+        // is treated as revoked, as the middleware would refuse its next GET.
+        Some(row) if !can_read(&row.permissions) => TokenState::Revoked,
         Some(row) => match row.remaining_ms {
             Some(ms) if ms <= 0 => TokenState::Expired,
             Some(ms) => TokenState::Valid(Some(Duration::from_millis(ms.unsigned_abs()))),
@@ -613,6 +631,8 @@ impl HintStream {
             Err(broadcast::error::RecvError::Closed) => Err(End::Shutdown),
             Ok(Signal::Hint(hint)) => self.deliver(hint).await,
             Ok(Signal::Access(bot)) if bot == self.bot_id => {
+                // A permission change is an access change too: check the token (read) first.
+                self.verify_token().await?;
                 self.refresh_readable().await?;
                 self.send(frame("access_changed", &serde_json::json!({}))).await
             }
