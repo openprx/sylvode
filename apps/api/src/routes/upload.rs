@@ -140,6 +140,12 @@ impl UploadAccess {
             UploadAccessMode::Session(claims) => claims,
         };
         let workspace_id = match resolve_upload_object_owner(state, object_key).await? {
+            // A signature image no current record references (replaced, retention-deleted, or never
+            // saved) has no tenant to check against; it is not served to sessions at all, so a key
+            // learned from an audit trail cannot be used to download it.
+            UploadObjectOwner::Unowned if object_key.starts_with("signatures/") => {
+                return Err(ApiError::NotFound(UPLOAD_NOT_FOUND_MESSAGE.to_string()));
+            }
             UploadObjectOwner::Unowned => None,
             UploadObjectOwner::Owned(workspace_id) => Some(workspace_id),
             // More than one workspace claims the object, so no membership check can be trusted.
