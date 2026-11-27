@@ -158,7 +158,7 @@ VALUES (
   'Smoke project for browser-originated @mention.',
   '$OWNER_ID',
   'contract_review',
-  '{"scenario_template_key":"contract_review_default"}'::jsonb,
+  '{}'::jsonb,
   now(),
   now()
 );

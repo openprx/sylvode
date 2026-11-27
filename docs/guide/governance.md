@@ -165,7 +165,4 @@ delete a pending appeal. **Mine only** filters the list.
 - **Governance Audit Logs**: governance actions of a project. Without a project filter the log
   covers the whole instance and is open to instance administrators only.
 
-Creating a project from a [scenario template](scenario-templates.md) also writes a governance
-configuration for it.
-
 The governance API is listed in the [API reference](../integrations/api.md).

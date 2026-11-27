@@ -150,7 +150,6 @@ for path in \
   apps/api/src/services/webhooks.rs \
   apps/api/src/routes/check_result.rs \
   apps/api/src/routes/project_type.rs \
-  apps/api/src/routes/scenario_template.rs \
   apps/worker/src/main.rs; do
   check_file "$path"
 done
@@ -214,24 +213,9 @@ contains "plugin hooks emit invoked business events" "apps/api/src/plugins/hooks
 contains "plugin hooks mark automatic hook metadata" "apps/api/src/plugins/hooks.rs" "automatic_hook"
 contains "restaurant order line total is a formula field of the template" "apps/api/src/routes/project.rs" "formula_amount_field("
 not_contains "restaurant template installs no calculation plugin" "apps/api/src/routes/project.rs" "restaurant_calc"
-contains "scenario template creates restaurant ordering default" "apps/api/src/routes/project.rs" "restaurant_ordering_default"
-contains "scenario template API emits runtime usage guide" "apps/api/src/routes/scenario_template.rs" "usage_guide"
-contains "scenario template API emits usage guide schema version" "apps/api/src/routes/scenario_template.rs" "openpr.scenario_template.usage_guide.v1"
-contains "scenario template API usage guide includes operator entrypoints" "apps/api/src/routes/scenario_template.rs" "operator_entrypoints"
-contains "scenario template API usage guide includes MCP tools" "apps/api/src/routes/scenario_template.rs" "primary_mcp_tools"
-contains "scenario template API usage guide includes plugin keys" "apps/api/src/routes/scenario_template.rs" "plugin_keys"
-contains "scenario template API tests restaurant usage guide" "apps/api/src/routes/scenario_template.rs" "restaurant_usage_guide_exposes_runtime_integration_contract"
-contains "MCP scenario template tool documents usage guide" "apps/mcp-server/src/tools/scenario_templates.rs" "usage_guide"
-contains "MCP scenario template tool tests usage guide docs" "apps/mcp-server/src/tools/scenario_templates.rs" "scenario_template_tools_document_usage_guide_contract"
 contains "project route emits project created business events" "apps/api/src/routes/project.rs" "project.created"
 contains "project route emits project updated business events" "apps/api/src/routes/project.rs" "project.updated"
 contains "project route emits project deleted business events" "apps/api/src/routes/project.rs" "project.deleted"
-contains "scenario template initialization emits business events" "apps/api/src/routes/project.rs" "scenario_template_initialized"
-contains "scenario template initialization writes form events" "apps/api/src/routes/project.rs" "insert_scenario_form_event"
-contains "API registers scenario template install route" "apps/api/src/router/projects.rs" "/api/v1/projects/{project_id}/scenario-templates/{template_key}/install"
-contains "project route installs scenario templates into existing projects" "apps/api/src/routes/project.rs" "install_project_scenario_template"
-contains "project route install emits scenario template business event" "apps/api/src/routes/project.rs" "project.scenario_template.installed"
-contains "project route scenario install reuses full template application" "apps/api/src/routes/project.rs" "apply_scenario_template("
 contains "project type route emits created business events" "apps/api/src/routes/project_type.rs" "project_type.created"
 contains "project type route emits updated business events" "apps/api/src/routes/project_type.rs" "project_type.updated"
 contains "project resource route emits created business events" "apps/api/src/routes/project_type.rs" "project_resource.created"
@@ -263,7 +247,6 @@ contains "form route archives child records" "apps/api/src/routes/form.rs" "arch
 contains "form route restores child records" "apps/api/src/routes/form.rs" "restore_child_record"
 contains "forms MCP smoke calls schema version list" "scripts/smoke-forms-mcp.sh" "form_schema_versions.list"
 contains "forms MCP smoke calls schema version get" "scripts/smoke-forms-mcp.sh" "form_schema_versions.get"
-contains "forms MCP smoke calls scenario template install" "scripts/smoke-forms-mcp.sh" "scenario_templates.install"
 contains "forms MCP smoke calls child create" "scripts/smoke-forms-mcp.sh" "form_records.child_create"
 contains "forms MCP smoke calls child update" "scripts/smoke-forms-mcp.sh" "form_records.child_update"
 contains "forms MCP smoke calls child archive" "scripts/smoke-forms-mcp.sh" "form_records.child_archive"
@@ -276,13 +259,10 @@ for path in \
   apps/mcp-server/src/tools/forms.rs \
   apps/mcp-server/src/tools/plugins.rs \
   apps/mcp-server/src/tools/project_types.rs \
-  apps/mcp-server/src/tools/scenario_templates.rs \
   apps/mcp-server/src/cli.rs; do
   check_file "$path"
 done
 contains "MCP exposes forms.list" "apps/mcp-server/src/tools/forms.rs" "forms.list"
-contains "MCP exposes scenario template install" "apps/mcp-server/src/tools/scenario_templates.rs" "scenario_templates.install"
-contains "MCP exposes forms.create_from_template" "apps/mcp-server/src/tools/forms.rs" "forms.create_from_template"
 contains "MCP exposes forms.duplicate" "apps/mcp-server/src/tools/forms.rs" "forms.duplicate"
 contains "MCP exposes forms.schema_summary" "apps/mcp-server/src/tools/forms.rs" "forms.schema_summary"
 contains "MCP exposes forms.field_usage" "apps/mcp-server/src/tools/forms.rs" "forms.field_usage"
@@ -314,8 +294,6 @@ contains "MCP registry pins current tool count" "apps/mcp-server/src/tools/mod.r
 contains "MCP registry embeds its versioned surface snapshot" "apps/mcp-server/src/tools/mod.rs" 'include_str!("mcp-surface-v05.snapshot.md")'
 contains "MCP skill validation derives the expected registry count" "skills/sylvode-mcp/scripts/validate-mcp.sh" "expected-tool-count.py"
 contains "MCP regression derives the expected registry count" "skills/sylvode-mcp/scripts/mcp-regression.py" "expected-tool-count.py"
-contains "API agent policy enables form template MCP tool" "apps/api/src/routes/context.rs" "forms.create_from_template"
-contains "API agent policy enables scenario template install tool" "apps/api/src/routes/context.rs" "scenario_templates.install"
 contains "API agent policy enables form schema version MCP tools" "apps/api/src/routes/context.rs" "form_schema_versions.list"
 contains "API agent policy enables form permission MCP tools" "apps/api/src/routes/context.rs" "form_permissions.get"
 contains "API agent policy enables form attachment MCP tools" "apps/api/src/routes/context.rs" "form_attachments.create"
@@ -332,14 +310,11 @@ printf '\nFrontend and browser smoke coverage:\n'
 for path in \
   frontend/src/lib/api/forms.ts \
   frontend/src/lib/api/auth.ts \
-  frontend/src/lib/utils/scenario-template.ts \
   'frontend/src/routes/(app)/settings/+page.svelte' \
   'frontend/src/routes/(app)/workspace/[workspaceId]/projects/[projectId]/forms/+page.svelte' \
   frontend/scripts/forms-smoke-server.mjs \
   frontend/scripts/smoke-forms-page-interactions.mjs \
   frontend/scripts/smoke-forms-record-list.mjs \
-  frontend/scripts/smoke-project-template-wizard.mjs \
-  frontend/scripts/smoke-template-work-items.mjs \
   frontend/scripts/smoke-restaurant-ordering.mjs; do
   check_file "$path"
 done
@@ -377,12 +352,6 @@ contains "forms browser smoke records its uncovered retired checks" "frontend/sc
 contains "forms record list smoke is wired into package scripts" "frontend/package.json" "smoke:forms-record-list"
 contains "forms page interactions smoke is wired into package scripts" "frontend/package.json" "smoke:forms-page-interactions"
 not_contains "package scripts do not keep the retired forms UI smoke" "frontend/package.json" "smoke:forms-ui"
-contains "project template wizard smoke covers template cards" "frontend/scripts/smoke-project-template-wizard.mjs" "data-template-card-seen"
-contains "project template wizard smoke covers scenario setup" "frontend/scripts/smoke-project-template-wizard.mjs" "data-scenario-dashboard-seen"
-contains "project template wizard smoke captures screenshots" "frontend/scripts/smoke-project-template-wizard.mjs" "OPENPR_PROJECT_TEMPLATE_SCREENSHOT_DIR"
-contains "template work items smoke covers all non-restaurant templates" "frontend/scripts/smoke-template-work-items.mjs" "quality_corrective_action_default"
-contains "template work items smoke covers scenario field issue creation" "frontend/scripts/smoke-template-work-items.mjs" "data-template-work-item-smoke"
-contains "template work items smoke captures screenshots" "frontend/scripts/smoke-template-work-items.mjs" "OPENPR_TEMPLATE_WORK_ITEMS_SCREENSHOT_DIR"
 contains "restaurant browser smoke covers table change" "frontend/scripts/smoke-restaurant-ordering.mjs" "table"
 contains "restaurant browser smoke captures screenshots" "frontend/scripts/smoke-restaurant-ordering.mjs" "OPENPR_RESTAURANT_SCREENSHOT_DIR"
 
@@ -395,7 +364,6 @@ for path in \
   scripts/smoke-phase1-project-types-resources.sh \
   scripts/smoke-user-settings-api.sh \
   scripts/smoke-webhook-generic-consumer.sh \
-  scripts/smoke-scenario-template-forms.sh \
   scripts/bootstrap-restaurant-demo.sh \
   scripts/smoke-restaurant-demo-bootstrap-mcp-http.sh \
   scripts/smoke-wasm-plugin-runtime.sh \
@@ -453,13 +421,7 @@ contains "plugin MCP smoke covers automatic hook business events" "scripts/smoke
 contains "project type/resource smoke covers business events" "scripts/smoke-phase1-project-types-resources.sh" "Project type/resource business events and outbox smoke passed"
 contains "project type/resource smoke covers project lifecycle events" "scripts/smoke-phase1-project-types-resources.sh" "Project lifecycle business events and outbox smoke passed"
 contains "webhook smoke covers generic consumer" "scripts/smoke-webhook-generic-consumer.sh" "webhook generic consumer"
-contains "scenario template smoke checks the restaurant template installs no plugin" "scripts/smoke-scenario-template-forms.sh" "should not install a restaurant_calc plugin"
-contains "scenario template smoke checks the order line total formula" "scripts/smoke-scenario-template-forms.sh" "line_total should be a formula field"
-contains "scenario template smoke covers runtime usage guide schema" "scripts/smoke-scenario-template-forms.sh" "usage guide schema version"
-contains "scenario template smoke covers runtime usage MCP tools" "scripts/smoke-scenario-template-forms.sh" "aggregate MCP tool"
-contains "scenario template smoke covers initialization business events" "scripts/smoke-scenario-template-forms.sh" "scenario template initialization business events and outbox smoke passed"
 contains "restaurant demo bootstrap uses public API" "scripts/bootstrap-restaurant-demo.sh" "/api/v1/workspaces"
-contains "restaurant demo bootstrap creates restaurant template project" "scripts/bootstrap-restaurant-demo.sh" "restaurant_ordering_default"
 contains "restaurant demo bootstrap refuses remote API by default" "scripts/bootstrap-restaurant-demo.sh" "SYLVODE_DEMO_ALLOW_REMOTE"
 contains "restaurant demo bootstrap verifies formula output" "scripts/bootstrap-restaurant-demo.sh" "order_line.line_total should be calculated from quantity and unit price"
 contains "restaurant demo bootstrap creates MCP bot token" "scripts/bootstrap-restaurant-demo.sh" "/bots"
@@ -480,7 +442,6 @@ contains "WASM runtime tests cover fuel trap" "apps/api/src/plugins/runtime.rs" 
 
 contains "MCP test script requires exact expected tool count" "scripts/test-mcp.sh" 'expected exactly $EXPECTED_TOOL_COUNT'
 contains "MCP test script derives its strict default tool count" "scripts/test-mcp.sh" 'EXPECTED_TOOL_COUNT="${EXPECTED_TOOL_COUNT:-$(python3 "$PROJECT_ROOT/skills/sylvode-mcp/scripts/expected-tool-count.py")}"'
-contains "MCP test script requires scenario template install" "scripts/test-mcp.sh" "scenario_templates.install"
 contains "MCP test script requires forms.duplicate" "scripts/test-mcp.sh" "forms.duplicate"
 contains "MCP test script requires form metadata tools" "scripts/test-mcp.sh" "forms.schema_summary"
 contains "MCP test script requires form permission tools" "scripts/test-mcp.sh" "form_permissions.get"

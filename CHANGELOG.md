@@ -12,6 +12,14 @@ name.
 
 ### Added
 
+- **Project templates are built-in packages.** The six scenario templates are signed packages
+  (`packages/builtin/`, `sv/contract-review` and so on, plus `sv/service-request` and `sv/service-desk`)
+  that go through the installation flow. `POST /workspaces/{id}/projects` takes `template_package`
+  instead of `scenario_template_key` and applies the package's project type, workflow states and
+  labels in one transaction with the project; `POST /projects/{id}/template-install` installs one
+  into an existing project, and `GET /workspaces/{id}/project-templates/preview` shows what a create
+  would apply. Only a workspace owner or admin who is a person may use a template. Migration `0141`
+  drops `scenario_templates`.
 - **API: change-hint stream for bot tokens.** `GET /api/v1/bot/change-hints` is a server-sent
   events stream (`hello`, `task`, `inbox`, `issue`, `tools`, `access_changed`, then `revoked`,
   `lagged` or `shutdown` when it ends) that tells a bot something it may read changed. It carries
@@ -340,6 +348,11 @@ name.
 
 ### Removed
 
+- **Scenario templates.** `GET /api/v1/scenario-templates`, its read-one route, the project install
+  route, `POST /projects/{id}/forms/from-template`, the MCP tools `scenario_templates.list`,
+  `scenario_templates.get`, `scenario_templates.install` and `forms.create_from_template`, and the
+  `sylvode://scenario-templates` resources are gone. A template no longer writes a governance
+  configuration.
 - **Legacy objects.** The four `legacy_pages.*` MCP tools, the `pages` table, `form_plugin_layouts`
   and the comment-anchor seal column (migration 0127); package manifests without a semantic model or
   with `editor_cid_v2` / `canonical_order_v3`; the `/projects/{pid}/audit-reports` redirect; the

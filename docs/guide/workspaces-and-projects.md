@@ -145,7 +145,7 @@ A project lives in a workspace and has a **Project Type** that decides which par
 | Custom Form (`custom_form`) | **Forms** only; the project opens on its forms page. |
 
 Industry scenarios such as restaurant ordering or contract review are built with forms and form
-templates inside a project, not with project types. See [Scenario templates](scenario-templates.md).
+templates inside a project, not with project types. See [Template packages](template-packages.md).
 
 ### Creating and editing a project
 

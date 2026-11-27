@@ -170,8 +170,9 @@ manifest only; hooks skip it.
 The MCP server offers the same operations as `plugins.list`, `plugins.get`, `plugins.install`,
 `plugins.invoke` and `plugin_invocations.list`; see the [MCP server README](../../apps/mcp-server/README.md).
 
-No built-in scenario template installs a plugin; the restaurant template calculates its order-line
-totals with a formula field (see [scenario templates](../guide/scenario-templates.md)).
+Only the `sv/service-desk` template package installs a plugin, through the installation review; the
+restaurant template calculates its order-line totals with a formula field (see
+[template packages](../guide/template-packages.md)).
 
 ### Building a plugin
 

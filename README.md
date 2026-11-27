@@ -14,8 +14,8 @@ Rust (axum, SeaORM) with a SvelteKit web interface and stores everything in Post
 - **Universal forms**: project-defined business record types with views, record links and child
   tables, formulas, per-role permissions, import/export, attachments and signatures.
   See [forms](docs/guide/forms.md).
-- **Scenario templates**: ready-made project setups for common business scenarios.
-  See [scenario templates](docs/guide/scenario-templates.md).
+- **Template packages**: ready-made, signed project setups for common business scenarios.
+  See [template packages](docs/guide/template-packages.md).
 - **Flow**: pages, collections and records with live multi-user editing, comments, shares and
   public links, conversion to forms, and export/import packages. Flow is on for every workspace
   unless an administrator turns it off. See [Flow](docs/guide/flow.md).
@@ -42,7 +42,7 @@ Rust (axum, SeaORM) with a SvelteKit web interface and stores everything in Post
   handlers, and form plugin packages. See [plugins](docs/plugins/README.md).
 
 <!-- BEGIN GENERATED: tool-count (sylvode-skillgen; do not edit) -->
-The MCP server registers 163 tools in 21 categories. By default it lists nine of them (search mode) and reaches the rest through `sylvode_search`, `sylvode_read` and `sylvode_write`. Every tool, with its category and access, is in [reference/tools.md](skills/sylvode-mcp/reference/tools.md).
+The MCP server registers 159 tools in 20 categories. By default it lists nine of them (search mode) and reaches the rest through `sylvode_search`, `sylvode_read` and `sylvode_write`. Every tool, with its category and access, is in [reference/tools.md](skills/sylvode-mcp/reference/tools.md).
 <!-- END GENERATED: tool-count -->
 
 ## Quick start

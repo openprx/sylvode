@@ -200,9 +200,6 @@ for required_tool in \
   "plugin_invocations.list" \
   "bot_operation_logs.list" \
   "release.readiness.get" \
-  "scenario_templates.list" \
-  "scenario_templates.get" \
-  "scenario_templates.install" \
   "flow.feature_get" \
   "flow.feature_set" \
   "objects.get" \

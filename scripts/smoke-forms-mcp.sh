@@ -282,8 +282,6 @@ async function main() {
     'forms.list',
     'forms.get',
     'forms.create',
-    'forms.create_from_template',
-    'scenario_templates.install',
     'forms.update_schema',
     'forms.duplicate',
     'forms.schema_summary',
@@ -331,27 +329,6 @@ async function main() {
     assert(templateNames.includes(template), `MCP resources/templates/list missing ${template}`);
   }
 
-  const installedScenario = callTool('scenario_templates.install', {
-    project_id: projectId,
-    template_key: 'contract_review_default',
-  }).payload;
-  const installedScenarioData = dataOf(installedScenario);
-  for (const formKey of ['contract', 'risk_clause', 'approval_record']) {
-    assert(
-      (installedScenarioData?.installed?.form_keys ?? []).includes(formKey),
-      `MCP scenario install should report ${formKey}: ${JSON.stringify(installedScenario)}`,
-    );
-  }
-  assert(
-    installedScenarioData?.project?.type_settings?.scenario_template_key === 'contract_review_default',
-    'MCP scenario install should merge scenario metadata into project type_settings',
-  );
-  const scenarioForms = callTool('forms.list', { project_id: projectId }).payload;
-  const scenarioFormKeys = itemsOf(scenarioForms).map((form) => form.key);
-  for (const formKey of ['contract', 'risk_clause', 'approval_record']) {
-    assert(scenarioFormKeys.includes(formKey), `MCP scenario install should create ${formKey}`);
-  }
-
   const customerForm = callTool('forms.create', {
     project_id: projectId,
     key: 'customer',
@@ -366,23 +343,6 @@ async function main() {
   }).payload;
   const customerFormData = dataOf(customerForm);
   assert(customerFormData?.key === 'customer', 'MCP should create relation target form');
-
-  const templatedForm = callTool('forms.create_from_template', {
-    project_id: projectId,
-    template_key: 'restaurant_ordering_default',
-    key: 'templated_menu_smoke',
-    name: 'Templated Menu Smoke',
-    title_template: '{name}',
-  }).payload;
-  const templatedFormData = dataOf(templatedForm);
-  assert(
-    templatedFormData?.key === 'templated_menu_smoke',
-    `MCP should create form from scenario template: ${JSON.stringify(templatedForm)}`,
-  );
-  assert(
-    (templatedFormData?.schema?.fields ?? []).length > 0,
-    'MCP template-created form should include template fields',
-  );
 
   const customerRecord = callTool('form_records.create', {
     form_id: customerFormData.id,

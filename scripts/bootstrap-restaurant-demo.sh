@@ -246,7 +246,7 @@ async function ensureProject(token, workspaceId) {
     key: projectKey,
     name: projectName,
     description: 'Local demo project created from restaurant_ordering_default.',
-    scenario_template_key: 'restaurant_ordering_default',
+    template_package: 'sv/restaurant-ordering',
   }, token);
 }
 

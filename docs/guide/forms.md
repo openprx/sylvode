@@ -22,10 +22,9 @@ On the forms page, start a new form and fill in:
 
 Then add fields one by one, or edit the schema as JSON.
 
-The **Template library** in the same panel lists form templates (see
-[Scenario templates](scenario-templates.md)). **Apply to draft** copies a template's fields into the
-draft so you can adjust them; **Install** creates the form from the template at once. **Refresh
-templates** reloads the list.
+The **Template library** in the same panel lists the form-template packages (see
+[Template packages](template-packages.md)). **Install** adds all forms of a package to the project at
+once (workspace owners and admins). **Refresh templates** reloads the list.
 
 The new form opens in **Field design**.
 

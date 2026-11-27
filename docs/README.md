@@ -29,7 +29,7 @@ below are grouped by reader.
   appeals, trust scores, impact reviews and audit logs.
 - [guide/forms.md](guide/forms.md): universal forms, fields, views, records, formulas,
   permissions, import/export, attachments and signatures.
-- [guide/scenario-templates.md](guide/scenario-templates.md): the built-in project templates and
+- [guide/template-packages.md](guide/template-packages.md): the built-in template packages and
   how to start a project from one.
 - [guide/flow.md](guide/flow.md): Flow pages, collections and records, live editing, sharing,
   conversion to forms and packages.
@@ -53,7 +53,7 @@ below are grouped by reader.
 ### MCP skill package
 
 <!-- BEGIN GENERATED: tool-count (sylvode-skillgen; do not edit) -->
-The MCP server registers 163 tools in 21 categories. By default it lists nine of them (search mode) and reaches the rest through `sylvode_search`, `sylvode_read` and `sylvode_write`. Every tool, with its category and access, is in [reference/tools.md](../skills/sylvode-mcp/reference/tools.md).
+The MCP server registers 159 tools in 20 categories. By default it lists nine of them (search mode) and reaches the rest through `sylvode_search`, `sylvode_read` and `sylvode_write`. Every tool, with its category and access, is in [reference/tools.md](../skills/sylvode-mcp/reference/tools.md).
 <!-- END GENERATED: tool-count -->
 
 - [../skills/sylvode-mcp/SKILL.md](../skills/sylvode-mcp/SKILL.md): the skill agents load to work
