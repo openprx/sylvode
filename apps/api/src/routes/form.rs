@@ -918,6 +918,7 @@ pub async fn update_form(
     let mut changed_fields = Vec::new();
     let mut schema_changed = false;
     let mut new_schema = None;
+    let new_title = req.title_template.clone();
     let mut idx = 1;
     macro_rules! push_set {
         ($column:literal, $value:expr) => {{
@@ -991,6 +992,41 @@ pub async fn update_form(
         values.push(expected.into());
     }
     let tx = state.db.begin().await?;
+    // LEAD BOT-SCHEMA: a bot's schema save that changes what visitors of a published site get
+    // is stored as a draft for a person to approve; when the comparison fails, it is drafted too.
+    if is_bot && let Some(schema) = &new_schema {
+        let old_title = form.title_template.as_str();
+        let after_title = new_title.as_deref().unwrap_or(old_title);
+        let gated =
+            crate::site::public_site_text_changes(&tx, form_id, (&form.schema, old_title), (schema, after_title))
+                .await
+                .unwrap_or_else(|error| {
+                    tracing::warn!(%form_id, %error, "visitor output of a bot schema save not comparable; drafting it");
+                    true
+                });
+        if gated {
+            drop(tx);
+            if changed_fields.iter().any(|field| *field != "schema") {
+                return Err(ApiError::conflict_coded(
+                    "public_site_text_mixed_save",
+                    "this schema change needs a person's review; send the schema alone to store it as a draft",
+                    None,
+                ));
+            }
+            let bot_id = bot.as_ref().map(|bot| bot.0.bot_id).ok_or(ApiError::Internal)?;
+            let draft_id = crate::drafts::handlers::create_form_schema_draft(
+                &state,
+                bot_id,
+                (form.workspace_id, form.project_id, form.id, form.schema_version),
+                schema.clone(),
+            )
+            .await?;
+            return Ok(ApiResponse::success(
+                json!({ "draft_id": draft_id, "status": "pending", "reason": "public_site_text" }),
+            )
+            .into_response());
+        }
+    }
     let written = tx
         .execute(Statement::from_sql_and_values(DbBackend::Postgres, &sql, values))
         .await?;
@@ -1024,12 +1060,21 @@ pub async fn update_form(
     }
     tx.commit().await?;
 
-    // Site bindings whose projection loses or changes fields: a warning, never a refusal.
+    // Site bindings whose projection loses or changes fields: a warning, never a refusal. The save
+    // has succeeded, so a failure here is logged and the warnings are left out.
     let warnings = match &new_schema {
-        Some(schema) => {
-            crate::site::projection_affected(&state.db, form_id, &updated_form.title_template, &form.schema, schema)
-                .await?
-        }
+        Some(schema) => crate::site::projection_affected(
+            &state.db,
+            form_id,
+            (&form.title_template, &updated_form.title_template),
+            &form.schema,
+            schema,
+        )
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!(%form_id, %error, "projection_affected warnings not computed");
+            Vec::new()
+        }),
         None => Vec::new(),
     };
     if warnings.is_empty() {
@@ -1052,6 +1097,14 @@ pub async fn delete_form(
     let (actor_id, _, is_bot) =
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "form.design").await?;
     let tx = state.db.begin().await?;
+    // LEAD BOT-SCHEMA: a bot does not archive a form a published site serves.
+    if is_bot && crate::site::form_on_published_site(&tx, form_id).await? {
+        return Err(ApiError::conflict_coded(
+            "form_on_published_site",
+            "a published site serves this form; a person archives it",
+            None,
+        ));
+    }
     insert_form_event(
         &tx,
         &form,

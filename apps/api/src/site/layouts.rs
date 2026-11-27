@@ -11,7 +11,7 @@ use sv_layout::{Context, Options, Validated};
 use uuid::Uuid;
 
 use super::admin::page_spec;
-use super::drafts::{PageOp, PageTarget};
+use super::drafts::PageTarget;
 use super::store::{self, PageRow};
 use crate::error::ApiError;
 
@@ -117,13 +117,17 @@ pub async fn site_context_bindings(
 /// The published-site rule for a bot's layout edit (LEAD C3-6, contract C3 section 3): when a
 /// page of a published site shows the layout, the edit is not applied but stored as a `site_page`
 /// draft (`op: update` of the first such page, with `layout_id` and the new `layout_spec`, which
-/// the approval writes into the layout in place). Returns the draft id when it was stored; a
-/// person, or a layout no published page shows, gets `None` and the edit applies directly.
+/// the approval writes into the layout in place, and the base: the page as it is and
+/// `expected_version`). Returns the draft id when it was stored; a person, or a layout no
+/// published page shows, gets `None` and the edit applies directly. `tx` is the caller's write
+/// transaction: the sites of the pages found stay share-locked in it, so a concurrent publish
+/// cannot slip between this decision and the direct write.
 ///
 /// # Errors
 /// `version_conflict` when `expected_version` is not the layout's version; the draft's errors.
 pub async fn draft_bot_layout_update_on_published_site(
     state: &AppState,
+    tx: &impl ConnectionTrait,
     bot_id: Option<Uuid>,
     layout_id: Uuid,
     spec: &Value,
@@ -132,7 +136,7 @@ pub async fn draft_bot_layout_update_on_published_site(
     let Some(bot_id) = bot_id else {
         return Ok(None);
     };
-    let Some(page) = store::published_pages_with_layout(&state.db, layout_id)
+    let Some(page) = store::published_pages_with_layout(tx, layout_id, true)
         .await?
         .into_iter()
         .next()
@@ -152,11 +156,7 @@ pub async fn draft_bot_layout_update_on_published_site(
     let site = store::load_site(&state.db, page.site_id)
         .await?
         .ok_or_else(ApiError::internal)?;
-    let target = PageTarget {
-        site_id: site.id,
-        page_id: Some(page.id),
-        op: PageOp::Update,
-    };
+    let target = PageTarget::update(site.id, &page, expected_version);
     let spec = page_spec(
         &page.route,
         &page.audience,

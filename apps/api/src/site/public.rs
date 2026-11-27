@@ -21,7 +21,7 @@ use uuid::Uuid;
 
 use super::http::{ClientAddress, HOUR, MINUTE, SiteError, SiteJson, WINDOWS, empty_object, ok, set_cookie};
 use super::layouts;
-use super::projection::{Audience, RECORD_COLUMNS, effective_read};
+use super::projection::{Audience, effective_read, field_items};
 use super::records::{self, Binding, ListRequest, MAX_PER_PAGE};
 use super::session::{self, Caller, operator_required};
 use super::store::{self, SiteRow};
@@ -187,34 +187,7 @@ pub async fn fields(
         let excluded = records::operator_excluded(&state, &binding, operator).await?;
         add(records::update_fields(&binding, &excluded));
     }
-    let fields: Vec<Value> = keys
-        .iter()
-        .filter_map(|key| match binding.fields.iter().find(|field| field.key == *key) {
-            Some(field) => {
-                let mut item = json!({
-                    "key": field.key,
-                    "label": field.label,
-                    "type": field.field_type,
-                    "required": field.required,
-                    "rules_client": field.rules_client,
-                });
-                if !field.options.is_empty()
-                    && let Some(object) = item.as_object_mut()
-                {
-                    object.insert("options".to_string(), json!(field.options));
-                }
-                Some(item)
-            }
-            None if RECORD_COLUMNS.contains(&key.as_str()) => Some(json!({
-                "key": key,
-                "label": if key == "created_at" { "Created" } else { "Updated" },
-                "type": "datetime",
-                "required": false,
-                "rules_client": [],
-            })),
-            None => None,
-        })
-        .collect();
+    let fields = field_items(&keys, &binding.fields);
     Ok(ok(StatusCode::OK, json!({ "fields": fields })))
 }
 

@@ -200,9 +200,12 @@ pub async fn update_layout(
     require_write(&state, &who, &scope).await?;
     ensure_user_layout(&row)?;
     let validated = console_validate(&req.spec, None)?;
+
+    let tx = state.db.begin().await?;
     // A bot's edit of a layout a published site page shows becomes a draft (LEAD C3-6).
     if let Some(draft_id) = crate::site::layouts::draft_bot_layout_update_on_published_site(
         &state,
+        &tx,
         who.bot_id(),
         id,
         &req.spec,
@@ -212,8 +215,6 @@ pub async fn update_layout(
     {
         return Ok(ApiResponse::success(json!({ "draft_id": draft_id, "status": "pending" })).into_response());
     }
-
-    let tx = state.db.begin().await?;
     // A layout that sits in slots must still fit each of them.
     for slot_id in store::slots_using_layout(&tx, id).await? {
         if let Some(slot) = sv_layout::slot(&slot_id) {

@@ -24,7 +24,7 @@ use crate::{
         access::{Scope, ScopeKind, resolve_scope},
         apply::{draft_slot, validate_for_slot},
     },
-    site::drafts::{self as site_drafts, PageTarget},
+    site::drafts::{self as site_drafts, Base, PageTarget},
 };
 
 pub(super) const KIND_FORM_SCHEMA: &str = "form_schema";
@@ -325,6 +325,12 @@ async fn judge_stored(tx: &DatabaseTransaction, row: &DraftRow) -> Result<(Prepa
         }
         KIND_SITE_PAGE => {
             let target: PageTarget = stored(&row.target)?;
+            // The page and its layout stay locked; a draft never overwrites a later change.
+            match site_drafts::check_base(tx, &target).await? {
+                Base::Unchanged => {}
+                Base::Missing => return Err(stale("page_missing", json!({}))),
+                Base::Changed => return Err(stale("target_changed", json!({}))),
+            }
             let prepared = site_page(tx, row.workspace_id, row.project_id, &target, &row.spec)
                 .await
                 .map_err(|error| {

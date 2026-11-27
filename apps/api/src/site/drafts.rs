@@ -6,8 +6,13 @@
 //! A `site_page` spec is the page's values (`route`, `audience`, `nav`, `position`) with the layout
 //! it shows: `layout_id` alone points the page at an existing layout, `layout_spec` alone replaces
 //! the page's own site layout (or stores a new one at the site's scope), and both together (a bot
-//! edit of a layout shown by a published page) replace that layout's spec in place. A title change
-//! is `{title}` with `page_id: null`; a delete has an empty spec.
+//! edit of a layout shown by a published page) replace that layout's spec in place and change
+//! nothing else. A title change is `{title}` with `page_id: null`; a delete has an empty spec.
+//!
+//! An update or delete records the page as it was when the draft was written (`base_page`), and
+//! an update also the version of the page's layout (`base_layout_version`). Approval locks the page
+//! and the layout and refuses `draft_stale` when either moved on, so a draft never undoes a
+//! person's later change.
 
 use std::collections::BTreeSet;
 
@@ -36,6 +41,30 @@ pub(crate) enum PageOp {
     Delete,
 }
 
+/// The page values a draft was written against.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BasePage {
+    route: String,
+    audience: String,
+    #[serde(default)]
+    nav: Option<Value>,
+    position: i32,
+    layout_id: Uuid,
+}
+
+impl BasePage {
+    fn of(page: &PageRow) -> Self {
+        Self {
+            route: page.route.clone(),
+            audience: page.audience.clone(),
+            nav: page.nav.clone(),
+            position: page.position,
+            layout_id: page.layout_id,
+        }
+    }
+}
+
 /// `target` of a `site_page` draft.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -44,9 +73,64 @@ pub(crate) struct PageTarget {
     #[serde(default)]
     pub(crate) page_id: Option<Uuid>,
     pub(crate) op: PageOp,
+    /// Update and delete: the page when the draft was written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) base_page: Option<BasePage>,
+    /// Update: the version of the page's layout when the draft was written (for a layout edit,
+    /// the `expected_version` of the request).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) base_layout_version: Option<i32>,
+}
+
+/// Whether the page and layout of a draft are still as the draft found them.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Base {
+    Unchanged,
+    Missing,
+    Changed,
 }
 
 impl PageTarget {
+    pub(crate) const fn title(site_id: Uuid) -> Self {
+        Self {
+            site_id,
+            page_id: None,
+            op: PageOp::Update,
+            base_page: None,
+            base_layout_version: None,
+        }
+    }
+
+    pub(crate) const fn create(site_id: Uuid) -> Self {
+        Self {
+            site_id,
+            page_id: None,
+            op: PageOp::Create,
+            base_page: None,
+            base_layout_version: None,
+        }
+    }
+
+    pub(crate) fn update(site_id: Uuid, page: &PageRow, layout_version: i32) -> Self {
+        Self {
+            site_id,
+            page_id: Some(page.id),
+            op: PageOp::Update,
+            base_page: Some(BasePage::of(page)),
+            base_layout_version: Some(layout_version),
+        }
+    }
+
+    pub(crate) fn delete(site_id: Uuid, page: &PageRow) -> Self {
+        Self {
+            site_id,
+            page_id: Some(page.id),
+            op: PageOp::Delete,
+            base_page: Some(BasePage::of(page)),
+            base_layout_version: None,
+        }
+    }
+
     /// What a later draft of the same author replaces: the same page (a layout edit apart from
     /// the page's own values), the same new route, or the title. Matches the SQL of
     /// `drafts::store::supersede`.
@@ -226,16 +310,41 @@ async fn resolve(
         ),
         None => None,
     };
-    if matches!(
-        (target.op, page.is_some()),
-        (PageOp::Create, true) | (PageOp::Delete, false)
-    ) {
+    let fits = match (target.op, page.is_some()) {
+        (PageOp::Create | PageOp::Update, false) => target.base_page.is_none() && target.base_layout_version.is_none(),
+        (PageOp::Update, true) => target.base_page.is_some() && target.base_layout_version.is_some(),
+        (PageOp::Delete, true) => target.base_page.is_some() && target.base_layout_version.is_none(),
+        (PageOp::Create, true) | (PageOp::Delete, false) => false,
+    };
+    if !fits {
         return Err(ApiError::bad_request_coded(
             "target_invalid",
-            "a create names no page_id; a delete names one",
+            "a create names no page; an update or delete names its page and the base it was written against",
         ));
     }
     Ok((site, page))
+}
+
+/// Locks the draft's page and its layout for the rest of the review transaction and compares them
+/// with the base the draft recorded.
+pub(crate) async fn check_base(tx: &DatabaseTransaction, target: &PageTarget) -> Result<Base, ApiError> {
+    let Some(page_id) = target.page_id else {
+        return Ok(Base::Unchanged);
+    };
+    let Some(page) = store::lock_page(tx, page_id).await? else {
+        return Ok(Base::Missing);
+    };
+    if target.base_page.as_ref() != Some(&BasePage::of(&page)) {
+        return Ok(Base::Changed);
+    }
+    if let Some(version) = target.base_layout_version {
+        match store::lock_layout_version(tx, page.layout_id).await? {
+            Some(current) if current == version => {}
+            Some(_) => return Ok(Base::Changed),
+            None => return Ok(Base::Missing),
+        }
+    }
+    Ok(Base::Unchanged)
 }
 
 /// Judges a `site_page` draft against the current state of its site. A missing site or page is
@@ -415,6 +524,22 @@ pub(crate) async fn apply(
             let page = store::insert_page(tx, site.id, values).await?.ok_or_else(route_taken)?;
             Ok(json!({ "page_id": page.id, "layout_id": layout_id }))
         }
+        (PageOp::Update, Some(page)) if spec.layout_id.is_some() && spec.layout_spec.is_some() => {
+            // A layout edit changes the layout only, from the version the draft was written against.
+            let layout_id = spec.layout_id.ok_or_else(ApiError::internal)?;
+            let layout_spec = spec.layout_spec.as_ref().ok_or_else(ApiError::internal)?;
+            let key = validate_site_layout(layout_spec, binding_keys(tx, site.id).await?)?
+                .layout
+                .key;
+            if !store::update_site_layout(tx, layout_id, &key, layout_spec, target.base_layout_version).await? {
+                return Err(ApiError::conflict_coded(
+                    "layout_key_taken",
+                    "another layout of this scope already has this key",
+                    None,
+                ));
+            }
+            Ok(json!({ "page_id": page.id, "layout_id": layout_id }))
+        }
         (PageOp::Update, Some(page)) => {
             let (route, audience) = page_values(&spec)?;
             let own_site_layout = store::load_layout(tx, page.layout_id)
@@ -422,20 +547,7 @@ pub(crate) async fn apply(
                 .filter(|layout| layout.scope_kind == "site" && layout.scope_id == site.id)
                 .map(|layout| layout.id);
             let layout_id = match (spec.layout_id, spec.layout_spec.as_ref()) {
-                (Some(layout_id), Some(layout_spec)) => {
-                    let key = validate_site_layout(layout_spec, binding_keys(tx, site.id).await?)?
-                        .layout
-                        .key;
-                    if !store::update_site_layout(tx, layout_id, &key, layout_spec).await? {
-                        return Err(ApiError::conflict_coded(
-                            "layout_key_taken",
-                            "another layout of this scope already has this key",
-                            None,
-                        ));
-                    }
-                    layout_id
-                }
-                (Some(layout_id), None) => layout_id,
+                (Some(layout_id), _) => layout_id,
                 (None, Some(layout_spec)) => {
                     save_site_layout(tx, &site, Some(approver), layout_spec, own_site_layout).await?
                 }
@@ -565,36 +677,61 @@ pub(crate) async fn page_exposure(
         }
         return Ok(vec![title]);
     };
-    if let (Some(layout_id), Some(layout_spec), Some(page)) = (spec.layout_id, spec.layout_spec.as_ref(), page.as_ref())
-    {
-        let mut items = Vec::new();
-        for shown in store::published_pages_with_layout(db, layout_id).await? {
-            let (route, audience) = if shown.id == page.id {
-                (route, spec.audience.as_deref().unwrap_or_default())
-            } else {
-                (shown.route.as_str(), shown.audience.as_str())
-            };
-            if audience != "visitor" {
-                continue;
+    let audience = spec.audience.as_deref().unwrap_or_default();
+    if let (Some(layout_spec), Some(page)) = (spec.layout_spec.as_ref(), page.as_ref()) {
+        match spec.layout_id {
+            // A layout edit changes the layout only: every page showing it, as each page is now.
+            Some(layout_id) => return shared_layout_items(db, layout_id, None, layout_spec).await,
+            None => {
+                // The page's own site layout is replaced in place: every page sharing it changes.
+                let own = store::load_layout(db, page.layout_id)
+                    .await?
+                    .is_some_and(|layout| layout.scope_kind == "site" && layout.scope_id == site.id);
+                if own {
+                    let this = Some((page.id, route, audience));
+                    return shared_layout_items(db, page.layout_id, this, layout_spec).await;
+                }
             }
-            let Some(shown_site) = store::load_site(db, shown.site_id).await? else {
-                continue;
-            };
-            items.extend(page_items(db, &shown_site, route, layout_spec).await?);
         }
-        return Ok(items);
     }
-    if spec.audience.as_deref() != Some("visitor") {
+    if audience != "visitor" {
         return Ok(Vec::new());
     }
     let layout = match (spec.layout_spec, spec.layout_id) {
         (Some(layout_spec), _) => layout_spec,
-        (None, Some(layout_id)) => store::load_layout(db, layout_id)
-            .await?
-            .map_or(Value::Null, |layout| layout.spec),
+        // Only a layout this site's pages may show: an out-of-scope id exposes nothing.
+        (None, Some(layout_id)) => check_page_layout(db, &site, layout_id)
+            .await
+            .ok()
+            .map_or(Value::Null, |(layout, _)| layout.spec),
         (None, None) => Value::Null,
     };
     page_items(db, &site, route, &layout).await
+}
+
+/// The items of every visitor page of a published site that shows `layout_id`, all showing
+/// `layout_spec`; `this` gives the draft's own page its new route and audience.
+async fn shared_layout_items(
+    db: &impl ConnectionTrait,
+    layout_id: Uuid,
+    this: Option<(Uuid, &str, &str)>,
+    layout_spec: &Value,
+) -> Result<Vec<Value>, ApiError> {
+    let mut items = Vec::new();
+    for shown in store::published_pages_with_layout(db, layout_id, false).await? {
+        let (route, audience) = match this {
+            Some((page_id, route, audience)) if page_id == shown.id => (route, audience),
+            _ => (shown.route.as_str(), shown.audience.as_str()),
+        };
+        if audience != "visitor" {
+            continue;
+        }
+        let Some(shown_site) = store::load_site(db, shown.site_id).await? else {
+            continue;
+        };
+        items.extend(page_items(db, &shown_site, route, layout_spec).await?);
+    }
+    Ok(items)
 }
 
 /// What a schema for form `form_id` would show visitors: per binding of a published site, the
@@ -646,6 +783,8 @@ mod tests {
             site_id: Uuid::from_u128(1),
             page_id,
             op,
+            base_page: None,
+            base_layout_version: None,
         }
     }
 
@@ -658,6 +797,33 @@ mod tests {
         assert_eq!(serde_json::to_value(&parsed).unwrap()["page_id"], Value::Null);
         assert!(serde_json::from_value::<PageTarget>(json!({"site_id": Uuid::nil(), "op": "move"})).is_err());
         assert!(serde_json::from_value::<PageTarget>(json!({"site_id": Uuid::nil(), "op": "create", "x": 1})).is_err());
+    }
+
+    #[test]
+    fn update_and_delete_targets_carry_their_base() {
+        let page = PageRow {
+            id: Uuid::from_u128(2),
+            site_id: Uuid::from_u128(1),
+            route: "/requests".to_string(),
+            layout_id: Uuid::from_u128(3),
+            audience: "visitor".to_string(),
+            nav: None,
+            position: 4,
+            installation_id: None,
+        };
+        let update = PageTarget::update(page.site_id, &page, 7);
+        let stored = serde_json::to_value(&update).unwrap();
+        assert_eq!(stored["base_layout_version"], 7);
+        assert_eq!(stored["base_page"]["route"], "/requests");
+        let back: PageTarget = serde_json::from_value(stored).unwrap();
+        assert_eq!(back.base_page, Some(BasePage::of(&page)));
+        let mut moved = page.clone();
+        moved.audience = "operator".to_string();
+        assert_ne!(back.base_page, Some(BasePage::of(&moved)));
+        let delete = serde_json::to_value(PageTarget::delete(page.site_id, &page)).unwrap();
+        assert!(delete.get("base_layout_version").is_none());
+        let title = serde_json::to_value(PageTarget::title(page.site_id)).unwrap();
+        assert!(title.get("base_page").is_none());
     }
 
     #[test]

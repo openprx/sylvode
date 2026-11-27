@@ -3,7 +3,8 @@
 //! The public surface `/api/site/v1/{slug}` is exposure `site` only: no console session, bot or
 //! OAuth token reaches it. The console administration follows LEAD-DECISIONS AUD-C3-M11: reading,
 //! creating sites, retitling and page writes are open to bots with the `write` level (on a published
-//! site a bot's page or title write is refused until drafts exist); publishing, settings,
+//! site a bot's page or title write is stored as a `site_page` draft for a person to approve);
+//! publishing, settings,
 //! bindings, roles and deletion are for people only. Site pages carry no `project_id`, so their
 //! handlers resolve the project and decide for a scoped bot themselves.
 

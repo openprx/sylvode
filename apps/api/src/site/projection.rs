@@ -506,13 +506,13 @@ fn shown_differently(old: &SiteField, new: &SiteField) -> bool {
 /// or masking change (`changed`). Both sorted, without duplicates.
 pub(crate) fn affected(
     raw: &Value,
-    title_template: &str,
+    (old_title, new_title): (&str, &str),
     old: &[SiteField],
     new: &[SiteField],
 ) -> (Vec<String>, Vec<String>) {
     let projection = Projection::stored(raw);
-    let before = effective_lists(&projection, old, title_template);
-    let after = effective_lists(&projection, new, title_template);
+    let before = effective_lists(&projection, old, old_title);
+    let after = effective_lists(&projection, new, new_title);
     let mut lost = BTreeSet::new();
     let mut changed = BTreeSet::new();
     for (before, after) in before.iter().zip(&after) {
@@ -526,6 +526,70 @@ pub(crate) fn affected(
         }
     }
     (lost.into_iter().collect(), changed.into_iter().collect())
+}
+
+/// The field descriptions the site API serves for `keys` (`GET /bindings/{b}/fields`): form fields
+/// with their label, type, requiredness, options and client rules, and the record columns.
+pub(crate) fn field_items(keys: &[String], fields: &[SiteField]) -> Vec<Value> {
+    keys.iter()
+        .filter_map(|key| match find(fields, key) {
+            Some(field) => {
+                let mut item = json!({
+                    "key": field.key,
+                    "label": field.label,
+                    "type": field.field_type,
+                    "required": field.required,
+                    "rules_client": field.rules_client,
+                });
+                if !field.options.is_empty()
+                    && let Some(object) = item.as_object_mut()
+                {
+                    object.insert("options".to_string(), json!(field.options));
+                }
+                Some(item)
+            }
+            None if RECORD_COLUMNS.contains(&key.as_str()) => Some(json!({
+                "key": key,
+                "label": if key == "created_at" { "Created" } else { "Updated" },
+                "type": "datetime",
+                "required": false,
+                "rules_client": [],
+            })),
+            None => None,
+        })
+        .collect()
+}
+
+/// What an anonymous visitor gets of a binding from the site API, built with the functions the
+/// public routes use: the manifest's visitor block (read, submit, filter and sort fields), the
+/// `fields` answer in its order, the masked fields, and the title template when the title is shown.
+pub(crate) fn visitor_output(projection: &Projection, fields: &[SiteField], title_template: &str) -> Value {
+    let none = BTreeSet::new();
+    let read = projection
+        .read(Audience::Visitor)
+        .map(|read| effective_read(read, fields, title_template, &none))
+        .unwrap_or_default();
+    let submit = projection
+        .visitor
+        .submit
+        .as_ref()
+        .map(|submit| effective_write(&submit.fields, fields, &none))
+        .unwrap_or_default();
+    let mut keys = read.fields.clone();
+    for key in &submit {
+        if !keys.contains(key) {
+            keys.push(key.clone());
+        }
+    }
+    json!({
+        "fields": field_items(&keys, fields),
+        "read_fields": read.fields,
+        "submit_fields": submit,
+        "filter_fields": read.filter,
+        "sort_fields": read.sort,
+        "masked": read.masked,
+        "title": read.title.then_some(title_template),
+    })
 }
 
 /// The `{key}` placeholders of a title template.
@@ -702,7 +766,10 @@ mod tests {
             "operator": {"read": {"fields": ["title", "qty"], "scope": "all"}}
         });
         let old = site_fields(&schema()).unwrap();
-        assert_eq!(affected(&projection, "{title}", &old, &old), (vec![], vec![]));
+        assert_eq!(
+            affected(&projection, ("{title}", "{title}"), &old, &old),
+            (vec![], vec![])
+        );
         let mut changed = schema();
         // `phone` leaves the form; `status` gets a new label; `qty` (operator only) a new label too.
         let fields = changed["fields"].as_array_mut().unwrap();
@@ -713,9 +780,36 @@ mod tests {
             }
         }
         let new = site_fields(&changed).unwrap();
-        let (lost, changed) = affected(&projection, "{title}", &old, &new);
+        let (lost, changed) = affected(&projection, ("{title}", "{title}"), &old, &new);
         assert_eq!(lost, vec!["phone".to_string()]);
         assert_eq!(changed, vec!["qty".to_string(), "status".to_string()]);
+    }
+
+    #[test]
+    fn visitor_output_changes_only_with_what_visitors_get() {
+        let projection = Projection::stored(&json!({
+            "visitor": {"read": {"fields": ["title", "status"], "scope": "own"}, "submit": {"fields": ["title"]}},
+            "operator": {"read": {"fields": ["title", "qty"], "scope": "all"}}
+        }));
+        let base = site_fields(&schema()).unwrap();
+        let before = visitor_output(&projection, &base, "{title}");
+        assert_eq!(before["read_fields"], json!(["title", "status"]));
+        assert_eq!(before["title"], "{title}");
+        assert_eq!(before["fields"][1]["options"], json!(["open", "closed"]));
+        let relabel = |key: &str| {
+            let mut changed = schema();
+            for field in changed["fields"].as_array_mut().unwrap() {
+                if field["key"] == key {
+                    field["label"] = json!("Renamed");
+                }
+            }
+            site_fields(&changed).unwrap()
+        };
+        // An operator-only field changes nothing a visitor gets; a visitor field does.
+        assert_eq!(visitor_output(&projection, &relabel("qty"), "{title}"), before);
+        assert_ne!(visitor_output(&projection, &relabel("status"), "{title}"), before);
+        // So does the title template while the title is shown.
+        assert_ne!(visitor_output(&projection, &base, "{title} {status}"), before);
     }
 
     #[test]

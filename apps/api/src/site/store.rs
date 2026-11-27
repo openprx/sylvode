@@ -3,7 +3,10 @@
 //!
 //! Rows that belong to a package installation (`installation_id` set) are not returned: resolving
 //! them needs the join with the installation's active generation, which arrives with migration
-//! 0138. Until then they stay hidden, like the package rows of the layout store.
+//! 0138. Until then they stay hidden, like the package rows of the layout store, and they do not
+//! count as pages of a site anywhere here: the site API does not serve them, so they are neither
+//! published nor public (the published-site rule for bots and the exposure lists apply the same
+//! `installation_id IS NULL` predicate).
 
 use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
@@ -314,27 +317,74 @@ pub(crate) async fn layout_on_published_site(db: &impl ConnectionTrait, layout_i
     Ok(db
         .query_one(statement(
             "SELECT 1 AS one FROM site_pages p JOIN sites s ON s.id = p.site_id \
-             WHERE p.layout_id = $1 AND s.status = 'published' LIMIT 1",
+             WHERE p.layout_id = $1 AND s.status = 'published' AND p.installation_id IS NULL LIMIT 1",
             vec![layout_id.into()],
         ))
         .await?
         .is_some())
 }
 
-/// The published-site pages that show a layout, with their site, in a stable order.
+/// The published-site pages that show a layout, in a stable order. `lock` takes a share lock on
+/// their sites, so a concurrent publish or unpublish waits for the caller's transaction.
 pub(crate) async fn published_pages_with_layout(
     db: &impl ConnectionTrait,
     layout_id: Uuid,
+    lock: bool,
 ) -> Result<Vec<PageRow>, ApiError> {
+    let suffix = if lock { " FOR SHARE OF s" } else { "" };
     Ok(PageRow::find_by_statement(statement(
-        "SELECT p.id, p.site_id, p.route, p.layout_id, p.audience, p.nav, p.position, p.installation_id \
-         FROM site_pages p JOIN sites s ON s.id = p.site_id \
-         WHERE p.layout_id = $1 AND s.status = 'published' AND p.installation_id IS NULL \
-         ORDER BY p.site_id, p.position, p.route",
+        &format!(
+            "SELECT p.id, p.site_id, p.route, p.layout_id, p.audience, p.nav, p.position, p.installation_id \
+             FROM site_pages p JOIN sites s ON s.id = p.site_id \
+             WHERE p.layout_id = $1 AND s.status = 'published' AND p.installation_id IS NULL \
+             ORDER BY p.site_id, p.position, p.route{suffix}"
+        ),
         vec![layout_id.into()],
     ))
     .all(db)
     .await?)
+}
+
+/// The site's status under a share lock: a publish, unpublish or disable of the site waits for
+/// the caller's transaction, so a bot's direct write cannot land on a site published meanwhile.
+pub(crate) async fn site_status_for_share(db: &impl ConnectionTrait, site_id: Uuid) -> Result<String, ApiError> {
+    #[derive(FromQueryResult)]
+    struct Status {
+        status: String,
+    }
+    Status::find_by_statement(statement(
+        "SELECT status FROM sites WHERE id = $1 FOR SHARE",
+        vec![site_id.into()],
+    ))
+    .one(db)
+    .await?
+    .map(|row| row.status)
+    .ok_or_else(|| ApiError::not_found("site not found"))
+}
+
+/// A page row locked for the rest of the transaction.
+pub(crate) async fn lock_page(db: &impl ConnectionTrait, id: Uuid) -> Result<Option<PageRow>, ApiError> {
+    Ok(PageRow::find_by_statement(statement(
+        &format!("SELECT {PAGE_COLUMNS} FROM site_pages WHERE id = $1 AND installation_id IS NULL FOR UPDATE"),
+        vec![id.into()],
+    ))
+    .one(db)
+    .await?)
+}
+
+/// A layout's version, with the row locked for the rest of the transaction.
+pub(crate) async fn lock_layout_version(db: &impl ConnectionTrait, id: Uuid) -> Result<Option<i32>, ApiError> {
+    #[derive(FromQueryResult)]
+    struct Version {
+        version: i32,
+    }
+    Ok(Version::find_by_statement(statement(
+        "SELECT version FROM layouts WHERE id = $1 FOR UPDATE",
+        vec![id.into()],
+    ))
+    .one(db)
+    .await?
+    .map(|row| row.version))
 }
 
 /// The sites (any status) with a page showing a layout.
@@ -344,7 +394,7 @@ pub(crate) async fn sites_showing_layout(db: &impl ConnectionTrait, layout_id: U
         site_id: Uuid,
     }
     Ok(Id::find_by_statement(statement(
-        "SELECT DISTINCT site_id FROM site_pages WHERE layout_id = $1 ORDER BY site_id",
+        "SELECT DISTINCT site_id FROM site_pages WHERE layout_id = $1 AND installation_id IS NULL ORDER BY site_id",
         vec![layout_id.into()],
     ))
     .all(db)
@@ -430,6 +480,23 @@ pub(crate) async fn exposed_bindings_of_site(
     .await?)
 }
 
+/// The bindings of a form on published sites, with those sites share-locked for the rest of the
+/// caller's transaction (a publish or unpublish waits for it).
+pub(crate) async fn published_bindings_of_form_locked(
+    db: &impl ConnectionTrait,
+    form_id: Uuid,
+) -> Result<Vec<ExposedBinding>, ApiError> {
+    Ok(ExposedBinding::find_by_statement(statement(
+        &format!(
+            "{EXPOSED_BINDING_SQL} AND b.form_id = $1 AND s.status = 'published' \
+             ORDER BY b.site_id, b.binding_key FOR SHARE OF s"
+        ),
+        vec![form_id.into()],
+    ))
+    .all(db)
+    .await?)
+}
+
 /// The bindings of a form; `published_only` keeps those of published sites.
 pub(crate) async fn bindings_of_form(
     db: &impl ConnectionTrait,
@@ -501,12 +568,14 @@ pub(crate) async fn insert_site_layout(
 }
 
 /// Replaces the spec of a layout (a site-scope layout, or the layout an approved draft edits in
-/// place); `false` when the key is taken by another layout of its scope.
+/// place); `false` when the key is taken by another layout of its scope, or when
+/// `expected_version` is given and is not the layout's version.
 pub(crate) async fn update_site_layout(
     db: &impl ConnectionTrait,
     id: Uuid,
     key: &str,
     spec: &Value,
+    expected_version: Option<i32>,
 ) -> Result<bool, ApiError> {
     let taken = db
         .query_one(statement(
@@ -520,13 +589,14 @@ pub(crate) async fn update_site_layout(
     if taken {
         return Ok(false);
     }
-    db.execute(statement(
-        "UPDATE layouts SET spec = $2, layout_key = $3, version = version + 1, status = 'active', updated_at = now() \
-         WHERE id = $1",
-        vec![id.into(), spec.clone().into(), key.into()],
-    ))
-    .await?;
-    Ok(true)
+    let done = db
+        .execute(statement(
+            "UPDATE layouts SET spec = $2, layout_key = $3, version = version + 1, status = 'active', \
+             updated_at = now() WHERE id = $1 AND ($4::integer IS NULL OR version = $4)",
+            vec![id.into(), spec.clone().into(), key.into(), expected_version.into()],
+        ))
+        .await?;
+    Ok(done.rows_affected() == 1)
 }
 
 /// Deletes a site-scope layout once no page of its site shows it any more.

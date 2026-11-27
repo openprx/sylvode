@@ -17,7 +17,7 @@ use sv_layout::Validated;
 use uuid::Uuid;
 
 use super::access::{Who, admin_site, page_writable_site, readable_site, require_project_read, require_project_write};
-use super::drafts::{PageOp, PageTarget, submit};
+use super::drafts::{PageTarget, submit};
 use super::layouts::{binding_keys, validate_site_layout};
 use super::projection::Projection;
 use super::store::{self, NewSite, PageRow, PageValues, SiteBody, SiteRow};
@@ -187,17 +187,16 @@ pub async fn update_site(
     let who = Who::new(claims, bot);
     let site = page_writable_site(&state, &who, id).await?;
     check_text(&req.title, "title_invalid")?;
-    if who.is_bot() && site.is_published() {
-        let target = PageTarget {
-            site_id: site.id,
-            page_id: None,
-            op: PageOp::Update,
-        };
+    let tx = state.db.begin().await?;
+    if drafted(&tx, &who, &site).await? {
+        drop(tx);
+        let target = PageTarget::title(site.id);
         return submit(&state, &who, &site, &target, json!({ "title": req.title })).await;
     }
-    let row = store::update_title(&state.db, site.id, &req.title)
+    let row = store::update_title(&tx, site.id, &req.title)
         .await?
         .ok_or_else(|| ApiError::not_found("site not found"))?;
+    tx.commit().await?;
     Ok(ApiResponse::success(site_body(&row)).into_response())
 }
 
@@ -406,7 +405,7 @@ pub(super) async fn save_site_layout(
     let key = validated.layout.key.clone();
     let taken = || ApiError::conflict_coded("layout_key_taken", "a layout of this site already has this key", None);
     if let Some(id) = existing {
-        if store::update_site_layout(tx, id, &key, spec).await? {
+        if store::update_site_layout(tx, id, &key, spec, None).await? {
             return Ok(id);
         }
         return Err(taken());
@@ -435,12 +434,10 @@ pub async fn create_page(
             "give exactly one of layout_id and layout_spec",
         ));
     }
-    if who.is_bot() && site.is_published() {
-        let target = PageTarget {
-            site_id: site.id,
-            page_id: None,
-            op: PageOp::Create,
-        };
+    let tx = state.db.begin().await?;
+    if drafted(&tx, &who, &site).await? {
+        drop(tx);
+        let target = PageTarget::create(site.id);
         let spec = page_spec(
             &route,
             &audience,
@@ -451,7 +448,6 @@ pub async fn create_page(
         );
         return submit(&state, &who, &site, &target, spec).await;
     }
-    let tx = state.db.begin().await?;
     let layout_id = match (req.layout_id, req.layout_spec.as_ref()) {
         (Some(layout_id), _) => check_page_layout(&state.db, &site, layout_id).await?.0.id,
         (None, Some(spec)) => save_site_layout(&tx, &site, who.user_id()?, spec, None).await?,
@@ -514,9 +510,12 @@ async fn page_and_site(state: &AppState, who: &Who, page_id: Uuid) -> Result<(Pa
     Ok((page, site))
 }
 
-/// Whether a bot's write to this site becomes a `site_page` draft (LEAD C3-6).
-fn drafted(who: &Who, site: &SiteRow) -> bool {
-    who.is_bot() && site.is_published()
+/// Whether a bot's write to this site becomes a `site_page` draft (LEAD C3-6). The site's status
+/// is re-read under a share lock in the write transaction, so a publish cannot slip between this
+/// decision and a bot's direct write.
+async fn drafted(tx: &sea_orm::DatabaseTransaction, who: &Who, site: &SiteRow) -> Result<bool, ApiError> {
+    let status = store::site_status_for_share(tx, site.id).await?;
+    Ok(who.is_bot() && status == "published")
 }
 
 /// `PATCH /api/v1/site-pages/{page_id}`: absent members stay; `layout_spec` replaces the page's own
@@ -538,7 +537,9 @@ pub async fn update_page(
         None => page.nav.clone(),
     };
     check_page_values(&route, &audience, nav.as_ref())?;
-    if drafted(&who, &site) {
+    let tx = state.db.begin().await?;
+    if drafted(&tx, &who, &site).await? {
+        drop(tx);
         if req.layout_id.is_some() && req.layout_spec.is_some() {
             return Err(invalid(
                 "layout_required",
@@ -547,16 +548,14 @@ pub async fn update_page(
         }
         // Without a layout change the draft names the page's current layout, so the reviewer sees it.
         let layout_id = req.layout_id.or(req.layout_spec.is_none().then_some(page.layout_id));
-        let target = PageTarget {
-            site_id: site.id,
-            page_id: Some(page.id),
-            op: PageOp::Update,
-        };
+        let layout_version = store::load_layout(&state.db, page.layout_id)
+            .await?
+            .map_or(0, |layout| layout.version);
+        let target = PageTarget::update(site.id, &page, layout_version);
         let position = Some(req.position.unwrap_or(page.position));
         let spec = page_spec(&route, &audience, nav.as_ref(), position, layout_id, req.layout_spec);
         return submit(&state, &who, &site, &target, spec).await;
     }
-    let tx = state.db.begin().await?;
     let current = store::load_layout(&tx, page.layout_id).await?;
     let own_site_layout = current
         .as_ref()
@@ -602,15 +601,12 @@ pub async fn delete_page(
 ) -> Result<Response, ApiError> {
     let who = Who::new(claims, bot);
     let (page, site) = page_and_site(&state, &who, page_id).await?;
-    if drafted(&who, &site) {
-        let target = PageTarget {
-            site_id: site.id,
-            page_id: Some(page.id),
-            op: PageOp::Delete,
-        };
+    let tx = state.db.begin().await?;
+    if drafted(&tx, &who, &site).await? {
+        drop(tx);
+        let target = PageTarget::delete(site.id, &page);
         return submit(&state, &who, &site, &target, json!({})).await;
     }
-    let tx = state.db.begin().await?;
     store::delete_page(&tx, page.id).await?;
     store::delete_unused_site_layout(&tx, page.layout_id).await?;
     tx.commit().await?;

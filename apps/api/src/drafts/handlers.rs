@@ -385,6 +385,47 @@ async fn store_draft(
     Ok(row)
 }
 
+/// Stores a bot's form schema save as a `form_schema` draft (LEAD BOT-SCHEMA: the save would
+/// change what visitors of a published site get) and returns its id. The form route has already
+/// checked the bot's `form.design` on the form; the draft records the form's current schema
+/// version as its base.
+pub(crate) async fn create_form_schema_draft(
+    state: &AppState,
+    bot_id: Uuid,
+    form: (Uuid, Uuid, Uuid, i32),
+    schema: Value,
+) -> Result<Uuid, ApiError> {
+    let (workspace_id, project_id, form_id, schema_version) = form;
+    if serde_json::to_vec(&schema).map_or(true, |bytes| bytes.len() > MAX_SPEC_BYTES) {
+        return Err(ApiError::bad_request_coded(
+            "draft_too_large",
+            "the spec is larger than a draft may be",
+        ));
+    }
+    if store::count_last_minute(&state.db, "bot", bot_id).await? >= CREATIONS_PER_MINUTE {
+        return Err(rate_limited("too many drafts in the last minute"));
+    }
+    let project = Scope {
+        kind: ScopeKind::Project,
+        id: project_id,
+        workspace_id,
+        project_id: Some(project_id),
+    };
+    let target = FormTarget {
+        form_id: Some(form_id),
+        base_schema_version: Some(schema_version),
+        key: None,
+        name: None,
+    };
+    let candidate = Candidate {
+        identity: target.identity(),
+        prepared: prepare::form_schema(workspace_id, project_id, schema),
+        target: serde_json::to_value(&target).map_err(|_| ApiError::internal())?,
+    };
+    let row = store_draft(state, &project, KIND_FORM_SCHEMA, ("bot", bot_id), candidate, None).await?;
+    Ok(row.id)
+}
+
 /// Stores a bot's write to a published site as a `site_page` draft (contract C3 sections 3 and
 /// 6.6, LEAD C3-6) and returns its id. The site route has already checked the bot's write level
 /// in the site's project; the draft is judged like any other and an invalid one is stored with
