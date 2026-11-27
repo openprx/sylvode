@@ -18,8 +18,8 @@
 use std::sync::{Arc, OnceLock};
 
 use platform::config::{
-    AiTasksConfig, ApiConfig, DEFAULT_STORAGE_DIR, EmailConfig, FlowConfig, InboundConfig, IpCidr,
-    OAuthConfig, OpenPrConfig, OutboundConfig, PackagesConfig, SiteConfig, StorageBackend, StorageConfig,
+    AiTasksConfig, ApiConfig, DEFAULT_STORAGE_DIR, EmailConfig, FlowConfig, InboundConfig, IpCidr, OAuthConfig,
+    OpenPrConfig, OutboundConfig, PackagesConfig, SiteConfig, StorageBackend, StorageConfig,
 };
 
 use crate::security::default_trusted_proxies;
