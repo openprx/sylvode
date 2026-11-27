@@ -1,8 +1,11 @@
-//! What an approval writes besides the installation: the package's layouts and their placements.
+//! What an approval writes besides the installation: the package's layouts, their placements and
+//! its site pages.
 //!
-//! Rows carry `installation_id` and `generation` (migration 0135/0138) and are shown only while the
-//! generation is the installation's active one. Forms a package creates are ordinary project forms
-//! and carry no tag: they survive a disable or a revoke.
+//! Rows carry `installation_id` and `generation` (migration 0135/0137/0138) and are shown only while
+//! the generation is the installation's active one. Forms a package creates are ordinary project
+//! forms and carry no tag: they survive a disable or a revoke.
+
+use std::collections::BTreeMap;
 
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use serde_json::Value;
@@ -43,7 +46,7 @@ struct Count {
 }
 
 /// Creates the layouts of `manifest` for generation `generation` of the installation and places
-/// each in the slots it names.
+/// each in the slots it names. Returns the id of each created layout by layout key.
 ///
 /// # Errors
 /// `layout_key_taken` when a layout key is taken in the scope, `slot_occupied` when a slot is full,
@@ -56,7 +59,8 @@ pub async fn create_layouts(
     installation_id: Uuid,
     generation: i32,
     created_by: Uuid,
-) -> Result<(), ApiError> {
+) -> Result<BTreeMap<String, Uuid>, ApiError> {
+    let mut created = BTreeMap::new();
     for entry in &manifest.layouts {
         let spec: Value = files
             .get(&entry.path)
@@ -95,8 +99,100 @@ pub async fn create_layouts(
         for slot_id in &entry.slots {
             place(tx, scope, slot_id, layout.id, installation_id, generation, created_by).await?;
         }
+        created.insert(entry.key.clone(), layout.id);
+    }
+    Ok(created)
+}
+
+/// Creates the site pages of `manifest` for generation `generation` in the project's site, which is
+/// created as a `draft` when the project has none. A page serves nothing until the site is published
+/// and a binding gives its form visitor access (contract C3 §6): the package never opens a form to
+/// the public by itself.
+///
+/// # Errors
+/// `pages_need_project` for a workspace scope, `page_route_taken` when the site already has a page
+/// with a route of the package at this generation, or a database failure.
+pub async fn create_pages(
+    tx: &impl ConnectionTrait,
+    manifest: &Manifest,
+    layouts: &BTreeMap<String, Uuid>,
+    scope: PlacementScope,
+    installation_id: Uuid,
+    generation: i32,
+    created_by: Uuid,
+) -> Result<(), ApiError> {
+    if manifest.pages.is_empty() {
+        return Ok(());
+    }
+    let project_id = scope
+        .project_id
+        .ok_or_else(|| ApiError::bad_request_coded("pages_need_project", "site pages are installed into a project"))?;
+    let site_id = site_of_project(tx, scope.workspace_id, project_id, created_by).await?;
+    for (position, page) in manifest.pages.iter().enumerate() {
+        let layout_id = layouts.get(&page.layout).ok_or_else(ApiError::internal)?;
+        let nav = page.nav.as_ref().and_then(|nav| serde_json::to_value(nav).ok());
+        let position = i32::try_from(position).map_err(|_| ApiError::internal())?;
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO site_pages (site_id, route, layout_id, audience, nav, position, installation_id, generation) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+            vec![
+                site_id.into(),
+                page.route.clone().into(),
+                (*layout_id).into(),
+                page.audience.clone().into(),
+                nav.into(),
+                position.into(),
+                installation_id.into(),
+                generation.into(),
+            ],
+        ))
+        .await
+        .map_err(|error| {
+            if error.to_string().contains("site_pages_route") {
+                ApiError::conflict_coded(
+                    "page_route_taken",
+                    "the site already has a page at a route of this package",
+                    None,
+                )
+            } else {
+                ApiError::from(error)
+            }
+        })?;
     }
     Ok(())
+}
+
+/// The project's oldest site, or a new `draft` one named after the project.
+async fn site_of_project(
+    tx: &impl ConnectionTrait,
+    workspace_id: Uuid,
+    project_id: Uuid,
+    created_by: Uuid,
+) -> Result<Uuid, ApiError> {
+    let existing = Id::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id FROM sites WHERE project_id = $1 ORDER BY created_at, id LIMIT 1",
+        vec![project_id.into()],
+    ))
+    .one(tx)
+    .await?;
+    if let Some(site) = existing {
+        return Ok(site.id);
+    }
+    // Slugs are global and the project key is not: a random suffix keeps the insert from colliding.
+    let slug = format!("site-{}", &Uuid::new_v4().simple().to_string()[..12]);
+    Id::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO sites (workspace_id, project_id, slug, title, created_by) \
+         SELECT $1, p.id, $3, jsonb_build_object('en', left(p.name, 80)), $4 FROM projects p WHERE p.id = $2 \
+         RETURNING id",
+        vec![workspace_id.into(), project_id.into(), slug.into(), created_by.into()],
+    ))
+    .one(tx)
+    .await?
+    .map(|row| row.id)
+    .ok_or_else(|| ApiError::not_found("project not found"))
 }
 
 async fn place(
@@ -163,12 +259,12 @@ async fn place(
     Ok(())
 }
 
-/// Deletes every layout and placement the installation created (all generations); a revoke.
+/// Deletes every page, layout and placement the installation created (all generations); a revoke.
 ///
 /// # Errors
 /// A database failure.
 pub async fn delete_all(tx: &impl ConnectionTrait, installation_id: Uuid) -> Result<(), ApiError> {
-    for table in ["layout_placements", "layouts"] {
+    for table in ["site_pages", "layout_placements", "layouts"] {
         tx.execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
             format!("DELETE FROM {table} WHERE installation_id = $1"),

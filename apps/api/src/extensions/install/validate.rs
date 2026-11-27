@@ -127,6 +127,13 @@ pub async fn check(
     check_components(opened, &mut out).await;
     check_requests(manifest, &mut out);
     check_layout_slots(opened, &mut out);
+    if project_id.is_none() && !manifest.pages.is_empty() {
+        out.problems.push(Problem::new(
+            "pages_need_project",
+            "/pages",
+            "site pages are installed into a project",
+        ));
+    }
     Ok(out)
 }
 
@@ -287,7 +294,7 @@ fn compare_fields(schema: &Value, required: &BTreeMap<String, String>) -> (Vec<S
 /// The form template of a `create` bind: `{key, name, schema, description?, icon?, color?,
 /// title_template?, detail_layout?}`. The schema is checked like a schema save; a reference to a
 /// plugin rule is judged at approval, when the installation that provides it is being activated.
-fn parse_template(
+pub(super) fn parse_template(
     opened: &Opened,
     bind: &str,
     from: &str,
@@ -346,7 +353,7 @@ fn parse_template(
     })
 }
 
-async fn check_components(opened: &Opened, out: &mut Check) {
+pub(super) async fn check_components(opened: &Opened, out: &mut Check) {
     let manifest = &opened.package.manifest;
     let entries = manifest
         .actions
@@ -403,7 +410,7 @@ pub fn capability_info(id: &str) -> Option<CapabilityInfo> {
     IDS.get(id).cloned()
 }
 
-fn check_requests(manifest: &Manifest, out: &mut Check) {
+pub(super) fn check_requests(manifest: &Manifest, out: &mut Check) {
     let mut seen = BTreeSet::new();
     for request in &manifest.requests {
         if !seen.insert(request.id.as_str()) {
@@ -426,7 +433,7 @@ fn check_requests(manifest: &Manifest, out: &mut Check) {
 }
 
 /// Every layout is checked in every slot the package places it in.
-fn check_layout_slots(opened: &Opened, out: &mut Check) {
+pub(super) fn check_layout_slots(opened: &Opened, out: &mut Check) {
     if matches!(opened.package.manifest.kind, Kind::FormTemplate) {
         return;
     }

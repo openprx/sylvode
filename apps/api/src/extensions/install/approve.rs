@@ -13,7 +13,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use super::artefacts::{PlacementScope, create_layouts};
+use super::artefacts::{PlacementScope, create_layouts, create_pages};
 use super::store::{self, GenerationRow, InstallationRow};
 use super::validate::{self, Check, Resolution};
 use crate::catalogue::{Refusal, RefusalCode};
@@ -359,10 +359,20 @@ async fn write(
             workspace_id: installation.workspace_id,
             project_id: installation.project_id,
         };
-        create_layouts(
+        let layouts = create_layouts(
             &tx,
             &opened.package.manifest,
             &opened.package.files,
+            scope,
+            installation_id,
+            generation.generation,
+            admin,
+        )
+        .await?;
+        create_pages(
+            &tx,
+            &opened.package.manifest,
+            &layouts,
             scope,
             installation_id,
             generation.generation,
