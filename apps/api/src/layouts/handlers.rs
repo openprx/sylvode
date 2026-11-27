@@ -199,8 +199,19 @@ pub async fn update_layout(
     let (row, scope) = load_with_scope(&state, id).await?;
     require_write(&state, &who, &scope).await?;
     ensure_user_layout(&row)?;
-    crate::site::layouts::refuse_bot_layout_write_on_published_site(&state.db, who.bot_id().is_some(), id).await?;
     let validated = console_validate(&req.spec, None)?;
+    // A bot's edit of a layout a published site page shows becomes a draft (LEAD C3-6).
+    if let Some(draft_id) = crate::site::layouts::draft_bot_layout_update_on_published_site(
+        &state,
+        who.bot_id(),
+        id,
+        &req.spec,
+        req.expected_version,
+    )
+    .await?
+    {
+        return Ok(ApiResponse::success(json!({ "draft_id": draft_id, "status": "pending" })).into_response());
+    }
 
     let tx = state.db.begin().await?;
     // A layout that sits in slots must still fit each of them.
@@ -225,7 +236,7 @@ pub async fn update_layout(
             )
         })?;
     tx.commit().await?;
-    Ok(ApiResponse::success(layout_body(&updated)))
+    Ok(ApiResponse::success(layout_body(&updated)).into_response())
 }
 
 /// `DELETE /api/v1/layouts/{id}`: archives; its placements stop resolving.
@@ -239,7 +250,7 @@ pub async fn delete_layout(
     let (row, scope) = load_with_scope(&state, id).await?;
     require_write(&state, &who, &scope).await?;
     ensure_user_layout(&row)?;
-    crate::site::layouts::refuse_bot_layout_write_on_published_site(&state.db, who.bot_id().is_some(), id).await?;
+    crate::site::layouts::refuse_bot_layout_archive_on_published_site(&state.db, who.bot_id().is_some(), id).await?;
     store::archive_layout(&state.db, id).await?;
     Ok(ApiResponse::success(json!({ "id": id, "status": "archived" })))
 }

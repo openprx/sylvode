@@ -93,5 +93,9 @@ pub(super) async fn save(
             require_write(state, &Principal::new(claims.clone(), None), &scope).await?;
             save_layout_draft(tx, &scope, &slot, &prepared.spec, approver).await
         }
+        // The review admits only human workspace owners and admins, who write every site page.
+        Plan::SitePage { target } => {
+            crate::site::drafts::apply(tx, row.workspace_id, row.project_id, &target, &prepared.spec, approver).await
+        }
     }
 }

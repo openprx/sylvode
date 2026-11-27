@@ -321,6 +321,132 @@ pub(crate) async fn layout_on_published_site(db: &impl ConnectionTrait, layout_i
         .is_some())
 }
 
+/// The published-site pages that show a layout, with their site, in a stable order.
+pub(crate) async fn published_pages_with_layout(
+    db: &impl ConnectionTrait,
+    layout_id: Uuid,
+) -> Result<Vec<PageRow>, ApiError> {
+    Ok(PageRow::find_by_statement(statement(
+        "SELECT p.id, p.site_id, p.route, p.layout_id, p.audience, p.nav, p.position, p.installation_id \
+         FROM site_pages p JOIN sites s ON s.id = p.site_id \
+         WHERE p.layout_id = $1 AND s.status = 'published' AND p.installation_id IS NULL \
+         ORDER BY p.site_id, p.position, p.route",
+        vec![layout_id.into()],
+    ))
+    .all(db)
+    .await?)
+}
+
+/// The sites (any status) with a page showing a layout.
+pub(crate) async fn sites_showing_layout(db: &impl ConnectionTrait, layout_id: Uuid) -> Result<Vec<Uuid>, ApiError> {
+    #[derive(FromQueryResult)]
+    struct Id {
+        site_id: Uuid,
+    }
+    Ok(Id::find_by_statement(statement(
+        "SELECT DISTINCT site_id FROM site_pages WHERE layout_id = $1 ORDER BY site_id",
+        vec![layout_id.into()],
+    ))
+    .all(db)
+    .await?
+    .into_iter()
+    .map(|row| row.site_id)
+    .collect())
+}
+
+/// Whether another page of the site already has this route (`except` is the page being edited).
+pub(crate) async fn route_taken(
+    db: &impl ConnectionTrait,
+    site_id: Uuid,
+    route: &str,
+    except: Option<Uuid>,
+) -> Result<bool, ApiError> {
+    Ok(db
+        .query_one(statement(
+            "SELECT 1 AS one FROM site_pages \
+             WHERE site_id = $1 AND route = $2 AND generation IS NULL AND ($3::uuid IS NULL OR id <> $3)",
+            vec![site_id.into(), route.into(), except.into()],
+        ))
+        .await?
+        .is_some())
+}
+
+/// Whether a form belongs to a project.
+pub(crate) async fn form_in_project(
+    db: &impl ConnectionTrait,
+    form_id: Uuid,
+    project_id: Uuid,
+) -> Result<bool, ApiError> {
+    Ok(db
+        .query_one(statement(
+            "SELECT 1 AS one FROM project_forms WHERE id = $1 AND project_id = $2",
+            vec![form_id.into(), project_id.into()],
+        ))
+        .await?
+        .is_some())
+}
+
+/// The console slots a layout is placed in.
+pub(crate) async fn layout_slots(db: &impl ConnectionTrait, layout_id: Uuid) -> Result<Vec<String>, ApiError> {
+    #[derive(FromQueryResult)]
+    struct Slot {
+        slot_id: String,
+    }
+    Ok(Slot::find_by_statement(statement(
+        "SELECT DISTINCT slot_id FROM layout_placements WHERE layout_id = $1 ORDER BY slot_id",
+        vec![layout_id.into()],
+    ))
+    .all(db)
+    .await?
+    .into_iter()
+    .map(|row| row.slot_id)
+    .collect())
+}
+
+/// A binding with the schema and title template of its form, as the exposure lists read it.
+#[derive(Debug, Clone, FromQueryResult)]
+pub(crate) struct ExposedBinding {
+    pub(crate) site_id: Uuid,
+    pub(crate) binding_key: String,
+    pub(crate) projection: Value,
+    pub(crate) schema: Value,
+    pub(crate) title_template: String,
+}
+
+const EXPOSED_BINDING_SQL: &str = "SELECT b.site_id, b.binding_key, b.projection, f.schema, f.title_template \
+     FROM site_bindings b JOIN sites s ON s.id = b.site_id JOIN project_forms f ON f.id = b.form_id \
+     WHERE f.project_id = s.project_id AND f.archived_at IS NULL";
+
+/// The bindings of a site whose form is still in the site's project and not archived.
+pub(crate) async fn exposed_bindings_of_site(
+    db: &impl ConnectionTrait,
+    site_id: Uuid,
+) -> Result<Vec<ExposedBinding>, ApiError> {
+    Ok(ExposedBinding::find_by_statement(statement(
+        &format!("{EXPOSED_BINDING_SQL} AND b.site_id = $1 ORDER BY b.binding_key"),
+        vec![site_id.into()],
+    ))
+    .all(db)
+    .await?)
+}
+
+/// The bindings of a form; `published_only` keeps those of published sites.
+pub(crate) async fn bindings_of_form(
+    db: &impl ConnectionTrait,
+    form_id: Uuid,
+    published_only: bool,
+) -> Result<Vec<ExposedBinding>, ApiError> {
+    Ok(ExposedBinding::find_by_statement(statement(
+        &format!(
+            "{EXPOSED_BINDING_SQL} AND b.form_id = $1 AND (NOT $2 OR s.status = 'published') \
+             ORDER BY b.site_id, b.binding_key"
+        ),
+        vec![form_id.into(), published_only.into()],
+    ))
+    .all(db)
+    .await?)
+}
+
 /// A site-scope layout row: the layout a site page shows.
 #[derive(Debug, Clone, FromQueryResult)]
 pub(crate) struct LayoutRow {
@@ -329,6 +455,7 @@ pub(crate) struct LayoutRow {
     pub(crate) scope_kind: String,
     pub(crate) scope_id: Uuid,
     pub(crate) layout_key: String,
+    pub(crate) version: i32,
     pub(crate) spec: Value,
     pub(crate) status: String,
     pub(crate) installation_id: Option<Uuid>,
@@ -336,7 +463,7 @@ pub(crate) struct LayoutRow {
 
 pub(crate) async fn load_layout(db: &impl ConnectionTrait, id: Uuid) -> Result<Option<LayoutRow>, ApiError> {
     Ok(LayoutRow::find_by_statement(statement(
-        "SELECT id, workspace_id, scope_kind, scope_id, layout_key, spec, status, installation_id \
+        "SELECT id, workspace_id, scope_kind, scope_id, layout_key, version, spec, status, installation_id \
          FROM layouts WHERE id = $1",
         vec![id.into()],
     ))
@@ -373,7 +500,8 @@ pub(crate) async fn insert_site_layout(
     .map(|row| row.id))
 }
 
-/// Replaces the spec of a site-scope layout; `false` when the key is taken by another layout.
+/// Replaces the spec of a layout (a site-scope layout, or the layout an approved draft edits in
+/// place); `false` when the key is taken by another layout of its scope.
 pub(crate) async fn update_site_layout(
     db: &impl ConnectionTrait,
     id: Uuid,

@@ -1,4 +1,5 @@
-//! Drafts: specs written by agents (form schemas, layouts) that wait for a person to review them.
+//! Drafts: specs written by agents (form schemas, layouts, site pages) that wait for a person to
+//! review them.
 //!
 //! A draft changes nothing until a workspace owner or administrator approves it in the console;
 //! approval runs the ordinary save of its kind with the approver's rights. Bots and connected

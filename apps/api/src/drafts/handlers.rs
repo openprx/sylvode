@@ -11,7 +11,7 @@ use axum::{
     response::IntoResponse,
 };
 use platform::{app::AppState, auth::JwtClaims, timestamp::Timestamp};
-use sea_orm::TransactionTrait;
+use sea_orm::{ConnectionTrait, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -19,8 +19,8 @@ use uuid::Uuid;
 use super::{
     apply,
     prepare::{
-        self, FormTarget, KIND_FORM_SCHEMA, KIND_LAYOUT, LayoutTarget, MAX_SPEC_BYTES, Prepared, public_exposure,
-        review_digest,
+        self, FormTarget, KIND_FORM_SCHEMA, KIND_LAYOUT, KIND_SITE_PAGE, LayoutTarget, MAX_SPEC_BYTES, Prepared,
+        public_exposure, review_digest,
     },
     store::{self, DraftRow, ListFilter, NewDraft},
 };
@@ -34,6 +34,7 @@ use crate::{
     middleware::{bot_auth::BotAuthContext, scoped_bot::readable_projects},
     response::{ApiResponse, PageQuery, PaginatedData},
     routes::form::{find_form, require_form_action},
+    site::drafts::PageTarget,
 };
 
 /// Creations of one author per minute, across projects.
@@ -123,8 +124,8 @@ fn summary(row: &DraftRow) -> DraftSummary {
     }
 }
 
-fn body(row: &DraftRow) -> Result<Draft, ApiError> {
-    let public = public_exposure();
+async fn body(db: &impl ConnectionTrait, row: &DraftRow) -> Result<Draft, ApiError> {
+    let public = public_exposure(db, row.workspace_id, row.project_id, &row.kind, &row.target, &row.spec).await?;
     let digest = review_digest(&row.spec, &row.validation, &row.capability_diff, &public)?;
     Ok(Draft {
         summary: summary(row),
@@ -277,12 +278,12 @@ pub async fn create_draft(
             "the note is longer than 2000 characters",
         ));
     }
-    let (early_kind, early_id) = match who.bot_id() {
+    let (author_kind, author_id) = match who.bot_id() {
         Some(bot_id) => ("bot", bot_id),
         None => ("user", who.user_id()?.ok_or_else(ApiError::internal)?),
     };
-    // A throttled author costs no validation: the locked recount below stays the authority.
-    if store::count_last_minute(&state.db, early_kind, early_id).await? >= CREATIONS_PER_MINUTE {
+    // A throttled author costs no validation: the locked recount in `store_draft` stays the authority.
+    if store::count_last_minute(&state.db, author_kind, author_id).await? >= CREATIONS_PER_MINUTE {
         return Err(rate_limited("too many drafts in the last minute"));
     }
     let candidate = match req.kind.as_str() {
@@ -301,7 +302,13 @@ pub async fn create_draft(
             )
             .await?
         }
-        "package_install" | "site_page" => {
+        KIND_SITE_PAGE => {
+            return Err(ApiError::bad_request_coded(
+                "draft_kind_unsupported",
+                "site_page drafts are created by the site page and title routes",
+            ));
+        }
+        "package_install" => {
             return Err(ApiError::bad_request_coded(
                 "draft_kind_unsupported",
                 "this draft kind is not available yet",
@@ -314,15 +321,43 @@ pub async fn create_draft(
             ));
         }
     };
-    let (author_kind, author_id) = match who.bot_id() {
-        Some(bot_id) => ("bot", bot_id),
-        None => ("user", who.user_id()?.ok_or_else(ApiError::internal)?),
-    };
+    let row = store_draft(
+        &state,
+        &project,
+        &req.kind,
+        (author_kind, author_id),
+        candidate,
+        req.note.as_deref(),
+    )
+    .await?;
+    Ok(ApiResponse::success(body(&state.db, &row).await?))
+}
+
+/// Stores a judged draft under the author's quotas, superseding the author's older pending
+/// drafts for the same target. The public-exposure list is computed here, so the stored digest
+/// covers it.
+async fn store_draft(
+    state: &AppState,
+    project: &Scope,
+    kind: &str,
+    (author_kind, author_id): (&str, Uuid),
+    mut candidate: Candidate,
+    note: Option<&str>,
+) -> Result<DraftRow, ApiError> {
+    candidate.prepared.public = public_exposure(
+        &state.db,
+        project.workspace_id,
+        project.id,
+        kind,
+        &candidate.target,
+        &candidate.prepared.spec,
+    )
+    .await?;
     let digest = candidate.prepared.digest()?;
 
     let tx = state.db.begin().await?;
     store::lock_author(&tx, author_id).await?;
-    store::supersede(&tx, project.id, &req.kind, author_kind, author_id, &candidate.identity).await?;
+    store::supersede(&tx, project.id, kind, author_kind, author_id, &candidate.identity).await?;
     if store::count_last_minute(&tx, author_kind, author_id).await? >= CREATIONS_PER_MINUTE {
         return Err(rate_limited("too many drafts in the last minute"));
     }
@@ -334,12 +369,12 @@ pub async fn create_draft(
         &NewDraft {
             workspace_id: project.workspace_id,
             project_id: project.id,
-            kind: &req.kind,
+            kind,
             target: &candidate.target,
             spec: &candidate.prepared.spec,
             author_kind,
             author_id,
-            note: req.note.as_deref(),
+            note,
             validation: &candidate.prepared.validation,
             capability_diff: &candidate.prepared.capability_diff,
             review_digest: &digest,
@@ -347,7 +382,44 @@ pub async fn create_draft(
     )
     .await?;
     tx.commit().await?;
-    Ok(ApiResponse::success(body(&row)?))
+    Ok(row)
+}
+
+/// Stores a bot's write to a published site as a `site_page` draft (contract C3 sections 3 and
+/// 6.6, LEAD C3-6) and returns its id. The site route has already checked the bot's write level
+/// in the site's project; the draft is judged like any other and an invalid one is stored with
+/// its report.
+pub(crate) async fn create_site_page_draft(
+    state: &AppState,
+    bot_id: Uuid,
+    workspace_id: Uuid,
+    project_id: Uuid,
+    target: &PageTarget,
+    spec: Value,
+) -> Result<Uuid, ApiError> {
+    if serde_json::to_vec(&spec).map_or(true, |bytes| bytes.len() > MAX_SPEC_BYTES) {
+        return Err(ApiError::bad_request_coded(
+            "draft_too_large",
+            "the spec is larger than a draft may be",
+        ));
+    }
+    if store::count_last_minute(&state.db, "bot", bot_id).await? >= CREATIONS_PER_MINUTE {
+        return Err(rate_limited("too many drafts in the last minute"));
+    }
+    let project = Scope {
+        kind: ScopeKind::Project,
+        id: project_id,
+        workspace_id,
+        project_id: Some(project_id),
+    };
+    let prepared = prepare::site_page(&state.db, workspace_id, project_id, target, &spec).await?;
+    let candidate = Candidate {
+        identity: target.identity(&prepared.spec),
+        target: serde_json::to_value(target).map_err(|_| ApiError::internal())?,
+        prepared,
+    };
+    let row = store_draft(state, &project, KIND_SITE_PAGE, ("bot", bot_id), candidate, None).await?;
+    Ok(row.id)
 }
 
 #[derive(Debug, Deserialize)]
@@ -442,7 +514,7 @@ pub async fn get_draft(
             .await
             .map_err(reads_as_not_found)?;
     }
-    Ok(ApiResponse::success(body(&row)?))
+    Ok(ApiResponse::success(body(&state.db, &row).await?))
 }
 
 /// The person who reviews, with the role that lets them: an owner or an administrator of the
@@ -537,7 +609,7 @@ pub async fn approve_draft(
     store::close(&tx, id, "approved", approver, req.comment.as_deref(), Some(&result)).await?;
     let closed = store::load(&tx, id, false).await?.ok_or_else(ApiError::internal)?;
     tx.commit().await?;
-    Ok(ApiResponse::success(body(&closed)?))
+    Ok(ApiResponse::success(body(&state.db, &closed).await?))
 }
 
 #[derive(Debug, Deserialize)]
@@ -567,5 +639,5 @@ pub async fn reject_draft(
     store::close(&tx, id, "rejected", reviewer_id, Some(&req.comment), None).await?;
     let closed = store::load(&tx, id, false).await?.ok_or_else(ApiError::internal)?;
     tx.commit().await?;
-    Ok(ApiResponse::success(body(&closed)?))
+    Ok(ApiResponse::success(body(&state.db, &closed).await?))
 }

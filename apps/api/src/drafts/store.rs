@@ -107,7 +107,8 @@ pub(super) async fn count_last_minute(
     .map_or(0, |row| row.total))
 }
 
-/// Marks the older pending drafts of the same author for the same target `superseded`.
+/// Marks the older pending drafts of the same author for the same target `superseded` (for a
+/// `site_page` draft: `site::drafts::PageTarget::identity`).
 pub(super) async fn supersede(
     db: &impl ConnectionTrait,
     project_id: Uuid,
@@ -123,6 +124,10 @@ pub(super) async fn supersede(
            AND status = 'pending' AND CASE kind \
               WHEN 'form_schema' THEN COALESCE(target->>'form_id', 'new:' || (target->>'key')) \
               WHEN 'layout' THEN (target->>'slot_id') || '/' || (target->>'scope_kind') || '/' || (target->>'scope_id') \
+              WHEN 'site_page' THEN (target->>'site_id') || '/' || COALESCE( \
+                (target->>'page_id') || CASE WHEN spec->'layout_id' IS NOT NULL AND spec->'layout_spec' IS NOT NULL \
+                                          THEN '/layout' ELSE '' END, \
+                CASE WHEN target->>'op' = 'create' THEN 'create:' || COALESCE(spec->>'route', '') ELSE 'title' END) \
               ELSE target::text END = $5",
         vec![
             project_id.into(),

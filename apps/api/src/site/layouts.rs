@@ -1,14 +1,17 @@
 //! Site page layouts: validation in site context (contract C3 sections 1.3 and 6.2, M10), the
-//! `binding:<key>` form references the site app reads, route matching, and the two hooks the
-//! layout routes call (site-context validation and the published-site rule for bot writes).
+//! `binding:<key>` form references the site app reads, route matching, and the hooks the layout
+//! routes call (site-context validation and the published-site rule for bot writes).
 
 use std::collections::BTreeSet;
 
+use platform::app::AppState;
 use sea_orm::ConnectionTrait;
 use serde_json::{Map, Value, json};
 use sv_layout::{Context, Options, Validated};
 use uuid::Uuid;
 
+use super::admin::page_spec;
+use super::drafts::{PageOp, PageTarget};
 use super::store::{self, PageRow};
 use crate::error::ApiError;
 
@@ -44,7 +47,7 @@ pub(crate) fn validate_site_layout(spec: &Value, bindings: BTreeSet<String>) -> 
 }
 
 /// The binding key a data source's form reference names, if any.
-fn binding_of(form: &str) -> Option<&str> {
+pub(super) fn binding_of(form: &str) -> Option<&str> {
     form.strip_prefix("$bind.").or_else(|| form.strip_prefix("form:"))
 }
 
@@ -111,27 +114,87 @@ pub async fn site_context_bindings(
     Ok((site.project_id, binding_keys(db, site_id).await?))
 }
 
-/// The published-site rule for bots (LEAD C3-6): a bot's change to a layout that a page of a
-/// published site shows would be stored as a `site_page` draft. Drafts (migration 0139) do not
-/// exist yet, so the write is refused with `site_draft_unavailable`.
-pub async fn refuse_bot_layout_write_on_published_site(
+/// The published-site rule for a bot's layout edit (LEAD C3-6, contract C3 section 3): when a
+/// page of a published site shows the layout, the edit is not applied but stored as a `site_page`
+/// draft (`op: update` of the first such page, with `layout_id` and the new `layout_spec`, which
+/// the approval writes into the layout in place). Returns the draft id when it was stored; a
+/// person, or a layout no published page shows, gets `None` and the edit applies directly.
+///
+/// # Errors
+/// `version_conflict` when `expected_version` is not the layout's version; the draft's errors.
+pub async fn draft_bot_layout_update_on_published_site(
+    state: &AppState,
+    bot_id: Option<Uuid>,
+    layout_id: Uuid,
+    spec: &Value,
+    expected_version: i32,
+) -> Result<Option<Uuid>, ApiError> {
+    let Some(bot_id) = bot_id else {
+        return Ok(None);
+    };
+    let Some(page) = store::published_pages_with_layout(&state.db, layout_id)
+        .await?
+        .into_iter()
+        .next()
+    else {
+        return Ok(None);
+    };
+    let layout = store::load_layout(&state.db, layout_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("layout not found"))?;
+    if layout.version != expected_version {
+        return Err(ApiError::conflict_coded(
+            "version_conflict",
+            "the layout changed since it was read",
+            Some(json!({ "current_version": layout.version })),
+        ));
+    }
+    let site = store::load_site(&state.db, page.site_id)
+        .await?
+        .ok_or_else(ApiError::internal)?;
+    let target = PageTarget {
+        site_id: site.id,
+        page_id: Some(page.id),
+        op: PageOp::Update,
+    };
+    let spec = page_spec(
+        &page.route,
+        &page.audience,
+        page.nav.as_ref(),
+        Some(page.position),
+        Some(layout_id),
+        Some(spec.clone()),
+    );
+    let draft_id = crate::drafts::handlers::create_site_page_draft(
+        state,
+        bot_id,
+        site.workspace_id,
+        site.project_id,
+        &target,
+        spec,
+    )
+    .await?;
+    Ok(Some(draft_id))
+}
+
+/// A bot may not archive a layout that a page of a published site shows: the contract has no
+/// draft for it (a page without its layout), so the archive is refused and left to a person.
+///
+/// # Errors
+/// `layout_on_published_site` for such a bot archive.
+pub async fn refuse_bot_layout_archive_on_published_site(
     db: &impl ConnectionTrait,
     is_bot: bool,
     layout_id: Uuid,
 ) -> Result<(), ApiError> {
     if is_bot && store::layout_on_published_site(db, layout_id).await? {
-        return Err(draft_unavailable());
+        return Err(ApiError::conflict_coded(
+            "layout_on_published_site",
+            "a page of a published site shows this layout; a person archives it",
+            None,
+        ));
     }
     Ok(())
-}
-
-/// The refusal of a bot write that a published site would turn into a draft.
-pub(crate) fn draft_unavailable() -> ApiError {
-    ApiError::conflict_coded(
-        "site_draft_unavailable",
-        "a bot change to a published site needs a human review draft, which this server does not support yet",
-        None,
-    )
 }
 
 #[cfg(test)]

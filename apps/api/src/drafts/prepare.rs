@@ -15,7 +15,7 @@ use uuid::Uuid;
 use super::store::DraftRow;
 use crate::{
     catalogue::{self, Risk},
-    error::ApiError,
+    error::{ApiError, ApiErrorKind},
     forms::{
         rules::SchemaScope,
         schema::{ensure_schema_field_ids, normalize_key, validate_schema_report},
@@ -24,10 +24,12 @@ use crate::{
         access::{Scope, ScopeKind, resolve_scope},
         apply::{draft_slot, validate_for_slot},
     },
+    site::drafts::{self as site_drafts, PageTarget},
 };
 
 pub(super) const KIND_FORM_SCHEMA: &str = "form_schema";
 pub(super) const KIND_LAYOUT: &str = "layout";
+pub(super) const KIND_SITE_PAGE: &str = "site_page";
 
 /// The largest serialised spec a draft accepts. The column check counts the text form of the
 /// stored `jsonb`, which is a little longer than the compact form, so this leaves room under the
@@ -112,11 +114,52 @@ pub(super) fn review_digest(
     Ok(format!("sha256:{}", hex::encode(Sha256::digest(bytes))))
 }
 
-/// The pages of published sites that would show the artefact to visitors. No site exists yet
-/// (migration 0137 is the site lane's), so nothing is public; the site lane fills this in, and the
-/// digest already covers it.
-pub(super) const fn public_exposure() -> Vec<Value> {
-    Vec::new()
+/// The pages, bindings and visitor fields of published sites that a draft would show visitors,
+/// against the current state: a form schema through the site bindings of its form, a `site_page`
+/// draft through the page (or the layout edit, or the title) it changes. A layout draft places a
+/// layout in a console slot, which no site shows; a new form has no binding yet.
+pub(super) async fn public_exposure(
+    db: &impl ConnectionTrait,
+    workspace_id: Uuid,
+    project_id: Uuid,
+    kind: &str,
+    target: &Value,
+    spec: &Value,
+) -> Result<Vec<Value>, ApiError> {
+    match kind {
+        KIND_FORM_SCHEMA => {
+            let form_id = target
+                .get("form_id")
+                .and_then(Value::as_str)
+                .and_then(|id| id.parse::<Uuid>().ok());
+            match form_id {
+                Some(form_id) => site_drafts::form_exposure(db, form_id, spec).await,
+                None => Ok(Vec::new()),
+            }
+        }
+        KIND_SITE_PAGE => match serde_json::from_value::<PageTarget>(target.clone()) {
+            Ok(target) => site_drafts::page_exposure(db, workspace_id, project_id, &target, spec).await,
+            Err(_) => Ok(Vec::new()),
+        },
+        _ => Ok(Vec::new()),
+    }
+}
+
+/// Judges a `site_page` draft against its site; a site or page that is gone is `not_found`.
+pub(super) async fn site_page(
+    db: &impl ConnectionTrait,
+    workspace_id: Uuid,
+    project_id: Uuid,
+    target: &PageTarget,
+    spec: &Value,
+) -> Result<Prepared, ApiError> {
+    let judged = site_drafts::judge(db, workspace_id, project_id, target, spec).await?;
+    Ok(Prepared {
+        capability_diff: judged.analysis.as_ref().map_or_else(|| json!([]), capability_diff),
+        spec: judged.spec,
+        validation: judged.validation,
+        public: Vec::new(),
+    })
 }
 
 /// Judges a form schema in the project it is written for.
@@ -139,7 +182,7 @@ pub(super) fn form_schema(workspace_id: Uuid, project_id: Uuid, spec: Value) -> 
                 spec: schema,
                 validation,
                 capability_diff: json!([]),
-                public: public_exposure(),
+                public: Vec::new(),
             }
         }
         Err(_) => Prepared {
@@ -150,7 +193,7 @@ pub(super) fn form_schema(workspace_id: Uuid, project_id: Uuid, spec: Value) -> 
                 "warnings": [],
             }),
             capability_diff: json!([]),
-            public: public_exposure(),
+            public: Vec::new(),
         },
     }
 }
@@ -196,13 +239,13 @@ pub(super) fn layout(slot: &SlotDescriptor, spec: Value) -> Prepared {
             capability_diff: capability_diff(&validated.analysis),
             validation: json!({ "valid": true, "errors": [], "analysis": validated.analysis }),
             spec,
-            public: public_exposure(),
+            public: Vec::new(),
         },
         Err(errors) => Prepared {
             spec,
             validation: json!({ "valid": false, "errors": errors, "analysis": null }),
             capability_diff: json!([]),
-            public: public_exposure(),
+            public: Vec::new(),
         },
     }
 }
@@ -212,6 +255,7 @@ pub(super) enum Plan {
     UpdateForm { form_id: Uuid },
     CreateForm { key: String, name: String },
     PlaceLayout { scope: Scope, slot: SlotDescriptor },
+    SitePage { target: PageTarget },
 }
 
 fn stale(reason: &'static str, details: Value) -> ApiError {
@@ -220,6 +264,7 @@ fn stale(reason: &'static str, details: Value) -> ApiError {
         match reason {
             "form_missing" => "the form of this draft no longer exists",
             "scope_missing" => "the scope of this draft no longer exists",
+            "page_missing" => "the site or page of this draft no longer exists",
             _ => "the target changed since the draft was written",
         },
         Some(details),
@@ -230,10 +275,25 @@ fn stored<T: for<'de> Deserialize<'de>>(target: &Value) -> Result<T, ApiError> {
     serde_json::from_value(target.clone()).map_err(|_| ApiError::internal())
 }
 
-/// Judges a stored draft again against the current state and resolves how it would be saved. A
-/// form row is locked for the rest of the transaction. Refuses `draft_stale` when the form moved
-/// on since the draft was written and `draft_kind_unsupported` for kinds a later batch adds.
+/// Judges a stored draft again against the current state (its public-exposure list included) and
+/// resolves how it would be saved. A form row is locked for the rest of the transaction. Refuses
+/// `draft_stale` when the form moved on since the draft was written, or the site or page of a
+/// `site_page` draft is gone, and `draft_kind_unsupported` for kinds a later batch adds.
 pub(super) async fn recompute(tx: &DatabaseTransaction, row: &DraftRow) -> Result<(Prepared, Plan), ApiError> {
+    let (mut prepared, plan) = judge_stored(tx, row).await?;
+    prepared.public = public_exposure(
+        tx,
+        row.workspace_id,
+        row.project_id,
+        &row.kind,
+        &row.target,
+        &prepared.spec,
+    )
+    .await?;
+    Ok((prepared, plan))
+}
+
+async fn judge_stored(tx: &DatabaseTransaction, row: &DraftRow) -> Result<(Prepared, Plan), ApiError> {
     match row.kind.as_str() {
         KIND_FORM_SCHEMA => {
             let target: FormTarget = stored(&row.target)?;
@@ -262,6 +322,19 @@ pub(super) async fn recompute(tx: &DatabaseTransaction, row: &DraftRow) -> Resul
             }
             let slot = draft_slot(&target.slot_id, kind)?;
             Ok((layout(&slot, row.spec.clone()), Plan::PlaceLayout { scope, slot }))
+        }
+        KIND_SITE_PAGE => {
+            let target: PageTarget = stored(&row.target)?;
+            let prepared = site_page(tx, row.workspace_id, row.project_id, &target, &row.spec)
+                .await
+                .map_err(|error| {
+                    if error.kind() == ApiErrorKind::NotFound {
+                        stale("page_missing", json!({}))
+                    } else {
+                        error
+                    }
+                })?;
+            Ok((prepared, Plan::SitePage { target }))
         }
         _ => Err(ApiError::bad_request_coded(
             "draft_kind_unsupported",

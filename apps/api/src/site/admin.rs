@@ -1,22 +1,24 @@
 //! Console administration of sites (contract C3 section 6.6): sites, pages, bindings and roles.
 //!
-//! Bot writes on a published site (pages, the title) would become `site_page` drafts (LEAD
-//! C3-6); drafts do not exist yet (migration 0139), so they are refused `site_draft_unavailable`.
-//! Human users, site editors included, write directly (C3-6b).
+//! Bot writes on a published site (pages, the title) are stored as `site_page` drafts and answered
+//! `{draft_id}` (LEAD C3-6); a workspace owner or admin approves them. Human users, site editors
+//! included, write directly (C3-6b).
 
 use axum::{
     Extension, Json,
     extract::{Path, Query, State},
-    response::IntoResponse,
+    response::{IntoResponse, Response},
 };
 use platform::{app::AppState, auth::JwtClaims};
-use sea_orm::TransactionTrait;
+use sea_orm::{ConnectionTrait, TransactionTrait};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use sv_layout::Validated;
 use uuid::Uuid;
 
 use super::access::{Who, admin_site, page_writable_site, readable_site, require_project_read, require_project_write};
-use super::layouts::{binding_keys, draft_unavailable, validate_site_layout};
+use super::drafts::{PageOp, PageTarget, submit};
+use super::layouts::{binding_keys, validate_site_layout};
 use super::projection::Projection;
 use super::store::{self, NewSite, PageRow, PageValues, SiteBody, SiteRow};
 use crate::catalogue::SiteRole;
@@ -44,7 +46,7 @@ fn is_slug(slug: &str) -> bool {
 }
 
 /// A text value: a string, or an i18n map with `en` (at most eight locales).
-fn check_text(value: &Value, code: &'static str) -> Result<(), ApiError> {
+pub(super) fn check_text(value: &Value, code: &'static str) -> Result<(), ApiError> {
     let fits = |text: &str| !text.trim().is_empty() && text.chars().count() <= MAX_TEXT_CHARS;
     let ok = match value {
         Value::String(text) => fits(text),
@@ -181,17 +183,22 @@ pub async fn update_site(
     bot: Option<Extension<BotAuthContext>>,
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateSiteRequest>,
-) -> Result<impl IntoResponse, ApiError> {
+) -> Result<Response, ApiError> {
     let who = Who::new(claims, bot);
     let site = page_writable_site(&state, &who, id).await?;
     check_text(&req.title, "title_invalid")?;
     if who.is_bot() && site.is_published() {
-        return Err(draft_unavailable());
+        let target = PageTarget {
+            site_id: site.id,
+            page_id: None,
+            op: PageOp::Update,
+        };
+        return submit(&state, &who, &site, &target, json!({ "title": req.title })).await;
     }
     let row = store::update_title(&state.db, site.id, &req.title)
         .await?
         .ok_or_else(|| ApiError::not_found("site not found"))?;
-    Ok(ApiResponse::success(site_body(&row)))
+    Ok(ApiResponse::success(site_body(&row)).into_response())
 }
 
 async fn set_status(state: &AppState, who: &Who, id: Uuid, status: &str) -> Result<SiteBody, ApiError> {
@@ -346,7 +353,7 @@ pub struct PageRequest {
     layout_spec: Option<Value>,
 }
 
-fn check_page_values(route: &str, audience: &str, nav: Option<&Value>) -> Result<(), ApiError> {
+pub(super) fn check_page_values(route: &str, audience: &str, nav: Option<&Value>) -> Result<(), ApiError> {
     if !is_route(route) || route.len() > 200 {
         return Err(invalid(
             "route_invalid",
@@ -363,37 +370,35 @@ fn check_page_values(route: &str, audience: &str, nav: Option<&Value>) -> Result
 }
 
 /// Checks a layout a page may show: an active user layout at this site's scope or in the site's
-/// project (or one of its forms), valid in site context. Returns its id.
-async fn check_page_layout(state: &AppState, site: &SiteRow, layout_id: Uuid) -> Result<Uuid, ApiError> {
+/// project (or one of its forms), valid in site context. Returns the layout row and the verdict.
+pub(super) async fn check_page_layout(
+    db: &impl ConnectionTrait,
+    site: &SiteRow,
+    layout_id: Uuid,
+) -> Result<(store::LayoutRow, Validated), ApiError> {
     let not_found = || ApiError::not_found("layout not found");
-    let layout = store::load_layout(&state.db, layout_id).await?.ok_or_else(not_found)?;
+    let layout = store::load_layout(db, layout_id).await?.ok_or_else(not_found)?;
     if layout.workspace_id != site.workspace_id || layout.status != "active" || layout.installation_id.is_some() {
         return Err(not_found());
     }
     let in_scope = match layout.scope_kind.as_str() {
         "site" => layout.scope_id == site.id,
         "project" => layout.scope_id == site.project_id,
-        "form" => form_in_project(state, layout.scope_id, site.project_id).await?,
+        "form" => store::form_in_project(db, layout.scope_id, site.project_id).await?,
         _ => false,
     };
     if !in_scope {
         return Err(not_found());
     }
-    validate_site_layout(&layout.spec, binding_keys(&state.db, site.id).await?)?;
-    Ok(layout.id)
-}
-
-async fn form_in_project(state: &AppState, form_id: Uuid, project_id: Uuid) -> Result<bool, ApiError> {
-    Ok(crate::routes::form::find_form(state, form_id)
-        .await
-        .is_ok_and(|form| form.project_id == project_id))
+    let validated = validate_site_layout(&layout.spec, binding_keys(db, site.id).await?)?;
+    Ok((layout, validated))
 }
 
 /// Stores a layout spec at the site's scope (a new layout, or the page's own site layout).
-async fn save_site_layout(
+pub(super) async fn save_site_layout(
     tx: &sea_orm::DatabaseTransaction,
     site: &SiteRow,
-    who: &Who,
+    created_by: Option<Uuid>,
     spec: &Value,
     existing: Option<Uuid>,
 ) -> Result<Uuid, ApiError> {
@@ -406,7 +411,7 @@ async fn save_site_layout(
         }
         return Err(taken());
     }
-    store::insert_site_layout(tx, site.workspace_id, site.id, &key, spec, who.user_id()?)
+    store::insert_site_layout(tx, site.workspace_id, site.id, &key, spec, created_by)
         .await?
         .ok_or_else(taken)
 }
@@ -418,25 +423,39 @@ pub async fn create_page(
     bot: Option<Extension<BotAuthContext>>,
     Path(id): Path<Uuid>,
     Json(req): Json<PageRequest>,
-) -> Result<impl IntoResponse, ApiError> {
+) -> Result<Response, ApiError> {
     let who = Who::new(claims, bot);
     let site = page_writable_site(&state, &who, id).await?;
-    if who.is_bot() && site.is_published() {
-        return Err(draft_unavailable());
-    }
     let route = req.route.ok_or_else(|| invalid("route_invalid", "route is required"))?;
     let audience = req.audience.unwrap_or_else(|| "visitor".to_string());
     check_page_values(&route, &audience, req.nav.as_ref())?;
+    if req.layout_id.is_some() == req.layout_spec.is_some() {
+        return Err(invalid(
+            "layout_required",
+            "give exactly one of layout_id and layout_spec",
+        ));
+    }
+    if who.is_bot() && site.is_published() {
+        let target = PageTarget {
+            site_id: site.id,
+            page_id: None,
+            op: PageOp::Create,
+        };
+        let spec = page_spec(
+            &route,
+            &audience,
+            req.nav.as_ref(),
+            req.position,
+            req.layout_id,
+            req.layout_spec,
+        );
+        return submit(&state, &who, &site, &target, spec).await;
+    }
     let tx = state.db.begin().await?;
     let layout_id = match (req.layout_id, req.layout_spec.as_ref()) {
-        (Some(_), Some(_)) | (None, None) => {
-            return Err(invalid(
-                "layout_required",
-                "give exactly one of layout_id and layout_spec",
-            ));
-        }
-        (Some(layout_id), None) => check_page_layout(&state, &site, layout_id).await?,
-        (None, Some(spec)) => save_site_layout(&tx, &site, &who, spec, None).await?,
+        (Some(layout_id), _) => check_page_layout(&state.db, &site, layout_id).await?.0.id,
+        (None, Some(spec)) => save_site_layout(&tx, &site, who.user_id()?, spec, None).await?,
+        (None, None) => return Err(ApiError::internal()),
     };
     let page = store::insert_page(
         &tx,
@@ -452,7 +471,33 @@ pub async fn create_page(
     .await?
     .ok_or_else(|| ApiError::conflict_coded("route_taken", "this site already has a page at this route", None))?;
     tx.commit().await?;
-    Ok(ApiResponse::success(page))
+    Ok(ApiResponse::success(page).into_response())
+}
+
+/// The `spec` of a `site_page` draft for a page: its values, and the layout it shows (an
+/// existing layout or a spec stored at the site's scope on approval).
+pub(super) fn page_spec(
+    route: &str,
+    audience: &str,
+    nav: Option<&Value>,
+    position: Option<i32>,
+    layout_id: Option<Uuid>,
+    layout_spec: Option<Value>,
+) -> Value {
+    let mut spec = serde_json::Map::new();
+    spec.insert("route".to_string(), json!(route));
+    spec.insert("audience".to_string(), json!(audience));
+    if let Some(nav) = nav.filter(|nav| !nav.is_null()) {
+        spec.insert("nav".to_string(), nav.clone());
+    }
+    spec.insert("position".to_string(), json!(position.unwrap_or(0)));
+    if let Some(layout_id) = layout_id {
+        spec.insert("layout_id".to_string(), json!(layout_id));
+    }
+    if let Some(layout_spec) = layout_spec {
+        spec.insert("layout_spec".to_string(), layout_spec);
+    }
+    Value::Object(spec)
 }
 
 /// The page and its site, for a page route (the page id carries no project of its own).
@@ -466,10 +511,12 @@ async fn page_and_site(state: &AppState, who: &Who, page_id: Uuid) -> Result<(Pa
             ApiError::Forbidden(message) => ApiError::Forbidden(message),
             _ => ApiError::not_found("page not found"),
         })?;
-    if who.is_bot() && site.is_published() {
-        return Err(draft_unavailable());
-    }
     Ok((page, site))
+}
+
+/// Whether a bot's write to this site becomes a `site_page` draft (LEAD C3-6).
+fn drafted(who: &Who, site: &SiteRow) -> bool {
+    who.is_bot() && site.is_published()
 }
 
 /// `PATCH /api/v1/site-pages/{page_id}`: absent members stay; `layout_spec` replaces the page's own
@@ -480,7 +527,7 @@ pub async fn update_page(
     bot: Option<Extension<BotAuthContext>>,
     Path(page_id): Path<Uuid>,
     Json(req): Json<PageRequest>,
-) -> Result<impl IntoResponse, ApiError> {
+) -> Result<Response, ApiError> {
     let who = Who::new(claims, bot);
     let (page, site) = page_and_site(&state, &who, page_id).await?;
     let route = req.route.unwrap_or_else(|| page.route.clone());
@@ -491,6 +538,24 @@ pub async fn update_page(
         None => page.nav.clone(),
     };
     check_page_values(&route, &audience, nav.as_ref())?;
+    if drafted(&who, &site) {
+        if req.layout_id.is_some() && req.layout_spec.is_some() {
+            return Err(invalid(
+                "layout_required",
+                "give at most one of layout_id and layout_spec",
+            ));
+        }
+        // Without a layout change the draft names the page's current layout, so the reviewer sees it.
+        let layout_id = req.layout_id.or(req.layout_spec.is_none().then_some(page.layout_id));
+        let target = PageTarget {
+            site_id: site.id,
+            page_id: Some(page.id),
+            op: PageOp::Update,
+        };
+        let position = Some(req.position.unwrap_or(page.position));
+        let spec = page_spec(&route, &audience, nav.as_ref(), position, layout_id, req.layout_spec);
+        return submit(&state, &who, &site, &target, spec).await;
+    }
     let tx = state.db.begin().await?;
     let current = store::load_layout(&tx, page.layout_id).await?;
     let own_site_layout = current
@@ -504,8 +569,8 @@ pub async fn update_page(
                 "give at most one of layout_id and layout_spec",
             ));
         }
-        (Some(layout_id), None) => check_page_layout(&state, &site, layout_id).await?,
-        (None, Some(spec)) => save_site_layout(&tx, &site, &who, spec, own_site_layout).await?,
+        (Some(layout_id), None) => check_page_layout(&state.db, &site, layout_id).await?.0.id,
+        (None, Some(spec)) => save_site_layout(&tx, &site, who.user_id()?, spec, own_site_layout).await?,
         (None, None) => page.layout_id,
     };
     let updated = store::update_page(
@@ -525,7 +590,7 @@ pub async fn update_page(
         store::delete_unused_site_layout(&tx, old).await?;
     }
     tx.commit().await?;
-    Ok(ApiResponse::success(updated))
+    Ok(ApiResponse::success(updated).into_response())
 }
 
 /// `DELETE /api/v1/site-pages/{page_id}`: the page's own site layout goes with it.
@@ -534,14 +599,22 @@ pub async fn delete_page(
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
     Path(page_id): Path<Uuid>,
-) -> Result<impl IntoResponse, ApiError> {
+) -> Result<Response, ApiError> {
     let who = Who::new(claims, bot);
-    let (page, _site) = page_and_site(&state, &who, page_id).await?;
+    let (page, site) = page_and_site(&state, &who, page_id).await?;
+    if drafted(&who, &site) {
+        let target = PageTarget {
+            site_id: site.id,
+            page_id: Some(page.id),
+            op: PageOp::Delete,
+        };
+        return submit(&state, &who, &site, &target, json!({})).await;
+    }
     let tx = state.db.begin().await?;
     store::delete_page(&tx, page.id).await?;
     store::delete_unused_site_layout(&tx, page.layout_id).await?;
     tx.commit().await?;
-    Ok(ApiResponse::success(json!({ "id": page.id })))
+    Ok(ApiResponse::success(json!({ "id": page.id })).into_response())
 }
 
 // ---------------------------------------------------------------------------------------------

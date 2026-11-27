@@ -36,6 +36,11 @@ impl Who {
         self.bot.is_some()
     }
 
+    /// The bot behind the request; `None` for a person.
+    pub(crate) fn bot_id(&self) -> Option<Uuid> {
+        self.bot.as_ref().map(|bot| bot.bot_id)
+    }
+
     /// The person behind the request; `None` for a bot.
     pub(crate) fn user_id(&self) -> Result<Option<Uuid>, ApiError> {
         if self.bot.is_some() {
