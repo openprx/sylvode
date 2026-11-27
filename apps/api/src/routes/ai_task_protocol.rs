@@ -187,9 +187,12 @@ pub async fn list_active_tasks(
     Ok(ApiResponse::success(views))
 }
 
-/// `GET /api/v1/ai/tasks/{task_id}?attempt=N`: the task view. A task that ended at attempt `N`
-/// is answered with `"active": false` so an agent can tell it is done; any other attempt or
-/// state is a 400.
+/// `GET /api/v1/ai/tasks/{task_id}[?attempt=N]`: the task view.
+///
+/// Without `attempt` the view of the current attempt is answered for a task in any status (a bot
+/// reads a task it was told changed). With `attempt=N`, a task that ended at attempt `N` is answered with `"active": false` so an
+/// agent can tell it is done; any other attempt or state is a 400. Another bot's task is a 404
+/// either way.
 pub async fn get_task(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
@@ -199,15 +202,16 @@ pub async fn get_task(
 ) -> Result<impl IntoResponse, ApiError> {
     let entry = load_task_with_protocol(&state.db, task_id).await?;
     ensure_task_bot(&entry.task, bot.as_ref().map(|bot| &bot.0), &claims)?;
-    let attempt = query.required()?;
     let task = &entry.task;
-    let ended_here = matches!(task.status.as_str(), "completed" | "failed") && task.attempts == attempt;
-    let active_here = is_active_status(&task.status) && task.attempts == attempt;
-    if !active_here && !ended_here {
-        return Err(ApiError::BadRequest(format!(
-            "task is not active for attempt {attempt} (current attempt {})",
-            task.attempts
-        )));
+    if let Some(attempt) = query.attempt {
+        let ended_here = matches!(task.status.as_str(), "completed" | "failed") && task.attempts == attempt;
+        let active_here = is_active_status(&task.status) && task.attempts == attempt;
+        if !active_here && !ended_here {
+            return Err(ApiError::BadRequest(format!(
+                "task is not active for attempt {attempt} (current attempt {})",
+                task.attempts
+            )));
+        }
     }
     Ok(ApiResponse::success(
         build_task_view(&state.db, task, &entry.protocol).await?,
@@ -993,7 +997,6 @@ mod tests {
         let w = World::new(db, "ar").await;
         let task = seed_task(db, &w.tenant, w.bot, "processing", 1, 0).await;
         for answer in [
-            get(db, &w, Caller::TaskBot, task, None).await,
             ack(db, &w, Caller::TaskBot, task, None, "plan").await,
             progress(db, &w, Caller::TaskBot, task, None, json!({})).await,
         ] {
@@ -1303,6 +1306,38 @@ mod tests {
             get(db, &w, Caller::TaskBot, Uuid::new_v4(), Some(1)).await,
             Err(ApiError::NotFound(_))
         ));
+        scratch.drop_self().await;
+    }
+
+    #[tokio::test]
+    async fn the_view_without_an_attempt_serves_the_current_attempt_in_any_status() {
+        let scratch = scratch_or_skip!("aitp_view_no_attempt");
+        let db = &scratch.db;
+        let w = World::new(db, "na").await;
+        for (status, attempts, active) in [
+            ("processing", 2, true),
+            ("acknowledged", 1, true),
+            ("completed", 2, false),
+            ("failed", 3, false),
+            ("pending", 0, false),
+        ] {
+            let task = seed_task(db, &w.tenant, w.bot, status, attempts, 0).await;
+            let view = get(db, &w, Caller::TaskBot, task, None)
+                .await
+                .unwrap_or_else(|error| panic!("a {status} task has a view without an attempt: {error:?}"));
+            assert_eq!(data(&view)["status"], status, "{status}");
+            assert_eq!(data(&view)["attempt"], attempts, "{status}");
+            assert_eq!(data(&view)["active"], active, "{status}");
+        }
+        // Ownership is unchanged: another bot, a member and an administrator get the 404 of a
+        // task that does not exist.
+        let task = seed_task(db, &w.tenant, w.bot, "completed", 1, 0).await;
+        for caller in [Caller::OtherBot, Caller::Member, Caller::SystemAdmin] {
+            assert!(
+                not_found(&get(db, &w, caller, task, None).await),
+                "another caller must not read the task without an attempt"
+            );
+        }
         scratch.drop_self().await;
     }
 
