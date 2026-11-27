@@ -4,7 +4,7 @@
 use serde_json::Value;
 
 use super::{
-    field_rules::{apply_default_values, check_field_rules},
+    field_rules::{FieldRuleViolation, apply_default_values, check_field_rules, field_rule_violations},
     values::{NormalizedValues, normalize_record_values_report, normalize_record_values_with_existing},
 };
 use crate::error::ApiError;
@@ -17,18 +17,9 @@ pub fn validate_and_normalize_values(schema: &Value, values: Value) -> Result<Va
     Ok(normalized)
 }
 
-/// Update: normalizes against the stored values and checks the rules of every value this write
-/// sets or changes.
-pub fn validate_and_normalize_values_with_existing(
-    schema: &Value,
-    values: Value,
-    existing_values: &Value,
-) -> Result<Value, ApiError> {
-    validate_and_normalize_values_with_existing_report(schema, values, existing_values).map(|report| report.values)
-}
-
-/// Same as [`validate_and_normalize_values_with_existing`], but also reports the required fields
-/// that were already unmet on the stored record and that this write did not address.
+/// Update: normalizes against the stored values, checks the rules of every value this write sets
+/// or changes, and reports the required fields that were already unmet on the stored record and
+/// that this write did not address.
 pub fn validate_and_normalize_values_with_existing_report(
     schema: &Value,
     values: Value,
@@ -37,4 +28,25 @@ pub fn validate_and_normalize_values_with_existing_report(
     let report = normalize_record_values_report(schema, values, Some(existing_values)).map_err(ApiError::BadRequest)?;
     check_field_rules(schema, &report.values, Some(existing_values))?;
     Ok(report)
+}
+
+/// The values a recalculation stores and the rule violations it carries.
+pub struct RecalculatedValues {
+    pub values: Value,
+    /// Derived outputs that break their field rules. They are stored as computed and reported, never
+    /// refused: a recalculation is a system write (also run after a child record commits), and
+    /// failing it would leave the user's own, already accepted write looking refused.
+    pub carried: Vec<FieldRuleViolation>,
+}
+
+/// Recalculation: type normalization still refuses; field rule violations are carried.
+pub fn validate_and_normalize_recalculated_values(
+    schema: &Value,
+    values: Value,
+    existing_values: &Value,
+) -> Result<RecalculatedValues, ApiError> {
+    let values =
+        normalize_record_values_with_existing(schema, values, Some(existing_values)).map_err(ApiError::BadRequest)?;
+    let carried = field_rule_violations(schema, &values, Some(existing_values))?;
+    Ok(RecalculatedValues { values, carried })
 }

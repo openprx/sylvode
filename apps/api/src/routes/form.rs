@@ -33,7 +33,7 @@ use crate::{
         },
         calculation::{evaluate_calculated_values, merge_values_for_calculation, overlay_calculated_values},
         event_redaction::{redact_event_metadata, redact_event_payload, redact_event_source},
-        field_rules::{apply_default_values, ensure_read_only_fields_untouched},
+        field_rules::{apply_default_values, carried_summary, ensure_read_only_fields_untouched},
         job_context::{add_form_job_worker_context, form_job_requester, form_job_worker_context},
         permissions::{
             append_record_scope_sql, denied_read_field_keys, ensure_field_read_policy_allows,
@@ -83,7 +83,7 @@ use crate::{
             signature_lifecycle_summary, signature_workflow_verification_summary, verify_signature_audit_source,
         },
         validation::{
-            validate_and_normalize_values, validate_and_normalize_values_with_existing,
+            validate_and_normalize_recalculated_values, validate_and_normalize_values,
             validate_and_normalize_values_with_existing_report,
         },
     },
@@ -3521,7 +3521,16 @@ pub async fn recalculate_form_record(
     let tx = state.db.begin().await?;
     let calculated = calculate_values(&state, &form, Some(record_id), record.values.clone()).await?;
     let with_autonumber = apply_autonumber_values(&tx, &form, Some(&record.values), calculated).await?;
-    let values = validate_and_normalize_values_with_existing(&form.schema, with_autonumber, &record.values)?;
+    let recalculated = validate_and_normalize_recalculated_values(&form.schema, with_autonumber, &record.values)?;
+    if !recalculated.carried.is_empty() {
+        tracing::warn!(
+            form_id = %form.id,
+            record_id = %record_id,
+            carried = %carried_summary(&recalculated.carried),
+            "recalculated values carry field rule violations; stored as computed"
+        );
+    }
+    let values = recalculated.values;
     let title = render_title(&form.title_template, record_id, &values);
 
     tx.execute(Statement::from_sql_and_values(
@@ -5198,7 +5207,16 @@ async fn recalculate_record_values(
     let tx = state.db.begin().await?;
     let calculated = calculate_values(state, &form, Some(record_id), record.values.clone()).await?;
     let with_autonumber = apply_autonumber_values(&tx, &form, Some(&record.values), calculated).await?;
-    let values = validate_and_normalize_values_with_existing(&form.schema, with_autonumber, &record.values)?;
+    let recalculated = validate_and_normalize_recalculated_values(&form.schema, with_autonumber, &record.values)?;
+    if !recalculated.carried.is_empty() {
+        tracing::warn!(
+            form_id = %form.id,
+            record_id = %record_id,
+            carried = %carried_summary(&recalculated.carried),
+            "recalculated values carry field rule violations; stored as computed"
+        );
+    }
+    let values = recalculated.values;
     let title = render_title(&form.title_template, record_id, &values);
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,

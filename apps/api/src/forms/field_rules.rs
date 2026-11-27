@@ -200,8 +200,25 @@ pub fn ensure_read_only_fields_untouched(
 /// A field is checked when it holds a value that this write set or changed (every value on create,
 /// `existing` is `None`).
 pub fn check_field_rules(schema: &Value, normalized: &Value, existing: Option<&Value>) -> Result<(), ApiError> {
+    let violations = field_rule_violations(schema, normalized, existing)?;
+    if violations.is_empty() {
+        Ok(())
+    } else {
+        Err(field_rules_error(&violations))
+    }
+}
+
+/// The `validation.*` violations of the values a write set or changed, without refusing.
+///
+/// Used by system writers (recalculation), whose derived outputs are stored as computed and whose
+/// violations are reported as `carried` instead of failing the operation.
+pub fn field_rule_violations(
+    schema: &Value,
+    normalized: &Value,
+    existing: Option<&Value>,
+) -> Result<Vec<FieldRuleViolation>, ApiError> {
     let Some(values) = normalized.as_object() else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     let fields = parse_fields(schema).map_err(ApiError::BadRequest)?;
     let rules = parse_field_rules(schema).map_err(ApiError::BadRequest)?;
@@ -228,11 +245,16 @@ pub fn check_field_rules(schema: &Value, normalized: &Value, existing: Option<&V
                 }),
         );
     }
-    if violations.is_empty() {
-        Ok(())
-    } else {
-        Err(field_rules_error(&violations))
-    }
+    Ok(violations)
+}
+
+/// Field keys and codes of carried violations, for logs (never values).
+pub fn carried_summary(violations: &[FieldRuleViolation]) -> String {
+    violations
+        .iter()
+        .map(|violation| format!("{}:{}", violation.field_key, violation.code.as_str()))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn read_only_write_allowed(field: &FormField, rules: &FieldRules, raw: &Value, existing: Option<&Value>) -> bool {
@@ -430,8 +452,8 @@ fn compile_pattern(key: &str, pattern: &str) -> Result<Regex, String> {
 #[allow(clippy::indexing_slicing)]
 mod tests {
     use super::{
-        FIELD_RULES_FAILED, apply_default_values, check_field_rules, ensure_read_only_fields_untouched,
-        validate_schema_field_rules,
+        FIELD_RULES_FAILED, apply_default_values, carried_summary, check_field_rules,
+        ensure_read_only_fields_untouched, field_rule_violations, validate_schema_field_rules,
     };
     use crate::error::ApiError;
     use serde_json::{Value, json};
@@ -509,6 +531,16 @@ mod tests {
         let existing = json!({"price": {"type": "number", "decimal": "0.1"}});
 
         assert!(check_field_rules(&schema(), &normalized, Some(&existing)).is_ok());
+    }
+
+    #[test]
+    fn recalculation_reports_violations_without_refusing() {
+        let normalized = json!({"quantity": {"type": "integer", "value": 11}});
+
+        let carried = field_rule_violations(&schema(), &normalized, None).expect("violations are reported");
+
+        assert_eq!(carried.len(), 1);
+        assert_eq!(carried_summary(&carried), "quantity:above_max");
     }
 
     #[test]
