@@ -176,7 +176,7 @@ pub enum PushOutcome {
 #[allow(clippy::struct_excessive_bools, reason = "independent flags of one supervised task")]
 pub struct Current<T> {
     pub task: T,
-    pushed_at: Instant,
+    pub pushed_at: Instant,
     acked: bool,
     cli_idle: bool,
     turn_ends: u32,

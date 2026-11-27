@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 use axum::http::StatusCode;
 use serde_json::{Value, json};
@@ -43,6 +44,7 @@ pub mod session;
 pub mod session_report;
 pub mod setup;
 pub mod sv_client;
+pub mod timing;
 
 #[allow(dead_code, reason = "used by the session manager, which is a later package")]
 pub mod guide;
@@ -97,6 +99,8 @@ mod session_tests;
 mod setup_tests;
 #[cfg(test)]
 mod sv_client_tests;
+#[cfg(test)]
+mod timing_tests;
 
 /// What the `runner` agents need while the service runs, built once at start-up.
 pub struct RunnerRuntime {
@@ -390,12 +394,31 @@ fn refused(agent: &AgentConfig, code: &str, reason: &str) -> Value {
     json!({"status": "refused", "reason_code": code, "reason": reason, "agent": agent.id})
 }
 
-/// Handles a delivery to a `runner` agent: the synchronous checks, then the channel.
+/// Handles a delivery to a `runner` agent: the synchronous checks, then the channel. `received` is
+/// when the delivery arrived; it only feeds the `delivery answered` timing log.
 ///
 /// # Errors
 ///
 /// HTTP 503 when Sylvode cannot answer in time, so the worker re-queues the task.
-pub async fn accept(state: &Arc<AppState>, agent: &AgentConfig, payload: &Value) -> Result<Value, StatusCode> {
+pub async fn accept(
+    state: &Arc<AppState>,
+    agent: &AgentConfig,
+    payload: &Value,
+    received: Instant,
+) -> Result<Value, StatusCode> {
+    let mut times = timing::DeliveryTimes::default();
+    let result = decide(state, agent, payload, &mut times).await;
+    times.total_ms = timing::millis(received.elapsed());
+    timing::delivery_answered(payload, result.as_ref().ok(), &times);
+    result
+}
+
+async fn decide(
+    state: &Arc<AppState>,
+    agent: &AgentConfig,
+    payload: &Value,
+    times: &mut timing::DeliveryTimes,
+) -> Result<Value, StatusCode> {
     let config = &state.config;
     let bot = payload
         .get("ai_participant_id")
@@ -439,6 +462,7 @@ pub async fn accept(state: &Arc<AppState>, agent: &AgentConfig, payload: &Value)
             "the runner's session registry cannot be used",
         ));
     };
+    let check_started = Instant::now();
     let verdict = checks::check_delivery(
         Context {
             config,
@@ -452,6 +476,7 @@ pub async fn accept(state: &Arc<AppState>, agent: &AgentConfig, payload: &Value)
         payload,
     )
     .await;
+    times.check_ms = timing::millis(check_started.elapsed());
     match verdict {
         Verdict::Unavailable => Err(StatusCode::SERVICE_UNAVAILABLE),
         Verdict::Ignored(reason) => Ok(json!({"status": "ignored", "reason": reason, "agent": agent.id})),
@@ -468,7 +493,10 @@ pub async fn accept(state: &Arc<AppState>, agent: &AgentConfig, payload: &Value)
                 install_guide(config, files, &accepted).await;
             }
             let session = accepted.tmux.as_str().to_string();
+            times.slot = accepted.slot.as_str().to_string();
+            let enqueue_started = Instant::now();
             let queued = sessions.enqueue(session::TmuxTask::from_accepted(&accepted)).await;
+            times.enqueue_ms = timing::millis(enqueue_started.elapsed());
             Ok(queued.map_or_else(
                 || {
                     refused(
@@ -502,6 +530,7 @@ pub async fn accept(state: &Arc<AppState>, agent: &AgentConfig, payload: &Value)
             };
             install_guide(config, files, &accepted).await;
             let key = accepted.project_key.clone();
+            times.slot = accepted.slot.as_str().to_string();
             headless::start(config, &state.background, roots.clone(), prepared, *accepted);
             Ok(json!({
                 "status": "dispatched",

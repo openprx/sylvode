@@ -41,6 +41,7 @@ use super::machine::{
 use super::message::{reminder_not_acknowledged, reminder_still_open};
 use super::profile::profile;
 use super::sv_client::SvClient;
+use super::timing;
 use super::tmux::{
     BracketedPasteConfirmed, ListedPane, NameSource, Pane, PaneId, PasteGuard, Refusal, Slot, SocketName, Tmux,
     TmuxError, TmuxName, WorkDir,
@@ -473,6 +474,12 @@ struct Worker {
     ticks: u32,
     /// This session has already asked for a report since the runner started.
     report_requested: bool,
+    /// When each queued task arrived, for the timing log only.
+    enqueued_at: HashMap<(String, i64), Instant>,
+    /// Logs the current task leaving the session (timing log only).
+    watch: timing::CurrentWatch,
+    /// Throttles `queue depth` (timing log only).
+    depth_beat: timing::DepthBeat,
 }
 
 /// Whether a session's record is worth an out-of-cycle report: there was no record before, its pane
@@ -578,7 +585,33 @@ impl Worker {
             turn_watch: TurnWatch::new(3, TURN_QUIET, Instant::now()),
             ticks: 0,
             report_requested: false,
+            enqueued_at: HashMap::new(),
+            watch: timing::CurrentWatch::default(),
+            depth_beat: timing::DepthBeat::new(Instant::now()),
         }
+    }
+
+    /// The timing log events that follow from what changed in the machine: the current task
+    /// cleared (`task left session`) and a non-empty queue (`queue depth`, every heartbeat).
+    fn observe(&mut self) {
+        let now = Instant::now();
+        let current = self
+            .machine
+            .current
+            .as_ref()
+            .map(|c| (c.task.task_id.clone(), c.task.attempt, c.pushed_at));
+        self.watch.observe(current, now, self.name.as_str());
+        let machine = &self.machine;
+        self.enqueued_at
+            .retain(|(id, attempt), _| machine.queue.iter().any(|e| &e.task_id == id && e.attempt == *attempt));
+        let beat = Duration::from_secs(self.shared.config.runner.heartbeat_secs.max(1));
+        self.depth_beat.tick(
+            now,
+            beat,
+            self.name.as_str(),
+            self.machine.queue.len(),
+            state_word(&self.machine.state),
+        );
     }
 
     /// Asks for an out-of-cycle report when [`report_needed`] says so.
@@ -618,6 +651,7 @@ impl Worker {
                 },
             };
             self.carry_out(actions).await;
+            self.observe();
         }
     }
 
@@ -685,12 +719,21 @@ impl Worker {
                     }
                 }
                 for task in requeue {
+                    self.enqueued_at.insert((task.task_id.clone(), task.attempt), now);
                     actions.extend(self.machine.enqueue(task, now));
                 }
                 actions
             }
             Cmd::Enqueue { task, reply } => {
                 let id = task.task_id.clone();
+                if self
+                    .machine
+                    .current_task()
+                    .is_some_and(|t| t.task_id == id && t.attempt < task.attempt)
+                {
+                    self.watch.hint("superseded");
+                }
+                self.enqueued_at.entry((id.clone(), task.attempt)).or_insert(now);
                 let actions = self.machine.enqueue(*task, now);
                 let _ = reply.send(self.machine.queue.position(&id).unwrap_or(0));
                 actions
@@ -765,7 +808,22 @@ impl Worker {
                 None => self.machine.on_ensure(EnsureOutcome::Running, now),
             },
             Action::TryPush(task) => {
+                let push_started = Instant::now();
                 let outcome = self.try_push(&task).await;
+                if let Some(word) = pushed_word(&outcome) {
+                    let queued = self
+                        .enqueued_at
+                        .get(&(task.task_id.clone(), task.attempt))
+                        .map_or(Duration::ZERO, |at| push_started.saturating_duration_since(*at));
+                    timing::task_pushed(
+                        &task.task_id,
+                        task.attempt,
+                        self.name.as_str(),
+                        queued,
+                        push_started.elapsed(),
+                        word,
+                    );
+                }
                 if let PushTry::Dialog(dialog) = &outcome {
                     let mut actions = self.machine.on_push(PushOutcome::NotReady, now);
                     actions.extend(self.machine.on_dialog(*dialog, now));
@@ -855,6 +913,7 @@ impl Worker {
                 if self.alive().await {
                     Vec::new()
                 } else {
+                    self.watch.hint("gone");
                     self.machine.on_session_gone(now)
                 }
             }
@@ -1546,7 +1605,7 @@ fn enter_retry_allowed(tmux: &Tmux, pane: &Pane, cli: &str, process_names: &[Str
 
 /// How a push attempt ended.
 #[derive(Debug)]
-enum PushTry {
+pub enum PushTry {
     Inactive,
     Held,
     Pushed,
@@ -1556,6 +1615,30 @@ enum PushTry {
     SessionGone,
     Failed,
     Dialog(Dialog),
+}
+
+/// The `outcome` word of `task pushed` for a push the machine counts as typed.
+pub const fn pushed_word(outcome: &PushTry) -> Option<&'static str> {
+    match outcome {
+        PushTry::Pushed => Some("pushed"),
+        PushTry::Unknown => Some("unknown"),
+        PushTry::PastedNotSubmitted => Some("pasted_not_submitted"),
+        _ => None,
+    }
+}
+
+/// The state word of `queue depth`.
+pub const fn state_word(state: &State) -> &'static str {
+    match state {
+        State::NoSession => "no_session",
+        State::Starting { .. } => "starting",
+        State::Idle => "idle",
+        State::Pushing { .. } => "pushing",
+        State::Busy => "busy",
+        State::BusyUser => "busy_user",
+        State::Blocked { .. } => "blocked",
+        State::Dead => "dead",
+    }
 }
 
 impl PushTry {

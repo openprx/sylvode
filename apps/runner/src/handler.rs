@@ -217,6 +217,7 @@ pub async fn handle_webhook(
     headers: HeaderMap,
     body: String,
 ) -> Result<Json<Value>, StatusCode> {
+    let received = std::time::Instant::now();
     // 1. Signature verification
     if !state.config.security.allow_unsigned {
         let inbound = match signature::extract_signature_from_headers(&headers) {
@@ -292,7 +293,7 @@ pub async fn handle_webhook(
         if a.agent_type == "runner" {
             // A `runner` agent runs on the project's channel, after the synchronous checks; no
             // legacy callback is involved.
-            let mut answer = crate::runner::accept(&state, a, &payload).await?;
+            let mut answer = crate::runner::accept(&state, a, &payload, received).await?;
             if let Some(map) = answer.as_object_mut() {
                 map.insert("route".to_string(), route);
                 map.insert("ai_task_callback".to_string(), json!(callback()));
