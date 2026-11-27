@@ -1,0 +1,17 @@
+[package]
+name = "sv-package"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Sylvode package format: manifest canonicalisation, signing and container"
+
+[dependencies]
+ring.workspace = true
+semver.workspace = true
+serde_jcs.workspace = true
+sha2 = "0.10"
+zip.workspace = true
+
+[lints]
+workspace = true

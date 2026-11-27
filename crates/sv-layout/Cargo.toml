@@ -1,0 +1,14 @@
+[package]
+name = "sv-layout"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Sylvode layout schema: component catalogue, validation and schema generation"
+
+[dependencies]
+schemars = "1"
+jsonschema = { version = "0.50", default-features = false }
+
+[lints]
+workspace = true
