@@ -5,7 +5,7 @@ import type {
 	FieldConditionOperator
 } from '#lib/forms/page-types.js';
 import { isRecord } from '#lib/forms/record-format.js';
-import { fieldReadOnly } from '#lib/forms/schema-v2.js';
+import { fieldReadOnly } from '#lib/forms/field-rules.js';
 
 export function fieldHasConditionalHidden(field: FormField): boolean {
 	return Boolean(field.conditional?.hidden_when);

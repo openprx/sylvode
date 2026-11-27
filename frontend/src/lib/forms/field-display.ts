@@ -16,7 +16,7 @@ import type { FormAttachment, FormField, FormFieldType } from '#lib/api/forms.js
 import { safeImageUrl, safeLinkUrl } from '#lib/utils/safe-url.js';
 import { recordValueIsEmpty } from './detail-layout.js';
 import { richTextToPlainText } from './rich-text.js';
-import { fieldRuleValue } from './schema-v2.js';
+import { fieldRuleValue } from './field-rules.js';
 
 export interface FileItem {
 	name: string;

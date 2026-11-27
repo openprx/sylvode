@@ -1,5 +1,5 @@
 import { writable, fromStore } from 'svelte/store';
-import { FORM_SCHEMA_VERSION } from '#lib/forms/schema-v2.js';
+import { FORM_SCHEMA_VERSION } from '#lib/forms/types/index.js';
 import type { RecordPluginActionSurface } from '#lib/plugins/record-entries.js';
 import { type FormsDraftVersion, FormsRefreshLatch } from '#lib/workbench/forms-session.js';
 import type {
@@ -8,6 +8,7 @@ import type {
 	FormAttachment,
 	FormChildRecord,
 	FormFieldDependency,
+	FormFieldErrorItem,
 	FormFieldUsage,
 	FormPermissionAction,
 	FormPermissions,
@@ -17,6 +18,7 @@ import type {
 	FormRecordImportRow,
 	FormRecordLink,
 	FormRelationTarget,
+	FormSchemaIssue,
 	FormView,
 	UniversalForm,
 	FormField
@@ -41,6 +43,7 @@ import { blankFieldDraft, parseFields } from '#lib/forms/designer-schema.js';
 import { detailPageWidgetEntriesFromLayout } from '#lib/forms/detail-layout-drafts.js';
 import { fieldLabel } from '#lib/forms/field-options.js';
 import { currentLocale } from '#lib/forms/i18n.js';
+import type { CheckContext } from '#lib/forms/record-checks.js';
 import type {
 	CalendarExceptionDateMap,
 	CardCoverAspect,
@@ -229,6 +232,8 @@ export class FormsPageState {
 
 	// owner: records
 	recordSubmitting = $state(false);
+	/** The server's refusal of the last record save (`validation_failed`), by field key. */
+	recordFieldErrors = $state<Record<string, FormFieldErrorItem[]>>({});
 
 	// owner: attachments
 	attachmentSubmittingField = $state<string | null>(null);
@@ -340,6 +345,8 @@ export class FormsPageState {
 	recordCommentDraft = $state('');
 	childEditor = $state<ChildEditorState | null>(null);
 	childSubmitting = $state(false);
+	/** The server's refusal of the last child record save, by field key. */
+	childFieldErrors = $state<Record<string, FormFieldErrorItem[]>>({});
 	deletingChildRecordId = $state<string | null>(null);
 
 	// owner: create-form
@@ -444,6 +451,8 @@ export class FormsPageState {
 	designerUsageLoading = $state(false);
 	selectedDesignerFieldIndex = $state(0);
 	designerSaving = $state(false);
+	/** Issues of the last refused schema save, by field key (`''` for schema-level issues). */
+	designerSchemaIssues = $state<Record<string, FormSchemaIssue[]>>({});
 
 	// owner: session
 	detailPageCompositionDraft = $state<DetailPageCompositionDraft>({
@@ -844,6 +853,16 @@ export class FormsPageState {
 	readonly currentUserId = $derived(
 		authUser.current.user?.id ?? this.workbench?.current.userId ?? ''
 	);
+
+	/** CEL `user` and `now` of the rule hints, as the server binds them for this user. */
+	readonly checkContext = (): CheckContext => ({
+		now: Math.floor(Date.now() / 1000),
+		user: {
+			id: this.currentUserId,
+			role:
+				this.workspaceMembers.find((member) => member.user_id === this.currentUserId)?.role ?? ''
+		}
+	});
 
 	// --- record side panel ---------------------------------------------------------------
 	readonly panelRecord = $derived(

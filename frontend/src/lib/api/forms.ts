@@ -63,13 +63,10 @@ export interface FormField {
 	amount?: AmountFieldConfig;
 	placeholder?: string;
 	help_text?: string;
-	default_value?: unknown;
-	validation?: {
-		min?: number | string;
-		max?: number | string;
-		pattern?: string;
-		max_length?: number;
-	};
+	/** Changed by no caller; only defaults and server computations write it. */
+	read_only?: boolean;
+	default?: FormFieldDefault;
+	rules?: FormFieldRules;
 	visibility?: {
 		list?: boolean;
 		detail?: boolean;
@@ -77,9 +74,6 @@ export interface FormField {
 	conditional?: {
 		hidden_when?: FormFieldCondition | FormFieldConditionGroup;
 		read_only_when?: FormFieldCondition | FormFieldConditionGroup;
-	};
-	policy?: {
-		read_only?: boolean;
 	};
 	formula?: {
 		op?: string;
@@ -115,6 +109,96 @@ export interface FormField {
 		retention_days?: number;
 		signed_url_ttl_minutes?: number;
 	};
+	/**
+	 * Members of the stored field object the client does not model (`mask`, `signature`, keys of
+	 * later versions or other tools). `parseSchema` collects them here and every schema the
+	 * designer saves writes them back unchanged.
+	 */
+	extra?: Record<string, unknown>;
+}
+
+/** `default` of a schema v2 field: a fixed value, or a CEL expression with `now` and `user`. */
+export type FormFieldDefault = { value: unknown } | { cel: string };
+
+/** One entry of `rules.validate`: a built-in rule, a CEL predicate or a plugin rule reference. */
+export interface FormFieldRuleObject {
+	rule?: string;
+	cel?: string;
+	plugin?: { package: string; rule: string };
+	value?: unknown;
+	values?: string[];
+	case_insensitive?: boolean;
+	schemes?: string[];
+	deps?: string[];
+	config?: Record<string, unknown>;
+	code?: string;
+	/** Localised failure text by language (`en`, `zh`); shown by clients, never echoed by the server. */
+	message?: Record<string, string>;
+	run_on_empty?: boolean;
+}
+
+/** `rules` of a schema v2 field (contract C2 §2). */
+export interface FormFieldRules {
+	normalize?: unknown[];
+	validate?: FormFieldRuleObject[];
+	transform?: unknown[];
+}
+
+/** One item of `details.errors` of a refused record write (contract C2 §9). */
+export interface FormFieldErrorItem {
+	field: string;
+	field_id: string;
+	stage: string;
+	code: string;
+	rule: string | null;
+	params: Record<string, unknown> | null;
+	row?: number | null;
+}
+
+/** A rule failure a recalculation stored instead of refusing (contract C2 §6). */
+export interface FormCarriedError extends FormFieldErrorItem {
+	record_id: string | null;
+}
+
+/** One item of `details.errors` of a refused schema save. */
+export interface FormSchemaIssue {
+	path: string;
+	code: string;
+	detail?: string;
+}
+
+/** One type of `GET /api/v1/field-types`. */
+export interface FieldTypeDocumentEntry {
+	name: string;
+	storage: string;
+	cel_type: string | null;
+	allowed_rules: string[];
+	normalize_ops: string[];
+	transform_ops: string[];
+	outlets: Record<string, string>;
+	maskable: boolean;
+}
+
+export interface FieldTypeDocument {
+	version: number;
+	types: FieldTypeDocumentEntry[];
+}
+
+/** `POST /api/v1/forms/{form_id}/validate`. */
+export interface FormRecordValidation {
+	valid: boolean;
+	normalized: Record<string, unknown> | null;
+	errors: FormFieldErrorItem[];
+	truncated: boolean;
+	carried: FormCarriedError[];
+}
+
+/** `POST /api/v1/forms/schema/validate`. */
+export interface FormSchemaValidation {
+	valid: boolean;
+	schema: Record<string, unknown>;
+	errors: FormSchemaIssue[];
+	warnings: FormSchemaIssue[];
 }
 
 export interface UniversalForm {
@@ -432,6 +516,12 @@ export interface FormRecalculatePreview {
 	schema_version: number;
 	values: Record<string, unknown>;
 	normalized_values: Record<string, unknown>;
+	carried: FormCarriedError[];
+}
+
+/** `POST /api/v1/form-records/{record_id}/recalculate`. */
+export interface FormRecalculatedRecord extends FormRecord {
+	carried: FormCarriedError[];
 }
 
 export interface FormAttachment {
@@ -922,8 +1012,37 @@ export const formsApi = {
 		return apiClient.post<FormRecord>(`/api/v1/form-records/${recordId}/restore`, {});
 	},
 
-	recalculateRecord(recordId: string): Promise<ApiResult<FormRecord>> {
-		return apiClient.post<FormRecord>(`/api/v1/form-records/${recordId}/recalculate`, {});
+	recalculateRecord(recordId: string): Promise<ApiResult<FormRecalculatedRecord>> {
+		return apiClient.post<FormRecalculatedRecord>(
+			`/api/v1/form-records/${recordId}/recalculate`,
+			{}
+		);
+	},
+
+	validateRecord(
+		formId: string,
+		data: {
+			mode: 'create' | 'update';
+			record_id?: string | null;
+			values: Record<string, unknown>;
+			schema?: Record<string, unknown> | null;
+		}
+	): Promise<ApiResult<FormRecordValidation>> {
+		return apiClient.post<FormRecordValidation>(`/api/v1/forms/${formId}/validate`, data);
+	},
+
+	validateSchema(
+		projectId: string,
+		schema: Record<string, unknown>
+	): Promise<ApiResult<FormSchemaValidation>> {
+		return apiClient.post<FormSchemaValidation>('/api/v1/forms/schema/validate', {
+			project_id: projectId,
+			schema
+		});
+	},
+
+	getFieldTypes(): Promise<ApiResult<FieldTypeDocument>> {
+		return apiClient.get<FieldTypeDocument>('/api/v1/field-types');
 	},
 
 	aggregate(

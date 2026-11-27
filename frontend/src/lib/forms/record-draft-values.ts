@@ -1,6 +1,6 @@
 import type { FormField, FormRecord } from '#lib/api/forms.js';
 import { draftValueFromRecordValue, emptyDraftValue } from '#lib/forms/record-values.js';
-import { fieldDefaultValue } from '#lib/forms/schema-v2.js';
+import { fieldDefaultValue } from '#lib/forms/field-rules.js';
 
 export function defaultDraftForFields(formFields: FormField[]): Record<string, unknown> {
 	return Object.fromEntries(

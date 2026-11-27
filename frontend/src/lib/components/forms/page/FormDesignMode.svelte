@@ -13,7 +13,8 @@
 		duplicateDesignerField,
 		removeDesignerField,
 		moveDesignerField,
-		saveDesignerSchema
+		saveDesignerSchema,
+		checkDraftOnServer
 	} = fp.designer;
 </script>
 
@@ -29,6 +30,9 @@
 		lockedFieldKeys={s.memberLockedFieldKeys}
 		usageLoading={s.designerUsageLoading}
 		saving={s.designerSaving}
+		schemaIssues={s.designerSchemaIssues}
+		checkContext={s.checkContext}
+		onCheckOnServer={checkDraftOnServer}
 		onSelectField={(index) => (s.selectedDesignerFieldIndex = index)}
 		onAppendField={addDesignerField}
 		onUpdateField={updateDesignerField}

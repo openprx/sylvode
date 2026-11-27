@@ -6,18 +6,13 @@
 import { Suite, assertDeepEqual, assertEqual, finish } from '../support/harness';
 import { installSvelteSsr } from '../support/svelte-ssr';
 import type { FormField, FormRecord } from '../../src/lib/api/forms';
-import type { FormFieldV2 } from '../../src/lib/forms/schema-v2';
 
 await installSvelteSsr();
 const m = await import('../../src/lib/forms/record-draft-values');
 
 const suite = new Suite('forms-page/record-draft-values');
 
-function field(
-	key: string,
-	type: FormField['type'],
-	extra: Partial<FormFieldV2> = {}
-): FormFieldV2 {
+function field(key: string, type: FormField['type'], extra: Partial<FormField> = {}): FormField {
 	return { key, type, ...extra };
 }
 

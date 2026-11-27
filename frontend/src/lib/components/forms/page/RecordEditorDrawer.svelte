@@ -25,6 +25,7 @@
 		optionGroup,
 		recordSelectOptions
 	} from '#lib/forms/field-options.js';
+	import { fieldInputHints } from '#lib/forms/field-rules.js';
 	import { inputValue, selectValue } from '#lib/forms/record-format.js';
 	import { getFormsPageContext } from '#lib/forms/state/context.js';
 
@@ -407,7 +408,7 @@
 								value={draftString(field.key)}
 								placeholder={fieldPlaceholder(field)}
 								readonly={fieldReadOnlyByCondition(field, s.recordDraft)}
-								maxlength={field.validation?.max_length}
+								maxlength={fieldInputHints(field).maxlength}
 								oninput={(event) => setDraftValue(field.key, inputValue(event))}></textarea>
 						{:else if fieldType(field) === 'signature'}
 							<div class="space-y-2" data-signature-field={field.key}>
@@ -473,7 +474,7 @@
 									value={draftString(field.key)}
 									placeholder={fieldPlaceholder(field)}
 									readonly={fieldReadOnlyByCondition(field, s.recordDraft)}
-									maxlength={field.validation?.max_length}
+									maxlength={fieldInputHints(field).maxlength}
 									oninput={(event) => {
 										if (!setSignatureValue(field.key, 'record', inputValue(event)))
 											event.currentTarget.value = draftString(field.key);
@@ -513,10 +514,9 @@
 								value={draftString(field.key)}
 								placeholder={fieldPlaceholder(field)}
 								readonly={fieldReadOnlyByCondition(field, s.recordDraft)}
-								min={field.validation?.min}
-								max={field.validation?.max}
-								pattern={field.validation?.pattern}
-								maxlength={field.validation?.max_length}
+								min={fieldInputHints(field).min}
+								max={fieldInputHints(field).max}
+								maxlength={fieldInputHints(field).maxlength}
 								oninput={(event) => setDraftValue(field.key, inputValue(event))}
 							/>
 						{/if}

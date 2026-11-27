@@ -3,6 +3,7 @@
 <script lang="ts">
 	import Button from '#lib/ui/button/Button.svelte';
 	import { X, Pencil } from '@lucide/svelte';
+	import { fieldInputHints } from '#lib/forms/field-rules.js';
 	import { inputValue, selectValue } from '#lib/forms/record-format.js';
 	import { fieldHiddenByCondition, fieldReadOnlyByCondition } from '#lib/forms/field-conditions.js';
 	import {
@@ -191,7 +192,7 @@
 							value={draftStringFrom(s.childEditor.draft, childField.key)}
 							placeholder={fieldPlaceholder(childField)}
 							readonly={fieldReadOnlyByCondition(childField, s.childEditor.draft)}
-							maxlength={childField.validation?.max_length}
+							maxlength={fieldInputHints(childField).maxlength}
 							oninput={(event) => updateChildDraftValue(childField.key, inputValue(event))}
 						></textarea>
 					{:else if fieldType(childField) === 'signature'}
@@ -260,7 +261,7 @@
 								value={draftStringFrom(s.childEditor.draft, childField.key)}
 								placeholder={fieldPlaceholder(childField)}
 								readonly={fieldReadOnlyByCondition(childField, s.childEditor.draft)}
-								maxlength={childField.validation?.max_length}
+								maxlength={fieldInputHints(childField).maxlength}
 								oninput={(event) => {
 									if (!setSignatureValue(childField.key, 'child', inputValue(event)))
 										event.currentTarget.value = draftStringFrom(
@@ -310,10 +311,9 @@
 							value={draftStringFrom(s.childEditor.draft, childField.key)}
 							placeholder={fieldPlaceholder(childField)}
 							readonly={fieldReadOnlyByCondition(childField, s.childEditor.draft)}
-							min={childField.validation?.min}
-							max={childField.validation?.max}
-							pattern={childField.validation?.pattern}
-							maxlength={childField.validation?.max_length}
+							min={fieldInputHints(childField).min}
+							max={fieldInputHints(childField).max}
+							maxlength={fieldInputHints(childField).maxlength}
 							oninput={(event) => updateChildDraftValue(childField.key, inputValue(event))}
 						/>
 					{/if}

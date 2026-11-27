@@ -5,15 +5,14 @@
  */
 import { Suite, assert, assertDeepEqual, assertEqual, finish } from '../support/harness';
 import { installSvelteSsr } from '../support/svelte-ssr';
-import type { FormRecord } from '../../src/lib/api/forms';
-import type { FormFieldV2 } from '../../src/lib/forms/schema-v2';
+import type { FormField, FormRecord } from '../../src/lib/api/forms';
 
 await installSvelteSsr();
 const m = await import('../../src/lib/forms/field-conditions');
 
 const suite = new Suite('forms-page/field-conditions');
 
-function field(key: string, extra: Partial<FormFieldV2> = {}): FormFieldV2 {
+function field(key: string, extra: Partial<FormField> = {}): FormField {
 	return { key, type: 'text', ...extra };
 }
 

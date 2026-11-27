@@ -1,4 +1,5 @@
 import type { FormField, FormFieldType, FormRecord } from '#lib/api/forms.js';
+import type { DefaultMode, RuleDraft } from '#lib/forms/rule-drafts.js';
 import type * as arrangement from '#lib/forms/view-arrangement.js';
 
 export type ImportMappingTransform =
@@ -64,11 +65,17 @@ export type FieldDraft = {
 	scale: string;
 	placeholder: string;
 	helpText: string;
+	defaultMode: DefaultMode;
 	defaultValue: string;
-	validationMin: string;
-	validationMax: string;
-	validationPattern: string;
-	validationMaxLength: string;
+	defaultCel: string;
+	/** `rules.validate`, one draft per rule. */
+	rules: RuleDraft[];
+	/** `rules.normalize` as stored; the designer toggles built-in ops and keeps plugin refs. */
+	normalize: unknown[];
+	/** `rules` members other than `validate` and `normalize` (`transform`, unknown), as stored. */
+	rulesExtra: Record<string, unknown>;
+	/** Field members the designer does not edit (`mask`, `signature`, unknown keys), as stored. */
+	extra: Record<string, unknown>;
 	listVisible: boolean;
 	detailVisible: boolean;
 	conditionalHiddenWhenText: string;

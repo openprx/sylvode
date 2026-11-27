@@ -13,7 +13,7 @@ import {
 import { translate } from '#lib/forms/i18n.js';
 import { isRecord } from '#lib/forms/record-format.js';
 import { FormsController } from '#lib/forms/state/controller.js';
-import { FORM_SCHEMA_VERSION } from '#lib/forms/schema-v2.js';
+import { FORM_SCHEMA_VERSION } from '#lib/forms/types/index.js';
 
 export class CreateFormController extends FormsController {
 	handleCreateForm = async () => {

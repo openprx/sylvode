@@ -1,60 +1,10 @@
 <script lang="ts" module>
 	import type { FormField } from '#lib/api/forms.js';
-
-	function isPlain(value: unknown): value is Record<string, unknown> {
-		return typeof value === 'object' && value !== null && !Array.isArray(value);
-	}
-
-	function stringMap(value: unknown): Record<string, string> | undefined {
-		if (!isPlain(value)) return undefined;
-		return Object.fromEntries(
-			Object.entries(value).filter(
-				(entry): entry is [string, string] => typeof entry[1] === 'string'
-			)
-		);
-	}
-
-	function stringList(value: unknown): string[] | undefined {
-		return Array.isArray(value)
-			? value.filter((item): item is string => typeof item === 'string')
-			: undefined;
-	}
+	import { parseSchema } from '#lib/forms/types/index.js';
 
 	/** The fields of a form schema, as the record panel reads them (the same shape the record page builds). */
 	export function schemaFields(schema: Record<string, unknown>): FormField[] {
-		const raw = Array.isArray(schema.fields) ? schema.fields : [];
-		return raw.filter(isPlain).flatMap((field): FormField[] => {
-			if (typeof field.key !== 'string' || !field.key) return [];
-			const rawType = typeof field.type === 'string' ? field.type : 'text';
-			const object = <K extends keyof FormField>(key: string) =>
-				(isPlain(field[key]) ? field[key] : undefined) as FormField[K];
-			return [
-				{
-					field_id: typeof field.field_id === 'string' ? field.field_id : undefined,
-					key: field.key,
-					label: typeof field.label === 'string' ? field.label : undefined,
-					type: (rawType === 'select' ? 'single_select' : rawType) as FormField['type'],
-					required: Boolean(field.required),
-					options: stringList(field.options) ?? [],
-					option_colors: stringMap(field.option_colors),
-					option_disabled: stringList(field.option_disabled),
-					option_archived: stringList(field.option_archived),
-					option_descriptions: stringMap(field.option_descriptions),
-					option_groups: stringMap(field.option_groups),
-					amount: object<'amount'>('amount'),
-					placeholder: typeof field.placeholder === 'string' ? field.placeholder : undefined,
-					help_text: typeof field.help_text === 'string' ? field.help_text : undefined,
-					default_value: field.default_value,
-					validation: object<'validation'>('validation'),
-					visibility: object<'visibility'>('visibility'),
-					conditional: object<'conditional'>('conditional'),
-					policy: object<'policy'>('policy'),
-					formula: object<'formula'>('formula'),
-					relation: object<'relation'>('relation'),
-					attachment: object<'attachment'>('attachment')
-				}
-			];
-		});
+		return parseSchema(schema).fields;
 	}
 
 	/** Address of the full record page: where "Edit" and "Open full page" lead in the host's main area. */

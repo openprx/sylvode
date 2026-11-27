@@ -171,7 +171,7 @@ export async function loadSource(
 				label: field.label ?? field.key,
 				type: field.type,
 				required: Boolean(field.required),
-				read_only: Boolean(field.policy?.read_only),
+				read_only: field.read_only === true,
 				...(field.options?.length ? { options: field.options } : {})
 			}));
 			return { ok: true, value: { form_id: formId, fields } };

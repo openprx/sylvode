@@ -42,6 +42,7 @@
 	} from '#lib/forms/detail-layout.js';
 	import type { FieldDisplayContext } from '#lib/forms/field-display.js';
 	import { flowLineageView } from '#lib/forms/flow-lineage.js';
+	import { parseSchema } from '#lib/forms/types/index.js';
 	import { toast } from '#lib/stores/toast.js';
 	import { isMissingResult } from '#lib/utils/api-helpers.js';
 	import { requireRouteParam } from '#lib/utils/route-params.js';
@@ -332,60 +333,7 @@
 	}
 
 	function parseFields(schema: Record<string, unknown>): FormField[] {
-		const rawFields = Array.isArray(schema.fields) ? schema.fields : [];
-		return rawFields
-			.filter(isRecord)
-			.map((field) => {
-				const rawType = typeof field.type === 'string' ? field.type : 'text';
-				return {
-					field_id: typeof field.field_id === 'string' ? field.field_id : undefined,
-					key: typeof field.key === 'string' ? field.key : '',
-					label: typeof field.label === 'string' ? field.label : undefined,
-					type: (rawType === 'select' ? 'single_select' : rawType) as FormField['type'],
-					required: Boolean(field.required),
-					options: Array.isArray(field.options)
-						? field.options.filter((item): item is string => typeof item === 'string')
-						: [],
-					option_colors: isRecord(field.option_colors)
-						? Object.fromEntries(
-								Object.entries(field.option_colors).filter(
-									(entry): entry is [string, string] => typeof entry[1] === 'string'
-								)
-							)
-						: undefined,
-					option_disabled: Array.isArray(field.option_disabled)
-						? field.option_disabled.filter((item): item is string => typeof item === 'string')
-						: undefined,
-					option_archived: Array.isArray(field.option_archived)
-						? field.option_archived.filter((item): item is string => typeof item === 'string')
-						: undefined,
-					option_descriptions: isRecord(field.option_descriptions)
-						? Object.fromEntries(
-								Object.entries(field.option_descriptions).filter(
-									(entry): entry is [string, string] => typeof entry[1] === 'string'
-								)
-							)
-						: undefined,
-					option_groups: isRecord(field.option_groups)
-						? Object.fromEntries(
-								Object.entries(field.option_groups).filter(
-									(entry): entry is [string, string] => typeof entry[1] === 'string'
-								)
-							)
-						: undefined,
-					amount: isRecord(field.amount) ? (field.amount as FormField['amount']) : undefined,
-					visibility: isRecord(field.visibility)
-						? (field.visibility as FormField['visibility'])
-						: undefined,
-					relation: isRecord(field.relation)
-						? (field.relation as FormField['relation'])
-						: undefined,
-					attachment: isRecord(field.attachment)
-						? (field.attachment as FormField['attachment'])
-						: undefined
-				};
-			})
-			.filter((field) => field.key);
+		return parseSchema(schema).fields;
 	}
 
 	function fieldType(field: FormField): string {

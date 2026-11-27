@@ -2,306 +2,64 @@ import { describeResult } from '#lib/i18n/describe.js';
 import {
 	type FormField,
 	type FormFieldDependency,
+	type FormFieldErrorItem,
 	type FormFieldType,
+	type FormSchemaIssue,
 	type FormFieldUsage,
 	formsApi,
 	type UniversalForm
 } from '#lib/api/forms.js';
 import { toast } from '#lib/stores/toast.js';
-import { blankFieldDraft } from '#lib/forms/designer-schema.js';
 import type { DesignerSchemaChange, FieldDraft } from '#lib/forms/page-types.js';
 import {
+	blankFieldDraft,
 	fieldDraftsFromSchema,
 	fieldIdentity,
-	parseAttachmentVariantsText,
-	parseFieldDefaultValue,
 	parseFields,
-	parseFormulaArgsText,
-	parseOptionColorsText,
-	parseOptionMetadataText,
-	parseOptionsText,
-	parseSelectDefaultValue,
-	sanitizeAttachmentDerivativeFormat
+	schemaFromDrafts
 } from '#lib/forms/designer-schema.js';
-import { parseFieldConditionText } from '#lib/forms/field-conditions.js';
 import { fieldLabel } from '#lib/forms/field-options.js';
 import { translate } from '#lib/forms/i18n.js';
 import { FormsController } from '#lib/forms/state/controller.js';
-import {
-	FORM_SCHEMA_VERSION,
-	anchoredPattern,
-	maxLengthAllowed,
-	patternAllowed,
-	ruleBound
-} from '#lib/forms/schema-v2.js';
+import { schemaIssuesOf } from '#lib/forms/field-errors.js';
+import { descriptorDrift, parseSchema } from '#lib/forms/types/index.js';
+
+let fieldTypeDriftChecked = false;
+
+/** Dev builds: compares the descriptor table with `GET /api/v1/field-types` once per page load. */
+async function warnOnFieldTypeDrift() {
+	if (!import.meta.env.DEV || fieldTypeDriftChecked) return;
+	fieldTypeDriftChecked = true;
+	const response = await formsApi.getFieldTypes();
+	if (response.code !== 0 || !response.data) return;
+	const drift = descriptorDrift(response.data);
+	if (drift.length > 0) console.warn('Field type descriptors differ from the server:', drift);
+}
+
+/** Schema issues by the key of the field their JSON Pointer names (`''` for the schema itself). */
+export function issuesByField(
+	issues: FormSchemaIssue[],
+	schema: Record<string, unknown>
+): Record<string, FormSchemaIssue[]> {
+	const fields = Array.isArray(schema.fields) ? schema.fields : [];
+	const grouped: Record<string, FormSchemaIssue[]> = {};
+	for (const issue of issues) {
+		const match = /^\/fields\/(\d+)(\/.*)?$/.exec(issue.path);
+		const field = match ? (fields[Number(match[1])] as { key?: unknown } | undefined) : undefined;
+		const key = typeof field?.key === 'string' ? field.key : '';
+		(grouped[key] ??= []).push({ ...issue, path: match ? (match[2] ?? '') : issue.path });
+	}
+	return grouped;
+}
 
 export class DesignerController extends FormsController {
+	/** The schema of the field drafts (`schemaFromDrafts`), mirrored into the JSON editor. */
 	buildSchemaFromDrafts = (
 		drafts: FieldDraft[] = this.s.fieldDrafts,
-		syncFormDraft = true
+		syncFormDraft = true,
+		schemaExtra: Record<string, unknown> = {}
 	): Record<string, unknown> => {
-		const fields = drafts
-			.map((field) => ({
-				field_id: field.field_id,
-				key: field.key.trim(),
-				label: field.label.trim(),
-				type: field.type,
-				required: field.required,
-				options: parseOptionsText(field.optionsText),
-				optionColors: parseOptionColorsText(field.optionColorsText),
-				optionDisabled: parseOptionsText(field.optionDisabledText),
-				optionArchived: parseOptionsText(field.optionArchivedText),
-				optionDescriptions: parseOptionMetadataText(field.optionDescriptionsText),
-				optionGroups: parseOptionMetadataText(field.optionGroupsText),
-				currency: field.currency.trim().toUpperCase() || 'CNY',
-				scale: Number.parseInt(field.scale, 10),
-				placeholder: field.placeholder.trim(),
-				helpText: field.helpText.trim(),
-				defaultValue: field.defaultValue.trim(),
-				validationMin: field.validationMin.trim(),
-				validationMax: field.validationMax.trim(),
-				validationPattern: field.validationPattern.trim(),
-				validationMaxLength: field.validationMaxLength.trim(),
-				listVisible: field.listVisible,
-				detailVisible: field.detailVisible,
-				conditionalHiddenWhen: parseFieldConditionText(field.conditionalHiddenWhenText),
-				conditionalReadOnlyWhen: parseFieldConditionText(field.conditionalReadOnlyWhenText),
-				readOnly: field.readOnly,
-				formulaOp: field.formulaOp.trim(),
-				formulaArgs: parseFormulaArgsText(field.formulaArgsText),
-				formulaScale: Number.parseInt(field.formulaScale, 10),
-				formulaRelationKey: field.formulaRelationKey.trim(),
-				formulaChildField: field.formulaChildField.trim(),
-				relationTargetType: field.relationTargetType.trim() || 'form_record',
-				relationFormKey: field.relationFormKey.trim(),
-				relationKey: field.relationKey.trim(),
-				relationType: field.relationType.trim(),
-				relationDisplayField: field.relationDisplayField.trim(),
-				attachmentAccept: parseOptionsText(field.attachmentAcceptText),
-				attachmentMaxSizeMb: Number.parseInt(field.attachmentMaxSizeMb, 10),
-				attachmentMultiple: field.attachmentMultiple,
-				attachmentPreview: field.attachmentPreview,
-				attachmentThumbnailFormat: sanitizeAttachmentDerivativeFormat(
-					field.attachmentThumbnailFormat
-				),
-				attachmentPreviewFormat: sanitizeAttachmentDerivativeFormat(field.attachmentPreviewFormat),
-				attachmentVariants: parseAttachmentVariantsText(field.attachmentVariantsText),
-				attachmentStoragePolicy: field.attachmentStoragePolicy.trim() || 'local',
-				attachmentRetentionDays: Number.parseInt(field.attachmentRetentionDays, 10),
-				attachmentSignedUrlTtlMinutes: Number.parseInt(field.attachmentSignedUrlTtlMinutes, 10)
-			}))
-			.filter((field) => field.key || field.label);
-
-		if (fields.length === 0) {
-			throw new Error(
-				translate('forms.fieldRequired', { values: { field: translate('forms.fields') } })
-			);
-		}
-
-		const schemaFields = fields.map((field) => {
-			if (!field.key.match(/^[a-z][a-z0-9_]*$/)) {
-				throw new Error(translate('forms.invalidFieldKey'));
-			}
-
-			const schemaField: Record<string, unknown> = {
-				key: field.key,
-				label: field.label || field.key,
-				type: field.type,
-				required: field.required
-			};
-
-			if (field.field_id) schemaField.field_id = field.field_id;
-
-			if (['single_select', 'multi_select'].includes(field.type)) {
-				if (field.options.length === 0) throw new Error(translate('forms.optionsRequired'));
-
-				schemaField.options = field.options;
-
-				const optionColors = Object.fromEntries(
-					Object.entries(field.optionColors).filter(
-						([option, color]) => field.options.includes(option) && Boolean(color)
-					)
-				);
-
-				if (Object.keys(optionColors).length > 0) schemaField.option_colors = optionColors;
-
-				const optionDisabled = field.optionDisabled.filter((option) =>
-					field.options.includes(option)
-				);
-
-				if (optionDisabled.length > 0) schemaField.option_disabled = optionDisabled;
-
-				const optionArchived = field.optionArchived.filter((option) =>
-					field.options.includes(option)
-				);
-
-				if (optionArchived.length > 0) schemaField.option_archived = optionArchived;
-
-				const optionDescriptions = Object.fromEntries(
-					Object.entries(field.optionDescriptions).filter(
-						([option, description]) => field.options.includes(option) && Boolean(description)
-					)
-				);
-
-				if (Object.keys(optionDescriptions).length > 0)
-					schemaField.option_descriptions = optionDescriptions;
-
-				const optionGroups = Object.fromEntries(
-					Object.entries(field.optionGroups).filter(
-						([option, group]) => field.options.includes(option) && Boolean(group)
-					)
-				);
-
-				if (Object.keys(optionGroups).length > 0) schemaField.option_groups = optionGroups;
-
-				if (field.defaultValue) {
-					schemaField.default = {
-						value: parseSelectDefaultValue(
-							field.defaultValue,
-							field.type,
-							field.options,
-							optionDisabled,
-							optionArchived
-						)
-					};
-				}
-			}
-
-			if (field.type === 'amount') {
-				schemaField.amount = {
-					currency: field.currency,
-					scale: Number.isFinite(field.scale) ? Math.min(Math.max(field.scale, 0), 8) : 2
-				};
-			}
-
-			if (field.placeholder) schemaField.placeholder = field.placeholder;
-			if (field.helpText) schemaField.help_text = field.helpText;
-
-			if (field.defaultValue && !['single_select', 'multi_select'].includes(field.type)) {
-				schemaField.default = { value: parseFieldDefaultValue(field.defaultValue, field.type) };
-			}
-
-			const validate: Record<string, unknown>[] = [];
-			const minBound = ruleBound(field.type, field.validationMin);
-			const maxBound = ruleBound(field.type, field.validationMax);
-
-			if (minBound !== undefined) validate.push({ rule: 'min', value: minBound });
-			if (maxBound !== undefined) validate.push({ rule: 'max', value: maxBound });
-
-			if (field.validationPattern && patternAllowed(field.type)) {
-				validate.push({ rule: 'pattern', value: anchoredPattern(field.validationPattern) });
-			}
-
-			if (field.validationMaxLength && maxLengthAllowed(field.type)) {
-				const maxLength = Number.parseInt(field.validationMaxLength, 10);
-
-				if (Number.isFinite(maxLength) && maxLength > 0) {
-					validate.push({ rule: 'max_length', value: maxLength });
-				}
-			}
-
-			if (validate.length > 0) schemaField.rules = { validate };
-
-			if (!field.listVisible || !field.detailVisible) {
-				schemaField.visibility = { list: field.listVisible, detail: field.detailVisible };
-			}
-
-			const conditional: Record<string, unknown> = {};
-
-			if (field.conditionalHiddenWhen) conditional.hidden_when = field.conditionalHiddenWhen;
-			if (field.conditionalReadOnlyWhen) conditional.read_only_when = field.conditionalReadOnlyWhen;
-			if (Object.keys(conditional).length > 0) schemaField.conditional = conditional;
-			if (field.readOnly) schemaField.read_only = true;
-
-			const isFormulaCapableField = ['formula', 'amount', 'number', 'integer'].includes(field.type);
-			const isChildFormula = field.formulaOp.startsWith('child_');
-			const hasChildFormulaConfig = isChildFormula && field.formulaRelationKey;
-			const hasRegularFormulaConfig = !isChildFormula && field.formulaArgs.length > 0;
-
-			if (
-				isFormulaCapableField &&
-				field.formulaOp &&
-				(hasChildFormulaConfig || hasRegularFormulaConfig)
-			) {
-				const formula: Record<string, unknown> = { op: field.formulaOp };
-
-				if (isChildFormula) {
-					formula.relation_key = field.formulaRelationKey;
-
-					if (field.formulaChildField) formula.field = field.formulaChildField;
-				} else {
-					formula.args = field.formulaArgs;
-				}
-
-				if (field.type === 'formula' && Number.isFinite(field.formulaScale)) {
-					formula.scale = Math.min(Math.max(field.formulaScale, 0), 8);
-				}
-
-				schemaField.formula = formula;
-			}
-
-			if (field.type === 'relation' || field.type === 'child_table') {
-				const relation: Record<string, unknown> = {
-					target_type: field.type === 'child_table' ? 'form_record' : field.relationTargetType
-				};
-
-				if (field.relationFormKey) relation.form_key = field.relationFormKey;
-				if (field.relationKey) relation.relation_key = field.relationKey;
-
-				relation.relation_type =
-					field.type === 'child_table' ? 'parent_child' : field.relationType || 'relation';
-
-				if (field.relationDisplayField) relation.display_field = field.relationDisplayField;
-
-				schemaField.relation = relation;
-			}
-
-			if (['attachment', 'image'].includes(field.type)) {
-				const attachment: Record<string, unknown> = {
-					multiple: field.attachmentMultiple,
-					preview: field.attachmentPreview
-				};
-
-				if (field.attachmentThumbnailFormat !== 'png') {
-					attachment.thumbnail_format = field.attachmentThumbnailFormat;
-				}
-
-				if (field.attachmentPreviewFormat !== 'png') {
-					attachment.preview_format = field.attachmentPreviewFormat;
-				}
-
-				if (field.attachmentVariants.length > 0) {
-					attachment.variants = field.attachmentVariants;
-				}
-
-				if (field.attachmentAccept.length > 0) attachment.accept = field.attachmentAccept;
-
-				if (Number.isFinite(field.attachmentMaxSizeMb) && field.attachmentMaxSizeMb > 0) {
-					attachment.max_size_mb = field.attachmentMaxSizeMb;
-				}
-
-				attachment.storage_policy = field.attachmentStoragePolicy;
-
-				if (Number.isFinite(field.attachmentRetentionDays) && field.attachmentRetentionDays > 0) {
-					attachment.retention_days = field.attachmentRetentionDays;
-				}
-
-				if (
-					Number.isFinite(field.attachmentSignedUrlTtlMinutes) &&
-					field.attachmentSignedUrlTtlMinutes > 0
-				) {
-					attachment.signed_url_ttl_minutes = field.attachmentSignedUrlTtlMinutes;
-				}
-
-				if (field.type === 'image') attachment.thumbnail = field.attachmentPreview;
-
-				schemaField.attachment = attachment;
-			}
-
-			return schemaField;
-		});
-
-		const schema = { version: FORM_SCHEMA_VERSION, fields: schemaFields };
+		const schema = schemaFromDrafts(drafts, schemaExtra);
 
 		if (syncFormDraft) this.s.formDraft.schemaText = JSON.stringify(schema, null, 2);
 
@@ -322,6 +80,7 @@ export class DesignerController extends FormsController {
 		if (this.s.designerSyncedFormId === form.id) return;
 
 		this.s.designerFieldDrafts = fieldDraftsFromSchema(form.schema);
+		this.s.designerSchemaIssues = {};
 		this.s.designerSyncedFormId = form.id;
 		this.s.selectedDesignerFieldIndex = 0;
 	};
@@ -335,6 +94,7 @@ export class DesignerController extends FormsController {
 		}
 
 		this.s.designerUsageLoading = true;
+		void warnOnFieldTypeDrift();
 
 		const [usageResponse, dependencyResponse] = await Promise.all([
 			formsApi.getFieldUsage(form.id),
@@ -545,13 +305,58 @@ export class DesignerController extends FormsController {
 		this.s.selectedDesignerFieldIndex = nextIndex;
 	};
 
+	/**
+	 * Runs `values` through the server pipeline against the unsaved designer schema
+	 * (`POST /forms/{id}/validate` with `schema`, nothing stored): the server side of the designer
+	 * preview.
+	 */
+	checkDraftOnServer = async (
+		values: Record<string, unknown>
+	): Promise<{ errors: FormFieldErrorItem[] } | { failure: string }> => {
+		if (!this.s.selectedForm) return { failure: translate('forms.invalidSchema') };
+
+		let schema: Record<string, unknown>;
+
+		try {
+			schema = this.buildSchemaFromDrafts(
+				this.s.designerFieldDrafts,
+				false,
+				parseSchema(this.s.selectedForm.schema).extra
+			);
+		} catch (error) {
+			return { failure: error instanceof Error ? error.message : translate('forms.invalidSchema') };
+		}
+
+		const response = await formsApi.validateRecord(this.s.selectedForm.id, {
+			mode: 'create',
+			values,
+			schema
+		});
+
+		if (response.code === 0 && response.data) return { errors: response.data.errors };
+
+		const issues = schemaIssuesOf(response);
+
+		if (issues) this.s.designerSchemaIssues = issuesByField(issues, schema);
+
+		return {
+			failure: issues
+				? translate('lowcode.forms.designer.schemaInvalid', { values: { count: issues.length } })
+				: describeResult(response)
+		};
+	};
+
 	saveDesignerSchema = async () => {
 		if (!this.s.selectedForm) return;
 
 		let schema: Record<string, unknown>;
 
 		try {
-			schema = this.buildSchemaFromDrafts(this.s.designerFieldDrafts, false);
+			schema = this.buildSchemaFromDrafts(
+				this.s.designerFieldDrafts,
+				false,
+				parseSchema(this.s.selectedForm.schema).extra
+			);
 		} catch (error) {
 			toast.error(error instanceof Error ? error.message : translate('forms.invalidSchema'));
 
@@ -596,10 +401,19 @@ export class DesignerController extends FormsController {
 		this.s.designerSaving = false;
 
 		if (response.code !== 0 || !response.data) {
-			toast.error(describeResult(response));
+			const issues = schemaIssuesOf(response);
+
+			this.s.designerSchemaIssues = issues ? issuesByField(issues, schema) : {};
+			toast.error(
+				issues
+					? translate('lowcode.forms.designer.schemaInvalid', { values: { count: issues.length } })
+					: describeResult(response)
+			);
 
 			return;
 		}
+
+		this.s.designerSchemaIssues = {};
 
 		this.s.forms = this.s.forms.map((form) =>
 			form.id === response.data?.id ? response.data : form

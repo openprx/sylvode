@@ -9,6 +9,7 @@ import type { ScenarioTemplate } from '../../src/lib/api/projects';
 
 await installSvelteSsr();
 const m = await import('../../src/lib/forms/designer-schema');
+const types = await import('../../src/lib/forms/types/index');
 
 const suite = new Suite('forms-page/designer-schema');
 
@@ -157,11 +158,13 @@ suite.check('blankFieldDraft returns the documented defaults as a fresh object',
 			scale: '2',
 			placeholder: '',
 			helpText: '',
+			defaultMode: 'value',
 			defaultValue: '',
-			validationMin: '',
-			validationMax: '',
-			validationPattern: '',
-			validationMaxLength: '',
+			defaultCel: '',
+			rules: [],
+			normalize: [],
+			rulesExtra: {},
+			extra: {},
 			listVisible: true,
 			detailVisible: true,
 			conditionalHiddenWhenText: '',
@@ -356,16 +359,111 @@ suite.check('fieldDraftsFromSchema converts amount, validation and default value
 	assertEqual(price?.currency, 'USD', 'currency');
 	assertEqual(price?.scale, '4', 'scale');
 	assertEqual(price?.defaultValue, '12.5', 'number default is stringified');
-	assertEqual(price?.validationMin, '0', 'zero min is kept');
-	assertEqual(price?.validationMax, '100', 'string max');
-	assertEqual(price?.validationPattern, '^a', 'pattern');
-	assertEqual(price?.validationMaxLength, '10', 'max length');
+	assertDeepEqual(
+		price?.rules.map((rule) => [rule.kind, rule.value]),
+		[
+			['min', '0'],
+			['max', '100'],
+			['pattern', '^(?:^a)$'],
+			['max_length', '10']
+		],
+		'rules keep order, bounds and the stored pattern'
+	);
 	assertEqual(drafts[1]?.defaultValue, 'false', 'false default is stringified');
 	assertEqual(drafts[2]?.defaultValue, '{"a":1}', 'object default is JSON');
 	assertEqual(drafts[3]?.defaultValue, '', 'null default');
 	assertEqual(drafts[4]?.defaultValue, '0', 'zero default');
-	assertEqual(drafts[4]?.validationMin, '0', 'zero min');
-	assertEqual(drafts[4]?.validationMax, '', 'absent max');
+	assertDeepEqual(
+		drafts[4]?.rules.map((rule) => [rule.kind, rule.value]),
+		[['min', '0']],
+		'zero min'
+	);
+});
+
+suite.check('a designer save keeps unknown keys at schema, field and rules level', () => {
+	const stored = {
+		version: 'sv.form.schema.v2',
+		x_designer: { any: 'kept' },
+		fields: [
+			{
+				field_id: 'f_1',
+				key: 'phone',
+				label: 'Phone',
+				type: 'phone',
+				required: true,
+				mask: { keep_last: 4, outlets: ['list'] },
+				x_field: [1, 2],
+				rules: {
+					normalize: [{ op: 'trim' }, { plugin: { package: 'acme/p', rule: 'n' } }],
+					validate: [
+						{
+							rule: 'max_length',
+							value: 20,
+							code: 'too_long',
+							message: { en: 'Long', fr: 'Long' }
+						},
+						{ cel: "!value.startsWith('+0')", run_on_empty: true },
+						{ plugin: { package: 'acme/p', rule: 'phone' }, deps: ['country'], config: { a: 1 } }
+					],
+					transform: [{ op: 'truncate', max: 10 }],
+					x_rules: true
+				}
+			}
+		]
+	};
+	const schema = m.schemaFromDrafts(
+		m.fieldDraftsFromSchema(stored),
+		types.parseSchema(stored).extra
+	);
+	assertDeepEqual(
+		schema,
+		{
+			x_designer: { any: 'kept' },
+			version: 'sv.form.schema.v2',
+			fields: [
+				{
+					mask: { keep_last: 4, outlets: ['list'] },
+					x_field: [1, 2],
+					key: 'phone',
+					label: 'Phone',
+					type: 'phone',
+					required: true,
+					field_id: 'f_1',
+					rules: {
+						transform: [{ op: 'truncate', max: 10 }],
+						x_rules: true,
+						normalize: [{ op: 'trim' }, { plugin: { package: 'acme/p', rule: 'n' } }],
+						validate: [
+							{
+								rule: 'max_length',
+								value: 20,
+								code: 'too_long',
+								message: { en: 'Long', fr: 'Long' }
+							},
+							{ cel: "!value.startsWith('+0')", run_on_empty: true },
+							{ plugin: { package: 'acme/p', rule: 'phone' }, deps: ['country'], config: { a: 1 } }
+						]
+					}
+				}
+			]
+		},
+		'round trip'
+	);
+});
+
+suite.check('a CEL default round-trips and an invalid one refuses the save', () => {
+	const drafts = m.fieldDraftsFromSchema({
+		fields: [{ key: 'due', type: 'datetime', default: { cel: 'now + 86400' } }]
+	});
+	assertEqual(drafts[0]?.defaultMode, 'cel', 'mode');
+	assertEqual(drafts[0]?.defaultCel, 'now + 86400', 'expression');
+	assertDeepEqual(
+		(m.schemaFromDrafts(drafts).fields as Record<string, unknown>[])[0]?.default,
+		{ cel: 'now + 86400' },
+		'saved'
+	);
+	const bad = [{ ...drafts[0]!, defaultCel: 'value' }];
+	assert(throwsMessage(() => m.schemaFromDrafts(bad)).length > 0, 'unknown variable refused');
 });
 
 suite.check('fieldDraftsFromSchema converts formula, relation and attachment settings', () => {

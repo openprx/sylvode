@@ -13,62 +13,21 @@
 		Trash2,
 		X
 	} from '@lucide/svelte';
-	import { t } from 'svelte-i18n';
+	import { locale, t } from 'svelte-i18n';
 	import Button from '#lib/ui/button/Button.svelte';
 	import type {
 		FormFieldDependency,
+		FormFieldErrorItem,
 		FormFieldType,
 		FormFieldUsage,
+		FormSchemaIssue,
 		UniversalForm
 	} from '#lib/api/forms.js';
-
-	export type FieldDraft = {
-		field_id?: string;
-		key: string;
-		label: string;
-		type: FormFieldType;
-		required: boolean;
-		optionsText: string;
-		optionColorsText: string;
-		optionDisabledText: string;
-		optionArchivedText: string;
-		optionDescriptionsText: string;
-		optionGroupsText: string;
-		currency: string;
-		scale: string;
-		placeholder: string;
-		helpText: string;
-		defaultValue: string;
-		validationMin: string;
-		validationMax: string;
-		validationPattern: string;
-		validationMaxLength: string;
-		listVisible: boolean;
-		detailVisible: boolean;
-		conditionalHiddenWhenText: string;
-		conditionalReadOnlyWhenText: string;
-		readOnly: boolean;
-		formulaOp: string;
-		formulaArgsText: string;
-		formulaScale: string;
-		formulaRelationKey: string;
-		formulaChildField: string;
-		relationTargetType: string;
-		relationFormKey: string;
-		relationKey: string;
-		relationType: string;
-		relationDisplayField: string;
-		attachmentAcceptText: string;
-		attachmentMaxSizeMb: string;
-		attachmentMultiple: boolean;
-		attachmentPreview: boolean;
-		attachmentThumbnailFormat: string;
-		attachmentPreviewFormat: string;
-		attachmentVariantsText: string;
-		attachmentStoragePolicy: string;
-		attachmentRetentionDays: string;
-		attachmentSignedUrlTtlMinutes: string;
-	};
+	import FieldRulesEditor from '#lib/components/forms/FieldRulesEditor.svelte';
+	import { errorMessage } from '#lib/forms/field-errors.js';
+	import type { FieldDraft } from '#lib/forms/page-types.js';
+	import type { CheckContext } from '#lib/forms/record-checks.js';
+	import { checkDefaultCel, type DefaultMode } from '#lib/forms/rule-drafts.js';
 
 	interface Props {
 		form: UniversalForm;
@@ -81,6 +40,12 @@
 		lockedFieldKeys?: string[];
 		usageLoading?: boolean;
 		saving?: boolean;
+		/** Issues of the last refused schema save, by field key (`''` for the schema). */
+		schemaIssues?: Record<string, FormSchemaIssue[]>;
+		checkContext: () => CheckContext;
+		onCheckOnServer?: (
+			values: Record<string, unknown>
+		) => Promise<{ errors: FormFieldErrorItem[] } | { failure: string }>;
 		onSelectField?: (index: number) => void;
 		onAppendField?: (type?: FormFieldType) => void;
 		onUpdateField?: (index: number, patch: Partial<FieldDraft>) => void;
@@ -101,6 +66,9 @@
 		lockedFieldKeys = [],
 		usageLoading = false,
 		saving = false,
+		schemaIssues = {},
+		checkContext,
+		onCheckOnServer,
 		onSelectField,
 		onAppendField,
 		onUpdateField,
@@ -127,6 +95,12 @@
 		Boolean(selectedField?.key && lockedFieldKeySet.has(selectedField.key))
 	);
 	let mobilePanel = $state<'library' | 'inspector' | null>(null);
+	const lang = $derived($locale === 'en' ? 'en' : 'zh');
+	const defaultCelProblem = $derived(
+		selectedField?.defaultMode === 'cel' && selectedField.defaultCel.trim()
+			? checkDefaultCel(selectedField.defaultCel)
+			: null
+	);
 
 	const fieldGroups = $derived([
 		{
@@ -299,6 +273,19 @@
 				{$t('forms.saveDesign')}
 			</Button>
 		</div>
+		{#if (schemaIssues['']?.length ?? 0) > 0}
+			<ul
+				class="space-y-1 border-b border-line bg-danger-soft px-4 py-2 text-xs text-danger"
+				role="alert"
+			>
+				{#each schemaIssues[''] ?? [] as issue, index (index)}
+					<li data-schema-issue={issue.code}>
+						<span class="font-mono">{issue.path || '/'}</span>
+						{errorMessage(undefined, issue, $t, lang)}
+					</li>
+				{/each}
+			</ul>
+		{/if}
 		<div class="min-h-[520px] bg-surface p-4">
 			{#if fieldDrafts.length === 0}
 				<div class="rounded-card border border-dashed border-line bg-raised p-8 text-center">
@@ -1009,20 +996,62 @@
 												: ''
 									})}></textarea>
 						</label>
-						<label class="space-y-1">
-							<span class="text-xs font-medium text-fg-muted">{$t('forms.defaultValue')}</span>
-							<input
-								class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
-								value={selectedField.defaultValue}
-								oninput={(event) =>
-									updateSelected({
-										defaultValue:
-											event.currentTarget instanceof HTMLInputElement
+						<div class="space-y-1" data-field-default={selectedField.key}>
+							<span class="flex items-center justify-between gap-2">
+								<span class="text-xs font-medium text-fg-muted">{$t('forms.defaultValue')}</span>
+								<select
+									class="rounded-control border border-input bg-field px-2 py-1 text-xs text-fg"
+									value={selectedField.defaultMode}
+									aria-label={$t('lowcode.forms.designer.defaultMode')}
+									onchange={(event) =>
+										updateSelected({
+											defaultMode: (event.currentTarget instanceof HTMLSelectElement
 												? event.currentTarget.value
-												: ''
-									})}
-							/>
-						</label>
+												: 'value') as DefaultMode
+										})}
+									data-field-default-mode
+								>
+									<option value="value">{$t('lowcode.forms.designer.defaultFixed')}</option>
+									<option value="cel">{$t('lowcode.forms.designer.defaultCel')}</option>
+								</select>
+							</span>
+							{#if selectedField.defaultMode === 'cel'}
+								<input
+									class="w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-sm text-fg"
+									value={selectedField.defaultCel}
+									placeholder="now"
+									aria-label={$t('lowcode.forms.designer.defaultCel')}
+									oninput={(event) =>
+										updateSelected({
+											defaultCel:
+												event.currentTarget instanceof HTMLInputElement
+													? event.currentTarget.value
+													: ''
+										})}
+									data-field-default-cel
+								/>
+								{#if defaultCelProblem}
+									<p class="text-xs text-danger" data-field-default-problem={defaultCelProblem}>
+										{errorMessage(undefined, { code: defaultCelProblem }, $t, lang)}
+									</p>
+								{:else}
+									<p class="text-xs text-fg-muted">{$t('lowcode.forms.designer.defaultCelHint')}</p>
+								{/if}
+							{:else}
+								<input
+									class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
+									value={selectedField.defaultValue}
+									aria-label={$t('forms.defaultValue')}
+									oninput={(event) =>
+										updateSelected({
+											defaultValue:
+												event.currentTarget instanceof HTMLInputElement
+													? event.currentTarget.value
+													: ''
+										})}
+								/>
+							{/if}
+						</div>
 						<div class="grid grid-cols-2 gap-2">
 							<label class="flex items-center gap-2 text-sm text-fg">
 								<input
@@ -1111,6 +1140,8 @@
 				<details
 					class="rounded-card border border-line bg-raised"
 					data-field-inspector-section="validation"
+					open={selectedField.rules.length > 0 ||
+						(schemaIssues[selectedField.key]?.length ?? 0) > 0}
 				>
 					<summary
 						class="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-semibold uppercase text-fg-muted marker:hidden"
@@ -1120,67 +1151,17 @@
 							{$t('forms.fieldInspectorAdvanced')}
 						</span>
 					</summary>
-					<div class="space-y-3 border-t border-line p-3">
-						<div class="grid grid-cols-2 gap-3">
-							<label class="space-y-1">
-								<span class="text-xs font-medium text-fg-muted">{$t('forms.minValue')}</span>
-								<input
-									class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
-									value={selectedField.validationMin}
-									oninput={(event) =>
-										updateSelected({
-											validationMin:
-												event.currentTarget instanceof HTMLInputElement
-													? event.currentTarget.value
-													: ''
-										})}
-								/>
-							</label>
-							<label class="space-y-1">
-								<span class="text-xs font-medium text-fg-muted">{$t('forms.maxValue')}</span>
-								<input
-									class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
-									value={selectedField.validationMax}
-									oninput={(event) =>
-										updateSelected({
-											validationMax:
-												event.currentTarget instanceof HTMLInputElement
-													? event.currentTarget.value
-													: ''
-										})}
-								/>
-							</label>
-						</div>
-						<label class="space-y-1">
-							<span class="text-xs font-medium text-fg-muted">{$t('forms.pattern')}</span>
-							<input
-								class="w-full rounded-control border border-input bg-field px-3 py-2 font-mono text-sm text-fg"
-								value={selectedField.validationPattern}
-								oninput={(event) =>
-									updateSelected({
-										validationPattern:
-											event.currentTarget instanceof HTMLInputElement
-												? event.currentTarget.value
-												: ''
-									})}
+					<div class="border-t border-line p-3">
+						{#key selectedField.key}
+							<FieldRulesEditor
+								field={selectedField}
+								fields={fieldDrafts}
+								issues={schemaIssues[selectedField.key] ?? []}
+								{checkContext}
+								onchange={updateSelected}
+								oncheckserver={onCheckOnServer}
 							/>
-						</label>
-						<label class="space-y-1">
-							<span class="text-xs font-medium text-fg-muted">{$t('forms.maxLength')}</span>
-							<input
-								type="number"
-								min="1"
-								class="w-full rounded-control border border-input bg-field px-3 py-2 text-sm text-fg"
-								value={selectedField.validationMaxLength}
-								oninput={(event) =>
-									updateSelected({
-										validationMaxLength:
-											event.currentTarget instanceof HTMLInputElement
-												? event.currentTarget.value
-												: ''
-									})}
-							/>
-						</label>
+						{/key}
 					</div>
 				</details>
 				<details
