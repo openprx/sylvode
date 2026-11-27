@@ -13,5 +13,6 @@ mod scoped_bot_projects_tests;
 mod scoped_bot_secondary_tests;
 #[cfg(test)]
 mod scoped_bot_tests;
+pub mod validate_limit;
 
 pub mod auth;

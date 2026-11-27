@@ -250,6 +250,13 @@ const ACCOUNTED: &[(&str, &str, Account)] = &[
     // Layout validator (layouts/handlers.rs): the scope is resolved and read-checked by the handler.
     ("ValidateRequest", "scope_id", Checked("layouts/access.rs")),
     (
+        "ValidateRecordRequest",
+        "record_id",
+        Exempt(
+            "the handler refuses a record of another form (record.form_id != the route's form, 404); the form is the route's resolved target",
+        ),
+    ),
+    (
         "ValidateRequest",
         "site_id",
         Exempt("site layouts are refused until sites exist; the handler reads no site"),

@@ -745,11 +745,11 @@ pub async fn authorize(
         return Ok(body);
     }
     let refuse = || ApiError::Forbidden(REFUSAL.to_string());
-    let safe = axum::http::Method::from_bytes(method.as_bytes()).is_ok_and(|method| method.is_safe());
     let matched = parts
         .extensions
         .get::<MatchedPath>()
         .map(|path| path.as_str().to_owned());
+    let safe = crate::catalogue::is_read_only(method, matched.as_deref());
     let Some((class, comment)) = matched.as_deref().and_then(|pattern| bot_class(method, pattern)) else {
         return Err(refuse());
     };

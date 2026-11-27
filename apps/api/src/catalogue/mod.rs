@@ -65,6 +65,22 @@ pub fn by_op(op: &str) -> Option<&'static Entry> {
     BY_OP.get(op).copied()
 }
 
+/// `POST` routes that only read (contract C3-4, the explicit exception list): the validators take
+/// their input in a body and store nothing. A bot needs the `read` permission and `read` level for
+/// them, not `write`, so a read-only bot can check a schema or a layout.
+const READ_POSTS: [&str; 3] = [
+    "/api/v1/forms/schema/validate",
+    "/api/v1/forms/{form_id}/validate",
+    "/api/v1/layouts/validate",
+];
+
+/// Whether the request reads only: a safe method, or a `POST` of the exception list.
+#[must_use]
+pub fn is_read_only(method: &str, matched_path: Option<&str>) -> bool {
+    axum::http::Method::from_bytes(method.as_bytes()).is_ok_and(|method| method.is_safe())
+        || (method == "POST" && matched_path.is_some_and(|path| READ_POSTS.contains(&path)))
+}
+
 /// The bot class of an entry, and `None` for an entry a bot never reaches.
 const fn bot_route(entry: &Entry) -> Option<RunnerRoute> {
     if !entry.exposure.contains(Exposure::BOT) {
@@ -160,6 +176,19 @@ mod tests {
         ops.sort_unstable();
         let golden: Vec<&str> = include_str!("golden/plugin_ops.txt").lines().collect();
         assert_eq!(ops, golden);
+    }
+
+    /// Every route of the read-POST exception list is a catalogued `Read` route with a body.
+    #[test]
+    fn the_read_post_exceptions_are_catalogued_read_routes() {
+        for path in super::READ_POSTS {
+            let entry = by_route("POST", path).expect("a catalogue entry");
+            assert_eq!(entry.risk, crate::catalogue::Risk::Read, "{path}");
+            assert!(super::is_read_only("POST", Some(path)));
+        }
+        assert!(!super::is_read_only("POST", Some("/api/v1/drafts")));
+        assert!(!super::is_read_only("POST", None));
+        assert!(super::is_read_only("GET", None));
     }
 
     #[test]

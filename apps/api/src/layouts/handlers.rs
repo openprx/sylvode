@@ -264,6 +264,7 @@ pub async fn validate_layout(
     bot: Option<Extension<BotAuthContext>>,
     Json(req): Json<ValidateRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
+    crate::middleware::validate_limit::check(&claims.sub)?;
     let who = Principal::new(claims, bot);
     authenticated(&who)?;
     if req.site_id.flatten().is_some() {

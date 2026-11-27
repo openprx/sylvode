@@ -183,6 +183,10 @@ pub(super) struct ListFilter<'a> {
     pub(super) readable_projects: Option<Vec<Uuid>>,
     pub(super) status: Option<&'a str>,
     pub(super) kind: Option<&'a str>,
+    /// Owners and admins see every form's drafts.
+    pub(super) can_bypass_form_view: bool,
+    /// The caller's role as a permission subject id.
+    pub(super) role_subject: String,
 }
 
 pub(super) async fn list(
@@ -195,7 +199,11 @@ pub(super) async fn list(
          AND ($2::uuid IS NULL OR d.project_id = $2) \
          AND ($3::uuid[] IS NULL OR d.project_id = ANY($3)) \
          AND ($4::text IS NULL OR d.status = $4) \
-         AND ($5::text IS NULL OR d.kind = $5)";
+         AND ($5::text IS NULL OR d.kind = $5) \
+         AND ($6::boolean OR d.kind <> 'form_schema' OR (d.target->>'form_id') IS NULL OR COALESCE(( \
+               SELECT (fp.policy -> 'actions' ->> 'form.view')::boolean FROM form_permissions fp \
+               WHERE fp.form_id = (d.target->>'form_id')::uuid AND fp.subject_type = 'role' \
+                 AND fp.subject_id = $7 LIMIT 1), true))";
     let values = || -> Vec<sea_orm::Value> {
         vec![
             filter.workspace_id.into(),
@@ -203,6 +211,8 @@ pub(super) async fn list(
             filter.readable_projects.clone().into(),
             filter.status.map(str::to_owned).into(),
             filter.kind.map(str::to_owned).into(),
+            filter.can_bypass_form_view.into(),
+            filter.role_subject.clone().into(),
         ]
     };
     let total = Count::find_by_statement(Statement::from_sql_and_values(
@@ -220,7 +230,7 @@ pub(super) async fn list(
         DbBackend::Postgres,
         format!(
             "SELECT {COLUMNS} FROM artefact_drafts d WHERE {WHERE} \
-             ORDER BY d.created_at DESC, d.id LIMIT $6 OFFSET $7"
+             ORDER BY d.created_at DESC, d.id LIMIT $8 OFFSET $9"
         ),
         page_values,
     ))

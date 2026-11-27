@@ -26,7 +26,7 @@ use super::{
 };
 use crate::{
     error::ApiError,
-    forms::permissions::role_is_form_admin,
+    forms::permissions::{normalize_permission_subject_id, role_is_form_admin},
     layouts::{
         access::{Principal, Scope, ScopeKind, member, require_read, resolve_project, resolve_scope},
         apply::draft_slot,
@@ -224,6 +224,8 @@ async fn form_candidate(
 
 async fn layout_candidate(
     state: &AppState,
+    claims: &JwtClaims,
+    bot: Option<&BotAuthContext>,
     who: &Principal,
     project: &Scope,
     raw_target: Value,
@@ -236,6 +238,10 @@ async fn layout_candidate(
         return Err(ApiError::not_found("scope not found"));
     }
     require_read(state, who, &scope).await?;
+    if kind == ScopeKind::Form {
+        let form = find_form(state, scope.id).await?;
+        require_form_action(state, claims, bot, &form, "form.view").await?;
+    }
     let slot = draft_slot(&target.slot_id, kind)?;
     Ok(Candidate {
         identity: target.identity(),
@@ -271,11 +277,30 @@ pub async fn create_draft(
             "the note is longer than 2000 characters",
         ));
     }
+    let (early_kind, early_id) = match who.bot_id() {
+        Some(bot_id) => ("bot", bot_id),
+        None => ("user", who.user_id()?.ok_or_else(ApiError::internal)?),
+    };
+    // A throttled author costs no validation: the locked recount below stays the authority.
+    if store::count_last_minute(&state.db, early_kind, early_id).await? >= CREATIONS_PER_MINUTE {
+        return Err(rate_limited("too many drafts in the last minute"));
+    }
     let candidate = match req.kind.as_str() {
         KIND_FORM_SCHEMA => {
             form_candidate(&state, &claims, bot_context.as_ref(), &project, req.target, req.spec).await?
         }
-        KIND_LAYOUT => layout_candidate(&state, &who, &project, req.target, req.spec).await?,
+        KIND_LAYOUT => {
+            layout_candidate(
+                &state,
+                &claims,
+                bot_context.as_ref(),
+                &who,
+                &project,
+                req.target,
+                req.spec,
+            )
+            .await?
+        }
         "package_install" | "site_page" => {
             return Err(ApiError::bad_request_coded(
                 "draft_kind_unsupported",
@@ -358,7 +383,7 @@ pub async fn list_drafts(
             ));
         }
     };
-    member(&state, &who, workspace_id).await?;
+    let role = member(&state, &who, workspace_id).await?;
     let readable = match who.bot_id() {
         Some(bot_id) => readable_projects(&state.db, bot_id).await?.ids(),
         None => None,
@@ -376,6 +401,8 @@ pub async fn list_drafts(
             readable_projects: readable,
             status: query.status.as_deref(),
             kind: query.kind.as_deref(),
+            can_bypass_form_view: role_is_form_admin(&role),
+            role_subject: normalize_permission_subject_id(&role)?,
         },
         paging.per_page,
         paging.offset(),
@@ -392,7 +419,8 @@ pub async fn get_draft(
     bot: Option<Extension<BotAuthContext>>,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let who = Principal::new(claims, bot);
+    let bot_context = bot.as_ref().map(|Extension(context)| context.clone());
+    let who = Principal::new(claims.clone(), bot);
     let row = store::load(&state.db, id, false).await?.ok_or_else(draft_not_found)?;
     let project = Scope {
         kind: ScopeKind::Project,
@@ -401,6 +429,19 @@ pub async fn get_draft(
         project_id: Some(row.project_id),
     };
     require_read(&state, &who, &project).await.map_err(reads_as_not_found)?;
+    // The proposed schema of a form is as private as the form: whoever may not view it gets nothing.
+    if row.kind == KIND_FORM_SCHEMA
+        && let Some(form_id) = row
+            .target
+            .get("form_id")
+            .and_then(Value::as_str)
+            .and_then(|id| id.parse().ok())
+    {
+        let form = find_form(&state, form_id).await.map_err(reads_as_not_found)?;
+        require_form_action(&state, &claims, bot_context.as_ref(), &form, "form.view")
+            .await
+            .map_err(reads_as_not_found)?;
+    }
     Ok(ApiResponse::success(body(&row)?))
 }
 

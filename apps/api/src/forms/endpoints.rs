@@ -65,6 +65,7 @@ pub async fn validate_form_record(
     Path(form_id): Path<Uuid>,
     Json(req): Json<ValidateRecordRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
+    crate::middleware::validate_limit::check(&claims.sub)?;
     let form = find_form(&state, form_id).await?;
     let bot = bot.as_ref().map(|b| &b.0);
     let updating = match req.mode.as_deref() {
@@ -166,6 +167,7 @@ pub async fn validate_form_schema(
     bot: Option<Extension<BotAuthContext>>,
     Json(req): Json<ValidateSchemaRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
+    crate::middleware::validate_limit::check(&claims.sub)?;
     let (workspace_id, _) = ensure_project_actor(&state, &claims, bot.as_ref().map(|b| &b.0), req.project_id).await?;
     let (schema, issues) = match ensure_schema_field_ids(req.schema.clone()) {
         Ok(schema) => {

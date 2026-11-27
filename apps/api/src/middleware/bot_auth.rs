@@ -521,8 +521,8 @@ fn without_admin(permissions: Vec<String>) -> Vec<String> {
 ///
 /// Safe methods only read, everything else can change state. Kept separate from the middleware so
 /// the mapping is testable without standing up a router.
-fn required_bot_permission(method: &axum::http::Method) -> BotPermission {
-    if method.is_safe() {
+fn required_bot_permission(method: &axum::http::Method, matched_path: Option<&str>) -> BotPermission {
+    if crate::catalogue::is_read_only(method.as_str(), matched_path) {
         BotPermission::Read
     } else {
         BotPermission::Write
@@ -649,7 +649,15 @@ pub async fn bot_or_user_auth_middleware(
             path: req.uri().path().to_string(),
             request_id: context.request_id,
         };
-        if let Err(error) = ensure_bot_permission(&context, required_bot_permission(req.method())) {
+        if let Err(error) = ensure_bot_permission(
+            &context,
+            required_bot_permission(
+                req.method(),
+                req.extensions()
+                    .get::<axum::extract::MatchedPath>()
+                    .map(axum::extract::MatchedPath::as_str),
+            ),
+        ) {
             let duration_ms = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
             let request_id = authenticated_operation.request_id;
             let surface = authenticated_operation.surface;
@@ -810,12 +818,24 @@ mod tests {
     }
 
     #[test]
+    fn the_validators_need_only_the_read_permission() {
+        assert_eq!(
+            required_bot_permission(&Method::POST, Some("/api/v1/layouts/validate")),
+            BotPermission::Read
+        );
+        assert_eq!(
+            required_bot_permission(&Method::POST, Some("/api/v1/layouts")),
+            BotPermission::Write
+        );
+    }
+
+    #[test]
     fn unsafe_methods_require_the_write_permission() {
         for method in [Method::GET, Method::HEAD, Method::OPTIONS] {
-            assert_eq!(required_bot_permission(&method), BotPermission::Read);
+            assert_eq!(required_bot_permission(&method, None), BotPermission::Read);
         }
         for method in [Method::POST, Method::PUT, Method::PATCH, Method::DELETE] {
-            assert_eq!(required_bot_permission(&method), BotPermission::Write);
+            assert_eq!(required_bot_permission(&method, None), BotPermission::Write);
         }
     }
 
