@@ -6274,18 +6274,9 @@ fn filter_event_response_values(
     mut event: BusinessEventResponse,
     read_policy: &RecordReadPolicy,
 ) -> BusinessEventResponse {
-    // Relation snapshots of restricted target forms leave the payload whether or not the reader has
-    // a denied field on this form.
-    if let Some(values) = event.payload.get_mut("values") {
-        *values = read_policy.values(std::mem::take(values));
-    }
-    let denied_read_fields = read_policy.denied_read_fields();
-    if denied_read_fields.is_empty() {
-        return event;
-    }
-    event.payload = redact_event_payload(&event.event_type, event.payload, denied_read_fields);
-    event.metadata = redact_event_metadata(event.metadata, denied_read_fields);
-    event.source = redact_event_source(event.source, denied_read_fields);
+    event.payload = redact_event_payload(&event.event_type, event.payload, read_policy);
+    event.metadata = redact_event_metadata(event.metadata, read_policy);
+    event.source = redact_event_source(event.source, read_policy);
     event
 }
 

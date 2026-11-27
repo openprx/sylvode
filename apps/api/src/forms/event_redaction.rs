@@ -9,9 +9,12 @@
 //! producer adds - is withheld, and `every_emitted_form_event_type_declares_a_payload_policy`
 //! fails the build when a producer emits an event type that has no declaration at all.
 
+#[cfg(test)]
 use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
+
+use super::read_policy::{RecordReadPolicy, reduce_relation_value};
 
 /// Marker inserted into a payload, source or metadata object whenever field level read permissions
 /// removed something, so a client can tell "the producer never wrote this" from "you may not see it".
@@ -213,9 +216,11 @@ pub fn event_payload_policy(event_type: &str) -> Option<&'static EventPayloadPol
         .map(|(_, policy)| policy)
 }
 
-/// Strip everything a reader denied `denied_read_fields` may not see from an event payload.
-pub fn redact_event_payload(event_type: &str, payload: Value, denied_read_fields: &BTreeSet<String>) -> Value {
-    if denied_read_fields.is_empty() {
+/// Strip everything the `reader` policy hides from an event payload: an unrestricted reader gets it unchanged;
+/// otherwise only declared keys survive (a payload `title` is never declared), denied keys are
+/// removed at any depth and restricted relation values are reduced to their reference.
+pub fn redact_event_payload(event_type: &str, payload: Value, reader: &RecordReadPolicy) -> Value {
+    if reader.is_unrestricted() {
         return payload;
     }
     let Some(policy) = event_payload_policy(event_type) else {
@@ -243,22 +248,22 @@ pub fn redact_event_payload(event_type: &str, payload: Value, denied_read_fields
         }
     }
     let mut payload = Value::Object(kept);
-    redacted |= strip_denied_keys_deep(&mut payload, denied_read_fields);
+    redacted |= redact_deep(&mut payload, reader);
     mark_redacted(payload, redacted)
 }
 
 /// Strip everything a restricted reader may not see from an event `source` object.
-pub fn redact_event_source(source: Value, denied_read_fields: &BTreeSet<String>) -> Value {
-    retain_allowed_keys(source, &SAFE_EVENT_SOURCE_KEYS, denied_read_fields)
+pub fn redact_event_source(source: Value, policy: &RecordReadPolicy) -> Value {
+    retain_allowed_keys(source, &SAFE_EVENT_SOURCE_KEYS, policy)
 }
 
 /// Strip everything a restricted reader may not see from an event `metadata` object.
-pub fn redact_event_metadata(metadata: Value, denied_read_fields: &BTreeSet<String>) -> Value {
-    retain_allowed_keys(metadata, &SAFE_EVENT_METADATA_KEYS, denied_read_fields)
+pub fn redact_event_metadata(metadata: Value, policy: &RecordReadPolicy) -> Value {
+    retain_allowed_keys(metadata, &SAFE_EVENT_METADATA_KEYS, policy)
 }
 
-fn retain_allowed_keys(value: Value, allowed_keys: &[&str], denied_read_fields: &BTreeSet<String>) -> Value {
-    if denied_read_fields.is_empty() {
+fn retain_allowed_keys(value: Value, allowed_keys: &[&str], policy: &RecordReadPolicy) -> Value {
+    if policy.is_unrestricted() {
         return value;
     }
     let Value::Object(entries) = value else {
@@ -274,7 +279,7 @@ fn retain_allowed_keys(value: Value, allowed_keys: &[&str], denied_read_fields: 
         }
     }
     let mut value = Value::Object(kept);
-    redacted |= strip_denied_keys_deep(&mut value, denied_read_fields);
+    redacted |= redact_deep(&mut value, policy);
     mark_redacted(value, redacted)
 }
 
@@ -291,17 +296,25 @@ fn mark_redacted(mut value: Value, redacted: bool) -> Value {
     value
 }
 
-/// Remove every entry keyed by a denied field from an already pruned document. The walk is
-/// iterative so a deeply nested document cannot exhaust the stack.
-fn strip_denied_keys_deep(value: &mut Value, denied_read_fields: &BTreeSet<String>) -> bool {
+/// Remove every entry keyed by a denied field from an already pruned document, and reduce every
+/// entry keyed by a restricted relation field to `{record_id, form_key}`. The walk is iterative so
+/// a deeply nested document cannot exhaust the stack.
+fn redact_deep(value: &mut Value, policy: &RecordReadPolicy) -> bool {
     let mut removed = false;
     let mut pending: Vec<&mut Value> = vec![value];
     while let Some(node) = pending.pop() {
         match node {
             Value::Object(entries) => {
-                for denied_key in denied_read_fields {
+                for denied_key in policy.denied_read_fields() {
                     if entries.remove(denied_key).is_some() {
                         removed = true;
+                    }
+                }
+                for (key, entry) in entries.iter_mut() {
+                    if policy.restricted_relation_fields().contains(key) {
+                        let before = entry.clone();
+                        reduce_relation_value(entry);
+                        removed |= *entry != before;
                     }
                 }
                 pending.extend(entries.values_mut());
@@ -361,12 +374,44 @@ mod tests {
         DELIVERED_FORM_EVENT_TYPES, EVENT_REDACTED_MARKER, FORM_EVENT_PAYLOAD_POLICIES, delivery_parts,
         event_payload_policy, event_type_literals, redact_event_metadata, redact_event_payload, redact_event_source,
     };
-    use crate::forms::permissions::FORM_PERMISSION_ACTIONS;
+    use crate::forms::{permissions::FORM_PERMISSION_ACTIONS, read_policy::RecordReadPolicy};
     use serde_json::{Value, json};
     use std::collections::BTreeSet;
 
-    fn denied(keys: &[&str]) -> BTreeSet<String> {
+    fn set(keys: &[&str]) -> BTreeSet<String> {
         keys.iter().map(|key| (*key).to_string()).collect()
+    }
+
+    fn denied(keys: &[&str]) -> RecordReadPolicy {
+        RecordReadPolicy::new(String::new(), set(keys), BTreeSet::new())
+    }
+
+    #[test]
+    fn a_restricted_relation_alone_drops_the_payload_title_and_reduces_nested_snapshots() {
+        let policy = RecordReadPolicy::new(String::new(), BTreeSet::new(), set(&["customer"]));
+        let payload = json!({
+            "record_id": "r1",
+            "title": "Ada ACME 9000",
+            "values": {
+                "name": "Ada",
+                "customer": {"record_id": "c1", "form_key": "c", "title": "ACME 9000", "label": "x"},
+                "nested": {"customer": [{"record_id": "c2", "display": "9000"}]}
+            }
+        });
+
+        let filtered = redact_event_payload("form.record.updated", payload, &policy);
+
+        assert!(filtered.get("title").is_none());
+        assert_eq!(filtered.pointer("/values/name"), Some(&json!("Ada")));
+        assert_eq!(
+            filtered.pointer("/values/customer"),
+            Some(&json!({"record_id": "c1", "form_key": "c"}))
+        );
+        assert_eq!(
+            filtered.pointer("/values/nested/customer"),
+            Some(&json!([{"record_id": "c2"}]))
+        );
+        assert!(!filtered.to_string().contains("9000"));
     }
 
     #[test]
@@ -398,7 +443,11 @@ mod tests {
     #[test]
     fn readers_without_denials_see_the_untouched_event() {
         let payload = json!({ "record_id": "r1", "title": "Alice earns 9000", "values": { "salary": 9000 } });
-        let filtered = redact_event_payload("form.record.archived", payload.clone(), &BTreeSet::new());
+        let filtered = redact_event_payload(
+            "form.record.archived",
+            payload.clone(),
+            &RecordReadPolicy::unrestricted(String::new()),
+        );
         assert_eq!(filtered, payload);
     }
 
