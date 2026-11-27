@@ -3,6 +3,9 @@
  * fetches forms and the apps count lazily and passes what it has; `null` means "not loaded yet".
  */
 
+import { projectChildren, type AppRef } from '../nav/rows';
+import type { ResolvedNav } from '../nav/types';
+
 export type TreeKind =
 	| 'project'
 	| 'overview'
@@ -10,6 +13,9 @@ export type TreeKind =
 	| 'form'
 	| 'all-forms'
 	| 'apps'
+	| 'app'
+	| 'link'
+	| 'caption'
 	| 'issues'
 	| 'board'
 	| 'cycles'
@@ -24,6 +30,10 @@ export interface TreeNode {
 	children?: TreeNode[];
 	/** Children exist but are fetched on first expansion. */
 	lazy?: boolean;
+	/** Glyph name overriding the kind's default (navigation entries with an icon). */
+	glyph?: string;
+	/** An external link: opens in a new tab. */
+	external?: boolean;
 }
 
 export type NavTranslate = (key: string) => string;
@@ -66,6 +76,11 @@ export interface ProjectTreeInput {
 	formsTotal: number | null;
 	/** Resolves the fixed rows' labels; defaults to returning the message key. */
 	translate?: NavTranslate;
+	/** The project's resolved navigation; the built-in rows apply while it is null or absent. */
+	menu?: ResolvedNav | null;
+	/** Apps of the project for the Apps row's children; null while discovery has not answered. */
+	apps?: AppRef[] | null;
+	locale?: string;
 }
 
 /** Where the project row itself goes: forms for `custom_form`, else the overview. */
@@ -142,6 +157,26 @@ export function projectTree(input: ProjectTreeInput): TreeNode {
 		href
 	});
 
+	if (input.menu) {
+		return {
+			kind: 'project',
+			id: project.id,
+			label: project.name,
+			href: projectHome(workspaceId, project),
+			children: projectChildren(input.menu, {
+				workspaceId,
+				projectId: project.id,
+				locale: input.locale ?? 'en',
+				tr: t,
+				isWorkspaceAdmin,
+				apps: input.apps ?? null,
+				forms,
+				formsTotal,
+				formsInTree: FORMS_IN_TREE
+			})
+		};
+	}
+
 	const children: TreeNode[] = [];
 	if (project.type_key !== CUSTOM_FORM_TYPE) {
 		children.push(row('overview', PROJECT_NAV_KEYS.overview, base));
@@ -164,8 +199,17 @@ export function projectTree(input: ProjectTreeInput): TreeNode {
 	}
 	children.push(formsNode);
 
-	if ((appsCount ?? 0) > 0 || isWorkspaceAdmin)
-		children.push(row('apps', PROJECT_NAV_KEYS.apps, `${base}/apps`));
+	if ((appsCount ?? 0) > 0 || (input.apps?.length ?? 0) > 0 || isWorkspaceAdmin) {
+		const appsNode = row('apps', PROJECT_NAV_KEYS.apps, `${base}/apps`);
+		if (input.apps && input.apps.length > 0)
+			appsNode.children = input.apps.map((app) => ({
+				kind: 'app' as const,
+				id: `app:${project.id}:${app.key}:${app.route}`,
+				label: app.label,
+				href: `${base}/apps/${encodeURIComponent(app.key)}/${encodeURIComponent(app.route)}`
+			}));
+		children.push(appsNode);
+	}
 	if (isWorkspaceAdmin)
 		children.push(row('settings', PROJECT_NAV_KEYS.settings, `${base}/settings`));
 

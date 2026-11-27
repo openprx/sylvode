@@ -6,15 +6,21 @@ import Briefcase from '@lucide/svelte/icons/briefcase';
 import Clock from '@lucide/svelte/icons/clock';
 import FileText from '@lucide/svelte/icons/file-text';
 import Flag from '@lucide/svelte/icons/flag';
+import ExternalLink from '@lucide/svelte/icons/external-link';
 import Folder from '@lucide/svelte/icons/folder';
 import FolderKanban from '@lucide/svelte/icons/folder-kanban';
 import House from '@lucide/svelte/icons/house';
+import Globe from '@lucide/svelte/icons/globe';
 import Kanban from '@lucide/svelte/icons/kanban';
 import Landmark from '@lucide/svelte/icons/landmark';
+import LayoutTemplate from '@lucide/svelte/icons/layout-template';
 import LayoutList from '@lucide/svelte/icons/layout-list';
+import Link from '@lucide/svelte/icons/link';
 import ListChecks from '@lucide/svelte/icons/list-checks';
+import Puzzle from '@lucide/svelte/icons/puzzle';
 import Repeat from '@lucide/svelte/icons/repeat';
 import Settings from '@lucide/svelte/icons/settings';
+import Star from '@lucide/svelte/icons/star';
 import Sparkles from '@lucide/svelte/icons/sparkles';
 import Table2 from '@lucide/svelte/icons/table-2';
 import Users from '@lucide/svelte/icons/users';
@@ -43,5 +49,11 @@ export const GLYPHS: Record<GlyphName, GlyphComponent> = {
 	landmark: Landmark,
 	flag: Flag,
 	users: Users,
-	briefcase: Briefcase
+	briefcase: Briefcase,
+	link: Link,
+	'external-link': ExternalLink,
+	star: Star,
+	'layout-template': LayoutTemplate,
+	globe: Globe,
+	puzzle: Puzzle
 };

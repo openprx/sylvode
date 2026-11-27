@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
+	import ExternalLink from '@lucide/svelte/icons/external-link';
 	import { GLYPHS } from './glyphs';
 	import { treeKeyAction, type NavRow } from './rows';
 
@@ -51,48 +52,57 @@
 	{#each rows as row (row.id)}
 		{@const Glyph = GLYPHS[row.glyph]}
 		<li>
-			<!-- eslint-disable svelte/no-navigation-without-resolve -- hrefs are built by the shell -->
-			<a
-				{...row.attrs}
-				href={row.href}
-				class="row"
-				class:selected={row.id === selectedId}
-				style:--level={row.level}
-				data-nav-row
-				data-row-id={row.id}
-				data-parent-id={row.parentId ?? undefined}
-				aria-current={row.id === selectedId ? 'page' : undefined}
-				aria-expanded={row.expandable ? (row.expanded ? 'true' : 'false') : undefined}
-				onclick={() => onfollow?.(row)}
-				onkeydown={(event) => onkeydown(event, row)}
-			>
-				<Glyph size={16} aria-hidden="true" />
-				<span class="label">{row.label}</span>
-				{#if row.count !== undefined && row.count > 0}
-					<span
-						class="count"
-						aria-label={$t('shell.column.unread', { values: { count: row.count } })}
-						>{row.count > 99 ? '99+' : row.count}</span
-					>
-				{/if}
-				{#if row.expandable}
-					<!-- Pointer-only: the keyboard uses the arrow keys. -->
-					<span
-						class="chevron"
-						class:open={row.expanded}
-						aria-hidden="true"
-						tabindex="-1"
-						onclick={(event) => {
-							event.preventDefault();
-							event.stopPropagation();
-							ontoggle?.(row.id, !row.expanded);
-						}}
-					>
-						<ChevronRight size={14} aria-hidden="true" />
-					</span>
-				{/if}
-			</a>
-			<!-- eslint-enable svelte/no-navigation-without-resolve -->
+			{#if row.caption}
+				<p class="caption" style:--level={row.level} data-nav-caption={row.id}>{row.label}</p>
+			{:else}
+				<!-- eslint-disable svelte/no-navigation-without-resolve -- hrefs are built by the shell -->
+				<a
+					{...row.attrs}
+					href={row.href}
+					target={row.external ? '_blank' : undefined}
+					rel={row.external ? 'noopener noreferrer' : undefined}
+					class="row"
+					class:selected={row.id === selectedId}
+					style:--level={row.level}
+					data-nav-row
+					data-row-id={row.id}
+					data-parent-id={row.parentId ?? undefined}
+					aria-current={row.id === selectedId ? 'page' : undefined}
+					aria-expanded={row.expandable ? (row.expanded ? 'true' : 'false') : undefined}
+					onclick={() => onfollow?.(row)}
+					onkeydown={(event) => onkeydown(event, row)}
+				>
+					<Glyph size={16} aria-hidden="true" />
+					<span class="label">{row.label}</span>
+					{#if row.count !== undefined && row.count > 0}
+						<span
+							class="count"
+							aria-label={$t('shell.column.unread', { values: { count: row.count } })}
+							>{row.count > 99 ? '99+' : row.count}</span
+						>
+					{/if}
+					{#if row.external}
+						<ExternalLink size={14} aria-hidden="true" />
+					{/if}
+					{#if row.expandable}
+						<!-- Pointer-only: the keyboard uses the arrow keys. -->
+						<span
+							class="chevron"
+							class:open={row.expanded}
+							aria-hidden="true"
+							tabindex="-1"
+							onclick={(event) => {
+								event.preventDefault();
+								event.stopPropagation();
+								ontoggle?.(row.id, !row.expanded);
+							}}
+						>
+							<ChevronRight size={14} aria-hidden="true" />
+						</span>
+					{/if}
+				</a>
+				<!-- eslint-enable svelte/no-navigation-without-resolve -->
+			{/if}
 		</li>
 	{/each}
 </ul>
@@ -105,6 +115,15 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--rf-space-1);
+	}
+	.caption {
+		margin: 0;
+		padding: var(--rf-space-4) var(--rf-space-4) var(--rf-space-2);
+		padding-inline-start: calc(var(--rf-space-4) + var(--level, 0) * var(--rf-space-6));
+		color: var(--rf-secondary);
+		font-size: var(--rf-size-meta);
+		line-height: var(--rf-leading-meta);
+		font-weight: var(--rf-weight-medium);
 	}
 	/* Row height 32: the space-9 token (contract 2.4). */
 	.row {

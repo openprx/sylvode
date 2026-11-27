@@ -25,7 +25,13 @@ export type GlyphName =
 	| 'landmark'
 	| 'flag'
 	| 'users'
-	| 'briefcase';
+	| 'briefcase'
+	| 'link'
+	| 'external-link'
+	| 'star'
+	| 'layout-template'
+	| 'globe'
+	| 'puzzle';
 
 export interface NavRow {
 	/** Unique in the whole column. */
@@ -47,6 +53,10 @@ export interface NavRow {
 	attrs?: Record<`data-${string}`, string>;
 	/** Present when "P" may add the row to the rail. */
 	pin?: Shortcut;
+	/** An external link: opens in a new tab and shows the external glyph. */
+	external?: boolean;
+	/** A section caption, not a link (`href` is empty). */
+	caption?: boolean;
 }
 
 // --- selection from the route ---
@@ -103,6 +113,9 @@ const TREE_GLYPHS: Record<TreeKind, GlyphName> = {
 	form: 'file-text',
 	'all-forms': 'table-2',
 	apps: 'app-window',
+	app: 'puzzle',
+	link: 'link',
+	caption: 'link',
 	settings: 'settings'
 };
 
@@ -135,9 +148,12 @@ export function flattenTree(
 			parentId,
 			expandable,
 			expanded: open,
-			selectable: node.kind !== 'all-forms',
+			selectable: node.kind !== 'all-forms' && node.kind !== 'caption' && !node.external,
 			attrs
 		};
+		if (node.glyph) row.glyph = node.glyph as GlyphName;
+		if (node.external) row.external = true;
+		if (node.kind === 'caption') row.caption = true;
 		if (node.kind === 'project')
 			row.pin = {
 				id: `project:${node.id}`,

@@ -1,0 +1,14 @@
+{
+	"nav": {
+		"sections": {
+			"pinned": "Pinned",
+			"more": "More"
+		},
+		"page": {
+			"loadFailed": "This page could not be loaded.",
+			"notAvailable": "This page is not available.",
+			"thing": "page",
+			"object": "page"
+		}
+	}
+}

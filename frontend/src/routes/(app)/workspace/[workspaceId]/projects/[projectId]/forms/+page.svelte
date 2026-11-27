@@ -15,6 +15,7 @@
 	import ImportWizardModal from '#lib/components/forms/page/ImportWizardModal.svelte';
 	import DesignerConfirmModal from '#lib/components/forms/page/DesignerConfirmModal.svelte';
 	import FormWorkspace from '#lib/components/forms/page/FormWorkspace.svelte';
+	import ProjectAppsStrip from '#lib/components/plugins/ProjectAppsStrip.svelte';
 
 	const workbench = getContext<TaskWorkbench | undefined>(WORKBENCH_CONTEXT);
 	const recordEditorAction = taskEditorAction();
@@ -151,6 +152,9 @@
 >
 	{#if !s.recordEditorOpen}<FormsSessionNotice />{/if}
 	<FormsPageHeader />
+	{#if page.params.workspaceId && page.params.projectId}
+		<ProjectAppsStrip workspaceId={page.params.workspaceId} projectId={page.params.projectId} />
+	{/if}
 
 	{#if s.loading}
 		<div class="rounded-card border border-line bg-raised p-6 text-sm text-fg-muted">

@@ -5,6 +5,7 @@
  * can pass fakes; `defaultColumnApis` (`column-apis.ts`) calls the real clients.
  */
 import type { ApiResult, PaginatedData } from '#lib/api/client.js';
+import type { AppRef } from '../../nav/rows';
 import type { WorkspaceRef } from './scope';
 
 export type LoadStatus = 'idle' | 'loading' | 'ready' | 'error' | 'forbidden';
@@ -47,6 +48,7 @@ export class ColumnData {
 	workspaces = $state.raw<Load<WorkspaceRef>>(IDLE);
 	private forms = $state.raw<Record<string, Load<FormRef>>>({});
 	private apps = $state.raw<Record<string, number | null>>({});
+	private appLists = $state.raw<Record<string, AppRef[] | null>>({});
 
 	private generation: Record<string, number> = {};
 
@@ -103,6 +105,14 @@ export class ColumnData {
 	/** Apps count of a project: null until its discovery has loaded. */
 	appsCountOf(projectId: string): number | null {
 		return this.apps[projectId] ?? null;
+	}
+	/** The apps of a project for the Apps row's children; null until discovery has answered. */
+	appsOf(projectId: string): AppRef[] | null {
+		return this.appLists[projectId] ?? null;
+	}
+	setApps(projectId: string, apps: AppRef[] | null): void {
+		this.appLists = { ...this.appLists, [projectId]: apps };
+		this.setAppsCount(projectId, apps === null ? null : apps.length);
 	}
 	setAppsCount(projectId: string, count: number | null): void {
 		if (this.apps[projectId] === count) return;

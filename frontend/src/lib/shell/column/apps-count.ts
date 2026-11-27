@@ -1,3 +1,4 @@
+import type { AppRef } from '../../nav/rows';
 import { layoutSlot, type DiscoveryState } from '#lib/plugins/contributions.js';
 
 /**
@@ -10,5 +11,19 @@ export function appsCountOf(state: DiscoveryState): number | null {
 		return layout.inline.length + layout.more.length;
 	}
 	if (state.status === 'off' || state.status === 'denied') return 0;
+	return null;
+}
+
+/** The `project.view` apps a discovery state shows, in display order; null while unknown. */
+export function appsOf(state: DiscoveryState): AppRef[] | null {
+	if (state.status === 'ready') {
+		const layout = layoutSlot(state.items, 'project.view');
+		return [...layout.inline, ...layout.more].map((item) => ({
+			key: item.key,
+			route: item.contribution.route ?? '',
+			label: item.contribution.label
+		}));
+	}
+	if (state.status === 'off' || state.status === 'denied') return [];
 	return null;
 }

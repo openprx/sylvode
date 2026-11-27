@@ -122,7 +122,7 @@
 			use:roving={{ selector: '[data-nav-row]', orientation: 'vertical', loop: false }}
 		>
 			{#if destination === 'home'}
-				<HomeColumn {shell} {url} unread={viewer.unread} onfollow={follow} />
+				<HomeColumn {shell} {url} unread={viewer.unread} flow={viewer.flow} onfollow={follow} />
 			{:else if destination === 'projects'}
 				<ProjectsColumn {shell} {scope} {url} {ctx} {viewer} {data} {onpin} onfollow={follow} />
 			{:else if destination === 'flow'}

@@ -9,7 +9,8 @@
 	import type { Shortcut } from '../shortcuts.svelte';
 	import type { ShellState } from '../shell-state.svelte';
 	import { projectTree } from '../../project/nav';
-	import { appsCountOf } from './apps-count';
+	import { navStore } from '#lib/nav/store.svelte.js';
+	import { appsOf } from './apps-count';
 	import type { ColumnData } from './column-data.svelte';
 	import {
 		formsGroupToExpand,
@@ -75,6 +76,9 @@
 				project: { id: project.id, name: project.name, type_key: project.type_key },
 				isWorkspaceAdmin: viewer.workspaceAdmin,
 				appsCount: data.appsCountOf(project.id),
+				apps: data.appsOf(project.id),
+				menu: navStore.state('project', project.id).menu,
+				locale: $locale ?? 'en',
 				forms: forms.status === 'ready' ? forms.items : null,
 				formsTotal: forms.status === 'ready' ? forms.total : null,
 				translate: (key) => tr(key)
@@ -164,18 +168,22 @@
 	// would be new on every update of the counts and make retain and release loop.
 	const openProjectKey = $derived(
 		branches
-			.filter((b) => b.open)
+			.filter((b) => b.open || b.current)
 			.map((b) => b.project.id)
 			.join('\n')
 	);
+	// The navigation of each open or current project loads with it; until it has, and when the
+	// endpoint is not there, the built-in rows show.
+	$effect(() => {
+		for (const id of openProjectKey ? openProjectKey.split('\n') : [])
+			void navStore.load('project', id);
+	});
 	$effect(() => {
 		const stops = (openProjectKey ? openProjectKey.split('\n') : []).map((id) => {
 			const discovery = projectDiscovery(id);
 			// Untracked: the first call runs inside this effect, and reading the counts there would
 			// make the effect depend on them and restart discovery whenever one changes.
-			const stop = discovery.subscribe((state) =>
-				untrack(() => data.setAppsCount(id, appsCountOf(state)))
-			);
+			const stop = discovery.subscribe((state) => untrack(() => data.setApps(id, appsOf(state))));
 			const release = discovery.retain();
 			return () => {
 				stop();
@@ -191,6 +199,7 @@
 	function refresh() {
 		lastRefresh = Date.now();
 		void optionsStore.ensureLoaded(true);
+		void navStore.invalidate();
 	}
 	$effect(() => {
 		const onProjectsPage =

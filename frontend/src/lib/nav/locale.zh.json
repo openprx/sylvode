@@ -1,0 +1,14 @@
+{
+	"nav": {
+		"sections": {
+			"pinned": "已固定",
+			"more": "更多"
+		},
+		"page": {
+			"loadFailed": "无法加载此页面。",
+			"notAvailable": "此页面不可用。",
+			"thing": "页面",
+			"object": "页面"
+		}
+	}
+}
