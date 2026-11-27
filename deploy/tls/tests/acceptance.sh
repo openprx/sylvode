@@ -238,6 +238,61 @@ hostile_inject() {
   hostile inject "critical,CA:TRUE" "nameConstraints = critical,DER:30$_gl$_g"
 }
 
+# der_wrap TAG HEX: a TLV (lengths up to 255).
+der_wrap() {
+  _w=$2
+  _wl=$((${#_w} / 2))
+  if [ "$_wl" -lt 128 ]; then
+    printf '%s%02x%s' "$1" "$_wl" "$_w"
+  else
+    printf '%s81%02x%s' "$1" "$_wl" "$_w"
+  fi
+}
+
+ascii_hex() {
+  printf '%s' "$1" | od -An -v -tx1 | tr -d ' \n'
+}
+
+ip_subtree() {
+  der_wrap 30 "$(der_wrap 87 "$1$2")"
+}
+
+dns_subtree() {
+  der_wrap 30 "$(der_wrap 82 "$(ascii_hex "$1")")"
+}
+
+# hostile_der NAME PERMITTED-SUBTREES-HEX: a CA whose name constraint is built by hand.
+hostile_der() {
+  hostile "$1" "critical,CA:TRUE" "nameConstraints = critical,DER:$(der_wrap 30 "$(der_wrap a0 "$2")")"
+}
+
+# hostile_big: a CA with a good constraint and a certificate larger than 16 KiB.
+hostile_big() {
+  {
+    printf '[req]\ndistinguished_name = dn\nprompt = no\nx509_extensions = x\n[dn]\nO = x\nCN = big\n[x]\n'
+    printf 'basicConstraints = critical,CA:TRUE\n'
+    printf 'nameConstraints = critical,permitted;DNS:a.test,permitted;IP:10.0.0.1/255.255.255.255\n'
+    printf 'subjectAltName = @san\n[san]\n'
+    _i=0
+    while [ "$_i" -lt 1500 ]; do
+      printf 'DNS.%s = a%s.example\n' "$_i" "$_i"
+      _i=$((_i + 1))
+    done
+  } >"$W/h-big.cnf"
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -keyout "$W/h-big.key" -out "$W/h-big.crt" -days 5 -config "$W/h-big.cnf" 2>/dev/null
+}
+
+# make_m5_cas: the hostile CAs of the second re-check, F13 and F14.
+make_m5_cas() {
+  hostile_der ipall "$(ip_subtree 00000000 00000000)$(dns_subtree a.test)"
+  hostile_der emptydns "$(ip_subtree 0a000001 ffffffff)$(der_wrap 30 "$(der_wrap 82 '')")"
+  hostile ip8 "critical,CA:TRUE" "nameConstraints = critical,permitted;IP:10.0.0.0/255.0.0.0,permitted;DNS:example.com"
+  hostile ip6w "critical,CA:TRUE" "nameConstraints = critical,permitted;IP:fd00::/ffff:ffff:ffff:ffff:0:0:0:0,permitted;DNS:example.com"
+  hostile dotdns "critical,CA:TRUE" "nameConstraints = critical,permitted;DNS:.example.com,permitted;IP:10.0.0.1/255.255.255.255"
+  hostile single "critical,CA:TRUE" "nameConstraints = critical,permitted;DNS:com,permitted;IP:10.0.0.1/255.255.255.255"
+  hostile_big
+}
+
 # trust_refused NAME: trust-client.sh must refuse the hostile CA with exit 3 and install nothing.
 trust_refused() {
   _fp=$(fp_of "$W/h-$1.crt")
@@ -637,6 +692,19 @@ t_26d() {
   ck "control: both subtrees accepted (got $RC)" [ "$RC" = 0 ]
 }
 
+t_26e() {
+  # M5: permitted subtrees that match everything or a whole range; F13: a single-label DNS base;
+  # F14: an oversized certificate.
+  make_m5_cas
+  for _n in ipall emptydns ip8 ip6w dotdns single big; do
+    ck "$_n was created" [ -f "$W/h-$_n.crt" ]
+    trust_refused "$_n"
+  done
+  ck "oversized certificate is refused for its size" err_has '16 KiB'
+  runlog dash /opt/tls/sylvode-tls.sh init-ca --dir "$W/x2" --dns localhost
+  ck "init-ca refuses a single-label name with exit 2 (got $RC)" [ "$RC" = 2 ]
+}
+
 t_31() {
   # M4: the cron and systemd command lines of docs/install.md, verbatim.
   cron=$(grep -E '^17 3 \* \* \* root ' /src/docs/install.md | head -n 1)
@@ -742,7 +810,7 @@ p_02() {
 }
 
 p_03() {
-  for _n in spoof cafalse dnsonly iponly excl noncrit inject; do
+  for _n in spoof cafalse dnsonly iponly excl noncrit inject ipall emptydns ip8 ip6w dotdns single big; do
     ps_refused "$_n"
   done
 }
@@ -791,6 +859,7 @@ run_test T-30 "IP-only CA is limited to DNS:invalid" t_30
 run_test T-26b "trust-client refuses a spoofed subject and a CA:FALSE certificate (M1)" t_26b
 run_test T-26c "trust-client refuses constraints that leave a name type open (M2)" t_26c
 run_test T-26d "trust-client refuses a newline-injected DNS-only constraint" t_26d
+run_test T-26e "trust-client refuses match-all, wide, single-label and oversized CAs (M5, F13, F14)" t_26e
 run_test T-31 "the cron and systemd lines of docs/install.md work (M4)" t_31
 run_test T-32 ".reload-pending symlink is refused (F1)" t_32
 run_test T-33 "an interrupted promote survives --abort (F2)" t_33

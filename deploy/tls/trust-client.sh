@@ -207,12 +207,17 @@ case $OPENSSL in
 esac
 
 [ -f "$CA_FILE" ] || die 2 "not a file: $(safe_str "$CA_FILE")"
+# A CA certificate from sylvode-tls.sh is under 1 KiB: cap the input before anything parses it.
+_size=$(wc -c <"$CA_FILE")
+[ "$((_size + 0))" -le 65536 ] || die 3 "$(safe_str "$CA_FILE") is larger than 64 KiB; refusing it"
 if grep -q 'PRIVATE KEY' "$CA_FILE"; then
   die 3 "refusing $(safe_str "$CA_FILE"): it contains a private key; pass the CA certificate only"
 fi
 _certs=$(grep -c -e '-----BEGIN CERTIFICATE-----' "$CA_FILE")
 [ "$_certs" = 1 ] || die 3 "$(safe_str "$CA_FILE") must hold exactly one PEM certificate (found $_certs)"
 "$OPENSSL" x509 -in "$CA_FILE" -noout >/dev/null 2>&1 || die 3 "$(safe_str "$CA_FILE") is not a valid PEM certificate"
+_der=$("$OPENSSL" x509 -in "$CA_FILE" -outform DER | wc -c)
+[ "$((_der + 0))" -le 16384 ] || die 3 "the certificate in $(safe_str "$CA_FILE") is larger than 16 KiB (DER); refusing it"
 
 FP=$("$OPENSSL" x509 -in "$CA_FILE" -noout -fingerprint -sha256 | sed -n 's/^.*Fingerprint=//p' | head -n 1 | tr 'a-f' 'A-F')
 [ -n "$FP" ] || die 1 "cannot compute the SHA-256 fingerprint"
@@ -236,6 +241,9 @@ NC_CRITICAL=0
 N_PERM_IP=0
 N_PERM_DNS=0
 PERM_LINES=
+PERM_BAD=
+BASE_KIND=
+BASE_OK=1
 EXCL_LINES=
 
 bad_der() {
@@ -295,17 +303,51 @@ hex_ascii() {
   printf '%s' "$_hout"
 }
 
-# describe_base: T and VAL hold a GeneralName; prints the display text, sets BASE_KIND (ip, dns, other).
+# dns_name_ok NAME: the DNS rules of sylvode-tls.sh (at least two labels), or the placeholder "invalid".
+dns_name_ok() {
+  case $1 in
+    invalid) return 0 ;;
+    "" | *[!a-zA-Z0-9.-]*) return 1 ;;
+    .* | *. | *..* | -* | *-.* | *.-* | *-) return 1 ;;
+    *[!0-9.]*) ;;
+    *) return 1 ;;
+  esac
+  [ "${#1}" -le 253 ] || return 1
+  case $1 in
+    *.*) ;;
+    *) return 1 ;;
+  esac
+  case $(printf '%s' "${1##*.}" | tr '[:upper:]' '[:lower:]') in
+    invalid) return 1 ;;
+  esac
+  printf '%s\n' "$1" | tr '.' '\n' | while IFS= read -r _dl; do
+    if [ "${#_dl}" -lt 1 ] || [ "${#_dl}" -gt 63 ]; then
+      exit 1
+    fi
+  done
+}
+
+# describe_base: T and VAL hold a GeneralName; prints the display text, sets BASE_KIND (ip, dns,
+# other) and BASE_OK (0 when the subtree is not a single host or not a valid name).
 describe_base() {
   case $T in
     82)
       BASE_KIND=dns
-      printf 'DNS:%s\n' "$(hex_ascii "$VAL")"
+      _bn=$(hex_ascii "$VAL")
+      BASE_OK=0
+      if dns_name_ok "$_bn"; then
+        BASE_OK=1
+      fi
+      printf 'DNS:%s\n' "$_bn"
       ;;
     87)
       BASE_KIND=ip
+      BASE_OK=0
       case ${#VAL} in
         16)
+          case $(printf '%s' "$VAL" | cut -c9-16) in
+            ffffffff) BASE_OK=1 ;;
+          esac
           _ia=$(printf '%s' "$VAL" | cut -c1-8)
           _im=$(printf '%s' "$VAL" | cut -c9-16)
           printf 'IP:%s.%s.%s.%s/%s.%s.%s.%s\n' \
@@ -315,6 +357,10 @@ describe_base() {
             $((0x$(printf '%s' "$_im" | cut -c5-6))) $((0x$(printf '%s' "$_im" | cut -c7-8)))
           ;;
         64)
+          case $(printf '%s' "$VAL" | cut -c33-64) in
+            *[!f]*) ;;
+            *) BASE_OK=1 ;;
+          esac
           printf 'IP:%s/%s\n' \
             "$(printf '%s' "$VAL" | cut -c1-32 | sed 's/..../&:/g;s/:$//')" \
             "$(printf '%s' "$VAL" | cut -c33-64 | sed 's/..../&:/g;s/:$//')"
@@ -324,6 +370,7 @@ describe_base() {
       ;;
     *)
       BASE_KIND=other
+      BASE_OK=1
       printf '(other name type, tag %s)\n' "$T"
       ;;
   esac
@@ -357,6 +404,9 @@ parse_nc() {
           _nl=$(describe_base)
           describe_base >/dev/null
           if [ "$_ng" = a0 ]; then
+            if [ "$BASE_OK" != 1 ] && [ -z "$PERM_BAD" ]; then
+              PERM_BAD=$_nl
+            fi
             PERM_LINES=$PERM_LINES"    $_nl
 "
             [ "$BASE_KIND" != ip ] || N_PERM_IP=$((N_PERM_IP + 1))
@@ -454,6 +504,9 @@ check_constrained() {
   [ "$IS_CA" = 1 ] || die 3 "refusing $_n: it is not a CA certificate (basicConstraints CA:TRUE is missing)"
   [ "$NC_COUNT" = 1 ] || die 3 "refusing $_n: it has no name constraint, so it could vouch for any site"
   [ "$NC_CRITICAL" = 1 ] || die 3 "refusing $_n: its name constraint is not critical"
+  if [ -n "$PERM_BAD" ]; then
+    die 3 "refusing $_n: the permitted subtree $PERM_BAD is not a single host (IP masks must be all ones: /32 or /128) or not a valid DNS name (at least two labels, no leading dot, not empty)"
+  fi
   if [ "$N_PERM_IP" -lt 1 ] || [ "$N_PERM_DNS" -lt 1 ]; then
     die 3 "refusing $_n: its name constraint must permit at least one IP address and one DNS name; a missing type leaves that kind of name open"
   fi

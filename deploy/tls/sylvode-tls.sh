@@ -538,7 +538,10 @@ EOF
   fi
   case $_cd_d in
     *.*) ;;
-    *) warnn "single-label name \"$_cd_d\": some clients do not resolve single-label names" ;;
+    *)
+      err "single-label DNS name \"$_cd_d\": use at least two labels (a single label would cover everything below it)"
+      return 2
+      ;;
   esac
   printf '%s\n' "$_cd_d"
 }

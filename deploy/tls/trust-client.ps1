@@ -117,6 +117,10 @@ try {
     if (-not (Test-Path -LiteralPath $CertPath -PathType Leaf)) {
         Stop-Script 2 "Not a file: $CertPath"
     }
+    # A CA certificate from sylvode-tls.sh is under 1 KiB: cap the input before anything parses it.
+    if ((Get-Item -LiteralPath $CertPath).Length -gt 65536) {
+        Stop-Script 3 'Refusing a file larger than 64 KiB.'
+    }
     $pem = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $CertPath).Path)
     if ($pem -match 'PRIVATE KEY') {
         Stop-Script 3 'Refusing a file that contains a private key; pass the CA certificate only.'
@@ -127,6 +131,10 @@ try {
     }
     $der = [Convert]::FromBase64String(($certMatches[0].Groups[1].Value -replace '\s', ''))
     $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList (, $der)
+
+    if ($cert.RawData.Length -gt 16384) {
+        Stop-Script 3 'Refusing a certificate larger than 16 KiB (DER).'
+    }
 
     $fp = Format-Sha256 $cert.RawData
     $thumbprint = $cert.Thumbprint   # SHA-1: a lookup key for the store only, never a trust decision
@@ -172,28 +180,49 @@ try {
         return $sb.ToString()
     }
 
+    # The DNS rules of sylvode-tls.sh (at least two labels), or the placeholder "invalid".
+    function Test-DnsName([string]$Name) {
+        if ($Name -ceq 'invalid') { return $true }
+        if ($Name.Length -lt 1 -or $Name.Length -gt 253) { return $false }
+        if ($Name -notmatch '\A[A-Za-z0-9.-]+\z') { return $false }
+        if ($Name -match '\A[0-9.]+\z') { return $false }
+        $labels = $Name.Split('.')
+        if ($labels.Count -lt 2) { return $false }
+        if ($labels[$labels.Count - 1] -ieq 'invalid') { return $false }
+        foreach ($label in $labels) {
+            if ($label.Length -lt 1 -or $label.Length -gt 63) { return $false }
+            if ($label.StartsWith('-') -or $label.EndsWith('-')) { return $false }
+        }
+        return $true
+    }
+
     function Format-GeneralName([byte[]]$Data, $Tlv) {
         if ($Tlv.Tag -eq 0x82) {
-            return @{ Kind = 'dns'; Text = ('DNS:' + (Format-SafeText $Data $Tlv.Start $Tlv.Length)) }
+            $dnsText = Format-SafeText $Data $Tlv.Start $Tlv.Length
+            return @{ Kind = 'dns'; Text = ('DNS:' + $dnsText); Ok = (Test-DnsName $dnsText) }
         }
         if ($Tlv.Tag -eq 0x87) {
             if ($Tlv.Length -eq 8) {
                 $a = (0..3 | ForEach-Object { [string][int]$Data[$Tlv.Start + $_] }) -join '.'
                 $m = (4..7 | ForEach-Object { [string][int]$Data[$Tlv.Start + $_] }) -join '.'
-                return @{ Kind = 'ip'; Text = "IP:$a/$m" }
+                $okMask = $true
+                foreach ($i in 4..7) { if ($Data[$Tlv.Start + $i] -ne 0xFF) { $okMask = $false } }
+                return @{ Kind = 'ip'; Text = "IP:$a/$m"; Ok = $okMask }
             }
             if ($Tlv.Length -eq 32) {
                 $a = (0..7 | ForEach-Object { '{0:x}' -f (([int]$Data[$Tlv.Start + 2 * $_] * 256) + [int]$Data[$Tlv.Start + 2 * $_ + 1]) }) -join ':'
                 $m = (8..15 | ForEach-Object { '{0:x}' -f (([int]$Data[$Tlv.Start + 2 * $_] * 256) + [int]$Data[$Tlv.Start + 2 * $_ + 1]) }) -join ':'
-                return @{ Kind = 'ip'; Text = "IP:$a/$m" }
+                $okMask = $true
+                foreach ($i in 16..31) { if ($Data[$Tlv.Start + $i] -ne 0xFF) { $okMask = $false } }
+                return @{ Kind = 'ip'; Text = "IP:$a/$m"; Ok = $okMask }
             }
-            return @{ Kind = 'other'; Text = 'IP:(invalid length)' }
+            return @{ Kind = 'other'; Text = 'IP:(invalid length)'; Ok = $false }
         }
-        return @{ Kind = 'other'; Text = ('(other name type, tag 0x{0:x2})' -f $Tlv.Tag) }
+        return @{ Kind = 'other'; Text = ('(other name type, tag 0x{0:x2})' -f $Tlv.Tag); Ok = $true }
     }
 
     function Get-CaInfo {
-        $info = @{ IsCa = $false; NcCount = 0; NcCritical = $false; PermIp = 0; PermDns = 0; Perm = @(); Excl = @() }
+        $info = @{ IsCa = $false; NcCount = 0; NcCritical = $false; PermIp = 0; PermDns = 0; Bad = @(); Perm = @(); Excl = @() }
         foreach ($ext in $cert.Extensions) {
             $raw = [byte[]]$ext.RawData
             if ($ext.Oid.Value -eq '2.5.29.19') {
@@ -218,6 +247,7 @@ try {
                         $name = Format-GeneralName $raw $base[0]
                         if ($group.Tag -eq 0xA0) {
                             $info.Perm += $name.Text
+                            if (-not $name.Ok) { $info.Bad += $name.Text }
                             if ($name.Kind -eq 'ip') { $info.PermIp++ }
                             if ($name.Kind -eq 'dns') { $info.PermDns++ }
                         }
@@ -257,6 +287,9 @@ try {
         }
         if (-not $info.NcCritical) {
             Stop-Script 3 'Refusing the certificate: its name constraint is not critical.'
+        }
+        if (@($info.Bad).Count -gt 0) {
+            Stop-Script 3 "Refusing the certificate: the permitted subtree $(@($info.Bad)[0]) is not a single host (IP masks must be all ones: /32 or /128) or not a valid DNS name (at least two labels, no leading dot, not empty)."
         }
         if ($info.PermIp -lt 1 -or $info.PermDns -lt 1) {
             Stop-Script 3 'Refusing the certificate: its name constraint must permit at least one IP address and one DNS name; a missing type leaves that kind of name open.'
