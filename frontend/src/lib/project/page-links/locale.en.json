@@ -44,5 +44,22 @@
 			"unlinkedRemoved": "unlinked a page that has since been removed",
 			"unlinkedGeneric": "unlinked a page"
 		}
+	},
+	"layout": {
+		"notAvailable": "Not available",
+		"actionUnknown": "Action is not defined",
+		"unknownNode": "Unsupported component: {type}",
+		"failed": "This panel could not be shown.",
+		"sourceError": "Some data could not be loaded.",
+		"noRows": "Nothing to show",
+		"expand": "Expand",
+		"collapse": "Collapse",
+		"hide": "Hide",
+		"undo": "Undo",
+		"hiddenNote": "{title} is hidden.",
+		"submit": "Submit",
+		"confirm": "Confirm",
+		"invokeConfirmTitle": "Run {action} from {package}?",
+		"actionFailed": "The action did not complete."
 	}
 }

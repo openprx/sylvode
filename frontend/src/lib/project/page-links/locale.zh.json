@@ -44,5 +44,22 @@
 			"unlinkedRemoved": "取消关联了一个已被移除的页面",
 			"unlinkedGeneric": "取消关联了一个页面"
 		}
+	},
+	"layout": {
+		"notAvailable": "暂不可用",
+		"actionUnknown": "操作未定义",
+		"unknownNode": "不支持的组件:{type}",
+		"failed": "此面板无法显示。",
+		"sourceError": "部分数据无法加载。",
+		"noRows": "暂无内容",
+		"expand": "展开",
+		"collapse": "收起",
+		"hide": "隐藏",
+		"undo": "撤销",
+		"hiddenNote": "{title} 已隐藏。",
+		"submit": "提交",
+		"confirm": "确认",
+		"invokeConfirmTitle": "运行 {package} 的 {action}?",
+		"actionFailed": "操作未完成。"
 	}
 }
