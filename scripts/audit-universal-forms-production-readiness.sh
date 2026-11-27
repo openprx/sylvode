@@ -286,7 +286,6 @@ contains "MCP integration test lists tools through JSON-RPC" "$TEST_MCP_SCRIPT" 
 contains "MCP integration test invokes tools through JSON-RPC" "$TEST_MCP_SCRIPT" '"method":"tools/call"'
 contains "MCP integration test derives its strict default tool count" "$TEST_MCP_SCRIPT" 'EXPECTED_TOOL_COUNT="${EXPECTED_TOOL_COUNT:-$(python3 "$PROJECT_ROOT/skills/sylvode-mcp/scripts/expected-tool-count.py")}"'
 contains "MCP integration test rejects tool count drift" "$TEST_MCP_SCRIPT" 'expected exactly $EXPECTED_TOOL_COUNT'
-contains "MCP integration test checks form template tool" "$TEST_MCP_SCRIPT" "forms.create_from_template"
 contains "MCP integration test checks form schema version tools" "$TEST_MCP_SCRIPT" "form_schema_versions.list"
 contains "MCP integration test checks form child lifecycle tools" "$TEST_MCP_SCRIPT" "form_records.child_archive"
 contains "MCP integration test checks form import/export tools" "$TEST_MCP_SCRIPT" "form_records.import_commit"

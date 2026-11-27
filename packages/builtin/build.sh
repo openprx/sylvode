@@ -22,6 +22,18 @@ root="$(cd "$here/../.." && pwd)"
 key="$1"
 out="$2"
 
+# The key and the packages never go into the repository: a QA key committed by accident is a leak.
+inside() { case "$1/" in "$root"/*) return 0 ;; esac; return 1; }
+mkdir -p "$(dirname "$key")" "$out"
+key="$(cd "$(dirname "$key")" && pwd -P)/$(basename "$key")"
+out="$(cd "$out" && pwd -P)"
+root_real="$(cd "$root" && pwd -P)"
+root="$root_real"
+if inside "$key" || inside "$out"; then
+  echo "refusing: <key-file> and <out-dir> must be outside the repository ($root)" >&2
+  exit 2
+fi
+
 cd "$root"
 cargo build -q -p sv-package --bin sv-pack
 pack="${CARGO_TARGET_DIR:-$root/target}/debug/sv-pack"

@@ -41,7 +41,13 @@ pub async fn admin_user(state: &AppState, claims: &JwtClaims, workspace_id: Uuid
     let (user_id, role, is_bot) = require_workspace_access_from_auth(state, claims, None, workspace_id)
         .await
         .map_err(|_| not_found())?;
-    if is_bot || !matches!(role.as_str(), "owner" | "admin") {
+    // A bot's seat in the workspace is a member row too: the identity decides, not the role.
+    if is_bot
+        || !matches!(role.as_str(), "owner" | "admin")
+        || crate::services::bot_identity::is_bot_user(&state.db, user_id)
+            .await
+            .map_err(|_| ApiError::internal())?
+    {
         return Err(admin_only());
     }
     Ok(user_id)

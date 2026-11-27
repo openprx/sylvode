@@ -6,6 +6,8 @@
     clippy::similar_names
 )]
 
+use std::time::Instant;
+
 use axum::{
     Extension, Json,
     extract::{Path, Query, State},
@@ -20,9 +22,10 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::{
+    catalogue::{Refusal, RefusalCode},
     error::ApiError,
     events::{BusinessEventInput, insert_business_event},
-    extensions::install::{access, approve, template},
+    extensions::install::{access, approve, rate, template},
     middleware::bot_auth::{BotAuthContext, require_workspace_access, require_workspace_access_from_auth},
     response::{ApiResponse, PaginatedData},
     routes::decision_domain,
@@ -93,6 +96,7 @@ async fn ensure_project_type_exists(state: &AppState, type_key: &str) -> Result<
 pub async fn create_project(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
     Path(workspace_id): Path<Uuid>,
     headers: HeaderMap,
     Json(req): Json<CreateProjectRequest>,
@@ -136,7 +140,12 @@ pub async fn create_project(
     // administers the workspace uses; everything is refused before anything is written.
     let chosen = match req.template_package.as_deref() {
         Some(key) => {
+            // Only a person at a console: a bot token or a delegated grant is refused outright.
+            if bot.is_some() || crate::oauth::delegated::current().is_some() {
+                return Err(Refusal::new(RefusalCode::InstallationAdminOnly, None).into());
+            }
             access::admin_user(&state, &claims, workspace_id).await?;
+            rate::requests().hit(workspace_id, Instant::now())?;
             Some(template::prepare(&state, workspace_id, key.trim()).await?)
         }
         None => None,
@@ -220,10 +229,16 @@ pub async fn create_project(
             template::install_prepared_in(&state, &tx, user_id, workspace_id, project_id, prepared).await
         }
         .await;
-        approve::refresh_rules(&state).await;
-        outcome?;
+        if let Err(error) = outcome {
+            drop(tx);
+            approve::refresh_rules(&state).await;
+            return Err(error);
+        }
     }
     tx.commit().await?;
+    if chosen.is_some() {
+        approve::refresh_rules(&state).await;
+    }
 
     decision_domain::initialize_default_domains_for_project(&state, project_id).await?;
 
@@ -301,8 +316,18 @@ pub async fn install_project_template(
     ))
     .one(&state.db)
     .await?
-    .ok_or_else(|| ApiError::NotFound("project not found".to_string()))?;
-    let admin = access::admin_user(&state, &claims, project.workspace_id).await?;
+    .ok_or_else(|| ApiError::not_found("project not found"))?;
+    let admin = access::admin_user(&state, &claims, project.workspace_id)
+        .await
+        .map_err(|error| {
+            // A project of another workspace looks exactly like a missing one.
+            if matches!(error.kind(), crate::error::ApiErrorKind::NotFound) {
+                ApiError::not_found("project not found")
+            } else {
+                error
+            }
+        })?;
+    rate::requests().hit(project.workspace_id, Instant::now())?;
     let installed =
         template::install_builtin(&state, admin, project.workspace_id, project_id, req.package_key.trim()).await?;
     Ok(ApiResponse::success(json!({
@@ -350,6 +375,7 @@ pub async fn preview_project_template(
             return Err(ApiError::BadRequest("type_key is not a project type key".to_string()));
         }
     }
+    rate::previews().hit(workspace_id, Instant::now())?;
     let auto_approve = !is_bot && matches!(role.as_str(), "owner" | "admin");
     let preview = template::preview_create(
         &state,

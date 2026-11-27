@@ -53,5 +53,5 @@ OAuth client or an MCP agent), and only packages without code or capability requ
   `POST /api/v1/projects/{project_id}/template-install` with `{"package_key": "sv/contract-review"}`. The forms
   are created; the package's project settings are not applied to an existing project.
 
-MCP agents create projects from a template with `projects.create` and `template_package`; the project's
-admin check is the same.
+Bots, MCP agents and connected applications cannot use templates: they are refused, and `projects.create`
+has no template argument.

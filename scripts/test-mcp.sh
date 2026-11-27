@@ -170,7 +170,6 @@ fi
 
 for required_tool in \
   "forms.list" \
-  "forms.create_from_template" \
   "forms.duplicate" \
   "forms.schema_summary" \
   "forms.field_usage" \

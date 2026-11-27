@@ -34,7 +34,9 @@ export class LoadersController extends FormsController {
 			return;
 		}
 
-		this.s.templatePackages = response.data?.items ?? [];
+		this.s.templatePackages = (response.data?.items ?? []).filter(
+			(item) => item.tier === 'builtin'
+		);
 	};
 
 	loadWorkspaceMembers = async () => {

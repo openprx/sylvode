@@ -388,6 +388,9 @@ fn a_project_block_out_of_range_is_refused() {
     let mut bidi = states();
     bidi[0]["name"]["en"] = json!("Dra\u{202e}ft");
     assert!(!packs(with_states(bidi)));
+    let mut invisible = states();
+    invisible[0]["name"]["en"] = json!("Dra\u{200b}ft");
+    assert!(!packs(with_states(invisible)));
     let mut repeated = states();
     repeated[1]["key"] = json!("draft");
     assert!(!packs(with_states(repeated)));

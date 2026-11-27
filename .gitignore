@@ -81,3 +81,8 @@ standin.*
 # Front site
 /site/node_modules
 /site/dist
+
+# Built-in package build output and signing keys
+*.svpkg
+*.key
+*.key.pub

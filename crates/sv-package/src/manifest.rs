@@ -334,7 +334,9 @@ fn display_text_ok(text: &str, max_chars: usize) -> bool {
         && text.trim() == text
         && is_nfc(text)
         && !text.chars().any(|c| {
-            c.is_control() || matches!(c, '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+            c.is_control()
+                || matches!(c, '\u{200b}'..='\u{200d}' | '\u{feff}' | '\u{61c}' | '\u{2028}' | '\u{2029}' | '\u{2060}'..='\u{2064}')
+                || matches!(c, '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
         })
 }
 

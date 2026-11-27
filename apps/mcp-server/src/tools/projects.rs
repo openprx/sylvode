@@ -94,10 +94,6 @@ pub fn create_project_tool() -> ToolDefinition {
                     "type": "object",
                     "description": "Project type-specific settings"
                 },
-                "template_package": {
-                    "type": "string",
-                    "description": "Optional key of a built-in template package installed into the new project, for example sv/contract-review (workspace owners and admins only)"
-                }
             },
             "required": ["key", "name"]
         }),
@@ -111,7 +107,6 @@ struct CreateProjectInput {
     description: Option<String>,
     type_key: Option<String>,
     type_settings: Option<serde_json::Value>,
-    template_package: Option<String>,
 }
 
 pub async fn create_project(client: &OpenPrClient, args: serde_json::Value) -> CallToolResult {
@@ -125,8 +120,7 @@ pub async fn create_project(client: &OpenPrClient, args: serde_json::Value) -> C
         "name": input.name,
         "description": input.description,
         "type_key": input.type_key,
-        "type_settings": input.type_settings,
-        "template_package": input.template_package
+        "type_settings": input.type_settings
     });
 
     match client.create_project(body).await {
