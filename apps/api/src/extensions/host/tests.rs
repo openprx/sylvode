@@ -27,7 +27,7 @@ const WORKSPACE: Uuid = Uuid::from_u128(0x10);
 const USER: Uuid = Uuid::from_u128(0x20);
 const RECORD: &str = "0b1d2f3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f";
 
-fn state() -> AppState {
+pub(super) fn state() -> AppState {
     AppState {
         cfg: AppConfig {
             app_name: "host-test".to_string(),

@@ -170,7 +170,14 @@ pub(super) async fn invoke_with(
     };
     emit(&record);
     if session.is_none() {
-        store(state, &record).await;
+        if world == World::FieldRule {
+            // A rule runs while its writer's transaction is open: the row is written by a task of its
+            // own, so the write never waits for a second connection.
+            let (state, record) = (state.clone(), record.clone());
+            tokio::spawn(async move { store(&state, &record).await });
+        } else {
+            store(state, &record).await;
+        }
     }
     Invocation { result, record }
 }

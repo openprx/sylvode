@@ -3421,10 +3421,13 @@ async fn create_record_for_form(
     req: CreateRecordRequest,
 ) -> Result<RecordResponse, ApiError> {
     let slots = crate::plugins::hooks::HookSlots::reserve(state, form.workspace_id, form.project_id).await?;
-    slots
-        .scope(create_record_for_form_in_slots(
+    let rules =
+        crate::extensions::rules::PreparedRules::prepare(state, form.workspace_id, form.project_id, &form.schema)
+            .await?;
+    rules
+        .scope(slots.scope(create_record_for_form_in_slots(
             state, form, actor_id, role, is_bot, req,
-        ))
+        )))
         .await
 }
 
@@ -3488,14 +3491,20 @@ pub async fn preview_form_record_recalculation(
         Writer::Preview,
         denied_read_fields.clone(),
     );
-    let output = validate_create_report(
+    let output = crate::extensions::rules::PreparedRules::around(
+        &state,
+        form.workspace_id,
+        form.project_id,
         &form.schema,
-        &ctx,
-        calculated.clone(),
-        &defaulted,
-        RulePolicy::CarryDerived,
+        validate_create_report(
+            &form.schema,
+            &ctx,
+            calculated.clone(),
+            &defaulted,
+            RulePolicy::CarryDerived,
+        ),
     )
-    .await?
+    .await??
     .map_err(crate::forms::rules::FieldErrors::into_api_error)?;
     let read_policy = ReaderContext::new(&role).policy(&state.db, (&form).into()).await?;
     Ok(ApiResponse::success(RecalculatePreviewResponse {
@@ -3577,6 +3586,10 @@ pub async fn recalculate_form_record(
     let updated_by = if is_bot { None } else { Some(actor_id) };
     let source =
         json!({ "type": if is_bot { "bot" } else { "user" }, "actor_id": actor_id, "operation": "recalculate" });
+    // The plugin rules are loaded before the transaction opens.
+    let rules =
+        crate::extensions::rules::PreparedRules::prepare(&state, form.workspace_id, form.project_id, &form.schema)
+            .await?;
     let tx = state.db.begin().await?;
     let calculated = calculate_values(&state, &form, Some(record_id), record.values.clone()).await?;
     let with_autonumber = apply_autonumber_values(&tx, &form, Some(&record.values), calculated).await?;
@@ -3588,7 +3601,14 @@ pub async fn recalculate_form_record(
         Writer::Recalculate,
         denied_read_fields.clone(),
     );
-    let recalculated = validate_recalculated(&form.schema, &ctx, with_autonumber, &record.values).await?;
+    let recalculated = rules
+        .scope(validate_recalculated(
+            &form.schema,
+            &ctx,
+            with_autonumber,
+            &record.values,
+        ))
+        .await?;
     let mut carried = CarriedError::for_reader(recalculated.carried, Some(record_id), &BTreeSet::new());
     log_carried(form.id, &carried);
     let values = recalculated.values;
@@ -3819,10 +3839,13 @@ async fn update_record_for_form(
     }
     // The legacy plugin hook slots are taken before the transaction opens (AUD-L1.1-F1).
     let slots = crate::plugins::hooks::HookSlots::reserve(state, form.workspace_id, form.project_id).await?;
-    slots
-        .scope(update_record_for_form_internal(
+    let rules =
+        crate::extensions::rules::PreparedRules::prepare(state, form.workspace_id, form.project_id, &form.schema)
+            .await?;
+    rules
+        .scope(slots.scope(update_record_for_form_internal(
             state, form, record, actor_id, role, is_bot, req, None,
-        ))
+        )))
         .await
 }
 
@@ -3838,9 +3861,17 @@ pub(crate) async fn update_record_for_plugin(
     if let Some(source) = &req.source {
         crate::forms::validation::ensure_no_site_origin(source)?;
     }
-    update_record_for_form_internal(state, form, record, actor_id, role, false, req, Some(plugin))
-        .await
-        .map(|(record, _)| record)
+    // The package-apply writer opens its transaction before this call, so its rules are prepared by
+    // its caller's scope when it has one; without one a plugin rule refuses `plugin_failed`.
+    crate::extensions::rules::PreparedRules::around(
+        state,
+        form.workspace_id,
+        form.project_id,
+        &form.schema,
+        update_record_for_form_internal(state, form, record, actor_id, role, false, req, Some(plugin)),
+    )
+    .await?
+    .map(|(record, _)| record)
 }
 
 /// A record update by an operator of a public site (contract C3 section 6.6): the native update
@@ -6363,10 +6394,16 @@ async fn preview_import_row(
         Writer::Import,
         denied_read_fields,
     );
-    let calculated = validate_create_report(&form.schema, &ctx, calculated, &defaulted, RulePolicy::Refuse)
-        .await?
-        .map_err(crate::forms::rules::FieldErrors::into_api_error)?
-        .values;
+    let calculated = crate::extensions::rules::PreparedRules::around(
+        state,
+        form.workspace_id,
+        form.project_id,
+        &form.schema,
+        validate_create_report(&form.schema, &ctx, calculated, &defaulted, RulePolicy::Refuse),
+    )
+    .await??
+    .map_err(crate::forms::rules::FieldErrors::into_api_error)?
+    .values;
     run_field_validator_hooks(
         state,
         form.workspace_id,

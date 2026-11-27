@@ -12,6 +12,7 @@
 //! A violation code `c` of the guest reaches users as `plugin.<package_key>.<c>` (the field engine
 //! builds the name); a refusal of the host is the C1 code itself.
 
+use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, LazyLock};
 
 use futures_util::future::BoxFuture;
@@ -22,6 +23,7 @@ use serde_json::{Value, json};
 use sv_package::RuleEntry;
 use uuid::Uuid;
 
+use super::host::engine::{compile_cache, engine};
 use super::host::{World, invoke};
 use super::install::live::{self, LoadError};
 use crate::catalogue::{InstallationView, Principal, RefusalCode};
@@ -175,10 +177,148 @@ pub async fn register(state: AppState) -> Result<(), sea_orm::DbErr> {
     Ok(())
 }
 
-/// A rule of an installed package, resolved for one write.
+/// A rule of an installed package, resolved for one write. It does no database work: everything it
+/// needs was loaded by [`PreparedRules::prepare`] before the writer's transaction opened.
 struct InstalledRule {
     state: AppState,
     reference: ExternalRuleRef,
+}
+
+/// The plugin rules of one write, loaded before its transaction opens.
+///
+/// A writer calls [`PreparedRules::prepare`] with the form's schema before `begin()` and runs the
+/// write inside [`PreparedRules::scope`]. For every `plugin` rule the schema names it loads the
+/// installation and its active generation, the rule's declaration and the component bytes, and warms
+/// the compile cache, so that [`InstalledRule::apply`] needs no pooled connection and no compile while
+/// the transaction is open. A rule that was not prepared (a writer that does not prepare) refuses
+/// `plugin_failed`: it never falls back to I/O. An installation that was disabled between the prepare
+/// and the apply is the same race as a disable concurrent with the write.
+#[derive(Clone, Default)]
+pub struct PreparedRules {
+    entries: Arc<HashMap<(String, String), Prepared>>,
+}
+
+enum Prepared {
+    Ready(Box<Ready>),
+    Refused(RefusalCode),
+}
+
+struct Ready {
+    installation: InstallationView,
+    approver: Option<Uuid>,
+    bytes: Arc<Vec<u8>>,
+    declared: RuleEntry,
+}
+
+tokio::task_local! {
+    static PREPARED: PreparedRules;
+}
+
+/// The `(package, rule)` pairs a schema's field rules name.
+fn plugin_refs(schema: &Value) -> BTreeSet<(String, String)> {
+    let mut found = BTreeSet::new();
+    let fields = schema.get("fields").and_then(Value::as_array).into_iter().flatten();
+    for stages in fields.filter_map(|field| field.get("rules").and_then(Value::as_object)) {
+        for rule in stages.values().filter_map(Value::as_array).flatten() {
+            let plugin = rule.get("plugin");
+            let text = |key: &str| plugin?.get(key)?.as_str().map(str::to_owned);
+            if let (Some(package), Some(name)) = (text("package"), text("rule")) {
+                found.insert((package, name));
+            }
+        }
+    }
+    found
+}
+
+impl PreparedRules {
+    /// Loads what the plugin rules of `schema` need, for a write in `project_id`.
+    ///
+    /// # Errors
+    /// Never for a rule that cannot run (that rule is recorded as refused); only for a failure that
+    /// the caller should see as a server error.
+    pub async fn prepare(
+        state: &AppState,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        schema: &Value,
+    ) -> Result<Self, crate::error::ApiError> {
+        let mut entries = HashMap::new();
+        for (package, name) in plugin_refs(schema) {
+            let entry = load_one(state, workspace_id, project_id, &package, &name).await;
+            entries.insert((package, name), entry);
+        }
+        Ok(Self {
+            entries: Arc::new(entries),
+        })
+    }
+
+    /// Prepares the rules of `schema` and runs `future` with them; for the writers and previews that
+    /// open no transaction of their own.
+    ///
+    /// # Errors
+    /// As [`Self::prepare`].
+    pub async fn around<F: std::future::Future>(
+        state: &AppState,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        schema: &Value,
+        future: F,
+    ) -> Result<F::Output, crate::error::ApiError> {
+        Ok(Self::prepare(state, workspace_id, project_id, schema)
+            .await?
+            .scope(future)
+            .await)
+    }
+
+    /// Runs `future` with these rules available to `InstalledRule::apply`.
+    pub async fn scope<F: std::future::Future>(self, future: F) -> F::Output {
+        PREPARED.scope(self, future).await
+    }
+}
+
+async fn load_one(state: &AppState, workspace_id: Uuid, project_id: Uuid, package: &str, name: &str) -> Prepared {
+    let db = &state.db;
+    let failed = Prepared::Refused(RefusalCode::PluginFailed);
+    if providers(workspace_id, project_id, package).is_empty() {
+        return Prepared::Refused(RefusalCode::InstallationNotActive);
+    }
+    let Ok(found) = find_installation(db, workspace_id, project_id, package).await else {
+        return failed;
+    };
+    let Some((installation_id, _)) = found else {
+        return Prepared::Refused(RefusalCode::InstallationNotActive);
+    };
+    let loaded = match live::load(db, installation_id).await {
+        Ok(loaded) => loaded,
+        Err(LoadError::Refused(code)) => return Prepared::Refused(code),
+        Err(LoadError::Unavailable) => return failed,
+    };
+    let Ok(rules) = manifest_rules(db, loaded.package_row_id).await else {
+        return failed;
+    };
+    let Some(declared) = rules.into_iter().find(|rule| rule.name == name) else {
+        return Prepared::Refused(RefusalCode::PluginActionUnknown);
+    };
+    let Ok(Some(stored)) = open::find_by_row(db, workspace_id, loaded.package_row_id).await else {
+        return Prepared::Refused(RefusalCode::InstallationNotActive);
+    };
+    let Ok(bytes) = open::component_bytes(db, workspace_id, &stored, &declared.component).await else {
+        return Prepared::Refused(RefusalCode::PluginInvalidComponent);
+    };
+    // Compile now, outside any transaction; the cache serves the run.
+    let compiled = match engine() {
+        Ok(engine) => compile_cache().get(engine, &bytes).await.is_ok(),
+        Err(_) => false,
+    };
+    if !compiled {
+        return Prepared::Refused(RefusalCode::PluginInvalidComponent);
+    }
+    Prepared::Ready(Box::new(Ready {
+        installation: loaded.view,
+        approver: loaded.approver,
+        bytes,
+        declared,
+    }))
 }
 
 /// The active installation of the package that serves `project_id`, project scope first.
@@ -194,7 +334,7 @@ async fn find_installation(
             "SELECT id, status FROM installations \
              WHERE workspace_id = $1 AND package_key = $2 AND status <> 'revoked' \
                AND (project_id IS NULL OR project_id = $3) \
-             ORDER BY (project_id IS NULL), created_at LIMIT 1",
+             ORDER BY (status = 'active') DESC, (project_id IS NULL), created_at LIMIT 1",
             vec![workspace_id.into(), package_key.to_owned().into(), project_id.into()],
         ))
         .await?;
@@ -211,31 +351,25 @@ impl ExternalRule for InstalledRule {
         call: ExternalRuleCall<'a>,
     ) -> BoxFuture<'a, Result<ExternalRuleOutcome, ExternalRuleError>> {
         Box::pin(async move {
-            let db = &self.state.db;
-            let (installation_id, _) =
-                find_installation(db, call.workspace_id, call.project_id, &self.reference.package_key)
-                    .await
-                    .map_err(|_| refused(RefusalCode::PluginFailed))?
-                    .ok_or_else(|| refused(RefusalCode::InstallationNotActive))?;
-            let loaded = live::load(db, installation_id).await.map_err(|error| match error {
-                LoadError::Refused(code) => refused(code),
-                LoadError::Unavailable => refused(RefusalCode::PluginFailed),
-            })?;
-            let stored = open::find_by_row(db, call.workspace_id, loaded.package_row_id)
-                .await
-                .map_err(|_| refused(RefusalCode::PluginFailed))?
-                .ok_or_else(|| refused(RefusalCode::InstallationNotActive))?;
-            let rules = manifest_rules(db, loaded.package_row_id).await?;
-            let Some(declared) = rules.iter().find(|rule| {
-                rule.name == self.reference.rule
-                    && rule.stages.iter().any(|stage| stage == call.stage.name())
-                    && rule.field_types.iter().any(|field_type| field_type == call.field_type)
-            }) else {
-                return Err(refused(RefusalCode::PluginActionUnknown));
+            let key = (self.reference.package_key.clone(), self.reference.rule.clone());
+            // Fail closed: a rule that was not prepared never loads anything here.
+            let prepared = PREPARED
+                .try_with(|rules| Arc::clone(&rules.entries))
+                .map_err(|_| refused(RefusalCode::PluginFailed))?;
+            let ready = match prepared.get(&key) {
+                Some(Prepared::Ready(ready)) => ready,
+                Some(Prepared::Refused(code)) => return Err(refused(*code)),
+                None => return Err(refused(RefusalCode::PluginFailed)),
             };
-            let bytes = open::component_bytes(db, call.workspace_id, &stored, &declared.component)
-                .await
-                .map_err(|_| refused(RefusalCode::PluginInvalidComponent))?;
+            let declared = &ready.declared;
+            if !declared.stages.iter().any(|stage| stage == call.stage.name())
+                || !declared
+                    .field_types
+                    .iter()
+                    .any(|field_type| field_type == call.field_type)
+            {
+                return Err(refused(RefusalCode::PluginActionUnknown));
+            }
             let input = json!({
                 "stage": call.stage.name(),
                 "field_key": call.field_key,
@@ -245,11 +379,11 @@ impl ExternalRule for InstalledRule {
                 "config": call.config,
             })
             .to_string();
-            let principal = rule_principal(loaded.view, loaded.approver);
+            let principal = rule_principal(ready.installation.clone(), ready.approver);
             let outcome = invoke(
                 &self.state,
                 &principal,
-                &bytes,
+                &ready.bytes,
                 World::FieldRule,
                 call.stage.name(),
                 &input,
@@ -301,8 +435,13 @@ mod tests {
     use sv_package::RuleEntry;
     use uuid::Uuid;
 
-    use super::{declares, providers, stage};
+    use serde_json::{Map, json};
+
+    use super::{InstalledRule, PreparedRules, declares, plugin_refs, providers, stage};
     use crate::forms::rules::external::ExternalStage;
+    use crate::forms::rules::external::{
+        ExternalRule, ExternalRuleCall, ExternalRuleError, ExternalRuleRef, RuleCaller, Writer,
+    };
 
     fn rule() -> RuleEntry {
         RuleEntry {
@@ -336,5 +475,57 @@ mod tests {
         assert_eq!(found.len(), 2);
         assert_eq!(found.first().and_then(|active| active.project_id), Some(project));
         assert_eq!(found.last().and_then(|active| active.project_id), None);
+    }
+
+    #[test]
+    fn the_plugin_rules_of_a_schema_are_found_at_every_stage() {
+        let schema = json!({"fields": [
+            {"key": "a", "rules": {"validate": [{"rule": "min", "value": 1}, {"plugin": {"package": "qa/x", "rule": "r"}}],
+                                    "normalize": [{"plugin": {"package": "qa/x", "rule": "r"}}]}},
+            {"key": "b", "rules": {"transform": [{"plugin": {"package": "qa/y", "rule": "s"}}]}},
+            {"key": "c"}
+        ]});
+        let found: Vec<_> = plugin_refs(&schema).into_iter().collect();
+        assert_eq!(
+            found,
+            [
+                ("qa/x".to_string(), "r".to_string()),
+                ("qa/y".to_string(), "s".to_string())
+            ]
+        );
+    }
+
+    /// A rule that was not prepared never loads anything: it refuses `plugin_failed`, with or without
+    /// a prepared set in scope.
+    #[tokio::test]
+    async fn an_unprepared_rule_fails_closed() {
+        let state = crate::extensions::host::test_state();
+        let rule = InstalledRule {
+            state,
+            reference: ExternalRuleRef {
+                package_key: "qa/x".to_string(),
+                rule: "r".to_string(),
+            },
+        };
+        let (value, deps, config) = (json!("v"), Map::new(), json!(null));
+        let caller = RuleCaller::system();
+        let call = || ExternalRuleCall {
+            stage: crate::forms::rules::external::ExternalStage::Validate,
+            writer: Writer::Create,
+            workspace_id: Uuid::nil(),
+            project_id: Uuid::nil(),
+            form_id: Uuid::nil(),
+            record_id: None,
+            field_key: "f",
+            field_type: "text",
+            value: &value,
+            deps: &deps,
+            config: &config,
+            caller: &caller,
+        };
+        let refused = ExternalRuleError::Refused("plugin_failed");
+        assert_eq!(rule.apply(call()).await.expect_err("no scope"), refused);
+        let empty = PreparedRules::default();
+        assert_eq!(empty.scope(rule.apply(call())).await.expect_err("no entry"), refused);
     }
 }

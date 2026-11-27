@@ -114,6 +114,14 @@ pub async fn validate_form_record(
         if updating { Writer::Update } else { Writer::Create },
         denied_read_fields.clone(),
     );
+    // The plugin rules are loaded first; the checks below need no connection of their own for them.
+    let rules = crate::extensions::rules::PreparedRules::prepare(
+        &state,
+        form_for_rules.workspace_id,
+        form_for_rules.project_id,
+        &schema,
+    )
+    .await?;
     let outcome = if let Some(existing) = existing.as_ref() {
         let submitted_denied = req
             .values
@@ -128,11 +136,28 @@ pub async fn validate_form_record(
             .unwrap_or_default();
         let calculated =
             calculate_values_with_existing(&state, &form_for_rules, req.record_id, Some(existing), req.values).await?;
-        validate_update_report(&schema, &ctx, calculated, existing, &submitted_denied, true).await?
+        rules
+            .scope(validate_update_report(
+                &schema,
+                &ctx,
+                calculated,
+                existing,
+                &submitted_denied,
+                true,
+            ))
+            .await?
     } else {
         let (with_defaults, defaulted) = apply_defaults(&schema, req.values, &caller(actor_id, &role, is_bot))?;
         let calculated = calculate_values(&state, &form_for_rules, None, with_defaults).await?;
-        validate_create_report(&schema, &ctx, calculated, &defaulted, RulePolicy::Refuse).await?
+        rules
+            .scope(validate_create_report(
+                &schema,
+                &ctx,
+                calculated,
+                &defaulted,
+                RulePolicy::Refuse,
+            ))
+            .await?
     };
     let read_policy = ReaderContext::new(&role).policy(&state.db, (&form).into()).await?;
     let (normalized, carried) = match outcome {

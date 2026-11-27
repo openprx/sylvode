@@ -21,6 +21,12 @@ mod state;
 #[cfg(test)]
 mod tests;
 
+/// A state without a database, for tests that must not reach one.
+#[cfg(test)]
+pub(crate) fn test_state() -> AppState {
+    tests::state()
+}
+
 use std::collections::BTreeSet;
 
 use platform::app::AppState;
