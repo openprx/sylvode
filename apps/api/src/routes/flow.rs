@@ -4045,9 +4045,12 @@ mod flow_database_tests {
             before_poll.try_get::<i64>("", "lineage").expect("lineage"),
             before_poll.try_get::<i64>("", "native_events").expect("events"),
         );
-        crate::routes::form::process_pending_form_jobs_from_worker(state.clone(), 4)
-            .await
-            .expect("worker Forms tick");
+        Box::pin(crate::routes::form::process_pending_form_jobs_from_worker(
+            state.clone(),
+            4,
+        ))
+        .await
+        .expect("worker Forms tick");
         crate::routes::proposal::governance_tick(&state)
             .await
             .expect("worker governance tick");

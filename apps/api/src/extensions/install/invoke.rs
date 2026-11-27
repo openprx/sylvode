@@ -31,6 +31,7 @@ pub const BODY_LIMIT: usize = 320 * 1024;
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(clippy::struct_field_names)]
 pub struct Context {
     #[serde(default)]
     project_id: Option<Uuid>,

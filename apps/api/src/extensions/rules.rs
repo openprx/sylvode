@@ -85,8 +85,9 @@ pub async fn refresh(db: &impl ConnectionTrait) -> Result<(), sea_orm::DbErr> {
 }
 
 /// Lets a schema that names a rule of the package being approved pass its save check while the
-/// approval creates the package's forms. The entry lives until the next [`refresh`], which the
-/// approval runs whether it commits or not.
+/// approval creates the package's forms.
+///
+/// The entry lives until the next [`refresh`], which the approval runs whether it commits or not.
 pub fn stage(workspace_id: Uuid, project_id: Option<Uuid>, package_key: &str, rules: &[RuleEntry]) {
     let mut registry = REGISTRY.write();
     registry.retain(|active| {
@@ -121,6 +122,7 @@ fn providers(workspace_id: Uuid, project_id: Uuid, package_key: &str) -> Vec<Act
         })
         .cloned()
         .collect();
+    drop(registry);
     found.sort_by_key(|active| active.project_id.is_none());
     found
 }
@@ -341,7 +343,7 @@ async fn find_installation(
     Ok(row.and_then(|row| Some((row.try_get("", "id").ok()?, row.try_get("", "status").ok()?))))
 }
 
-fn refused(code: RefusalCode) -> ExternalRuleError {
+const fn refused(code: RefusalCode) -> ExternalRuleError {
     ExternalRuleError::Refused(code.as_str())
 }
 
@@ -390,10 +392,9 @@ impl ExternalRule for InstalledRule {
             )
             .await;
             match outcome.result {
-                Ok(value) => Ok(match value.get("replace") {
-                    Some(replacement) => ExternalRuleOutcome::Replace(replacement.clone()),
-                    None => ExternalRuleOutcome::Keep,
-                }),
+                Ok(value) => Ok(value.get("replace").map_or(ExternalRuleOutcome::Keep, |replacement| {
+                    ExternalRuleOutcome::Replace(replacement.clone())
+                })),
                 Err(error) => match error.guest_code {
                     Some(code) if error.code == RefusalCode::PluginGuestError => {
                         Ok(ExternalRuleOutcome::Violation { code })

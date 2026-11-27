@@ -215,16 +215,15 @@ async fn fresh_principal(env: &CallEnv) -> Result<Arc<Principal>, CallError> {
         Some(version) if version == env.session_version => {}
         _ => return Err(CallError::Ended(RefusalCode::PluginSessionEnded)),
     }
-    if let Some(approver) = binding.approver {
-        if !live::approver_is_admin(db, loaded.view.workspace_id, approver)
+    if let Some(approver) = binding.approver
+        && !live::approver_is_admin(db, loaded.view.workspace_id, approver)
             .await
             .map_err(unavailable)?
-        {
-            live::disable_for_lost_approver(db, env.installation_id)
-                .await
-                .map_err(unavailable)?;
-            return Err(CallError::Ended(RefusalCode::InstallationApproverLost));
-        }
+    {
+        live::disable_for_lost_approver(db, env.installation_id)
+            .await
+            .map_err(unavailable)?;
+        return Err(CallError::Ended(RefusalCode::InstallationApproverLost));
     }
     Ok(Arc::new(match &*env.principal {
         Principal::Plugin { invoker, .. } => Principal::Plugin {

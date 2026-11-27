@@ -70,9 +70,10 @@ const SITE_ORIGIN_KEYS: [&str; 3] = ["site_id", "site_visitor_id", "operator_id"
 /// not send them either, or a person could make a write look like a plugin acting for someone else.
 const PLUGIN_ORIGIN_KEYS: [&str; 3] = ["surface", "installation", "generation"];
 
-/// Refuses a client-supplied `source` that claims the site origin (`kind: "site"` or any of the
-/// site keys at its top level), or the plugin origin (`type: "plugin"`, or `surface`, `installation`
-/// or `generation`), with `400 source_reserved`.
+/// Refuses a client-supplied `source` that claims the site or the plugin origin.
+///
+/// The site origin is `kind: "site"` or any of the site keys at its top level; the plugin origin is
+/// `type: "plugin"`, or `surface`, `installation` or `generation`. The answer is `400 source_reserved`.
 ///
 /// # Errors
 /// `source_reserved` when the source claims the site origin.

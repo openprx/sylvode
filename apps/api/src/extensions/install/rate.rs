@@ -15,7 +15,7 @@ use crate::error::ApiError;
 pub const REQUESTS_PER_HOUR: usize = 10;
 /// Previews per workspace per hour (a preview compiles too, but only to show the result).
 pub const PREVIEWS_PER_HOUR: usize = 60;
-const WINDOW: Duration = Duration::from_secs(3600);
+const WINDOW: Duration = Duration::from_hours(1);
 
 /// A per-workspace window of hits.
 pub struct Window {
@@ -47,6 +47,7 @@ impl Window {
             return Err(Refusal::new(RefusalCode::InstallationRateLimited, None).into());
         }
         times.push_back(now);
+        drop(hits);
         Ok(())
     }
 }

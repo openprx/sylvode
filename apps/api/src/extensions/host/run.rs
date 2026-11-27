@@ -47,7 +47,7 @@ struct Who {
     approver: Option<Uuid>,
 }
 
-fn who(principal: &Principal) -> Result<(Who, &InstallationView), HostError> {
+const fn who(principal: &Principal) -> Result<(Who, &InstallationView), HostError> {
     let (installation, actor, approver) = match principal {
         Principal::Plugin {
             invoker: Invoker::User { user_id, .. },
@@ -260,10 +260,13 @@ fn check_shape(
     Ok(())
 }
 
-/// Checks a component of a package at install time (contract C1 §6): the size limit, that it
-/// compiles, exports the world's function and imports only interfaces of this host's package
-/// version that the world may have. Every interface of the world counts as allowed here; which of
-/// them an invocation links depends on the grants.
+/// Checks a component of a package at install time (contract C1 §6).
+///
+/// The checks are the size limit, that it compiles, exports the world's function and imports only
+/// interfaces of this host's package version that the world may have.
+///
+/// Every interface of the world counts as allowed here; which of them an invocation links depends
+/// on the grants.
 ///
 /// # Errors
 /// `plugin_component_too_large`, `plugin_invalid_component`, `plugin_world_mismatch`,
@@ -413,7 +416,7 @@ async fn execute(
     telemetry.host_calls = data.host_calls;
     telemetry.log_lines = data.log_lines;
     telemetry.denials = data.denials;
-    telemetry.last_denial = data.last_denial.clone();
+    telemetry.last_denial.clone_from(&data.last_denial);
     let text = ran.map_err(|_| HostError::new(RefusalCode::PluginDeadlineExceeded))??;
     if text.len() > limits.output {
         return Err(HostError::new(RefusalCode::PluginOutputTooLarge));
@@ -436,7 +439,7 @@ async fn run_world(
     match world {
         World::Action => {
             let mut linker = Linker::<HostState>::new(&engine);
-            let linked = (|| -> wasmtime::Result<()> {
+            let wired = (|| -> wasmtime::Result<()> {
                 action::sv::plugin::ctx::add_to_linker::<HostState, HasSelf<HostState>>(&mut linker, |state| state)?;
                 action::sv::plugin::log::add_to_linker::<HostState, HasSelf<HostState>>(&mut linker, |state| state)?;
                 action::sv::plugin::clock::add_to_linker::<HostState, HasSelf<HostState>>(&mut linker, |state| state)?;
@@ -454,12 +457,12 @@ async fn run_world(
                 }
                 Ok(())
             })();
-            linked.map_err(|_| HostError::new(RefusalCode::PluginFailed))?;
+            wired.map_err(|_| HostError::new(RefusalCode::PluginFailed))?;
             let instance = action::Action::instantiate_async(&mut *store, component, &linker)
                 .await
                 .map_err(|error| map_error(&error))?;
             let answer = instance
-                .call_run(&mut *store, &entry.to_string(), &input.to_string())
+                .call_run(&mut *store, entry, &input.to_string())
                 .await
                 .map_err(|error| map_error(&error))?;
             match answer {

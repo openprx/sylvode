@@ -164,7 +164,7 @@ pub(super) async fn sync_builtin_key(db: &impl ConnectionTrait, key: Option<(&st
 
 /// Takes a shared row lock on an active key, so a concurrent revocation waits for this
 /// transaction; `false` when the key is no longer active.
-pub(crate) async fn lock_active(db: &impl ConnectionTrait, id: Uuid) -> Result<bool, ApiError> {
+pub async fn lock_active(db: &impl ConnectionTrait, id: Uuid) -> Result<bool, ApiError> {
     Ok(db
         .query_one(stmt(
             "SELECT 1 FROM publisher_keys WHERE id = $1 AND status = 'active' FOR SHARE",

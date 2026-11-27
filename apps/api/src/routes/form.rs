@@ -2065,7 +2065,7 @@ pub async fn import_form_records(
     let (actor_id, role, is_bot) =
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "record.create").await?;
     Ok(ApiResponse::success(
-        import_form_record_rows(&state, &form, actor_id, &role, is_bot, req).await?,
+        Box::pin(import_form_record_rows(&state, &form, actor_id, &role, is_bot, req)).await?,
     ))
 }
 
@@ -2096,7 +2096,10 @@ pub async fn import_form_records_from_file(
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "record.create").await?;
     let import_req = import_records_request_from_uploaded_file(&state, &form, req, actor_id, &role, is_bot).await?;
     Ok(ApiResponse::success(
-        import_form_record_rows(&state, &form, actor_id, &role, is_bot, import_req).await?,
+        Box::pin(import_form_record_rows(
+            &state, &form, actor_id, &role, is_bot, import_req,
+        ))
+        .await?,
     ))
 }
 
@@ -2350,7 +2353,7 @@ fn spawn_form_import_job(
     req: CreateImportJobRequest,
 ) {
     tokio::spawn(async move {
-        if let Err(error) = run_form_import_job(state, form, actor_id, role, is_bot, job_id, req).await {
+        if let Err(error) = Box::pin(run_form_import_job(state, form, actor_id, role, is_bot, job_id, req)).await {
             tracing::warn!(job_id = %job_id, error = %error, "form import job failed before status update");
         }
     });
@@ -2370,7 +2373,11 @@ async fn run_form_import_job(
     }
     let import_req_result = import_records_request_from_job(&state, &form, req, actor_id, &role, is_bot).await;
     let import_result = match import_req_result {
-        Ok(import_req) => match import_form_record_rows(&state, &form, actor_id, &role, is_bot, import_req).await {
+        Ok(import_req) => match Box::pin(import_form_record_rows(
+            &state, &form, actor_id, &role, is_bot, import_req,
+        ))
+        .await
+        {
             Ok(result) => serde_json::to_value(result).map_err(|_| ApiError::Internal),
             Err(error) => Err(error),
         },
@@ -2390,7 +2397,7 @@ async fn run_form_import_job(
 pub async fn process_pending_form_jobs_from_worker(state: AppState, concurrency: usize) -> Result<usize, ApiError> {
     let limit = i64::try_from(concurrency.max(1)).unwrap_or(i64::MAX) * 3;
     let mut processed = 0;
-    processed += process_pending_form_import_jobs_from_worker(&state, limit).await?;
+    processed += Box::pin(process_pending_form_import_jobs_from_worker(&state, limit)).await?;
     processed += process_pending_form_export_jobs_from_worker(&state, limit).await?;
     processed += process_pending_form_attachment_package_jobs_from_worker(&state, limit).await?;
     processed += cleanup_expired_attachment_package_artifacts_from_worker(&state, limit).await?;
@@ -2415,7 +2422,7 @@ async fn process_pending_form_import_jobs_from_worker(state: &AppState, limit: i
     .await?;
     let mut processed = 0;
     for job in jobs {
-        if process_form_import_job_from_worker(state, job).await? {
+        if Box::pin(process_form_import_job_from_worker(state, job)).await? {
             processed += 1;
         }
     }
@@ -2437,7 +2444,16 @@ async fn process_form_import_job_from_worker(state: &AppState, job: FormImportJo
         Ok(form) => form,
         Err(error) => return fail_import_job_if_claimed(state, job.id, error.to_string()).await,
     };
-    run_form_import_job(state.clone(), form, actor_id, role, is_bot, job.id, req).await?;
+    Box::pin(run_form_import_job(
+        state.clone(),
+        form,
+        actor_id,
+        role,
+        is_bot,
+        job.id,
+        req,
+    ))
+    .await?;
     Ok(true)
 }
 
@@ -2811,7 +2827,7 @@ async fn import_form_record_rows(
                 .as_ref()
                 .map(|key| format!("{key}:row:{row_number}"))
         });
-        let record = create_record_for_form(
+        let record = Box::pin(create_record_for_form(
             state,
             form,
             actor_id,
@@ -2823,7 +2839,7 @@ async fn import_form_record_rows(
                 source: Some(source),
                 idempotency_key: row_idempotency_key,
             },
-        )
+        ))
         .await?;
         created.push(record);
     }
@@ -3493,7 +3509,7 @@ pub async fn create_form_record(
     let form = find_form(&state, form_id).await?;
     let (actor_id, role, is_bot) =
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "record.create").await?;
-    let record = create_record_for_form(&state, &form, actor_id, &role, is_bot, req).await?;
+    let record = Box::pin(create_record_for_form(&state, &form, actor_id, &role, is_bot, req)).await?;
     let read_policy = ReaderContext::new(&role).policy(&state.db, (&form).into()).await?;
     Ok(ApiResponse::success(filter_record_response_values(
         record,
@@ -3516,9 +3532,9 @@ async fn create_record_for_form(
         crate::extensions::rules::PreparedRules::prepare(state, form.workspace_id, form.project_id, &form.schema)
             .await?;
     rules
-        .scope(slots.scope(create_record_for_form_in_slots(
+        .scope(slots.scope(Box::pin(create_record_for_form_in_slots(
             state, form, actor_id, role, is_bot, req,
-        )))
+        ))))
         .await
 }
 
@@ -3908,7 +3924,10 @@ pub async fn update_form_record(
     let (actor_id, role, is_bot) =
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "record.update").await?;
     ensure_record_scope_allows_created_by(&state, form.id, &role, actor_id, record.created_by).await?;
-    let (record, _) = update_record_for_form(&state, &form, record, actor_id, &role, is_bot, req).await?;
+    let (record, _) = Box::pin(update_record_for_form(
+        &state, &form, record, actor_id, &role, is_bot, req,
+    ))
+    .await?;
     let read_policy = ReaderContext::new(&role).policy(&state.db, (&form).into()).await?;
     Ok(ApiResponse::success(filter_record_response_values(
         record,
@@ -3934,9 +3953,9 @@ async fn update_record_for_form(
         crate::extensions::rules::PreparedRules::prepare(state, form.workspace_id, form.project_id, &form.schema)
             .await?;
     rules
-        .scope(slots.scope(update_record_for_form_internal(
+        .scope(slots.scope(Box::pin(update_record_for_form_internal(
             state, form, record, actor_id, role, is_bot, req, None,
-        )))
+        ))))
         .await
 }
 
@@ -4731,7 +4750,7 @@ pub async fn create_child_record(
     .await?;
     let relation_key = validate_parent_child_relation(&parent_form.schema, &child_form.key, &req.relation_key)?;
     let metadata = ensure_json_object(req.metadata.unwrap_or_else(|| json!({})), "metadata")?;
-    let child_record = create_record_for_form(
+    let child_record = Box::pin(create_record_for_form(
         &state,
         &child_form,
         actor_id,
@@ -4743,7 +4762,7 @@ pub async fn create_child_record(
             source: req.source,
             idempotency_key: None,
         },
-    )
+    ))
     .await?;
     let (link, parents) = create_parent_child_link(
         &state,
@@ -4806,7 +4825,7 @@ pub async fn update_child_record(
         None => None,
     };
     let link = find_parent_child_link(&state, record_id, child_record_id, relation_key.as_deref()).await?;
-    let (updated, parents) = update_record_for_form(
+    let (updated, parents) = Box::pin(update_record_for_form(
         &state,
         &child_form,
         child_record,
@@ -4821,7 +4840,7 @@ pub async fn update_child_record(
             expected_updated_at: None,
             expected_schema_version: None,
         },
-    )
+    ))
     .await?;
     let read_policy = ReaderContext::new(&child_role)
         .policy(&state.db, (&child_form).into())

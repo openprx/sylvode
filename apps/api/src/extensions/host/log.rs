@@ -164,7 +164,7 @@ pub async fn purge_old(state: &AppState) -> Result<u64, sea_orm::DbErr> {
 /// Starts the task that deletes old invocation rows at start and then every 24 hours.
 pub fn spawn_retention(state: AppState) {
     tokio::spawn(async move {
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(24 * 60 * 60));
+        let mut tick = tokio::time::interval(std::time::Duration::from_hours(24));
         loop {
             tick.tick().await;
             match purge_old(&state).await {

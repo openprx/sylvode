@@ -1227,7 +1227,9 @@ pub async fn invoke(
             form_key: context.form.key.clone(),
         },
     };
-    Ok(ApiResponse::success(execute(&state, context, execution, active).await?))
+    Ok(ApiResponse::success(
+        Box::pin(execute(&state, context, execution, active)).await?,
+    ))
 }
 
 #[derive(Deserialize)]

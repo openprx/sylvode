@@ -92,10 +92,14 @@ impl Entries {
     }
 }
 
-/// Compiled components by the SHA-256 of their bytes; at most [`COMPILE_CACHE_ENTRIES`] entries and
-/// [`COMPILE_CACHE_BYTES`] of component bytes (compiled code is several times the size of the
-/// component, so the byte bound is what keeps memory in check). In memory only: loading compiled
-/// artefacts is `unsafe` and the workspace denies `unsafe`, so a restart recompiles.
+/// Compiled components by the SHA-256 of their bytes.
+///
+/// At most [`COMPILE_CACHE_ENTRIES`] entries and [`COMPILE_CACHE_BYTES`] of component bytes
+/// (compiled code is several times the size of the component, so the byte bound is what keeps
+/// memory in check).
+///
+/// In memory only: loading compiled artefacts is `unsafe` and the workspace denies `unsafe`, so a
+/// restart recompiles.
 pub struct CompileCache {
     entries: Mutex<Entries>,
     max_entries: usize,
@@ -128,9 +132,8 @@ impl CompileCache {
         let digest: [u8; 32] = Sha256::digest(bytes).into();
         let cell = {
             let mut entries = self.entries.lock();
-            if let Some(slot) = entries.lru.get(&digest) {
-                Arc::clone(&slot.cell)
-            } else {
+            let cached = entries.lru.get(&digest).map(|slot| Arc::clone(&slot.cell));
+            let cell = cached.unwrap_or_else(|| {
                 let cell = Cell::default();
                 entries.lru.insert(
                     digest,
@@ -142,7 +145,9 @@ impl CompileCache {
                 entries.bytes = entries.bytes.saturating_add(bytes.len());
                 entries.trim(self.max_entries, self.max_bytes);
                 cell
-            }
+            });
+            drop(entries);
+            cell
         };
         let compiled = cell
             .get_or_try_init(|| async {
@@ -177,7 +182,7 @@ impl CompileCache {
     }
 
     #[cfg(test)]
-    pub fn len(&self) -> usize {
+    pub fn entry_count(&self) -> usize {
         self.entries.lock().lru.len()
     }
 
@@ -217,7 +222,7 @@ mod tests {
             .await
             .expect_err("garbage");
         assert_eq!(error.code, crate::catalogue::RefusalCode::PluginInvalidComponent);
-        assert_eq!(cache.len(), 0);
+        assert_eq!(cache.entry_count(), 0);
     }
 
     /// The cache holds at most its byte budget (the newest entry always stays) and its byte count
@@ -231,11 +236,11 @@ mod tests {
         let cache = CompileCache::new(8, small.len().max(other.len()), 2);
         cache.get(engine, &small).await.expect("small");
         cache.get(engine, &other).await.expect("other");
-        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.entry_count(), 1);
         assert_eq!(cache.held_bytes(), other.len());
         // The evicted one compiles again and evicts the other.
         cache.get(engine, &small).await.expect("small again");
-        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.entry_count(), 1);
         assert_eq!(cache.held_bytes(), small.len());
     }
 
@@ -246,6 +251,6 @@ mod tests {
         let bytes = wat::parse_str("(component)").expect("wat");
         cache.get(engine, &bytes).await.expect("first");
         cache.get(engine, &bytes).await.expect("second");
-        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.entry_count(), 1);
     }
 }

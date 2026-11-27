@@ -130,10 +130,9 @@ async fn prepare(
 }
 
 fn scope_of(input: &ScopeInput) -> Result<Option<Uuid>, ApiError> {
-    match validate::scope_error(&input.kind, input.project_id) {
-        None => Ok(input.project_id),
-        Some(message) => Err(ApiError::bad_request_coded("scope_invalid", message)),
-    }
+    validate::scope_error(&input.kind, input.project_id).map_or(Ok(input.project_id), |message| {
+        Err(ApiError::bad_request_coded("scope_invalid", message))
+    })
 }
 
 fn requested_ids(opened: &Opened) -> Vec<String> {
@@ -317,7 +316,7 @@ pub async fn preview_installation(
         &body.scope.kind,
         generation,
         &existing.view,
-        json!({}),
+        &json!({}),
     )))
 }
 
@@ -391,9 +390,12 @@ pub async fn get_installation(
     )))
 }
 
-/// `GET /api/v1/installations/{installation_id}/review`: the preview of the pending generation (or,
-/// with none pending, of the active one), computed from the package's verified bytes and the current
-/// state. `changed_grants` lists grants that must be approved again.
+/// `GET /api/v1/installations/{installation_id}/review`: the preview of the pending generation.
+///
+/// With none pending it previews the active one, computed from the package's verified bytes and
+/// the current state.
+///
+/// `changed_grants` lists grants that must be approved again.
 pub async fn review_installation(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
@@ -423,7 +425,7 @@ pub async fn review_installation(
         &row.scope_kind,
         subject.generation,
         &existing.view,
-        json!({
+        &json!({
             "installation": installation,
             "pending": subject.status == "pending",
         }),

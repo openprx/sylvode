@@ -170,5 +170,6 @@ pub async fn component_bytes(
             }
         }
     }
+    drop(cache);
     Ok(bytes)
 }

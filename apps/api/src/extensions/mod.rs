@@ -57,22 +57,27 @@ pub fn current() -> Option<PluginCall> {
     CURRENT.try_with(|call| *call).ok()
 }
 
-/// The `source` a handler stores for a write by `actor`: the plugin's provenance when the request is
-/// a plugin call (`{type: "plugin", surface: "plugin", installation, generation, actor}`), else the
-/// one of a person or a bot. The host strips any `source` a guest sends, so this is the only way a
-/// plugin source reaches a stored record or event (contract C1 §3, MF-4).
+/// The `source` a handler stores for a write by `actor`.
+///
+/// It is the plugin's provenance when the request is a plugin call (`{type: "plugin", surface:
+/// "plugin", installation, generation, actor}`), else the one of a person or a bot.
+///
+/// The host strips any `source` a guest sends, so this is the only way a plugin source reaches a
+/// stored record or event (contract C1 §3, MF-4).
 #[must_use]
 pub fn provenance_source(is_bot: bool, actor_id: Uuid) -> serde_json::Value {
-    match current() {
-        Some(call) => serde_json::json!({
-            "type": "plugin",
-            "surface": crate::flow::event_origin::EventSurface::Plugin.as_wire(),
-            "installation": call.installation_id,
-            "generation": call.generation,
-            "actor": call.actor_id,
-        }),
-        None => serde_json::json!({ "type": if is_bot { "bot" } else { "user" }, "actor_id": actor_id }),
-    }
+    current().map_or_else(
+        || serde_json::json!({ "type": if is_bot { "bot" } else { "user" }, "actor_id": actor_id }),
+        |call| {
+            serde_json::json!({
+                "type": "plugin",
+                "surface": crate::flow::event_origin::EventSurface::Plugin.as_wire(),
+                "installation": call.installation_id,
+                "generation": call.generation,
+                "actor": call.actor_id,
+            })
+        },
+    )
 }
 
 /// Runs `future` as a request of the plugin call `call`.

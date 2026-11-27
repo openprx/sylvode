@@ -19,7 +19,7 @@ pub struct PlacementScope {
 }
 
 impl PlacementScope {
-    fn kind(self) -> &'static str {
+    const fn kind(self) -> &'static str {
         if self.project_id.is_some() {
             "project"
         } else {

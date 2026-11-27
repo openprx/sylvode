@@ -27,7 +27,7 @@ pub fn preview(
     scope_kind: &str,
     generation: i32,
     existing: &Existing,
-    extras: Value,
+    extras: &Value,
 ) -> Value {
     let manifest = &opened.package.manifest;
     let forms: Vec<&str> = check

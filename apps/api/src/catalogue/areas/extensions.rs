@@ -6,7 +6,7 @@
 //! revoke, the reads and the invocation log are for people with a console session only. The invoke
 //! route is for a console session too: bots do not invoke actions yet (lead decision C1-2).
 
-use crate::catalogue::types::dsl::{Admin, Entry, InstanceAdmin, Post, console};
+use crate::catalogue::types::dsl::{Admin, Entry, Get, Own, Post, Read, WorkspaceAdmin, Write, bot, console};
 
 #[rustfmt::skip]
 pub static ENTRIES: &[Entry] = &[

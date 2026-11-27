@@ -84,7 +84,7 @@ pub struct Check {
 
 impl Check {
     #[must_use]
-    pub fn valid(&self) -> bool {
+    pub const fn valid(&self) -> bool {
         self.problems.is_empty()
     }
 }

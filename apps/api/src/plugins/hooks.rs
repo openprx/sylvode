@@ -49,7 +49,8 @@ impl HookSlots {
     /// `legacy_plugin_busy` (429) when a plugin has no free slot within the wait.
     pub async fn reserve(state: &AppState, workspace_id: Uuid, project_id: Uuid) -> Result<Self, ApiError> {
         let mut held = std::collections::HashMap::new();
-        for plugin in load_active_plugins(state, workspace_id, project_id).await? {
+        let plugins = load_active_plugins(state, workspace_id, project_id).await?;
+        for plugin in plugins {
             let before_commit = parse_manifest(&plugin.manifest).is_ok_and(|manifest| {
                 manifest
                     .capabilities
@@ -172,10 +173,11 @@ pub async fn run_field_validator_hooks(
     Ok(())
 }
 
-/// Runs the `formula` hooks of the project over `values`. A patch is applied only when the acting
-/// `role` may write each key under the form's field write policy and, when the hook declares a
-/// `field_key`, the patch touches that key alone; otherwise the write is refused
-/// `legacy_plugin_patch_denied`. Every write path passes its requester's role.
+/// Runs the `formula` hooks of the project over `values`.
+///
+/// A patch is applied only when the acting `role` may write each key under the form's field write
+/// policy and, when the hook declares a `field_key`, the patch touches that key alone; otherwise
+/// the write is refused `legacy_plugin_patch_denied`. Every write path passes its requester's role.
 pub async fn run_formula_hooks(
     state: &AppState,
     workspace_id: Uuid,
@@ -380,7 +382,7 @@ async fn run_and_record_hook(
             Some(permit)
         };
         let _slot = (&reserved, &permit);
-        match invoke_wasm_plugin(wasm_bytes, input.clone(), limits::clamp(runtime)).await {
+        match invoke_wasm_plugin(wasm_bytes, input.clone(), limits::clamp(&runtime)).await {
             Ok(output) => {
                 let refused = rejection(&output.output);
                 insert_hook_invocation(&state, &plugin, hook_kind, input, output.clone(), refused.clone()).await?;
@@ -508,7 +510,8 @@ fn merge_patch(values: &mut Value, patch: Value) -> Result<(), ApiError> {
 
 /// Component bytes of legacy plugins by id and version, so a record write does not read every
 /// plugin's blob from the database. Bounded: a full cache is emptied.
-static WASM: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashMap<Uuid, (String, Arc<Vec<u8>>)>>> =
+type WasmCache = std::collections::HashMap<Uuid, (String, Arc<Vec<u8>>)>;
+static WASM: std::sync::LazyLock<parking_lot::Mutex<WasmCache>> =
     std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
 const WASM_CACHE_PLUGINS: usize = 64;
 
@@ -535,6 +538,7 @@ async fn wasm_of(state: &AppState, plugin_id: Uuid, version: &str) -> Result<Opt
         cache.clear();
     }
     cache.insert(plugin_id, (version.to_owned(), Arc::clone(&bytes)));
+    drop(cache);
     Ok(Some(bytes))
 }
 
@@ -714,6 +718,7 @@ mod tests {
     /// A reserved slot is visible to the hooks of the task that runs inside the scope, only for the
     /// plugin it was reserved for, and not outside the scope.
     #[tokio::test]
+    #[allow(clippy::significant_drop_tightening)]
     async fn a_reserved_slot_is_seen_only_inside_its_scope() {
         let (reserved, other) = (Uuid::new_v4(), Uuid::new_v4());
         let permit = limits::acquire_hook(reserved, std::time::Duration::from_millis(50))

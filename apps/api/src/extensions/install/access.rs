@@ -59,8 +59,10 @@ pub async fn member(state: &AppState, claims: &JwtClaims, workspace_id: Uuid) ->
 }
 
 /// The caller of request, upgrade or preview: an owner or admin person, or a bot of the whole
-/// workspace with the `write` permission. Every other caller is refused (a project-scoped bot is
-/// stopped earlier by its route class; the check here is the second line).
+/// workspace with the `write` permission.
+///
+/// Every other caller is refused (a project-scoped bot is stopped earlier by its route class; the
+/// check here is the second line).
 ///
 /// # Errors
 /// `not_found` for a non-member, `installation_admin_only` for anyone else who may not.
