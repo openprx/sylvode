@@ -1,0 +1,34 @@
+{
+  "schema": "sv.package.v1",
+  "kind": "form-template",
+  "id": "sv/code-delivery",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "sv",
+    "key_id": "ed25519:00000000000000000000000000000000"
+  },
+  "sv": {
+    "min": "0.6.0",
+    "form_schema": "sv.form.schema.v2"
+  },
+  "summary": {
+    "en": "Task, change and release-check forms for AI-assisted software delivery.",
+    "zh": "AI 辅助软件交付的任务、变更和发布检查表单。"
+  },
+  "license": "Apache-2.0",
+  "binds": {
+    "code_task": {
+      "kind": "form",
+      "create_from": "contents/forms/code_task.json"
+    },
+    "change_record": {
+      "kind": "form",
+      "create_from": "contents/forms/change_record.json"
+    },
+    "release_check": {
+      "kind": "form",
+      "create_from": "contents/forms/release_check.json"
+    }
+  },
+  "files": {}
+}

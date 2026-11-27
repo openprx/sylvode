@@ -1,0 +1,93 @@
+{
+  "key": "risk_clause",
+  "name": "Risk Clause",
+  "description": "Clause risk extraction and suggested revision.",
+  "title_template": "{clause_type}",
+  "schema": {
+    "version": "sv.form.schema.v2",
+    "fields": [
+      {
+        "field_id": "fld_risk_clause_clause_type",
+        "key": "clause_type",
+        "label": "Clause Type",
+        "type": "single_select",
+        "required": true,
+        "options": [
+          "payment",
+          "liability",
+          "termination",
+          "ip",
+          "other"
+        ]
+      },
+      {
+        "field_id": "fld_risk_clause_original_text",
+        "key": "original_text",
+        "label": "Original Text",
+        "type": "textarea",
+        "required": true
+      },
+      {
+        "field_id": "fld_risk_clause_risk_note",
+        "key": "risk_note",
+        "label": "Risk Note",
+        "type": "textarea",
+        "required": true
+      },
+      {
+        "field_id": "fld_risk_clause_suggested_revision",
+        "key": "suggested_revision",
+        "label": "Suggested Revision",
+        "type": "textarea",
+        "required": false
+      },
+      {
+        "field_id": "fld_risk_clause_risk_level",
+        "key": "risk_level",
+        "label": "Risk Level",
+        "type": "single_select",
+        "required": true,
+        "options": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      {
+        "field_id": "fld_risk_clause_owner",
+        "key": "owner",
+        "label": "Owner",
+        "type": "member",
+        "required": false
+      },
+      {
+        "field_id": "fld_risk_clause_contract_id",
+        "key": "contract_id",
+        "label": "Contract",
+        "type": "relation",
+        "required": false,
+        "relation": {
+          "target_type": "form_record",
+          "form_key": "contract"
+        }
+      }
+    ]
+  },
+  "detail_layout": {
+    "sections": [
+      {
+        "key": "main",
+        "title": "Risk Clause",
+        "fields": [
+          "clause_type",
+          "original_text",
+          "risk_note",
+          "suggested_revision",
+          "risk_level",
+          "owner",
+          "contract_id"
+        ]
+      }
+    ]
+  }
+}

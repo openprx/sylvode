@@ -1,0 +1,55 @@
+{
+  "schema": "sv.layout.v1",
+  "key": "service.request.public",
+  "title": {
+    "en": "New request",
+    "zh": "提交请求"
+  },
+  "data": {
+    "form": {
+      "source": "form",
+      "form": "$bind.requests",
+      "fields": [
+        "title",
+        "description",
+        "contact_phone"
+      ]
+    }
+  },
+  "actions": {
+    "send": {
+      "kind": "submit",
+      "data": "form",
+      "mode": "create"
+    }
+  },
+  "root": {
+    "type": "stack",
+    "props": {
+      "gap": "md"
+    },
+    "children": [
+      {
+        "type": "text",
+        "props": {
+          "value": {
+            "en": "Tell us what you need",
+            "zh": "请描述您的需求"
+          },
+          "style": "heading"
+        }
+      },
+      {
+        "type": "form",
+        "props": {
+          "data": "form",
+          "submit": "send",
+          "submit_label": {
+            "en": "Send request",
+            "zh": "提交请求"
+          }
+        }
+      }
+    ]
+  }
+}

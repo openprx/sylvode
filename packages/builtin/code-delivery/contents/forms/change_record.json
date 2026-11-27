@@ -1,0 +1,53 @@
+{
+  "key": "change_record",
+  "name": "Change Record",
+  "description": "Changed files, summary, tests and impact surface.",
+  "title_template": "{file_path}",
+  "schema": {
+    "version": "sv.form.schema.v2",
+    "fields": [
+      {
+        "field_id": "fld_change_record_file_path",
+        "key": "file_path",
+        "label": "File",
+        "type": "text",
+        "required": true
+      },
+      {
+        "field_id": "fld_change_record_summary",
+        "key": "summary",
+        "label": "Summary",
+        "type": "textarea",
+        "required": true
+      },
+      {
+        "field_id": "fld_change_record_tests",
+        "key": "tests",
+        "label": "Tests",
+        "type": "textarea",
+        "required": false
+      },
+      {
+        "field_id": "fld_change_record_impact",
+        "key": "impact",
+        "label": "Impact",
+        "type": "textarea",
+        "required": false
+      }
+    ]
+  },
+  "detail_layout": {
+    "sections": [
+      {
+        "key": "main",
+        "title": "Change Record",
+        "fields": [
+          "file_path",
+          "summary",
+          "tests",
+          "impact"
+        ]
+      }
+    ]
+  }
+}

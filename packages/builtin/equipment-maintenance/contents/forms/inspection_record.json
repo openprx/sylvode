@@ -1,0 +1,78 @@
+{
+  "key": "inspection_record",
+  "name": "Inspection Record",
+  "description": "Inspection item, result, exception and evidence.",
+  "title_template": "{inspection_item}",
+  "schema": {
+    "version": "sv.form.schema.v2",
+    "fields": [
+      {
+        "field_id": "fld_inspection_record_equipment_id",
+        "key": "equipment_id",
+        "label": "Equipment",
+        "type": "relation",
+        "required": true,
+        "relation": {
+          "target_type": "form_record",
+          "form_key": "equipment"
+        }
+      },
+      {
+        "field_id": "fld_inspection_record_inspection_item",
+        "key": "inspection_item",
+        "label": "Inspection Item",
+        "type": "text",
+        "required": true
+      },
+      {
+        "field_id": "fld_inspection_record_result",
+        "key": "result",
+        "label": "Result",
+        "type": "single_select",
+        "required": true,
+        "options": [
+          "pending",
+          "pass",
+          "fail"
+        ]
+      },
+      {
+        "field_id": "fld_inspection_record_exception_note",
+        "key": "exception_note",
+        "label": "Exception Note",
+        "type": "textarea",
+        "required": false
+      },
+      {
+        "field_id": "fld_inspection_record_signature",
+        "key": "signature",
+        "label": "Signature",
+        "type": "signature",
+        "required": false
+      },
+      {
+        "field_id": "fld_inspection_record_image",
+        "key": "image",
+        "label": "Image",
+        "type": "image",
+        "required": false
+      }
+    ]
+  },
+  "detail_layout": {
+    "sections": [
+      {
+        "key": "main",
+        "title": "Inspection Record",
+        "fields": [
+          "equipment_id",
+          "inspection_item",
+          "result",
+          "exception_note",
+          "signature",
+          "image"
+        ]
+      }
+    ]
+  }
+}

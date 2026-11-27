@@ -1,0 +1,86 @@
+{
+  "key": "order",
+  "name": "Order",
+  "description": "Restaurant order header, table and total amount.",
+  "title_template": "{order_no}",
+  "schema": {
+    "version": "sv.form.schema.v2",
+    "fields": [
+      {
+        "field_id": "fld_order_order_no",
+        "key": "order_no",
+        "label": "Order No.",
+        "type": "text",
+        "required": true
+      },
+      {
+        "field_id": "fld_order_table_id",
+        "key": "table_id",
+        "label": "Table",
+        "type": "relation",
+        "required": true,
+        "relation": {
+          "target_type": "form_record",
+          "form_key": "table"
+        }
+      },
+      {
+        "field_id": "fld_order_status",
+        "key": "status",
+        "label": "Status",
+        "type": "single_select",
+        "required": true,
+        "options": [
+          "draft",
+          "sent_to_kitchen",
+          "served",
+          "paid",
+          "cancelled"
+        ]
+      },
+      {
+        "field_id": "fld_order_total_amount",
+        "key": "total_amount",
+        "label": "Total Amount",
+        "type": "amount",
+        "required": false,
+        "amount": {
+          "currency": "CNY",
+          "scale": 2,
+          "allow_negative": false,
+          "rounding": "half_up"
+        }
+      },
+      {
+        "field_id": "fld_order_opened_at",
+        "key": "opened_at",
+        "label": "Opened At",
+        "type": "datetime",
+        "required": false
+      },
+      {
+        "field_id": "fld_order_paid_at",
+        "key": "paid_at",
+        "label": "Paid At",
+        "type": "datetime",
+        "required": false
+      }
+    ]
+  },
+  "detail_layout": {
+    "sections": [
+      {
+        "key": "main",
+        "title": "Order",
+        "fields": [
+          "order_no",
+          "table_id",
+          "status",
+          "total_amount",
+          "opened_at",
+          "paid_at"
+        ]
+      }
+    ]
+  }
+}

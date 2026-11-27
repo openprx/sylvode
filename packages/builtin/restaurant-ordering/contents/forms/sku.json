@@ -1,0 +1,84 @@
+{
+  "key": "sku",
+  "name": "SKU",
+  "description": "Menu item SKU, category, price and kitchen station.",
+  "title_template": "{name}",
+  "schema": {
+    "version": "sv.form.schema.v2",
+    "fields": [
+      {
+        "field_id": "fld_sku_sku",
+        "key": "sku",
+        "label": "SKU",
+        "type": "text",
+        "required": true
+      },
+      {
+        "field_id": "fld_sku_name",
+        "key": "name",
+        "label": "Name",
+        "type": "text",
+        "required": true
+      },
+      {
+        "field_id": "fld_sku_category_id",
+        "key": "category_id",
+        "label": "Category",
+        "type": "relation",
+        "required": false,
+        "relation": {
+          "target_type": "form_record",
+          "form_key": "menu_category"
+        }
+      },
+      {
+        "field_id": "fld_sku_price",
+        "key": "price",
+        "label": "Price",
+        "type": "amount",
+        "required": true,
+        "amount": {
+          "currency": "CNY",
+          "scale": 2,
+          "allow_negative": false,
+          "rounding": "half_up"
+        }
+      },
+      {
+        "field_id": "fld_sku_kitchen_station",
+        "key": "kitchen_station",
+        "label": "Kitchen Station",
+        "type": "text",
+        "required": false
+      },
+      {
+        "field_id": "fld_sku_status",
+        "key": "status",
+        "label": "Status",
+        "type": "single_select",
+        "required": false,
+        "options": [
+          "available",
+          "sold_out",
+          "inactive"
+        ]
+      }
+    ]
+  },
+  "detail_layout": {
+    "sections": [
+      {
+        "key": "main",
+        "title": "SKU",
+        "fields": [
+          "sku",
+          "name",
+          "category_id",
+          "price",
+          "kitchen_station",
+          "status"
+        ]
+      }
+    ]
+  }
+}

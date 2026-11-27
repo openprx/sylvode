@@ -1,0 +1,152 @@
+{
+  "key": "service_request",
+  "name": "Service request",
+  "description": "Requests with priority, contact details and a resolution rule.",
+  "title_template": "{title}",
+  "schema": {
+    "version": "sv.form.schema.v2",
+    "fields": [
+      {
+        "field_id": "fld_service_request_title",
+        "key": "title",
+        "label": "Title",
+        "type": "text",
+        "required": true,
+        "rules": {
+          "normalize": [
+            {
+              "op": "trim"
+            }
+          ],
+          "validate": [
+            {
+              "rule": "min_length",
+              "value": 3
+            },
+            {
+              "rule": "max_length",
+              "value": 200
+            }
+          ]
+        }
+      },
+      {
+        "field_id": "fld_service_request_description",
+        "key": "description",
+        "label": "Description",
+        "type": "textarea",
+        "rules": {
+          "validate": [
+            {
+              "rule": "max_length",
+              "value": 4000
+            }
+          ]
+        }
+      },
+      {
+        "field_id": "fld_service_request_priority",
+        "key": "priority",
+        "label": "Priority",
+        "type": "single_select",
+        "options": [
+          "low",
+          "normal",
+          "high",
+          "urgent"
+        ],
+        "default": {
+          "value": "normal"
+        }
+      },
+      {
+        "field_id": "fld_service_request_contact_phone",
+        "key": "contact_phone",
+        "label": "Contact phone",
+        "type": "phone",
+        "rules": {
+          "validate": [
+            {
+              "rule": "pattern",
+              "value": "^[0-9+() -]{6,20}$",
+              "code": "phone_format",
+              "message": {
+                "en": "Use digits, spaces and + ( ) - only",
+                "zh": "只能包含数字、空格和 + ( ) -"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "field_id": "fld_service_request_contact_email",
+        "key": "contact_email",
+        "label": "Contact email",
+        "type": "email"
+      },
+      {
+        "field_id": "fld_service_request_status",
+        "key": "status",
+        "label": "Status",
+        "type": "single_select",
+        "options": [
+          "open",
+          "in_progress",
+          "resolved",
+          "closed"
+        ],
+        "default": {
+          "value": "open"
+        }
+      },
+      {
+        "field_id": "fld_service_request_assignee",
+        "key": "assignee",
+        "label": "Assignee",
+        "type": "member"
+      },
+      {
+        "field_id": "fld_service_request_due_date",
+        "key": "due_date",
+        "label": "Due date",
+        "type": "date"
+      },
+      {
+        "field_id": "fld_service_request_resolution",
+        "key": "resolution",
+        "label": "Resolution",
+        "type": "textarea",
+        "rules": {
+          "validate": [
+            {
+              "cel": "record.status != 'resolved' || size(record.resolution) > 0",
+              "code": "resolution_required",
+              "message": {
+                "en": "Describe the resolution before marking the request resolved",
+                "zh": "标记已解决前请填写处理结果"
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "detail_layout": {
+    "sections": [
+      {
+        "key": "main",
+        "title": "Service request",
+        "fields": [
+          "title",
+          "description",
+          "priority",
+          "contact_phone",
+          "contact_email",
+          "status",
+          "assignee",
+          "due_date"
+        ]
+      }
+    ]
+  }
+}

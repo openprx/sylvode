@@ -1,0 +1,77 @@
+{
+  "key": "change_request",
+  "name": "Change Request",
+  "description": "Change content, impact, quotation and status.",
+  "title_template": "{request}",
+  "schema": {
+    "version": "sv.form.schema.v2",
+    "fields": [
+      {
+        "field_id": "fld_change_request_customer_id",
+        "key": "customer_id",
+        "label": "Customer",
+        "type": "relation",
+        "required": true,
+        "relation": {
+          "target_type": "form_record",
+          "form_key": "customer"
+        }
+      },
+      {
+        "field_id": "fld_change_request_request",
+        "key": "request",
+        "label": "Request",
+        "type": "textarea",
+        "required": true
+      },
+      {
+        "field_id": "fld_change_request_impact",
+        "key": "impact",
+        "label": "Impact",
+        "type": "textarea",
+        "required": false
+      },
+      {
+        "field_id": "fld_change_request_quote",
+        "key": "quote",
+        "label": "Quote",
+        "type": "amount",
+        "required": false,
+        "amount": {
+          "currency": "CNY",
+          "scale": 2,
+          "allow_negative": false,
+          "rounding": "half_up"
+        }
+      },
+      {
+        "field_id": "fld_change_request_status",
+        "key": "status",
+        "label": "Status",
+        "type": "single_select",
+        "required": false,
+        "options": [
+          "draft",
+          "reviewing",
+          "approved",
+          "rejected"
+        ]
+      }
+    ]
+  },
+  "detail_layout": {
+    "sections": [
+      {
+        "key": "main",
+        "title": "Change Request",
+        "fields": [
+          "customer_id",
+          "request",
+          "impact",
+          "quote",
+          "status"
+        ]
+      }
+    ]
+  }
+}

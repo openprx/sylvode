@@ -1,0 +1,151 @@
+{
+  "key": "desk_requests",
+  "name": "Service desk requests",
+  "description": "Requests handled by the service-desk plugin.",
+  "title_template": "{title}",
+  "schema": {
+    "version": "sv.form.schema.v2",
+    "fields": [
+      {
+        "field_id": "fld_desk_requests_title",
+        "key": "title",
+        "label": "Title",
+        "type": "text",
+        "required": true,
+        "rules": {
+          "normalize": [
+            {
+              "op": "trim"
+            }
+          ],
+          "validate": [
+            {
+              "rule": "min_length",
+              "value": 3
+            },
+            {
+              "rule": "max_length",
+              "value": 200
+            }
+          ]
+        }
+      },
+      {
+        "field_id": "fld_desk_requests_description",
+        "key": "description",
+        "label": "Description",
+        "type": "textarea",
+        "rules": {
+          "validate": [
+            {
+              "rule": "max_length",
+              "value": 4000
+            }
+          ]
+        }
+      },
+      {
+        "field_id": "fld_desk_requests_priority",
+        "key": "priority",
+        "label": "Priority",
+        "type": "single_select",
+        "options": [
+          "low",
+          "normal",
+          "high",
+          "urgent"
+        ],
+        "default": {
+          "value": "normal"
+        }
+      },
+      {
+        "field_id": "fld_desk_requests_contact_phone",
+        "key": "contact_phone",
+        "label": "Contact phone",
+        "type": "phone",
+        "rules": {
+          "validate": [
+            {
+              "rule": "pattern",
+              "value": "^[0-9+() -]{6,20}$",
+              "code": "phone_format",
+              "message": {
+                "en": "Use digits, spaces and + ( ) - only",
+                "zh": "只能包含数字、空格和 + ( ) -"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "field_id": "fld_desk_requests_contact_email",
+        "key": "contact_email",
+        "label": "Contact email",
+        "type": "email"
+      },
+      {
+        "field_id": "fld_desk_requests_status",
+        "key": "status",
+        "label": "Status",
+        "type": "single_select",
+        "options": [
+          "open",
+          "assigned",
+          "closed"
+        ],
+        "default": {
+          "value": "open"
+        }
+      },
+      {
+        "field_id": "fld_desk_requests_reference",
+        "key": "reference",
+        "label": "Reference",
+        "type": "text",
+        "rules": {
+          "normalize": [
+            {
+              "plugin": {
+                "package": "sv/service-desk",
+                "rule": "reference_code"
+              }
+            }
+          ],
+          "validate": [
+            {
+              "plugin": {
+                "package": "sv/service-desk",
+                "rule": "reference_code"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "field_id": "fld_desk_requests_assignee",
+        "key": "assignee",
+        "label": "Assignee",
+        "type": "text"
+      }
+    ]
+  },
+  "detail_layout": {
+    "sections": [
+      {
+        "key": "main",
+        "title": "Service desk requests",
+        "fields": [
+          "title",
+          "description",
+          "priority",
+          "contact_phone",
+          "contact_email",
+          "status",
+          "reference",
+          "assignee"
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,118 @@
+{
+  "key": "order_line",
+  "name": "Order Line",
+  "description": "Order line item as order child table data.",
+  "title_template": "{sku_name}",
+  "schema": {
+    "version": "sv.form.schema.v2",
+    "fields": [
+      {
+        "field_id": "fld_order_line_order_id",
+        "key": "order_id",
+        "label": "Order",
+        "type": "relation",
+        "required": true,
+        "relation": {
+          "target_type": "form_record",
+          "form_key": "order"
+        }
+      },
+      {
+        "field_id": "fld_order_line_sku_id",
+        "key": "sku_id",
+        "label": "SKU",
+        "type": "relation",
+        "required": true,
+        "relation": {
+          "target_type": "form_record",
+          "form_key": "sku"
+        }
+      },
+      {
+        "field_id": "fld_order_line_sku_name",
+        "key": "sku_name",
+        "label": "SKU Name",
+        "type": "text",
+        "required": true
+      },
+      {
+        "field_id": "fld_order_line_quantity",
+        "key": "quantity",
+        "label": "Quantity",
+        "type": "integer",
+        "required": true
+      },
+      {
+        "field_id": "fld_order_line_unit_price",
+        "key": "unit_price",
+        "label": "Unit Price",
+        "type": "amount",
+        "required": true,
+        "amount": {
+          "currency": "CNY",
+          "scale": 2,
+          "allow_negative": false,
+          "rounding": "half_up"
+        }
+      },
+      {
+        "field_id": "fld_order_line_line_total",
+        "key": "line_total",
+        "label": "Line Total",
+        "type": "amount",
+        "required": false,
+        "amount": {
+          "currency": "CNY",
+          "scale": 2,
+          "allow_negative": false,
+          "rounding": "half_up"
+        },
+        "formula": {
+          "op": "multiply",
+          "args": [
+            "quantity",
+            "unit_price"
+          ]
+        }
+      },
+      {
+        "field_id": "fld_order_line_seat_no",
+        "key": "seat_no",
+        "label": "Seat",
+        "type": "text",
+        "required": false
+      },
+      {
+        "field_id": "fld_order_line_status",
+        "key": "status",
+        "label": "Status",
+        "type": "single_select",
+        "required": false,
+        "options": [
+          "draft",
+          "sent_to_kitchen",
+          "served",
+          "cancelled"
+        ]
+      }
+    ]
+  },
+  "detail_layout": {
+    "sections": [
+      {
+        "key": "main",
+        "title": "Order Line",
+        "fields": [
+          "order_id",
+          "sku_id",
+          "sku_name",
+          "quantity",
+          "unit_price",
+          "line_total",
+          "seat_no",
+          "status"
+        ]
+      }
+    ]
+  }
+}

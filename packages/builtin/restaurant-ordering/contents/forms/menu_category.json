@@ -1,0 +1,49 @@
+{
+  "key": "menu_category",
+  "name": "Menu Category",
+  "description": "Menu grouping for front counter and kitchen routing.",
+  "title_template": "{name}",
+  "schema": {
+    "version": "sv.form.schema.v2",
+    "fields": [
+      {
+        "field_id": "fld_menu_category_name",
+        "key": "name",
+        "label": "Name",
+        "type": "text",
+        "required": true
+      },
+      {
+        "field_id": "fld_menu_category_sort_order",
+        "key": "sort_order",
+        "label": "Sort Order",
+        "type": "integer",
+        "required": false
+      },
+      {
+        "field_id": "fld_menu_category_status",
+        "key": "status",
+        "label": "Status",
+        "type": "single_select",
+        "required": false,
+        "options": [
+          "active",
+          "inactive"
+        ]
+      }
+    ]
+  },
+  "detail_layout": {
+    "sections": [
+      {
+        "key": "main",
+        "title": "Menu Category",
+        "fields": [
+          "name",
+          "sort_order",
+          "status"
+        ]
+      }
+    ]
+  }
+}

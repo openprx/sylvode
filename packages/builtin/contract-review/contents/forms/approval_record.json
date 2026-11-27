@@ -1,0 +1,70 @@
+{
+  "key": "approval_record",
+  "name": "Approval Record",
+  "description": "Approver decision, opinion and timestamp.",
+  "title_template": "{approver}",
+  "schema": {
+    "version": "sv.form.schema.v2",
+    "fields": [
+      {
+        "field_id": "fld_approval_record_approver",
+        "key": "approver",
+        "label": "Approver",
+        "type": "member",
+        "required": true
+      },
+      {
+        "field_id": "fld_approval_record_opinion",
+        "key": "opinion",
+        "label": "Opinion",
+        "type": "textarea",
+        "required": false
+      },
+      {
+        "field_id": "fld_approval_record_approved_at",
+        "key": "approved_at",
+        "label": "Approved At",
+        "type": "datetime",
+        "required": false
+      },
+      {
+        "field_id": "fld_approval_record_decision",
+        "key": "decision",
+        "label": "Decision",
+        "type": "single_select",
+        "required": true,
+        "options": [
+          "pending",
+          "approved",
+          "rejected"
+        ]
+      },
+      {
+        "field_id": "fld_approval_record_contract_id",
+        "key": "contract_id",
+        "label": "Contract",
+        "type": "relation",
+        "required": false,
+        "relation": {
+          "target_type": "form_record",
+          "form_key": "contract"
+        }
+      }
+    ]
+  },
+  "detail_layout": {
+    "sections": [
+      {
+        "key": "main",
+        "title": "Approval Record",
+        "fields": [
+          "approver",
+          "opinion",
+          "approved_at",
+          "decision",
+          "contract_id"
+        ]
+      }
+    ]
+  }
+}

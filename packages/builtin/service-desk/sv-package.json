@@ -1,0 +1,110 @@
+{
+  "schema": "sv.package.v1",
+  "publisher": {
+    "id": "sv",
+    "key_id": "ed25519:00000000000000000000000000000000"
+  },
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "files": {},
+  "kind": "app",
+  "id": "sv/service-desk",
+  "sv": {
+    "min": "0.6.0",
+    "layout": "sv.layout.v1",
+    "form_schema": "sv.form.schema.v2"
+  },
+  "wit": "sv:plugin@4.0.0",
+  "summary": {
+    "en": "Service desk: request form, reference-code rule, close action and a public request page",
+    "zh": "服务台：请求表单、参考编号规则、关闭操作和公开请求页面"
+  },
+  "binds": {
+    "requests": {
+      "kind": "form",
+      "create_from": "contents/forms/desk_requests.json",
+      "requires_fields": {
+        "title": "text",
+        "status": "single_select",
+        "contact_phone": "phone",
+        "reference": "text"
+      }
+    }
+  },
+  "requests": [
+    {
+      "id": "forms.records.read",
+      "form": "$bind.requests"
+    },
+    {
+      "id": "forms.records.update",
+      "form": "$bind.requests"
+    }
+  ],
+  "actions": [
+    {
+      "name": "assign_request",
+      "world": "action",
+      "component": "contents/components/service-desk-action.wasm",
+      "label": {
+        "en": "Assign request",
+        "zh": "分配请求"
+      }
+    },
+    {
+      "name": "close_request",
+      "world": "action",
+      "component": "contents/components/service-desk-action.wasm",
+      "label": {
+        "en": "Close request",
+        "zh": "关闭请求"
+      }
+    }
+  ],
+  "rules": [
+    {
+      "name": "reference_code",
+      "world": "field-rule",
+      "component": "contents/components/service-desk-rule.wasm",
+      "stages": [
+        "normalize",
+        "validate"
+      ],
+      "field_types": [
+        "text"
+      ]
+    }
+  ],
+  "messages": {
+    "invalid_reference": {
+      "en": "The reference code must be SD- and six digits",
+      "zh": "参考编号必须是 SD- 加六位数字"
+    }
+  },
+  "layouts": [
+    {
+      "key": "service.request.actions",
+      "path": "contents/layouts/actions.json",
+      "slots": [
+        "form.record.actions"
+      ]
+    },
+    {
+      "key": "service.request.public",
+      "path": "contents/layouts/public-request.json",
+      "slots": []
+    }
+  ],
+  "pages": [
+    {
+      "route": "/requests/new",
+      "layout": "service.request.public",
+      "audience": "visitor",
+      "nav": {
+        "en": "New request",
+        "zh": "提交请求"
+      }
+    }
+  ],
+  "depends": []
+}

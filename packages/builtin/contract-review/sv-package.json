@@ -1,0 +1,34 @@
+{
+  "schema": "sv.package.v1",
+  "kind": "form-template",
+  "id": "sv/contract-review",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "sv",
+    "key_id": "ed25519:00000000000000000000000000000000"
+  },
+  "sv": {
+    "min": "0.6.0",
+    "form_schema": "sv.form.schema.v2"
+  },
+  "summary": {
+    "en": "Contract, risk-clause and approval-record forms.",
+    "zh": "合同、风险条款和审批记录表单。"
+  },
+  "license": "Apache-2.0",
+  "binds": {
+    "contract": {
+      "kind": "form",
+      "create_from": "contents/forms/contract.json"
+    },
+    "risk_clause": {
+      "kind": "form",
+      "create_from": "contents/forms/risk_clause.json"
+    },
+    "approval_record": {
+      "kind": "form",
+      "create_from": "contents/forms/approval_record.json"
+    }
+  },
+  "files": {}
+}

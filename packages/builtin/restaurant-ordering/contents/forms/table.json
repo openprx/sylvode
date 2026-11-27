@@ -1,0 +1,51 @@
+{
+  "key": "table",
+  "name": "Table",
+  "description": "Dining table or seat area.",
+  "title_template": "{table_no}",
+  "schema": {
+    "version": "sv.form.schema.v2",
+    "fields": [
+      {
+        "field_id": "fld_table_table_no",
+        "key": "table_no",
+        "label": "Table No.",
+        "type": "text",
+        "required": true
+      },
+      {
+        "field_id": "fld_table_seat_count",
+        "key": "seat_count",
+        "label": "Seat Count",
+        "type": "integer",
+        "required": false
+      },
+      {
+        "field_id": "fld_table_status",
+        "key": "status",
+        "label": "Status",
+        "type": "single_select",
+        "required": false,
+        "options": [
+          "empty",
+          "occupied",
+          "reserved",
+          "cleaning"
+        ]
+      }
+    ]
+  },
+  "detail_layout": {
+    "sections": [
+      {
+        "key": "main",
+        "title": "Table",
+        "fields": [
+          "table_no",
+          "seat_count",
+          "status"
+        ]
+      }
+    ]
+  }
+}

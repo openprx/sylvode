@@ -1,0 +1,66 @@
+{
+  "key": "customer",
+  "name": "Customer",
+  "description": "Customer profile and contact.",
+  "title_template": "{customer_name}",
+  "schema": {
+    "version": "sv.form.schema.v2",
+    "fields": [
+      {
+        "field_id": "fld_customer_customer_name",
+        "key": "customer_name",
+        "label": "Customer Name",
+        "type": "text",
+        "required": true
+      },
+      {
+        "field_id": "fld_customer_contact",
+        "key": "contact",
+        "label": "Contact",
+        "type": "text",
+        "required": false
+      },
+      {
+        "field_id": "fld_customer_phone",
+        "key": "phone",
+        "label": "Phone",
+        "type": "phone",
+        "required": false
+      },
+      {
+        "field_id": "fld_customer_industry",
+        "key": "industry",
+        "label": "Industry",
+        "type": "text",
+        "required": false
+      },
+      {
+        "field_id": "fld_customer_level",
+        "key": "level",
+        "label": "Level",
+        "type": "single_select",
+        "required": false,
+        "options": [
+          "standard",
+          "key",
+          "strategic"
+        ]
+      }
+    ]
+  },
+  "detail_layout": {
+    "sections": [
+      {
+        "key": "main",
+        "title": "Customer",
+        "fields": [
+          "customer_name",
+          "contact",
+          "phone",
+          "industry",
+          "level"
+        ]
+      }
+    ]
+  }
+}

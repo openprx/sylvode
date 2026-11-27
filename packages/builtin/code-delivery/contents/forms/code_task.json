@@ -1,0 +1,79 @@
+{
+  "key": "code_task",
+  "name": "Code Task",
+  "description": "Repository work item for branch, CI and release risk.",
+  "title_template": "{repo}:{branch}",
+  "schema": {
+    "version": "sv.form.schema.v2",
+    "fields": [
+      {
+        "field_id": "fld_code_task_repo",
+        "key": "repo",
+        "label": "Repository",
+        "type": "text",
+        "required": true
+      },
+      {
+        "field_id": "fld_code_task_directory",
+        "key": "directory",
+        "label": "Directory",
+        "type": "text",
+        "required": false
+      },
+      {
+        "field_id": "fld_code_task_branch",
+        "key": "branch",
+        "label": "Branch",
+        "type": "text",
+        "required": false
+      },
+      {
+        "field_id": "fld_code_task_ci_status",
+        "key": "ci_status",
+        "label": "CI status",
+        "type": "single_select",
+        "required": false,
+        "options": [
+          "unknown",
+          "passing",
+          "failing"
+        ]
+      },
+      {
+        "field_id": "fld_code_task_risk",
+        "key": "risk",
+        "label": "Risk",
+        "type": "single_select",
+        "required": false,
+        "options": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      {
+        "field_id": "fld_code_task_verification",
+        "key": "verification",
+        "label": "Verification",
+        "type": "textarea",
+        "required": false
+      }
+    ]
+  },
+  "detail_layout": {
+    "sections": [
+      {
+        "key": "main",
+        "title": "Code Task",
+        "fields": [
+          "repo",
+          "directory",
+          "branch",
+          "ci_status",
+          "risk",
+          "verification"
+        ]
+      }
+    ]
+  }
+}

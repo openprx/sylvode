@@ -1,0 +1,34 @@
+{
+  "schema": "sv.package.v1",
+  "kind": "form-template",
+  "id": "sv/customer-delivery",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "sv",
+    "key_id": "ed25519:00000000000000000000000000000000"
+  },
+  "sv": {
+    "min": "0.6.0",
+    "form_schema": "sv.form.schema.v2"
+  },
+  "summary": {
+    "en": "Customer, delivery-milestone and change-request forms.",
+    "zh": "客户、交付里程碑和变更请求表单。"
+  },
+  "license": "Apache-2.0",
+  "binds": {
+    "customer": {
+      "kind": "form",
+      "create_from": "contents/forms/customer.json"
+    },
+    "delivery_milestone": {
+      "kind": "form",
+      "create_from": "contents/forms/delivery_milestone.json"
+    },
+    "change_request": {
+      "kind": "form",
+      "create_from": "contents/forms/change_request.json"
+    }
+  },
+  "files": {}
+}

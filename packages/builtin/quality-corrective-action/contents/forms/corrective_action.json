@@ -1,0 +1,70 @@
+{
+  "key": "corrective_action",
+  "name": "Corrective Action",
+  "description": "Action owner, deadline and recheck result.",
+  "title_template": "{action}",
+  "schema": {
+    "version": "sv.form.schema.v2",
+    "fields": [
+      {
+        "field_id": "fld_corrective_action_defect_id",
+        "key": "defect_id",
+        "label": "Defect",
+        "type": "relation",
+        "required": true,
+        "relation": {
+          "target_type": "form_record",
+          "form_key": "defect_record"
+        }
+      },
+      {
+        "field_id": "fld_corrective_action_action",
+        "key": "action",
+        "label": "Action",
+        "type": "textarea",
+        "required": true
+      },
+      {
+        "field_id": "fld_corrective_action_owner",
+        "key": "owner",
+        "label": "Owner",
+        "type": "member",
+        "required": true
+      },
+      {
+        "field_id": "fld_corrective_action_deadline",
+        "key": "deadline",
+        "label": "Deadline",
+        "type": "date",
+        "required": false
+      },
+      {
+        "field_id": "fld_corrective_action_recheck_result",
+        "key": "recheck_result",
+        "label": "Recheck Result",
+        "type": "single_select",
+        "required": false,
+        "options": [
+          "pending",
+          "passed",
+          "failed"
+        ]
+      }
+    ]
+  },
+  "detail_layout": {
+    "sections": [
+      {
+        "key": "main",
+        "title": "Corrective Action",
+        "fields": [
+          "defect_id",
+          "action",
+          "owner",
+          "deadline",
+          "recheck_result"
+        ]
+      }
+    ]
+  }
+}

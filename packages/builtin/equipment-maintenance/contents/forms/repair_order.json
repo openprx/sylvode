@@ -1,0 +1,95 @@
+{
+  "key": "repair_order",
+  "name": "Repair Order",
+  "description": "Fault report, downtime, owner and repair result.",
+  "title_template": "{fault_type}",
+  "schema": {
+    "version": "sv.form.schema.v2",
+    "fields": [
+      {
+        "field_id": "fld_repair_order_equipment_id",
+        "key": "equipment_id",
+        "label": "Equipment",
+        "type": "relation",
+        "required": true,
+        "relation": {
+          "target_type": "form_record",
+          "form_key": "equipment"
+        }
+      },
+      {
+        "field_id": "fld_repair_order_fault_type",
+        "key": "fault_type",
+        "label": "Fault Type",
+        "type": "text",
+        "required": true
+      },
+      {
+        "field_id": "fld_repair_order_description",
+        "key": "description",
+        "label": "Description",
+        "type": "textarea",
+        "required": true
+      },
+      {
+        "field_id": "fld_repair_order_downtime_impact",
+        "key": "downtime_impact",
+        "label": "Downtime Impact",
+        "type": "single_select",
+        "required": false,
+        "options": [
+          "none",
+          "minor",
+          "major",
+          "critical"
+        ]
+      },
+      {
+        "field_id": "fld_repair_order_reported_at",
+        "key": "reported_at",
+        "label": "Reported At",
+        "type": "datetime",
+        "required": false
+      },
+      {
+        "field_id": "fld_repair_order_repair_owner",
+        "key": "repair_owner",
+        "label": "Repair Owner",
+        "type": "member",
+        "required": false
+      },
+      {
+        "field_id": "fld_repair_order_repair_result",
+        "key": "repair_result",
+        "label": "Repair Result",
+        "type": "textarea",
+        "required": false
+      },
+      {
+        "field_id": "fld_repair_order_attachment",
+        "key": "attachment",
+        "label": "Attachment",
+        "type": "attachment",
+        "required": false
+      }
+    ]
+  },
+  "detail_layout": {
+    "sections": [
+      {
+        "key": "main",
+        "title": "Repair Order",
+        "fields": [
+          "equipment_id",
+          "fault_type",
+          "description",
+          "downtime_impact",
+          "reported_at",
+          "repair_owner",
+          "repair_result",
+          "attachment"
+        ]
+      }
+    ]
+  }
+}

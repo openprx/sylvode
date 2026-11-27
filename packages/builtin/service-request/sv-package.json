@@ -1,0 +1,26 @@
+{
+  "schema": "sv.package.v1",
+  "publisher": {
+    "id": "sv",
+    "key_id": "ed25519:00000000000000000000000000000000"
+  },
+  "version": "1.0.0",
+  "license": "Apache-2.0",
+  "files": {},
+  "kind": "form-template",
+  "id": "sv/service-request",
+  "sv": {
+    "min": "0.6.0",
+    "form_schema": "sv.form.schema.v2"
+  },
+  "summary": {
+    "en": "Service request form with normalisation, format and cross-field rules",
+    "zh": "带规范化、格式和跨字段规则的服务请求表单"
+  },
+  "binds": {
+    "requests": {
+      "kind": "form",
+      "create_from": "contents/forms/service_request.json"
+    }
+  }
+}

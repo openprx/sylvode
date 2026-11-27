@@ -1,0 +1,84 @@
+{
+  "key": "delivery_milestone",
+  "name": "Delivery Milestone",
+  "description": "Plan date, actual date, acceptance status and risk.",
+  "title_template": "{milestone}",
+  "schema": {
+    "version": "sv.form.schema.v2",
+    "fields": [
+      {
+        "field_id": "fld_delivery_milestone_customer_id",
+        "key": "customer_id",
+        "label": "Customer",
+        "type": "relation",
+        "required": true,
+        "relation": {
+          "target_type": "form_record",
+          "form_key": "customer"
+        }
+      },
+      {
+        "field_id": "fld_delivery_milestone_milestone",
+        "key": "milestone",
+        "label": "Milestone",
+        "type": "text",
+        "required": true
+      },
+      {
+        "field_id": "fld_delivery_milestone_planned_date",
+        "key": "planned_date",
+        "label": "Planned Date",
+        "type": "date",
+        "required": false
+      },
+      {
+        "field_id": "fld_delivery_milestone_actual_date",
+        "key": "actual_date",
+        "label": "Actual Date",
+        "type": "date",
+        "required": false
+      },
+      {
+        "field_id": "fld_delivery_milestone_acceptance_status",
+        "key": "acceptance_status",
+        "label": "Acceptance Status",
+        "type": "single_select",
+        "required": false,
+        "options": [
+          "not_started",
+          "submitted",
+          "accepted",
+          "rejected"
+        ]
+      },
+      {
+        "field_id": "fld_delivery_milestone_risk",
+        "key": "risk",
+        "label": "Risk",
+        "type": "single_select",
+        "required": false,
+        "options": [
+          "low",
+          "medium",
+          "high"
+        ]
+      }
+    ]
+  },
+  "detail_layout": {
+    "sections": [
+      {
+        "key": "main",
+        "title": "Delivery Milestone",
+        "fields": [
+          "customer_id",
+          "milestone",
+          "planned_date",
+          "actual_date",
+          "acceptance_status",
+          "risk"
+        ]
+      }
+    ]
+  }
+}

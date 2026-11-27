@@ -1,0 +1,34 @@
+{
+  "schema": "sv.package.v1",
+  "kind": "form-template",
+  "id": "sv/equipment-maintenance",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "sv",
+    "key_id": "ed25519:00000000000000000000000000000000"
+  },
+  "sv": {
+    "min": "0.6.0",
+    "form_schema": "sv.form.schema.v2"
+  },
+  "summary": {
+    "en": "Equipment, repair-order and inspection forms.",
+    "zh": "设备、维修单和巡检记录表单。"
+  },
+  "license": "Apache-2.0",
+  "binds": {
+    "equipment": {
+      "kind": "form",
+      "create_from": "contents/forms/equipment.json"
+    },
+    "repair_order": {
+      "kind": "form",
+      "create_from": "contents/forms/repair_order.json"
+    },
+    "inspection_record": {
+      "kind": "form",
+      "create_from": "contents/forms/inspection_record.json"
+    }
+  },
+  "files": {}
+}

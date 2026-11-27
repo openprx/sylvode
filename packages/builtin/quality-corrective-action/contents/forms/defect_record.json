@@ -1,0 +1,66 @@
+{
+  "key": "defect_record",
+  "name": "Defect Record",
+  "description": "Batch/order defect classification and severity.",
+  "title_template": "{defect_type}",
+  "schema": {
+    "version": "sv.form.schema.v2",
+    "fields": [
+      {
+        "field_id": "fld_defect_record_batch",
+        "key": "batch",
+        "label": "Batch or Order",
+        "type": "text",
+        "required": true
+      },
+      {
+        "field_id": "fld_defect_record_defect_type",
+        "key": "defect_type",
+        "label": "Defect Type",
+        "type": "text",
+        "required": true
+      },
+      {
+        "field_id": "fld_defect_record_quantity",
+        "key": "quantity",
+        "label": "Quantity",
+        "type": "integer",
+        "required": false
+      },
+      {
+        "field_id": "fld_defect_record_image",
+        "key": "image",
+        "label": "Image",
+        "type": "image",
+        "required": false
+      },
+      {
+        "field_id": "fld_defect_record_severity",
+        "key": "severity",
+        "label": "Severity",
+        "type": "single_select",
+        "required": false,
+        "options": [
+          "minor",
+          "major",
+          "critical"
+        ]
+      }
+    ]
+  },
+  "detail_layout": {
+    "sections": [
+      {
+        "key": "main",
+        "title": "Defect Record",
+        "fields": [
+          "batch",
+          "defect_type",
+          "quantity",
+          "image",
+          "severity"
+        ]
+      }
+    ]
+  }
+}

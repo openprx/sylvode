@@ -1,0 +1,34 @@
+{
+  "schema": "sv.package.v1",
+  "kind": "form-template",
+  "id": "sv/quality-corrective-action",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "sv",
+    "key_id": "ed25519:00000000000000000000000000000000"
+  },
+  "sv": {
+    "min": "0.6.0",
+    "form_schema": "sv.form.schema.v2"
+  },
+  "summary": {
+    "en": "Defect, root-cause and corrective-action forms.",
+    "zh": "缺陷、根因分析和纠正措施表单。"
+  },
+  "license": "Apache-2.0",
+  "binds": {
+    "defect_record": {
+      "kind": "form",
+      "create_from": "contents/forms/defect_record.json"
+    },
+    "root_cause_analysis": {
+      "kind": "form",
+      "create_from": "contents/forms/root_cause_analysis.json"
+    },
+    "corrective_action": {
+      "kind": "form",
+      "create_from": "contents/forms/corrective_action.json"
+    }
+  },
+  "files": {}
+}

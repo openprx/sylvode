@@ -1,0 +1,72 @@
+{
+  "key": "root_cause_analysis",
+  "name": "Root Cause Analysis",
+  "description": "Cause category, analysis process and evidence.",
+  "title_template": "{cause_category}",
+  "schema": {
+    "version": "sv.form.schema.v2",
+    "fields": [
+      {
+        "field_id": "fld_root_cause_analysis_defect_id",
+        "key": "defect_id",
+        "label": "Defect",
+        "type": "relation",
+        "required": true,
+        "relation": {
+          "target_type": "form_record",
+          "form_key": "defect_record"
+        }
+      },
+      {
+        "field_id": "fld_root_cause_analysis_cause_category",
+        "key": "cause_category",
+        "label": "Cause Category",
+        "type": "single_select",
+        "required": true,
+        "options": [
+          "material",
+          "process",
+          "human",
+          "equipment",
+          "other"
+        ]
+      },
+      {
+        "field_id": "fld_root_cause_analysis_analysis",
+        "key": "analysis",
+        "label": "Analysis",
+        "type": "textarea",
+        "required": true
+      },
+      {
+        "field_id": "fld_root_cause_analysis_responsible_department",
+        "key": "responsible_department",
+        "label": "Responsible Department",
+        "type": "text",
+        "required": false
+      },
+      {
+        "field_id": "fld_root_cause_analysis_evidence",
+        "key": "evidence",
+        "label": "Evidence",
+        "type": "attachment",
+        "required": false
+      }
+    ]
+  },
+  "detail_layout": {
+    "sections": [
+      {
+        "key": "main",
+        "title": "Root Cause Analysis",
+        "fields": [
+          "defect_id",
+          "cause_category",
+          "analysis",
+          "responsible_department",
+          "evidence"
+        ]
+      }
+    ]
+  }
+}

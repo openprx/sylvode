@@ -1,0 +1,67 @@
+{
+  "key": "business_report",
+  "name": "Business Report",
+  "description": "Daily revenue, order count and printed receipt summary.",
+  "title_template": "{report_date}",
+  "schema": {
+    "version": "sv.form.schema.v2",
+    "fields": [
+      {
+        "field_id": "fld_business_report_report_date",
+        "key": "report_date",
+        "label": "Report Date",
+        "type": "date",
+        "required": true
+      },
+      {
+        "field_id": "fld_business_report_gross_revenue",
+        "key": "gross_revenue",
+        "label": "Gross Revenue",
+        "type": "amount",
+        "required": false,
+        "amount": {
+          "currency": "CNY",
+          "scale": 2,
+          "allow_negative": false,
+          "rounding": "half_up"
+        }
+      },
+      {
+        "field_id": "fld_business_report_order_count",
+        "key": "order_count",
+        "label": "Order Count",
+        "type": "integer",
+        "required": false
+      },
+      {
+        "field_id": "fld_business_report_item_count",
+        "key": "item_count",
+        "label": "Item Count",
+        "type": "integer",
+        "required": false
+      },
+      {
+        "field_id": "fld_business_report_printed_receipts",
+        "key": "printed_receipts",
+        "label": "Printed Receipts",
+        "type": "integer",
+        "required": false
+      }
+    ]
+  },
+  "detail_layout": {
+    "sections": [
+      {
+        "key": "main",
+        "title": "Business Report",
+        "fields": [
+          "report_date",
+          "gross_revenue",
+          "order_count",
+          "item_count",
+          "printed_receipts"
+        ]
+      }
+    ]
+  }
+}

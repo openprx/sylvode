@@ -1,0 +1,83 @@
+{
+  "key": "print_job",
+  "name": "Print Job",
+  "description": "Kitchen ticket and cashier receipt printing task.",
+  "title_template": "{job_type}",
+  "schema": {
+    "version": "sv.form.schema.v2",
+    "fields": [
+      {
+        "field_id": "fld_print_job_order_id",
+        "key": "order_id",
+        "label": "Order",
+        "type": "relation",
+        "required": true,
+        "relation": {
+          "target_type": "form_record",
+          "form_key": "order"
+        }
+      },
+      {
+        "field_id": "fld_print_job_job_type",
+        "key": "job_type",
+        "label": "Job Type",
+        "type": "single_select",
+        "required": true,
+        "options": [
+          "kitchen",
+          "receipt"
+        ]
+      },
+      {
+        "field_id": "fld_print_job_status",
+        "key": "status",
+        "label": "Status",
+        "type": "single_select",
+        "required": true,
+        "options": [
+          "pending",
+          "printing",
+          "printed",
+          "failed"
+        ]
+      },
+      {
+        "field_id": "fld_print_job_printer",
+        "key": "printer",
+        "label": "Printer",
+        "type": "text",
+        "required": false
+      },
+      {
+        "field_id": "fld_print_job_payload",
+        "key": "payload",
+        "label": "Payload",
+        "type": "textarea",
+        "required": false
+      },
+      {
+        "field_id": "fld_print_job_retry_count",
+        "key": "retry_count",
+        "label": "Retry Count",
+        "type": "integer",
+        "required": false
+      }
+    ]
+  },
+  "detail_layout": {
+    "sections": [
+      {
+        "key": "main",
+        "title": "Print Job",
+        "fields": [
+          "order_id",
+          "job_type",
+          "status",
+          "printer",
+          "payload",
+          "retry_count"
+        ]
+      }
+    ]
+  }
+}

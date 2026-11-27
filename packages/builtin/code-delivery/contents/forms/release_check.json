@@ -1,0 +1,58 @@
+{
+  "key": "release_check",
+  "name": "Release Check",
+  "description": "Release readiness checklist and evidence.",
+  "title_template": "{check_item}",
+  "schema": {
+    "version": "sv.form.schema.v2",
+    "fields": [
+      {
+        "field_id": "fld_release_check_check_item",
+        "key": "check_item",
+        "label": "Check item",
+        "type": "text",
+        "required": true
+      },
+      {
+        "field_id": "fld_release_check_result",
+        "key": "result",
+        "label": "Result",
+        "type": "single_select",
+        "required": true,
+        "options": [
+          "pending",
+          "pass",
+          "fail"
+        ]
+      },
+      {
+        "field_id": "fld_release_check_evidence",
+        "key": "evidence",
+        "label": "Evidence",
+        "type": "textarea",
+        "required": false
+      },
+      {
+        "field_id": "fld_release_check_owner",
+        "key": "owner",
+        "label": "Owner",
+        "type": "member",
+        "required": false
+      }
+    ]
+  },
+  "detail_layout": {
+    "sections": [
+      {
+        "key": "main",
+        "title": "Release Check",
+        "fields": [
+          "check_item",
+          "result",
+          "evidence",
+          "owner"
+        ]
+      }
+    ]
+  }
+}

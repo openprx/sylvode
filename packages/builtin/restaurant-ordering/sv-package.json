@@ -1,0 +1,50 @@
+{
+  "schema": "sv.package.v1",
+  "kind": "form-template",
+  "id": "sv/restaurant-ordering",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "sv",
+    "key_id": "ed25519:00000000000000000000000000000000"
+  },
+  "sv": {
+    "min": "0.6.0",
+    "form_schema": "sv.form.schema.v2"
+  },
+  "summary": {
+    "en": "Menu, table, order, order-line, print-job and report forms.",
+    "zh": "菜单、桌台、订单、订单行、打印任务和日报表单。"
+  },
+  "license": "Apache-2.0",
+  "binds": {
+    "menu_category": {
+      "kind": "form",
+      "create_from": "contents/forms/menu_category.json"
+    },
+    "sku": {
+      "kind": "form",
+      "create_from": "contents/forms/sku.json"
+    },
+    "table": {
+      "kind": "form",
+      "create_from": "contents/forms/table.json"
+    },
+    "order": {
+      "kind": "form",
+      "create_from": "contents/forms/order.json"
+    },
+    "order_line": {
+      "kind": "form",
+      "create_from": "contents/forms/order_line.json"
+    },
+    "print_job": {
+      "kind": "form",
+      "create_from": "contents/forms/print_job.json"
+    },
+    "business_report": {
+      "kind": "form",
+      "create_from": "contents/forms/business_report.json"
+    }
+  },
+  "files": {}
+}

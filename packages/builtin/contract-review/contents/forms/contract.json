@@ -1,0 +1,116 @@
+{
+  "key": "contract",
+  "name": "Contract",
+  "description": "Contract master data, amount, dates, attachment and risk status.",
+  "title_template": "{contract_name}",
+  "schema": {
+    "version": "sv.form.schema.v2",
+    "fields": [
+      {
+        "field_id": "fld_contract_contract_no",
+        "key": "contract_no",
+        "label": "Contract No.",
+        "type": "text",
+        "required": true
+      },
+      {
+        "field_id": "fld_contract_contract_name",
+        "key": "contract_name",
+        "label": "Contract Name",
+        "type": "text",
+        "required": true
+      },
+      {
+        "field_id": "fld_contract_counterparty",
+        "key": "counterparty",
+        "label": "Counterparty",
+        "type": "text",
+        "required": true
+      },
+      {
+        "field_id": "fld_contract_amount",
+        "key": "amount",
+        "label": "Amount",
+        "type": "amount",
+        "required": false,
+        "amount": {
+          "currency": "CNY",
+          "scale": 2,
+          "allow_negative": false,
+          "rounding": "half_up"
+        }
+      },
+      {
+        "field_id": "fld_contract_signing_entity",
+        "key": "signing_entity",
+        "label": "Signing Entity",
+        "type": "text",
+        "required": false
+      },
+      {
+        "field_id": "fld_contract_start_date",
+        "key": "start_date",
+        "label": "Start Date",
+        "type": "date",
+        "required": false
+      },
+      {
+        "field_id": "fld_contract_end_date",
+        "key": "end_date",
+        "label": "End Date",
+        "type": "date",
+        "required": false
+      },
+      {
+        "field_id": "fld_contract_attachment",
+        "key": "attachment",
+        "label": "Attachment",
+        "type": "attachment",
+        "required": false
+      },
+      {
+        "field_id": "fld_contract_risk_level",
+        "key": "risk_level",
+        "label": "Risk Level",
+        "type": "single_select",
+        "required": true,
+        "options": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      {
+        "field_id": "fld_contract_status",
+        "key": "status",
+        "label": "Status",
+        "type": "single_select",
+        "required": false,
+        "options": [
+          "draft",
+          "reviewing",
+          "approved",
+          "signed"
+        ]
+      }
+    ]
+  },
+  "detail_layout": {
+    "sections": [
+      {
+        "key": "main",
+        "title": "Contract",
+        "fields": [
+          "contract_no",
+          "contract_name",
+          "counterparty",
+          "amount",
+          "signing_entity",
+          "start_date",
+          "end_date",
+          "attachment"
+        ]
+      }
+    ]
+  }
+}

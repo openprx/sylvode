@@ -1,0 +1,82 @@
+{
+  "key": "equipment",
+  "name": "Equipment",
+  "description": "Equipment asset profile and owner.",
+  "title_template": "{equipment_no}",
+  "schema": {
+    "version": "sv.form.schema.v2",
+    "fields": [
+      {
+        "field_id": "fld_equipment_equipment_no",
+        "key": "equipment_no",
+        "label": "Equipment No.",
+        "type": "text",
+        "required": true
+      },
+      {
+        "field_id": "fld_equipment_name",
+        "key": "name",
+        "label": "Name",
+        "type": "text",
+        "required": true
+      },
+      {
+        "field_id": "fld_equipment_model",
+        "key": "model",
+        "label": "Model",
+        "type": "text",
+        "required": false
+      },
+      {
+        "field_id": "fld_equipment_location",
+        "key": "location",
+        "label": "Location",
+        "type": "text",
+        "required": false
+      },
+      {
+        "field_id": "fld_equipment_owner",
+        "key": "owner",
+        "label": "Owner",
+        "type": "member",
+        "required": false
+      },
+      {
+        "field_id": "fld_equipment_status",
+        "key": "status",
+        "label": "Status",
+        "type": "single_select",
+        "required": false,
+        "options": [
+          "running",
+          "stopped",
+          "maintenance"
+        ]
+      },
+      {
+        "field_id": "fld_equipment_image",
+        "key": "image",
+        "label": "Image",
+        "type": "image",
+        "required": false
+      }
+    ]
+  },
+  "detail_layout": {
+    "sections": [
+      {
+        "key": "main",
+        "title": "Equipment",
+        "fields": [
+          "equipment_no",
+          "name",
+          "model",
+          "location",
+          "owner",
+          "status",
+          "image"
+        ]
+      }
+    ]
+  }
+}
