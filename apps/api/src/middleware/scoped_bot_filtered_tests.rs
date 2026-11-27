@@ -350,7 +350,7 @@ async fn the_other_workspace_routes_stay_refused_for_a_runner_bot() {
         "/api/v1/proposals".to_string(),
         "/api/v1/decision-domains".to_string(),
         "/api/v1/trust-scores".to_string(),
-        format!("/api/v1/workspaces/{ws}/flow/navigator"),
+        format!("/api/v2/flow/scopes/{}/navigator", Uuid::new_v4()),
     ] {
         assert!(
             refused(&call(&stub, "GET", &path, &w.c.token, None).await),

@@ -1498,7 +1498,7 @@ async fn record_command_rejected(
     }
 }
 
-/// `POST /api/v1/flow/objects/{object_id}/commands`.
+/// `POST /api/v2/flow/objects/{object_id}/commands`.
 ///
 /// # Errors
 /// `NotFound` if the object does not exist; `BadRequest` for an unregistered `command.type` or a

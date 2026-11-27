@@ -104,6 +104,17 @@ name.
 
 ### Changed
 
+- **Breaking: Flow has one route surface, `/api/v2/flow/`.** Every `/api/v1/flow/...`,
+  `/api/v1/workspaces/{workspace_id}/flow/...` and `/api/v1/collab/{tickets,ws}` route is removed,
+  together with the `/api/v2/flow/{*path}` adapter that forwarded to them. Only
+  `/api/v1/workspaces/{workspace_id}/features/flow` and the `/api/v1/admin/.../flow/...` routes keep
+  their paths. A workspace is reached through its scope (`GET /api/v2/flow/workspaces/{workspace_id}/scope`,
+  then `/api/v2/flow/scopes/{scope_id}/...`), and workspace bot tokens are accepted on the routes that serve
+  workspace content, never on a personal scope. The MCP server and the `sylvode` command line use the new
+  paths; the tool arguments are unchanged, and the results now have the v2 shapes. The collaboration
+  ticket request and the WebSocket query take `client_id` as a UUID, and the ticket route is
+  `POST /api/v2/flow/collab/tickets`.
+
 - **Work item comments, activity and agent tasks are newest first and paged.** `GET /issues/{id}/comments`
   (default 20, max 100), `GET /issues/{id}/activities` (default 30, max 100; the fixed limit of 100 is
   gone) and `GET /issues/{id}/ai-tasks` (default 5, max 50, now in the paged shape) take `page` and

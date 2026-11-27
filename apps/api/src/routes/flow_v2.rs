@@ -1438,307 +1438,6 @@ pub async fn post_flow_v2_record(
     .into_response())
 }
 
-/// Bounded transport-only compatibility: the exact v1 router retains its domain services and
-/// authority checks. Scope resolution changes context, never ownership or event replay identity.
-#[derive(Clone)]
-pub struct LegacyFlowRouter(pub axum::Router);
-pub async fn flow_v2_legacy_adapter(
-    State(state): State<AppState>,
-    Extension(legacy): Extension<LegacyFlowRouter>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    request: axum::extract::Request,
-) -> Result<Response, ApiError> {
-    use tower::ServiceExt;
-    let actor = user(&claims, bot.as_ref())?;
-    let original = request.uri().clone();
-    let path = original.path();
-    let suffix = path
-        .strip_prefix("/api/v2/flow/")
-        .ok_or_else(|| ApiError::not_found("Flow route not found"))?;
-    let parts = suffix.split('/').collect::<Vec<_>>();
-    let target = if parts.first() == Some(&"scopes") {
-        let scope_id = parts
-            .get(1)
-            .and_then(|s| Uuid::parse_str(s).ok())
-            .ok_or_else(|| ApiError::invalid_update("invalid Flow scope"))?;
-        let Some(workspace) = scope::legacy_workspace(&state.db, scope_id).await? else {
-            accessible_scope(&state, scope_id, actor).await?;
-            return Err(ApiError::typed_with_details(
-                crate::error::ApiErrorKind::FeatureDisabled,
-                "this scope-native surface is not yet available",
-                json!({"reason":"scope_surface_not_ready"}),
-            ));
-        };
-        format!(
-            "/api/v1/workspaces/{workspace}/flow/{}",
-            parts.iter().skip(2).copied().collect::<Vec<_>>().join("/")
-        )
-    } else {
-        if matches!(parts.first(), Some(&"objects" | &"collections")) {
-            let object = parts
-                .get(1)
-                .and_then(|s| Uuid::parse_str(s).ok())
-                .ok_or_else(|| ApiError::invalid_update("invalid Flow object"))?;
-            let identity = scope::identity(&state.db, object).await?;
-            if identity.workspace_id.is_none() {
-                scope::authorize(&state.db, object, actor, PermissionLevel::View).await?;
-                return Err(ApiError::typed_with_details(
-                    crate::error::ApiErrorKind::FeatureDisabled,
-                    "this scope-native surface is not yet available",
-                    json!({"reason":"scope_surface_not_ready"}),
-                ));
-            }
-        }
-        format!("/api/v1/flow/{suffix}")
-    };
-    let target = if let Some(query) = original.query() {
-        format!("{target}?{query}")
-    } else {
-        target
-    };
-    let (mut request_parts, mut body) = request.into_parts();
-    // These v2 destination fields are semantic, not ignorable JSON extras. The legacy bridge
-    // supports its genuine source workspace only; explicitly map the matching project and reject
-    // cross-workspace intent until the scope-native conversion application service handles it.
-    if parts.as_slice() == ["conversions", "preview"] && request_parts.method == axum::http::Method::POST {
-        let bytes = axum::body::to_bytes(body, 200 * 1024 * 1024)
-            .await
-            .map_err(|_| ApiError::invalid_update("conversion request exceeds the HTTP body limit"))?;
-        let mut input: Value =
-            serde_json::from_slice(&bytes).map_err(|_| ApiError::invalid_update("invalid conversion JSON"))?;
-        let source = input
-            .get("source_object_id")
-            .and_then(Value::as_str)
-            .and_then(|id| Uuid::parse_str(id).ok())
-            .ok_or_else(|| ApiError::invalid_update("source_object_id required"))?;
-        let identity = scope::identity(&state.db, source).await?;
-        scope::authorize(&state.db, source, actor, PermissionLevel::View).await?;
-        let workspace = identity.workspace_id.ok_or_else(|| {
-            ApiError::typed_with_details(
-                crate::error::ApiErrorKind::FeatureDisabled,
-                "personal conversion is not yet available",
-                json!({"reason":"scope_surface_not_ready"}),
-            )
-        })?;
-        if input
-            .get("destination_workspace_id")
-            .and_then(Value::as_str)
-            .is_some_and(|id| id != workspace.to_string())
-        {
-            return Err(ApiError::unsupported_protocol(
-                "cross-workspace conversion requires the scope-native conversion service",
-            ));
-        }
-        if let Some(project) = input
-            .get("destination_project_id")
-            .and_then(Value::as_str)
-            .and_then(|id| Uuid::parse_str(id).ok())
-        {
-            if input.get("target_type").and_then(Value::as_str) == Some("form") {
-                if input
-                    .pointer("/mapping/target_project_id")
-                    .and_then(Value::as_str)
-                    .is_some_and(|id| id != project.to_string())
-                {
-                    return Err(ApiError::invalid_update(
-                        "destination project and mapping target project disagree",
-                    ));
-                }
-                input.field_mut("mapping")?["target_project_id"] = json!(project);
-            } else if let Some(form) = input
-                .pointer("/mapping/target_form_id")
-                .and_then(Value::as_str)
-                .and_then(|id| Uuid::parse_str(id).ok())
-            {
-                let matches = state
-                    .db
-                    .query_one(Statement::from_sql_and_values(
-                        DbBackend::Postgres,
-                        "SELECT project_id=$3 AS matches FROM project_forms WHERE id=$1 AND workspace_id=$2",
-                        vec![form.into(), workspace.into(), project.into()],
-                    ))
-                    .await?
-                    .and_then(|row| row.try_get::<bool>("", "matches").ok())
-                    .unwrap_or(false);
-                if !matches {
-                    return Err(ApiError::not_found("conversion target not found"));
-                }
-            }
-        }
-        if let Some(input) = input.as_object_mut() {
-            input.remove("destination_workspace_id");
-            input.remove("destination_project_id");
-        }
-        let bytes = serde_json::to_vec(&input).map_err(|_| ApiError::internal())?;
-        request_parts.headers.remove(axum::http::header::CONTENT_LENGTH);
-        body = axum::body::Body::from(bytes);
-    }
-
-    // Outer wildcard captures are private Axum extensions. Carrying them into another router
-    // appends a second Path parameter and corrupts extraction. Reestablish trusted context only;
-    // the inner exact v1 authentication middleware still validates the original credential.
-    let peer = request_parts
-        .extensions
-        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-        .copied();
-    request_parts.extensions = axum::http::Extensions::new();
-    request_parts.extensions.insert(claims);
-    if let Some(peer) = peer {
-        request_parts.extensions.insert(peer);
-    }
-    request_parts.uri = target
-        .parse()
-        .map_err(|_| ApiError::invalid_update("invalid legacy Flow route"))?;
-    let response = legacy
-        .0
-        .oneshot(axum::http::Request::from_parts(request_parts, body))
-        .await
-        .map_err(|_| ApiError::internal())?;
-    if !response
-        .headers()
-        .get(axum::http::header::CONTENT_TYPE)
-        .and_then(|h| h.to_str().ok())
-        .is_some_and(|h| h.starts_with("application/json"))
-    {
-        return Ok(response);
-    }
-    if matches!(legacy_response_shape(&parts), LegacyDtoShape::None) {
-        return Ok(response);
-    }
-    let (mut response_parts, body) = response.into_parts();
-    let bytes = axum::body::to_bytes(body, 16 * 1024 * 1024)
-        .await
-        .map_err(|_| ApiError::internal())?;
-    let Ok(mut value) = serde_json::from_slice::<Value>(&bytes) else {
-        return Ok(axum::http::Response::from_parts(
-            response_parts,
-            axum::body::Body::from(bytes),
-        ));
-    };
-    let shape = legacy_response_shape(&parts);
-    let positions = match shape {
-        LegacyDtoShape::AcceptedObject => vec!["/data/object".to_string()],
-        LegacyDtoShape::RecordQuery => value
-            .pointer("/data/items")
-            .and_then(Value::as_array)
-            .map(|items| (0..items.len()).map(|i| format!("/data/items/{i}/record")).collect())
-            .unwrap_or_default(),
-        LegacyDtoShape::None | LegacyDtoShape::ScopedMetadata => Vec::new(),
-    };
-    for pointer in positions {
-        let id = value
-            .pointer(&pointer)
-            .and_then(|v| v.get("id"))
-            .and_then(Value::as_str)
-            .and_then(|id| Uuid::parse_str(id).ok());
-        if let Some(id) = id
-            && let Ok(view) = scope::object_view(&state.db, id, actor).await
-            && let Some(slot) = value.pointer_mut(&pointer)
-        {
-            *slot = view;
-        }
-    }
-    if matches!(shape, LegacyDtoShape::ScopedMetadata)
-        && let Some(data) = value.get_mut("data").and_then(Value::as_object_mut)
-        && let Some(scope) = parts.get(1).and_then(|id| Uuid::parse_str(id).ok())
-    {
-        data.insert("target_scope_id".into(), json!(scope));
-    }
-    let bytes = serde_json::to_vec(&value).map_err(|_| ApiError::internal())?;
-    response_parts.headers.remove(axum::http::header::CONTENT_LENGTH);
-    Ok(axum::http::Response::from_parts(
-        response_parts,
-        axum::body::Body::from(bytes),
-    ))
-}
-
-#[derive(Clone, Copy)]
-enum LegacyDtoShape {
-    None,
-    AcceptedObject,
-    RecordQuery,
-    ScopedMetadata,
-}
-fn legacy_response_shape(parts: &[&str]) -> LegacyDtoShape {
-    match parts {
-        ["objects", _, "history", "restore"] | ["objects", _, "commands" | "schema"] | ["collections", _] => {
-            LegacyDtoShape::AcceptedObject
-        }
-        ["collections", _, "records" | "query"] => LegacyDtoShape::RecordQuery,
-        ["scopes", _, "imports", _] => LegacyDtoShape::ScopedMetadata,
-        _ => LegacyDtoShape::None,
-    }
-}
-
-#[cfg(test)]
-mod transport_adapter_tests {
-    use super::*;
-    use tower::ServiceExt;
-    #[tokio::test]
-    async fn inner_router_receives_only_its_own_path_capture() {
-        async fn inner(Path(job): Path<Uuid>) -> Json<Value> {
-            Json(json!({"job_id":job}))
-        }
-        let id = Uuid::new_v4();
-        let claims = JwtClaims {
-            sub: Uuid::new_v4().to_string(),
-            email: "adapter@example.test".into(),
-            token_type: platform::auth::TokenType::Access,
-            iat: 0,
-            exp: 0,
-            sv: 0,
-        };
-        let state = AppState {
-            db: sea_orm::DatabaseConnection::Disconnected,
-            cfg: platform::config::AppConfig {
-                app_name: "adapter".into(),
-                bind_addr: "127.0.0.1:0".into(),
-                database_url: platform::config::Secret::new("postgres://unused/unused"),
-                jwt_secret: platform::config::Secret::new("adapter-test-secret"),
-                jwt_access_ttl_seconds: 900,
-                jwt_refresh_ttl_seconds: 3600,
-                allow_insecure_cookies: false,
-                collab_allowed_origins: Vec::new(),
-            },
-            flow_permission_cache: platform::app::FlowPermissionCacheSlot::default(),
-        };
-        let legacy = axum::Router::new().route("/api/v1/flow/exports/{job_id}/artifact", axum::routing::get(inner));
-        let router = axum::Router::new()
-            .route(
-                "/api/v2/flow/{*legacy_path}",
-                axum::routing::get(flow_v2_legacy_adapter),
-            )
-            .layer(Extension(claims))
-            .layer(Extension(LegacyFlowRouter(legacy)))
-            .with_state(state);
-        let response = router
-            .oneshot(
-                axum::http::Request::builder()
-                    .uri(format!("/api/v2/flow/exports/{id}/artifact"))
-                    .body(axum::body::Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("response");
-        assert_eq!(response.status(), axum::http::StatusCode::OK);
-        let bytes = axum::body::to_bytes(response.into_body(), 1024).await.expect("body");
-        let body: Value = serde_json::from_slice(&bytes).expect("JSON");
-        assert_eq!(body.field("job_id").as_str(), Some(id.to_string().as_str()));
-    }
-    #[test]
-    fn opaque_semantic_json_is_not_a_dto_normalization_target() {
-        assert!(matches!(
-            legacy_response_shape(&["objects", "id", "comments"]),
-            LegacyDtoShape::None
-        ));
-        assert!(matches!(
-            legacy_response_shape(&["objects", "id", "relations"]),
-            LegacyDtoShape::None
-        ));
-    }
-}
-
 fn optional_intent(headers: &axum::http::HeaderMap) -> Result<Option<&str>, ApiError> {
     headers
         .get("Idempotency-Key")
@@ -2976,4 +2675,46 @@ pub async fn get_flow_v2_block_share_placements(
         )
         .await?,
     ))
+}
+
+#[cfg(test)]
+mod collaboration_client_id_tests {
+    use super::{ScopeTicketRequest, ScopeWsQuery};
+    use axum::extract::Query;
+    use serde_json::json;
+    use uuid::Uuid;
+
+    fn ticket(client_id: &serde_json::Value) -> serde_json::Value {
+        json!({
+            "object_id": Uuid::new_v4(),
+            "document_id": Uuid::new_v4(),
+            "client_id": client_id,
+            "origin": "http://127.0.0.1:18097",
+        })
+    }
+
+    #[test]
+    fn the_ticket_request_takes_a_uuid_client_id_only() {
+        let accepted = serde_json::from_value::<ScopeTicketRequest>(ticket(&json!(Uuid::new_v4())));
+        assert!(accepted.is_ok());
+        for refused in [json!("e2e-client-1"), json!(""), json!("   "), json!(7), json!(null)] {
+            assert!(
+                serde_json::from_value::<ScopeTicketRequest>(ticket(&refused)).is_err(),
+                "{refused} was accepted as a client id"
+            );
+        }
+    }
+
+    #[test]
+    fn the_upgrade_query_takes_a_uuid_client_id_only() {
+        let uri = |client: &str| format!("http://x/api/v2/flow/collab/ws?ticket=t&client_id={client}").parse();
+        let good = Uuid::new_v4().to_string();
+        assert!(Query::<ScopeWsQuery>::try_from_uri(&uri(&good).expect("uri")).is_ok());
+        for refused in ["e2e-client-1", "", "not-a-uuid"] {
+            assert!(
+                Query::<ScopeWsQuery>::try_from_uri(&uri(refused).expect("uri")).is_err(),
+                "{refused:?} was accepted as a client id"
+            );
+        }
+    }
 }

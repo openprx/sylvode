@@ -459,6 +459,99 @@ async fn legacy_restricted_parent_creation_is_fenced_and_leaves_no_residue() {
     drop(state);
     scratch.close().await;
 }
+#[tokio::test]
+async fn a_workspace_bot_is_judged_as_a_bot_by_the_scope_authorization() {
+    let scratch = Scratch::new().await;
+    let db = &scratch.db;
+    let owner = user(db).await;
+    let human_admin = user(db).await;
+    let admin_bot = user(db).await;
+    let workspace = Uuid::new_v4();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO workspaces(id,slug,name,created_by) VALUES($1,$2,'Bot principal',$3)",
+        vec![workspace.into(), workspace.to_string().into(), owner.into()],
+    ))
+    .await
+    .unwrap();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE users SET entity_type='bot' WHERE id=$1",
+        vec![admin_bot.into()],
+    ))
+    .await
+    .unwrap();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO workspace_members(workspace_id,user_id,role) VALUES($1,$2,'owner'),($1,$3,'admin'),($1,$4,'admin')",
+        vec![workspace.into(), owner.into(), human_admin.into(), admin_bot.into()],
+    ))
+    .await
+    .unwrap();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO flow_workspace_settings(workspace_id,flow_enabled) VALUES($1,true) ON CONFLICT (workspace_id) DO UPDATE SET flow_enabled = EXCLUDED.flow_enabled",
+        vec![workspace.into()],
+    ))
+    .await
+    .unwrap();
+    let scope = scope::legacy_scope(db, workspace).await.unwrap();
+    let root = scope::roots(db, scope.id)
+        .await
+        .unwrap()
+        .first()
+        .expect("fixture element")
+        .object_id;
+    // A page that cuts its parent's grants and carries none of its own: only the human
+    // administrator's rescue reaches it.
+    let page = Uuid::new_v4();
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO flow_objects(id,workspace_id,object_type,parent_id,inherit_from_parent) VALUES($1,$2,'page',$3,false)",
+        vec![page.into(), workspace.into(), root.into()],
+    ))
+    .await
+    .unwrap();
+    let engine = collab_core::LoroCollabEngine::new_empty(1);
+    api::flow::repository::insert_collab_document(
+        db,
+        &api::flow::repository::NewCollabDocument {
+            id: Uuid::new_v4(),
+            object_id: page,
+            format_version: "loro-1".into(),
+            snapshot: engine.export_snapshot().unwrap(),
+            frontier: engine.frontier().as_bytes().to_vec(),
+        },
+    )
+    .await
+    .unwrap();
+    api::flow::repository::insert_projection(
+        db,
+        &api::flow::repository::NewProjection {
+            object_id: page,
+            document_seq: 0,
+            document_frontier: engine.frontier().as_bytes().to_vec(),
+            title: "Boundary page".into(),
+            state: serde_json::json!({"nodes":{}}),
+            plain_text: String::new(),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        scope::authorize(db, page, human_admin, PermissionLevel::View)
+            .await
+            .is_ok(),
+        "the administrator's rescue belongs to people"
+    );
+    assert!(
+        scope::authorize(db, page, admin_bot, PermissionLevel::View)
+            .await
+            .is_err(),
+        "an administrator bot does not get the human rescue behind an authorization boundary"
+    );
+    scratch.close().await;
+}
 async fn wait_for_database_lock(db: &DatabaseConnection, pid: i32) {
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
     loop {

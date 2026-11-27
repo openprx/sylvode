@@ -253,7 +253,7 @@ pub struct ConsumedTicket {
 /// (`ADR-0007`: "失败、过期和重放都返回不泄密的 401/403 upgrade failure") without a separate
 /// check-then-consume race window.
 ///
-/// `GET /api/v1/collab/ws` carries no `document_id` of its own (`rest-api-v1.md`: "WebSocket
+/// `GET /api/v2/flow/collab/ws` carries no `document_id` of its own (`rest-api-v1.md`: "WebSocket
 /// upgrade;无 JSON body") — the ticket is the sole source of which document this connection binds
 /// to; the later `open` frame's own `document_id` is checked against
 /// [`ConsumedTicket::document_id`] by the session loop, not here.

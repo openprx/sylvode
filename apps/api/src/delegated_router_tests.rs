@@ -708,13 +708,10 @@ const PUBLIC_ROUTES: &[(&str, &str)] = &[
     ("GET", "/api/v1/uploads/signatures/{file_name}/download"),
     ("GET", "/api/v1/form-attachments/{attachment_id}/download"),
     // Public Flow shares: authorised by the share token in the path.
-    ("GET", "/api/v1/flow/public-shares/{token}"),
-    ("GET", "/api/v1/flow/public-shares/{token}/assets/{asset_id}"),
     ("GET", "/api/v2/flow/public-shares/{token}"),
     ("GET", "/api/v2/flow/public-shares/{token}/assets/{asset_id}"),
     ("GET", "/api/v2/flow/public-shares/{token}/body-assets/{asset_id}"),
     // WebSocket upgrades: the handshake is authorised by a single-use ticket, not a bearer token.
-    ("GET", "/api/v1/collab/ws"),
     ("GET", "/api/v2/flow/collab/ws"),
 ];
 

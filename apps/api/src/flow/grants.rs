@@ -2,9 +2,9 @@
 //! read `flow_object_grants` rows and flip `flow_objects.inherit_from_parent`.
 //!
 //! ```text
-//! GET /api/v1/flow/objects/{object_id}/grants
-//! PUT /api/v1/flow/objects/{object_id}/grants
-//! PUT /api/v1/flow/objects/{object_id}/inheritance
+//! GET /api/v2/flow/objects/{object_id}/grants
+//! PUT /api/v2/flow/objects/{object_id}/grants
+//! PUT /api/v2/flow/objects/{object_id}/inheritance
 //! ```
 //!
 //! v0.4 shipped the *read* half of `ADR-0012` §3 (`super::collab::authz::effective_permission`:

@@ -40,7 +40,7 @@ binaries do not read `RUST_LOG`.
 
 Secrets from the configuration file (database URL, signing key, bot token, forwarding secrets, S3
 credentials) are never logged. The reverse proxy is the other place where credentials can leak, because two kinds of URL carry one in
-their query string: the one-time ticket of `GET /api/v1/collab/ws?ticket=...` and the signature of
+their query string: the one-time ticket of `GET /api/v2/flow/collab/ws?ticket=...` and the signature of
 signed download URLs (`?expires=...&signature=...`). The shipped `frontend/nginx.conf` replaces
 the whole query in its access log when it contains `ticket=` or `signature=`, and
 `deploy/caddy/Caddyfile` deletes those two parameters from its log. Keep an equivalent rule in any
