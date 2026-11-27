@@ -1124,14 +1124,43 @@ fn starved_worker(outcome: &AcceptOutcome) -> bool {
         || (rejected.code == RejectedCode::LimitExceeded && details["limit_kind"] == "decode_apply_wall_ms")
 }
 
+/// Whether the worker was killed at the window's CPU ceiling (`decode_apply_cpu_ms`). Only the write
+/// of a page that is over its budget is meant to meet it; for a write that must fit, it is the
+/// worker's CPU time inflated by a loaded machine (the real decode of a few hundred marks is a few
+/// milliseconds, far inside the ceiling), not the product's decision.
+#[cfg(target_os = "linux")]
+fn killed_at_the_cpu_ceiling(outcome: &AcceptOutcome) -> bool {
+    matches!(
+        outcome,
+        AcceptOutcome::Rejected(rejected)
+            if rejected.code == RejectedCode::LimitExceeded
+                && rejected.details.as_ref().is_some_and(|details| details["limit_kind"] == "decode_apply_cpu_ms")
+    )
+}
+
 /// Submits `bytes` and, while the worker was starved, sends the same update again. Nothing else is
 /// repeated: every other answer is the product's.
 #[cfg(target_os = "linux")]
 async fn submit_past_starvation(f: &Fixture, bytes: Vec<u8>) -> AcceptOutcome {
+    submit_resending_while(f, bytes, starved_worker).await
+}
+
+/// [`submit_past_starvation`] for a write that must fit the window: a kill at the CPU ceiling is
+/// resent as well (see [`killed_at_the_cpu_ceiling`]).
+#[cfg(target_os = "linux")]
+async fn submit_that_must_fit(f: &Fixture, bytes: Vec<u8>) -> AcceptOutcome {
+    submit_resending_while(f, bytes, |outcome| {
+        starved_worker(outcome) || killed_at_the_cpu_ceiling(outcome)
+    })
+    .await
+}
+
+#[cfg(target_os = "linux")]
+async fn submit_resending_while(f: &Fixture, bytes: Vec<u8>, resend: impl Fn(&AcceptOutcome) -> bool) -> AcceptOutcome {
     let update_id = Uuid::new_v4();
     for _ in 0..STARVED_RESENDS {
         let outcome = submit(f, update_id, bytes.clone(), RebasePolicy::ClientRebases).await;
-        if !starved_worker(&outcome) {
+        if !resend(&outcome) {
             return outcome;
         }
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
@@ -1170,7 +1199,7 @@ async fn grow_and_push(f: &Fixture) -> Pushed {
     while marks < target {
         let step = 50.min(target - marks);
         let update = nested_marks_update(f, marks, step).await;
-        match submit_past_starvation(f, update).await {
+        match submit_that_must_fit(f, update).await {
             AcceptOutcome::Accepted(_) => marks += step,
             AcceptOutcome::Rejected(rejected) => {
                 panic!(
@@ -1182,7 +1211,7 @@ async fn grow_and_push(f: &Fixture) -> Pushed {
     }
     let head_before = head_seq_of(&f.state, f.document_id).await;
     let update = nested_marks_update(f, marks, edge * 20 / 100).await;
-    let outcome = submit_past_starvation(f, update).await;
+    let outcome = submit_that_must_fit(f, update).await;
     Pushed {
         outcome,
         head_before,
@@ -1227,13 +1256,13 @@ async fn an_update_that_would_leave_a_text_over_its_decode_budget_is_refused_and
     assert_eq!(head_seq_of(&f.state, f.document_id).await, head_before);
     // The page is writable: a title update and a small growth are accepted.
     let bytes = a_title_update_at_head(&f, "still writable").await;
-    let outcome = submit_past_starvation(&f, bytes).await;
+    let outcome = submit_that_must_fit(&f, bytes).await;
     assert!(
         matches!(outcome, AcceptOutcome::Accepted(_)),
         "an unrelated write is accepted: {}",
         describe(&outcome)
     );
-    let outcome = submit_past_starvation(&f, nested_marks_update(&f, marks, 5).await).await;
+    let outcome = submit_that_must_fit(&f, nested_marks_update(&f, marks, 5).await).await;
     assert!(
         matches!(outcome, AcceptOutcome::Accepted(_)),
         "five more marks fit the budget: {}",

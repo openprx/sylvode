@@ -2461,11 +2461,13 @@ mod tests {
             .unwrap();
         let mut timings = Vec::new();
         for expected in [3_000, 1_000, 0] {
-            let tx = begin_capped(db).await;
+            let tx = begin_for_timing_mode(db).await;
             let started = Instant::now();
             let (statements, outcome) = {
+                // The row bound drives the chunking; a wall-clock deadline would make the pending
+                // counts depend on runner speed. Timing is asserted only on qualified machines.
                 let allowance = RegistrationAllowance::Bounded {
-                    deadline: started + STAGING_BUDGET,
+                    deadline: started + Duration::from_hours(1),
                     max_rows: 2_000,
                     min_rows: 0,
                 };
