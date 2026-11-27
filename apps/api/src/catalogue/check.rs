@@ -63,14 +63,19 @@ pub fn allowed_pre(principal: &Principal, entry: &Entry) -> Result<(), Refusal> 
 }
 
 /// Steps 3c-3d: the target against the installation's workspace, project and grant selectors.
-/// Only meaningful after [`allowed_pre`] passed; users, bots and delegated callers pass.
+/// Only meaningful after [`allowed_pre`] passed; users, bots, delegated callers and site principals
+/// pass.
 ///
 /// # Errors
 /// The [`Refusal`] of the first failed step.
 pub fn allowed_target(principal: &Principal, entry: &Entry, resource: &Resource) -> Result<(), Refusal> {
     let capability = entry.capability();
     let installation = match principal {
-        Principal::User { .. } | Principal::Bot { .. } | Principal::Delegated { .. } => return Ok(()),
+        Principal::User { .. }
+        | Principal::Bot { .. }
+        | Principal::Delegated { .. }
+        | Principal::SiteVisitor { .. }
+        | Principal::SiteOperator { .. } => return Ok(()),
         Principal::Plugin { installation, .. } | Principal::Installation { installation, .. } => installation,
     };
     check_target(installation, capability, resource).map_err(|code| Refusal::new(code, Some(capability)))
