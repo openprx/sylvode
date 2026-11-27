@@ -430,6 +430,20 @@ enabled = false
 
 
 # ---------------------------------------------------------------------------------------------
+# [packages] — the package store. Optional.
+#
+# builtin_public_key is the Ed25519 public key (32 bytes, base64url without padding) of the
+# built-in publisher `sv`; at start the active `sv` keys are made equal to it and every other `sv`
+# key is revoked. A build that pins a release key at compile time ignores this value. Create a QA
+# key pair with `sv-pack keygen` and keep the private key out of the repository.
+# builtin_dir is a directory of `*.svpkg` built-in packages verified and stored at start; a
+# package that does not verify stops the start.
+# ---------------------------------------------------------------------------------------------
+[packages]
+# builtin_public_key = "replace_with_base64url_public_key"
+# builtin_dir = "/etc/sylvode/packages"
+
+# ---------------------------------------------------------------------------------------------
 # [email] — notification e-mails over SMTP (plain text only). Optional; off by default.
 #
 # With enabled = false nothing is sent and the notification settings page says that e-mail is not

@@ -48,6 +48,7 @@ mod email;
 mod error;
 mod inbound;
 mod oauth;
+mod packages;
 mod raw;
 mod secret;
 
@@ -66,6 +67,7 @@ pub use oauth::{
     DEFAULT_MAX_ACTIVE_GRANTS_PER_USER_CLIENT, DEFAULT_MAX_STREAMS_PER_PROCESS, DEFAULT_REFRESH_TOKEN_IDLE_DAYS,
     MIN_FORWARD_SECRET_LEN, OAuthConfig,
 };
+pub use packages::PackagesConfig;
 pub use secret::{REDACTED, Secret};
 
 /// Where a binary looks for its configuration when no `--config` path is given.
@@ -228,6 +230,8 @@ pub struct OpenPrConfig {
     pub oauth: Option<OAuthConfig>,
     /// `[inbound]`: the alert chain's inbound endpoint, off unless `enabled = true`.
     pub inbound: InboundConfig,
+    /// `[packages]`: the built-in publisher key and the built-in package directory.
+    pub packages: PackagesConfig,
     /// `[email]`: `Some` only when `enabled = true`, with every value it needs validated.
     pub email: Option<EmailConfig>,
 }

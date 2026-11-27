@@ -78,7 +78,8 @@
       "max_alerts_per_rule_per_hour",
       "event_retention_days",
       "followup_interval_secs"
-    ]
+    ],
+    "packages": ["builtin_public_key", "builtin_dir"]
   },
   "retired": {}
 }

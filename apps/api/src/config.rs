@@ -19,7 +19,7 @@ use std::sync::{Arc, OnceLock};
 
 use platform::config::{
     AiTasksConfig, ApiConfig, DEFAULT_STORAGE_DIR, EmailConfig, FlowConfig, InboundConfig, IpCidr, OAuthConfig,
-    OpenPrConfig, OutboundConfig, StorageBackend, StorageConfig,
+    OpenPrConfig, OutboundConfig, PackagesConfig, StorageBackend, StorageConfig,
 };
 
 use crate::security::default_trusted_proxies;
@@ -42,6 +42,8 @@ pub struct RuntimeConfig {
     pub inbound: InboundConfig,
     /// The SMTP sender (`[email]`), `None` unless it is enabled.
     pub email: Option<EmailConfig>,
+    /// `[packages]`: the built-in publisher key and the built-in package directory.
+    pub packages: PackagesConfig,
     /// `[server] public_url`: the origin this server is reached at, `None` when not configured.
     pub public_url: Option<String>,
 }
@@ -63,6 +65,7 @@ impl RuntimeConfig {
             oauth: config.oauth.clone().map(Arc::new),
             inbound: config.inbound,
             email: config.email.clone(),
+            packages: config.packages.clone(),
             public_url: config.server.public_url.clone(),
         }
     }
@@ -93,6 +96,7 @@ impl RuntimeConfig {
             oauth: None,
             inbound: InboundConfig::default(),
             email: None,
+            packages: PackagesConfig::default(),
             public_url: None,
         }
     }
