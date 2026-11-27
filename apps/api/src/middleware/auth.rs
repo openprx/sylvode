@@ -18,6 +18,10 @@ pub async fn jwt_auth_middleware(
     mut req: Request,
     next: Next,
 ) -> Result<Response, ApiError> {
+    // A request the plugin host dispatched: no token, the invoking user's live claims.
+    if let Some(call) = req.extensions().get::<crate::extensions::InternalCall>().cloned() {
+        return crate::extensions::handle_internal(&state, req, next, call).await;
+    }
     let token = extract_bearer_token(req.headers())
         .or_else(|| extract_cookie_token(req.headers(), "access_token"))
         .ok_or_else(|| ApiError::Unauthorized("missing access token".to_string()))?;

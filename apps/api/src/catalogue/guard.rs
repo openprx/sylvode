@@ -13,6 +13,7 @@ use axum::{
 use super::refusal::{Refusal, RefusalCode};
 use super::uncatalogued::is_uncatalogued;
 use crate::error::ApiError;
+use crate::extensions::InternalCall;
 
 /// Decides a request by `(method, matched path)`:
 ///
@@ -24,14 +25,21 @@ use crate::error::ApiError;
 ///   that is not registered, so a registered but uncatalogued method fails closed;
 /// * a matched path with no entry at all is refused `capability_unclassified`.
 ///
-/// The re-check of an internal call against the entry of its operation arrives with the plugin host.
+/// A request the plugin host dispatched carries [`InternalCall`]: its route must be the entry of the
+/// operation the host checked (`capability_not_exposed` otherwise) and must not be an `extensions.*`
+/// route (`plugin_reentry`). The authentication branch then re-checks the principal against the
+/// resolved target.
 pub async fn guard(request: Request, next: Next) -> Response {
     let verdict = match request.extensions().get::<MatchedPath>() {
         None => Verdict::Pass,
-        Some(matched) => verdict(request.method().as_str(), matched.as_str()),
+        Some(matched) => match request.extensions().get::<InternalCall>() {
+            Some(call) => internal_verdict(request.method().as_str(), matched.as_str(), call.op),
+            None => verdict(request.method().as_str(), matched.as_str()),
+        },
     };
     match verdict {
         Verdict::Pass => next.run(request).await,
+        Verdict::Refuse(code) => ApiError::from(Refusal::new(code, None)).into_response(),
         Verdict::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED.into_response(),
         Verdict::Unclassified => {
             ApiError::from(Refusal::new(RefusalCode::CapabilityUnclassified, None)).into_response()
@@ -42,8 +50,18 @@ pub async fn guard(request: Request, next: Next) -> Response {
 #[derive(Debug, PartialEq, Eq)]
 enum Verdict {
     Pass,
+    Refuse(RefusalCode),
     MethodNotAllowed,
     Unclassified,
+}
+
+/// The verdict for a request that carries [`InternalCall`] with the operation `op`.
+fn internal_verdict(method: &str, path: &str, op: &str) -> Verdict {
+    match super::by_route(method, path) {
+        Some(entry) if entry.op.starts_with("extensions.") => Verdict::Refuse(RefusalCode::PluginReentry),
+        Some(entry) if entry.op == op => Verdict::Pass,
+        _ => Verdict::Refuse(RefusalCode::CapabilityNotExposed),
+    }
 }
 
 fn verdict(method: &str, path: &str) -> Verdict {
@@ -120,6 +138,22 @@ mod tests {
         let (status, body) = call(Method::GET, "/not-in-the-catalogue").await;
         assert_eq!(status, StatusCode::OK);
         assert!(body.contains("capability_unclassified"), "{body}");
+    }
+
+    #[test]
+    fn an_internal_call_must_match_its_operation_and_stay_out_of_the_extension_routes() {
+        use super::{Verdict, internal_verdict};
+        use crate::catalogue::RefusalCode;
+        let path = "/api/v1/form-records/{record_id}";
+        assert_eq!(internal_verdict("GET", path, "forms.records.read"), Verdict::Pass);
+        assert_eq!(
+            internal_verdict("PATCH", path, "forms.records.read"),
+            Verdict::Refuse(RefusalCode::CapabilityNotExposed)
+        );
+        assert_eq!(
+            internal_verdict("GET", "/api/v1/nothing", "forms.records.read"),
+            Verdict::Refuse(RefusalCode::CapabilityNotExposed)
+        );
     }
 
     #[tokio::test]

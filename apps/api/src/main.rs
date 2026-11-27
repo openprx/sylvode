@@ -114,6 +114,8 @@ async fn main() -> anyhow::Result<()> {
 
     let reader_db = state.db.clone();
     let app = router::build_router(state);
+    // Host calls of the plugin host go through this router, in process.
+    api::extensions::dispatch::install(app.clone());
 
     let listener = tokio::net::TcpListener::bind(&cfg.bind_addr).await?;
     api::flow::scope_runtime::spawn(reader_db, "api").await?;

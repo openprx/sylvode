@@ -538,6 +538,10 @@ pub async fn bot_or_user_auth_middleware(
     mut req: Request,
     next: Next,
 ) -> Result<Response, ApiError> {
+    // A request the plugin host dispatched: no token, the invoking user's live claims.
+    if let Some(call) = req.extensions().get::<crate::extensions::InternalCall>().cloned() {
+        return crate::extensions::handle_internal(&state, req, next, call).await;
+    }
     let started = Instant::now();
     let mut operation_context = None;
     let header_token = extract_bearer_token(req.headers());
