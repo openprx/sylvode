@@ -2430,7 +2430,6 @@ dependencies = [
  "clap",
  "collab-core",
  "hex",
- "hyper",
  "hyper-util",
  "mcp-server",
  "parking_lot",

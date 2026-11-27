@@ -37,7 +37,6 @@ base64 = "0.22"
 clap.workspace = true
 parking_lot = "0.12"
 platform = { path = "../../crates/platform" }
-hyper = "1"
 hyper-util = { version = "0.1", features = ["http1", "http2", "server-auto", "server-graceful", "service", "tokio"] }
 reqwest.workspace = true
 serde.workspace = true
