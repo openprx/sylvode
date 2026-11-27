@@ -14,7 +14,7 @@ use axum::{
 };
 use platform::app::AppState;
 use platform::timestamp::Timestamp;
-use sea_orm::TransactionTrait;
+use sea_orm::{ConnectionTrait, TransactionTrait};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
@@ -75,12 +75,16 @@ pub async fn manifest(
             .map(|read| effective_read(read, &binding.fields, &binding.form.title_template, &BTreeSet::new()))
             .unwrap_or_default();
         let operator_block = match operator {
-            Some(_) => {
+            Some(operator) => {
                 let access = records::read_access(&state, &caller, &binding).await.ok().flatten();
                 let read = access.map(|access| access.read).unwrap_or_default();
+                let update = match records::operator_excluded(&state, &binding, operator).await {
+                    Ok(excluded) => records::update_fields(&binding, &excluded),
+                    Err(_) => Vec::new(),
+                };
                 json!({
                     "read_fields": read.fields,
-                    "update_fields": records::update_fields(&binding),
+                    "update_fields": update,
                     "filter_fields": read.filter,
                     "sort_fields": read.sort,
                 })
@@ -176,11 +180,12 @@ pub async fn fields(
         add(effective_read(read, &binding.fields, &binding.form.title_template, &BTreeSet::new()).fields);
     }
     add(records::submit_fields(&binding));
-    if caller.operator.is_some() {
+    if let Some(operator) = &caller.operator {
         if let Some(access) = records::read_access(&state, &caller, &binding).await? {
             add(access.read.fields);
         }
-        add(records::update_fields(&binding));
+        let excluded = records::operator_excluded(&state, &binding, operator).await?;
+        add(records::update_fields(&binding, &excluded));
     }
     let fields: Vec<Value> = keys
         .iter()
@@ -345,6 +350,17 @@ pub async fn submit_record(
         .as_ref()
         .map(|operator| operator.workspace_role.clone())
         .unwrap_or_default();
+    // An operator submits under their own form policy too: `record.create` is required.
+    if caller.operator.is_some()
+        && !crate::forms::permissions::form_action_allowed(&state, binding.form.id, &operator_role, "record.create")
+            .await?
+    {
+        return Err(SiteError::new(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "you may not create these records",
+        ));
+    }
     let tx = state.db.begin().await?;
     let mut new_cookie = None;
     let (actor, source);
@@ -370,6 +386,8 @@ pub async fn submit_record(
             };
         }
         None => {
+            // Only the site submit may store a visitor origin (checked by the 0137 trigger).
+            tx.execute_unprepared("SET LOCAL sv.site_writer = 'on'").await?;
             let visitor_id = match caller.visitor_id {
                 Some(visitor) => visitor,
                 None => {
@@ -446,7 +464,8 @@ pub async fn update_record(
     let caller = caller(&state, site, &headers, "site.records.update").await?;
     let operator = caller.require_operator()?.clone();
     let binding = Binding::load(&state, &caller, &key).await?;
-    let allowed = records::update_fields(&binding);
+    let excluded = records::operator_excluded(&state, &binding, &operator).await?;
+    let allowed = records::update_fields(&binding, &excluded);
     records::ensure_writable(&body.values, &allowed)?;
     let access = records::read_access(&state, &caller, &binding)
         .await?

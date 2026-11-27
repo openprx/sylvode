@@ -2704,6 +2704,9 @@ async fn import_form_record_rows(
     let batch_idempotency_key = normalize_optional_idempotency_key(req.idempotency_key)?;
     for (index, row) in req.rows.into_iter().enumerate() {
         let row_number = row.row_number.unwrap_or(index + 1);
+        if let Some(source) = &row.source {
+            crate::forms::validation::ensure_no_site_origin(source)?;
+        }
         let source = row.source.unwrap_or_else(|| {
             json!({
                 "type": if is_bot { "bot" } else { "user" },
@@ -3416,6 +3419,9 @@ async fn create_record_for_form(
     req: CreateRecordRequest,
 ) -> Result<RecordResponse, ApiError> {
     let idempotency_key = normalize_optional_idempotency_key(req.idempotency_key)?;
+    if let Some(source) = &req.source {
+        crate::forms::validation::ensure_no_site_origin(source)?;
+    }
     let source = ensure_json_object(
         req.source
             .unwrap_or_else(|| json!({ "type": if is_bot { "bot" } else { "user" }, "actor_id": actor_id })),
@@ -3790,6 +3796,9 @@ async fn update_record_for_form(
     is_bot: bool,
     req: UpdateRecordRequest,
 ) -> Result<(RecordResponse, Vec<RecalculatedParent>), ApiError> {
+    if let Some(source) = &req.source {
+        crate::forms::validation::ensure_no_site_origin(source)?;
+    }
     update_record_for_form_internal(state, form, record, actor_id, role, is_bot, req, None).await
 }
 
@@ -3802,6 +3811,9 @@ pub(crate) async fn update_record_for_plugin(
     req: UpdateRecordRequest,
     plugin: &super::plugin_package::ApplyCommit,
 ) -> Result<RecordResponse, ApiError> {
+    if let Some(source) = &req.source {
+        crate::forms::validation::ensure_no_site_origin(source)?;
+    }
     update_record_for_form_internal(state, form, record, actor_id, role, false, req, Some(plugin))
         .await
         .map(|(record, _)| record)

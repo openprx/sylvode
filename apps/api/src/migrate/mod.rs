@@ -665,7 +665,7 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
     ("0136_form_schema_v2.sql", SchemaProbe::Rerunnable),
     (
         "0137_sites.sql",
-        SchemaProbe::Trigger("form_records", "trg_sv_site_record_origin"),
+        SchemaProbe::Trigger("form_records", "trg_sv_site_record_guard"),
     ),
     (
         "0139_artefact_drafts.sql",

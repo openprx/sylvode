@@ -69,21 +69,30 @@ CREATE INDEX IF NOT EXISTS site_sessions_user ON site_sessions (user_id);
 CREATE INDEX IF NOT EXISTS form_records_site_visitor
   ON form_records ((source->>'site_visitor_id')) WHERE source->>'kind' = 'site';
 
--- A record a visitor submitted stays theirs: every writer replaces `form_records.source` with its
--- own, so the site origin (`kind`, `site_id`, `site_visitor_id`) is carried over on each update.
--- Events keep the writer's own source; only the stored record keeps the origin.
-CREATE OR REPLACE FUNCTION sv_site_record_origin() RETURNS trigger LANGUAGE plpgsql AS $$
+-- The visitor origin of a record (`source.site_visitor_id`) decides the visitor's "own" scope, so
+-- only the site API may set it. On INSERT it needs `SET LOCAL sv.site_writer = 'on'`, which only
+-- the site submit transaction sets. On UPDATE a record never gains a visitor origin, and a record
+-- a visitor submitted keeps its origin (`kind`, `site_id`, `site_visitor_id`) whatever source a
+-- later writer stores. Events keep each writer's own source.
+CREATE OR REPLACE FUNCTION sv_site_record_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-  IF jsonb_typeof(NEW.source) = 'object' THEN
-    NEW.source := NEW.source || jsonb_build_object(
-      'kind', 'site',
-      'site_id', OLD.source->'site_id',
-      'site_visitor_id', OLD.source->'site_visitor_id');
-  ELSE
-    NEW.source := jsonb_build_object(
-      'kind', 'site',
-      'site_id', OLD.source->'site_id',
-      'site_visitor_id', OLD.source->'site_visitor_id');
+  IF TG_OP = 'INSERT' THEN
+    IF jsonb_typeof(NEW.source) = 'object' AND NEW.source ? 'site_visitor_id'
+       AND current_setting('sv.site_writer', true) IS DISTINCT FROM 'on' THEN
+      RAISE EXCEPTION 'source_reserved: a site visitor origin is set by the site API only'
+        USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+  END IF;
+  IF jsonb_typeof(OLD.source) = 'object' AND OLD.source->>'kind' = 'site' AND OLD.source ? 'site_visitor_id' THEN
+    NEW.source := CASE WHEN jsonb_typeof(NEW.source) = 'object' THEN NEW.source ELSE '{}'::jsonb END
+      || jsonb_build_object(
+           'kind', 'site',
+           'site_id', OLD.source->'site_id',
+           'site_visitor_id', OLD.source->'site_visitor_id');
+  ELSIF jsonb_typeof(NEW.source) = 'object' AND NEW.source ? 'site_visitor_id' THEN
+    RAISE EXCEPTION 'source_reserved: a record cannot gain a site visitor origin'
+      USING ERRCODE = 'check_violation';
   END IF;
   RETURN NEW;
 END $$;
@@ -92,12 +101,9 @@ DO $$
 BEGIN
   SET LOCAL lock_timeout = '10s';
   IF NOT EXISTS (SELECT 1 FROM pg_trigger
-                 WHERE tgrelid = to_regclass('form_records') AND tgname = 'trg_sv_site_record_origin'
+                 WHERE tgrelid = to_regclass('form_records') AND tgname = 'trg_sv_site_record_guard'
                    AND NOT tgisinternal) THEN
-    CREATE TRIGGER trg_sv_site_record_origin BEFORE UPDATE OF source ON form_records
-      FOR EACH ROW
-      WHEN (OLD.source->>'kind' = 'site' AND OLD.source ? 'site_visitor_id'
-            AND NEW.source IS DISTINCT FROM OLD.source)
-      EXECUTE FUNCTION sv_site_record_origin();
+    CREATE TRIGGER trg_sv_site_record_guard BEFORE INSERT OR UPDATE OF source ON form_records
+      FOR EACH ROW EXECUTE FUNCTION sv_site_record_guard();
   END IF;
 END $$;

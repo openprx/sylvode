@@ -262,45 +262,64 @@ pub(crate) fn client_address(headers: &HeaderMap, peer: Option<SocketAddr>) -> I
     crate::security::client_ip(headers, peer, &crate::config::runtime().trusted_proxies)
 }
 
-/// In-process fixed windows, keyed by bucket and identity. Bounded: past the cap, closed windows
-/// are dropped first and then the whole table.
+/// In-process fixed windows, keyed by bucket and identity, each entry with its own window length.
+/// Bounded: past the cap, expired entries are dropped; if the table is still full, a new key is
+/// refused (fail closed) and every existing window keeps counting.
 pub(crate) struct Windows {
-    table: Mutex<HashMap<String, (Instant, u32)>>,
+    table: Mutex<HashMap<String, Window>>,
+    capacity: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Window {
+    started: Instant,
+    hits: u32,
+    length: Duration,
 }
 
 const MAX_WINDOWS: usize = 100_000;
 
 impl Windows {
-    fn new() -> Self {
+    fn new(capacity: usize) -> Self {
         Self {
             table: Mutex::new(HashMap::new()),
+            capacity,
         }
     }
 
-    /// Counts a hit; `Err(retry_after_secs)` when the window already holds `limit` hits.
+    /// Counts a hit; `Err(retry_after_secs)` when the window already holds `limit` hits, or when
+    /// the table is full and `key` is new.
     pub(crate) fn hit(&self, key: String, limit: u32, window: Duration) -> Result<(), u64> {
         let now = Instant::now();
         let mut table = self.table.lock();
-        if table.len() >= MAX_WINDOWS && !table.contains_key(&key) {
-            table.retain(|_, (started, _)| now.duration_since(*started) < window);
-            if table.len() >= MAX_WINDOWS {
-                table.clear();
+        if table.len() >= self.capacity && !table.contains_key(&key) {
+            table.retain(|_, entry| now.duration_since(entry.started) < entry.length);
+            if table.len() >= self.capacity {
+                return Err(window.as_secs().clamp(1, 60));
             }
         }
-        let entry = table.entry(key).or_insert((now, 0));
-        if now.duration_since(entry.0) >= window {
-            *entry = (now, 0);
+        let entry = table.entry(key).or_insert(Window {
+            started: now,
+            hits: 0,
+            length: window,
+        });
+        if now.duration_since(entry.started) >= entry.length {
+            *entry = Window {
+                started: now,
+                hits: 0,
+                length: window,
+            };
         }
-        if entry.1 >= limit {
-            let left = window.saturating_sub(now.duration_since(entry.0));
+        if entry.hits >= limit {
+            let left = entry.length.saturating_sub(now.duration_since(entry.started));
             return Err(left.as_secs().max(1));
         }
-        entry.1 += 1;
+        entry.hits += 1;
         Ok(())
     }
 }
 
-pub(crate) static WINDOWS: LazyLock<Windows> = LazyLock::new(Windows::new);
+pub(crate) static WINDOWS: LazyLock<Windows> = LazyLock::new(|| Windows::new(MAX_WINDOWS));
 
 pub(crate) const MINUTE: Duration = Duration::from_secs(60);
 pub(crate) const HOUR: Duration = Duration::from_secs(3600);
@@ -505,11 +524,33 @@ mod tests {
 
     #[test]
     fn windows_refuse_past_the_limit() {
-        let windows = Windows::new();
+        let windows = Windows::new(16);
         assert!(windows.hit("k".into(), 2, MINUTE).is_ok());
         assert!(windows.hit("k".into(), 2, MINUTE).is_ok());
         assert!(windows.hit("k".into(), 2, MINUTE).is_err());
         assert!(windows.hit("other".into(), 2, MINUTE).is_ok());
+    }
+
+    #[test]
+    fn a_full_table_refuses_new_keys_and_keeps_existing_windows() {
+        let windows = Windows::new(3);
+        for _ in 0..5 {
+            let _ = windows.hit("login-email:a@example.com".into(), 5, MINUTE);
+        }
+        assert!(windows.hit("submit:x".into(), 20, HOUR).is_ok());
+        assert!(windows.hit("req:1".into(), 120, MINUTE).is_ok());
+        assert!(
+            windows.hit("req:2".into(), 120, MINUTE).is_err(),
+            "a new key is refused when full"
+        );
+        assert!(
+            windows.hit("login-email:a@example.com".into(), 5, MINUTE).is_err(),
+            "the used-up login window survives"
+        );
+        assert!(
+            windows.hit("submit:x".into(), 20, HOUR).is_ok(),
+            "the hour window survives"
+        );
     }
 
     #[test]

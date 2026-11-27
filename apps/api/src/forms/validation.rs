@@ -62,6 +62,30 @@ pub fn writer_for_source(source: &Value, default: Writer) -> Writer {
     }
 }
 
+/// Keys of a record `source` that only the public site's own handlers may set (contract C3
+/// section 6.1): the visitor scope and the site writer are derived from them.
+const SITE_ORIGIN_KEYS: [&str; 3] = ["site_id", "site_visitor_id", "operator_id"];
+
+/// Refuses a client-supplied `source` that claims the site origin (`kind: "site"` or any of the
+/// site keys at its top level) with `400 source_reserved`.
+///
+/// # Errors
+/// `source_reserved` when the source claims the site origin.
+pub fn ensure_no_site_origin(source: &Value) -> Result<(), ApiError> {
+    let claims_site = source.get("kind").and_then(Value::as_str) == Some("site")
+        || source
+            .as_object()
+            .is_some_and(|object| SITE_ORIGIN_KEYS.iter().any(|key| object.contains_key(*key)));
+    if claims_site {
+        Err(ApiError::bad_request_coded(
+            "source_reserved",
+            "the site origin of a record is set by the site only",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 /// Create (and every create-shaped writer): normalises and checks every field; refuses on any error.
 /// `defaulted` lists the keys filled from defaults.
 pub async fn validate_create(
@@ -182,4 +206,25 @@ pub async fn validate_recalculated(
         values: output.values,
         carried: output.carried,
     })
+}
+
+#[cfg(test)]
+mod site_origin_tests {
+    use serde_json::json;
+
+    use super::ensure_no_site_origin;
+
+    #[test]
+    fn the_site_origin_is_reserved() {
+        assert!(ensure_no_site_origin(&json!({"type": "user", "actor_id": "x"})).is_ok());
+        assert!(ensure_no_site_origin(&json!("text")).is_ok());
+        for source in [
+            json!({"kind": "site"}),
+            json!({"type": "user", "site_visitor_id": "v"}),
+            json!({"site_id": "s"}),
+            json!({"operator_id": "o"}),
+        ] {
+            assert!(ensure_no_site_origin(&source).is_err(), "{source}");
+        }
+    }
 }

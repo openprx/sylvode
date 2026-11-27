@@ -84,7 +84,7 @@ enum Scope {
 }
 
 /// The operator's own read limits on the form: `form.view`, then the fields their policy excludes.
-async fn operator_excluded(
+pub(crate) async fn operator_excluded(
     state: &AppState,
     binding: &Binding,
     operator: &Operator,
@@ -409,14 +409,15 @@ pub(crate) fn submit_fields(binding: &Binding) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The update fields of the operator projection that still qualify.
-pub(crate) fn update_fields(binding: &Binding) -> Vec<String> {
+/// The update fields of the operator projection that still qualify, minus the fields the
+/// operator's own policy keeps from them (`excluded`).
+pub(crate) fn update_fields(binding: &Binding, excluded: &BTreeSet<String>) -> Vec<String> {
     binding
         .projection
         .operator
         .update
         .as_ref()
-        .map(|update| effective_write(&update.fields, &binding.fields, &BTreeSet::new()))
+        .map(|update| effective_write(&update.fields, &binding.fields, excluded))
         .unwrap_or_default()
 }
 
