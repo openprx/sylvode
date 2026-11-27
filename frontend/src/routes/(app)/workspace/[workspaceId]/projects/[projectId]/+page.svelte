@@ -3,6 +3,7 @@
 	import { resolve } from '$app/paths';
 	import ProjectPluginSettingsLink from '#lib/components/plugins/ProjectPluginSettingsLink.svelte';
 	import ProjectPluginNav from '#lib/components/plugins/ProjectPluginNav.svelte';
+	import Slot from '#lib/layout/Slot.svelte';
 	import FlowSharedBlockList from '#lib/components/flow/FlowSharedBlockList.svelte';
 	import { FileText } from '@lucide/svelte';
 	import { onMount, onDestroy, getContext } from 'svelte';
@@ -294,6 +295,13 @@
 		</div>
 
 		<ProjectPluginNav {workspaceId} {projectId} />
+
+		<Slot
+			id="project.home.widgets"
+			context={{ project_id: projectId }}
+			{workspaceId}
+			class="mb-8"
+		/>
 
 		{#if scenarioTemplate}
 			<div class="mb-8 rounded-card border border-line bg-raised p-6">

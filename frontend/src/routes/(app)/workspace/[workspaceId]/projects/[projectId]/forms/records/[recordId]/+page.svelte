@@ -3,6 +3,7 @@
 	import { writable } from 'svelte/store';
 	import CreatorPluginLink from '#lib/components/plugins/CreatorPluginLink.svelte';
 	import RecordPluginPanels from '#lib/components/plugins/RecordPluginPanels.svelte';
+	import Slot from '#lib/layout/Slot.svelte';
 	import RecordPluginActions from '#lib/components/plugins/RecordPluginActions.svelte';
 	import type { RecordPluginActionSurface } from '#lib/plugins/record-entries.js';
 	import {
@@ -699,6 +700,14 @@
 							{/if}
 							<RecordPluginActions recordId={record.id} surface={recordPluginActions} />
 						{/if}
+						{#if pluginRecordInRoute}
+							<Slot
+								id="form.record.actions"
+								context={{ project_id: projectId, form_id: form.id, record_id: record.id }}
+								{workspaceId}
+								chrome={false}
+							/>
+						{/if}
 					</div>
 				</div>
 			</header>
@@ -884,6 +893,13 @@
 							</dl>
 						</details>
 					{/each}
+					{#if pluginRecordInRoute}
+						<Slot
+							id="form.record.detail"
+							context={{ project_id: projectId, form_id: form.id, record_id: record.id }}
+							{workspaceId}
+						/>
+					{/if}
 				</main>
 
 				<aside
