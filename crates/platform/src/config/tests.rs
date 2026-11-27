@@ -291,6 +291,83 @@ fn ai_task_cap_below_the_timeout_names_both_keys() {
 }
 
 #[test]
+fn ai_task_delivery_keys_default_to_the_behaviour_without_them() {
+    let config = parse("").expect("an empty file is valid").ai_tasks;
+    assert!(!config.delivery_pool);
+    assert_eq!(config.delivery_concurrency, 1);
+    assert_eq!(config.per_runner_concurrency, 1);
+    assert_eq!(config.lane_batch, 10);
+    assert_eq!(config.pool_idle_timeout_secs, 30);
+    assert_eq!(config.pool_max_idle_per_host, 4);
+    assert_eq!(config.tcp_keepalive_secs, 30);
+    assert_eq!(config, super::AiTasksConfig::default());
+}
+
+#[test]
+fn ai_task_delivery_keys_are_read_and_bounded() {
+    let config = parse(
+        "[ai_tasks]\ndelivery_pool = true\ndelivery_concurrency = 8\nper_runner_concurrency = 4\n\
+         lane_batch = 20\npool_idle_timeout_secs = 60\npool_max_idle_per_host = 8\ntcp_keepalive_secs = 0\n",
+    )
+    .expect("valid delivery keys")
+    .ai_tasks;
+    assert!(config.delivery_pool);
+    assert_eq!(
+        (
+            config.delivery_concurrency,
+            config.per_runner_concurrency,
+            config.lane_batch,
+            config.pool_idle_timeout_secs,
+            config.pool_max_idle_per_host,
+            config.tcp_keepalive_secs
+        ),
+        (8, 4, 20, 60, 8, 0)
+    );
+    for (key, bad) in [
+        ("delivery_concurrency", 0_u64),
+        ("delivery_concurrency", 65),
+        ("per_runner_concurrency", 0),
+        ("per_runner_concurrency", 65),
+        ("lane_batch", 0),
+        ("lane_batch", 1_001),
+        ("pool_idle_timeout_secs", 0),
+        ("pool_idle_timeout_secs", 3_601),
+        ("pool_max_idle_per_host", 0),
+        ("pool_max_idle_per_host", 65),
+        ("tcp_keepalive_secs", 3_601),
+    ] {
+        let reported = issues(&format!("[ai_tasks]\n{key} = {bad}\n"));
+        assert!(
+            reported.iter().any(|issue| issue.contains(&format!("ai_tasks.{key}"))),
+            "{key} = {bad} was not rejected: {reported:?}"
+        );
+    }
+}
+
+#[test]
+fn the_example_configuration_delivery_keys_equal_the_defaults() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/sylvode.example.toml");
+    let text = std::fs::read_to_string(path).expect("example config");
+    let section = text
+        .split("\n[ai_tasks]\n")
+        .nth(1)
+        .and_then(|rest| rest.split("\n[").next())
+        .expect("[ai_tasks] section");
+    let uncommented = section
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let config = parse(&format!("[ai_tasks]\n{uncommented}\n")).expect("example ai_tasks parses");
+    assert!(!config.ai_tasks.delivery_pool);
+    assert_eq!(
+        config.ai_tasks,
+        super::AiTasksConfig::default(),
+        "the example's [ai_tasks] values must equal the defaults"
+    );
+}
+
+#[test]
 fn an_unknown_ai_tasks_key_is_still_refused() {
     assert!(parse("[ai_tasks]\nlease_extension = 60\n").is_err());
 }
