@@ -338,7 +338,7 @@ export class LayoutRuntime {
     scope: RefScope,
   ): Promise<ActionState> {
     const source = this.spec.data?.[action.data];
-    if (!source || source.source !== "form") return { status: "error", error: "action_unknown" };
+    if (source?.source !== "form") return { status: "error", error: "action_unknown" };
     const key = this.#bindingKey(source.form, scope);
     if (!key) return { status: "error", error: "binding_missing" };
     const allowed = new Set(this.editableFields(key, action.mode));
