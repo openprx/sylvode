@@ -46,5 +46,81 @@
       "create_from": "contents/forms/business_report.json"
     }
   },
-  "files": {}
+  "files": {},
+  "project": {
+    "type_key": "custom_form",
+    "workflow_states": [
+      {
+        "key": "draft",
+        "name": {
+          "en": "Draft",
+          "zh": "草稿"
+        },
+        "category": "unstarted",
+        "initial": true
+      },
+      {
+        "key": "sent_to_kitchen",
+        "name": {
+          "en": "Sent to Kitchen",
+          "zh": "已下厨"
+        },
+        "category": "active"
+      },
+      {
+        "key": "served",
+        "name": {
+          "en": "Served",
+          "zh": "已上菜"
+        },
+        "category": "active"
+      },
+      {
+        "key": "paid",
+        "name": {
+          "en": "Paid",
+          "zh": "已结账"
+        },
+        "category": "completed"
+      },
+      {
+        "key": "cancelled",
+        "name": {
+          "en": "Cancelled",
+          "zh": "已取消"
+        },
+        "category": "cancelled"
+      }
+    ],
+    "labels": [
+      {
+        "name": {
+          "en": "menu",
+          "zh": "菜单"
+        },
+        "color": "#2563eb"
+      },
+      {
+        "name": {
+          "en": "kitchen",
+          "zh": "后厨"
+        },
+        "color": "#7c3aed"
+      },
+      {
+        "name": {
+          "en": "receipt",
+          "zh": "小票"
+        },
+        "color": "#dc2626"
+      },
+      {
+        "name": {
+          "en": "revenue",
+          "zh": "营收"
+        },
+        "color": "#0891b2"
+      }
+    ]
+  }
 }

@@ -30,5 +30,81 @@
       "create_from": "contents/forms/change_request.json"
     }
   },
-  "files": {}
+  "files": {},
+  "project": {
+    "type_key": "custom_form",
+    "workflow_states": [
+      {
+        "key": "planned",
+        "name": {
+          "en": "Planned",
+          "zh": "已计划"
+        },
+        "category": "unstarted",
+        "initial": true
+      },
+      {
+        "key": "in_delivery",
+        "name": {
+          "en": "In Delivery",
+          "zh": "交付中"
+        },
+        "category": "active"
+      },
+      {
+        "key": "acceptance",
+        "name": {
+          "en": "Acceptance",
+          "zh": "验收"
+        },
+        "category": "active"
+      },
+      {
+        "key": "change_review",
+        "name": {
+          "en": "Change Review",
+          "zh": "变更评审"
+        },
+        "category": "active"
+      },
+      {
+        "key": "delivered",
+        "name": {
+          "en": "Delivered",
+          "zh": "已交付"
+        },
+        "category": "completed"
+      }
+    ],
+    "labels": [
+      {
+        "name": {
+          "en": "milestone",
+          "zh": "里程碑"
+        },
+        "color": "#2563eb"
+      },
+      {
+        "name": {
+          "en": "acceptance",
+          "zh": "验收"
+        },
+        "color": "#7c3aed"
+      },
+      {
+        "name": {
+          "en": "change-request",
+          "zh": "变更请求"
+        },
+        "color": "#dc2626"
+      },
+      {
+        "name": {
+          "en": "payment-risk",
+          "zh": "回款风险"
+        },
+        "color": "#0891b2"
+      }
+    ]
+  }
 }

@@ -30,5 +30,89 @@
       "create_from": "contents/forms/release_check.json"
     }
   },
-  "files": {}
+  "files": {},
+  "project": {
+    "type_key": "code_project",
+    "workflow_states": [
+      {
+        "key": "backlog",
+        "name": {
+          "en": "Backlog",
+          "zh": "待办"
+        },
+        "category": "unstarted",
+        "initial": true
+      },
+      {
+        "key": "ready",
+        "name": {
+          "en": "Ready",
+          "zh": "就绪"
+        },
+        "category": "active"
+      },
+      {
+        "key": "in_progress",
+        "name": {
+          "en": "In Progress",
+          "zh": "进行中"
+        },
+        "category": "active"
+      },
+      {
+        "key": "review",
+        "name": {
+          "en": "Review",
+          "zh": "评审"
+        },
+        "category": "active"
+      },
+      {
+        "key": "release_approval",
+        "name": {
+          "en": "Release Approval",
+          "zh": "发布审批"
+        },
+        "category": "active"
+      },
+      {
+        "key": "done",
+        "name": {
+          "en": "Done",
+          "zh": "已完成"
+        },
+        "category": "completed"
+      }
+    ],
+    "labels": [
+      {
+        "name": {
+          "en": "bug",
+          "zh": "缺陷"
+        },
+        "color": "#2563eb"
+      },
+      {
+        "name": {
+          "en": "feature",
+          "zh": "功能"
+        },
+        "color": "#7c3aed"
+      },
+      {
+        "name": {
+          "en": "review",
+          "zh": "评审"
+        },
+        "color": "#dc2626"
+      },
+      {
+        "name": {
+          "en": "release-risk",
+          "zh": "发布风险"
+        },
+        "color": "#0891b2"
+      }
+    ]
+  }
 }

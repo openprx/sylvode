@@ -18,7 +18,8 @@ pub use container::{
 };
 pub use error::{ErrorCode, PackageError, Result};
 pub use manifest::{
-    ActionEntry, Bind, Compat, Kind, LayoutEntry, Manifest, PageEntry, Publisher, Request, RuleEntry, SCHEMA_ID,
+    ActionEntry, Bind, Compat, Kind, LayoutEntry, Manifest, PageEntry, ProjectBlock, ProjectLabel, ProjectState,
+    Publisher, Request, RuleEntry, SCHEMA_ID,
 };
 pub use sign::{
     SIGNING_DOMAIN, canonical_bytes, generate_pkcs8, hex, key_id, keypair_from_pkcs8, package_digest, public_key,

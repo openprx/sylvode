@@ -135,6 +135,50 @@ pub struct PageEntry {
     pub nav: Option<BTreeMap<String, String>>,
 }
 
+/// A workflow state a template gives the project it creates.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectState {
+    /// `^[a-z][a-z0-9_]{0,31}$`, unique in the list.
+    pub key: String,
+    /// Display name (i18n map, `en` required).
+    pub name: BTreeMap<String, String>,
+    /// `unstarted`, `active`, `completed` or `cancelled`.
+    pub category: String,
+    /// Exactly one state is initial.
+    #[serde(default)]
+    pub initial: bool,
+    /// `^#[0-9a-f]{6}$`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+}
+
+/// A label a template creates in the workspace.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectLabel {
+    /// Name (i18n map, `en` required).
+    pub name: BTreeMap<String, String>,
+    /// `^#[0-9a-f]{6}$`.
+    pub color: String,
+}
+
+/// Project settings a built-in template applies when a project is created from it (never to an
+/// existing project): type, workflow states and labels. Governance is not part of it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectBlock {
+    /// An existing project type; the server checks that it exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_key: Option<String>,
+    /// The full ordered workflow (2..24 states).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_states: Option<Vec<ProjectState>>,
+    /// Labels (0..32).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub labels: Option<Vec<ProjectLabel>>,
+}
+
 /// The package manifest.
 ///
 /// `custom_code` is deliberately not a field: the server computes it
@@ -186,6 +230,9 @@ pub struct Manifest {
     /// Required package ids.
     #[serde(default)]
     pub depends: Vec<String>,
+    /// Project settings for create-from-template (kinds `form-template` and `app` only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<ProjectBlock>,
     /// Content path to `sha256:<64 hex>`.
     pub files: BTreeMap<String, String>,
 }
@@ -279,6 +326,115 @@ fn check_i18n(what: &str, map: &BTreeMap<String, String>) -> Result<()> {
     Ok(())
 }
 
+/// A text shown across the workspace: NFC, trimmed, no control or bidi-override characters.
+fn display_text_ok(text: &str, max_chars: usize) -> bool {
+    use unicode_normalization::is_nfc;
+    let chars = text.chars().count();
+    (1..=max_chars).contains(&chars)
+        && text.trim() == text
+        && is_nfc(text)
+        && !text.chars().any(|c| {
+            c.is_control() || matches!(c, '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+        })
+}
+
+/// An i18n map of a project block: at most 8 keys of the form `xx` or `xx-XX`, `en` present, every
+/// value a display text of at most `max_chars`.
+fn check_display_map(what: &str, map: &BTreeMap<String, String>, max_chars: usize) -> Result<()> {
+    let lang_ok = |lang: &str| {
+        let b = lang.as_bytes();
+        match b.len() {
+            2 => b.iter().all(u8::is_ascii_lowercase),
+            5 => b[..2].iter().all(u8::is_ascii_lowercase) && b[2] == b'-' && b[3..].iter().all(u8::is_ascii_uppercase),
+            _ => false,
+        }
+    };
+    if map.len() > 8 || !map.contains_key("en") || !map.keys().all(|lang| lang_ok(lang)) {
+        return Err(bad(format!(
+            "{what}: needs `en` and at most 8 language keys like en or zh-CN"
+        )));
+    }
+    if !map.values().all(|text| display_text_ok(text, max_chars)) {
+        return Err(bad(format!(
+            "{what}: a text is empty, too long, not NFC, untrimmed or has control characters"
+        )));
+    }
+    Ok(())
+}
+
+fn type_key_ok(key: &str) -> bool {
+    let mut chars = key.chars();
+    key.len() <= 48
+        && chars.next().is_some_and(|c| c.is_ascii_lowercase())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
+fn colour_ok(colour: &str) -> bool {
+    colour.len() == 7 && colour.starts_with('#') && colour[1..].bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+fn check_states(states: &[ProjectState]) -> Result<()> {
+    if !(2..=24).contains(&states.len()) {
+        return Err(bad("project.workflow_states needs 2 to 24 states"));
+    }
+    let mut keys = std::collections::BTreeSet::new();
+    for state in states {
+        let key_ok = state.key.len() <= 32
+            && state.key.chars().next().is_some_and(|c| c.is_ascii_lowercase())
+            && state
+                .key
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+        if !key_ok || !keys.insert(state.key.as_str()) {
+            return Err(bad(format!(
+                "workflow state key `{}` is invalid or repeated",
+                state.key
+            )));
+        }
+        check_display_map(&format!("workflow state `{}` name", state.key), &state.name, 64)?;
+        if !matches!(
+            state.category.as_str(),
+            "unstarted" | "active" | "completed" | "cancelled"
+        ) {
+            return Err(bad(format!("workflow state `{}`: bad category", state.key)));
+        }
+        if state.color.as_deref().is_some_and(|c| !colour_ok(c)) {
+            return Err(bad(format!(
+                "workflow state `{}`: color must be lower-case #rrggbb",
+                state.key
+            )));
+        }
+    }
+    if states.iter().filter(|s| s.initial).count() != 1 {
+        return Err(bad("exactly one workflow state must be initial"));
+    }
+    if !states.iter().any(|s| s.category == "completed") {
+        return Err(bad("at least one workflow state must be completed"));
+    }
+    Ok(())
+}
+
+fn check_labels(labels: &[ProjectLabel]) -> Result<()> {
+    if labels.len() > 32 {
+        return Err(bad("project.labels lists more than 32 labels"));
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for label in labels {
+        check_display_map("label name", &label.name, 48)?;
+        if !colour_ok(&label.color) {
+            return Err(bad("label color must be lower-case #rrggbb"));
+        }
+        // The name in every language: the same text twice, in any case, would collide on the
+        // workspace's `lower(name)` index. One label may repeat its own text across languages.
+        let own: std::collections::BTreeSet<String> = label.name.values().map(|text| text.to_lowercase()).collect();
+        if own.iter().any(|text| seen.contains(text)) {
+            return Err(bad("a label name is repeated"));
+        }
+        seen.extend(own);
+    }
+    Ok(())
+}
+
 fn too_many(what: &str, n: usize) -> Result<()> {
     if n > MAX_LIST {
         Err(bad(format!("{what} lists more than {MAX_LIST} entries")))
@@ -365,6 +521,7 @@ impl Manifest {
         self.check_components()?;
         self.check_layouts_and_pages()?;
         self.check_messages_and_depends()?;
+        self.check_project()?;
         for r in &self.requests {
             check_request(r, &self.binds)?;
         }
@@ -539,6 +696,27 @@ impl Manifest {
             if let Some(nav) = &p.nav {
                 check_i18n("page nav", nav)?;
             }
+        }
+        Ok(())
+    }
+
+    fn check_project(&self) -> Result<()> {
+        let Some(project) = &self.project else {
+            return Ok(());
+        };
+        if !matches!(self.kind, Kind::FormTemplate | Kind::App) {
+            return Err(bad("project is only allowed in a form-template or an app"));
+        }
+        if let Some(type_key) = &project.type_key
+            && !type_key_ok(type_key)
+        {
+            return Err(bad("project.type_key must match ^[a-z][a-z0-9_]{0,47}$"));
+        }
+        if let Some(states) = &project.workflow_states {
+            check_states(states)?;
+        }
+        if let Some(labels) = &project.labels {
+            check_labels(labels)?;
         }
         Ok(())
     }

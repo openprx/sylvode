@@ -106,5 +106,8 @@
       }
     }
   ],
-  "depends": []
+  "depends": [],
+  "project": {
+    "type_key": "custom_form"
+  }
 }

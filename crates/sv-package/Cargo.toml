@@ -14,6 +14,7 @@ ring.workspace = true
 semver.workspace = true
 serde_jcs.workspace = true
 sha2 = "0.10"
+unicode-normalization.workspace = true
 zip.workspace = true
 
 [lints]

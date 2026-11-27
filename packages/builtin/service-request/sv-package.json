@@ -22,5 +22,8 @@
       "kind": "form",
       "create_from": "contents/forms/service_request.json"
     }
+  },
+  "project": {
+    "type_key": "custom_form"
   }
 }
