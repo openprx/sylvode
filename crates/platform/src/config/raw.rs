@@ -23,16 +23,20 @@ use super::inbound::RawInbound;
 use super::oauth::{RawOAuth, UrlRole, validate_forward_secret, validate_url};
 use super::secret::Secret;
 use super::{
-    AI_TASK_LEASE_EXTENSION_RANGE_SECS, AI_TASK_MAX_CHAIN_DEPTH_RANGE, AI_TASK_MAX_PROCESSING_CEILING_SECS,
-    AI_TASK_PROCESSING_TIMEOUT_RANGE_SECS, AiTasksConfig, AuditConfig, AuthConfig, ConfigError,
+    AI_TASK_DELIVERY_CONCURRENCY_RANGE, AI_TASK_LANE_BATCH_RANGE, AI_TASK_LEASE_EXTENSION_RANGE_SECS,
+    AI_TASK_MAX_CHAIN_DEPTH_RANGE, AI_TASK_MAX_PROCESSING_CEILING_SECS, AI_TASK_PER_RUNNER_CONCURRENCY_RANGE,
+    AI_TASK_POOL_IDLE_TIMEOUT_RANGE_SECS, AI_TASK_POOL_MAX_IDLE_PER_HOST_RANGE, AI_TASK_PROCESSING_TIMEOUT_RANGE_SECS,
+    AI_TASK_TCP_KEEPALIVE_CEILING_SECS, AiTasksConfig, AuditConfig, AuthConfig, ConfigError,
+    DEFAULT_AI_TASK_DELIVERY_CONCURRENCY, DEFAULT_AI_TASK_DELIVERY_POOL, DEFAULT_AI_TASK_LANE_BATCH,
     DEFAULT_AI_TASK_LEASE_EXTENSION_SECS, DEFAULT_AI_TASK_MAX_CHAIN_DEPTH, DEFAULT_AI_TASK_MAX_PROCESSING_SECS,
-    DEFAULT_AI_TASK_PROCESSING_TIMEOUT_SECS, DEFAULT_FLOW_BODY_ASSET_MAX_BYTES,
-    DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS, DEFAULT_FLOW_DISPATCH_MAX_ATTEMPTS, DEFAULT_FLOW_SETUP_CPU_BUDGET_MS,
-    DEFAULT_OPERATION_LOG_RETENTION_DAYS, DEFAULT_S3_REGION, DEFAULT_STORAGE_DIR, DatabaseConfig, FlowConfig, IpCidr,
-    LogFormat, LogOutput, LoggingConfig, MAX_FLOW_BODY_ASSET_BYTES, MAX_FLOW_CONVERSION_REAP_INTERVAL_SECS,
-    MAX_FLOW_SETUP_CPU_BUDGET_MS, MIN_FLOW_SETUP_CPU_BUDGET_MS, MIN_JWT_SECRET_LEN, McpConfig, McpToolMode,
-    McpTransport, MigrationsConfig, OAuthConfig, OpenPrConfig, OutboundConfig, S3Config, ServerConfig, StorageBackend,
-    StorageConfig,
+    DEFAULT_AI_TASK_PER_RUNNER_CONCURRENCY, DEFAULT_AI_TASK_POOL_IDLE_TIMEOUT_SECS,
+    DEFAULT_AI_TASK_POOL_MAX_IDLE_PER_HOST, DEFAULT_AI_TASK_PROCESSING_TIMEOUT_SECS,
+    DEFAULT_AI_TASK_TCP_KEEPALIVE_SECS, DEFAULT_FLOW_BODY_ASSET_MAX_BYTES, DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS,
+    DEFAULT_FLOW_DISPATCH_MAX_ATTEMPTS, DEFAULT_FLOW_SETUP_CPU_BUDGET_MS, DEFAULT_OPERATION_LOG_RETENTION_DAYS,
+    DEFAULT_S3_REGION, DEFAULT_STORAGE_DIR, DatabaseConfig, FlowConfig, IpCidr, LogFormat, LogOutput, LoggingConfig,
+    MAX_FLOW_BODY_ASSET_BYTES, MAX_FLOW_CONVERSION_REAP_INTERVAL_SECS, MAX_FLOW_SETUP_CPU_BUDGET_MS,
+    MIN_FLOW_SETUP_CPU_BUDGET_MS, MIN_JWT_SECRET_LEN, McpConfig, McpToolMode, McpTransport, MigrationsConfig,
+    OAuthConfig, OpenPrConfig, OutboundConfig, S3Config, ServerConfig, StorageBackend, StorageConfig,
 };
 
 const DEFAULT_MAX_CONNECTIONS: u32 = 20;
@@ -159,6 +163,13 @@ struct RawAiTasks {
     lease_extension_secs: Option<u64>,
     max_processing_secs: Option<u64>,
     max_chain_depth: Option<u32>,
+    delivery_pool: Option<bool>,
+    delivery_concurrency: Option<u32>,
+    per_runner_concurrency: Option<u32>,
+    lane_batch: Option<u32>,
+    pool_idle_timeout_secs: Option<u64>,
+    pool_max_idle_per_host: Option<u32>,
+    tcp_keepalive_secs: Option<u64>,
 }
 
 #[derive(Deserialize, Default)]
@@ -588,11 +599,76 @@ impl RawAiTasks {
                 DEFAULT_AI_TASK_MAX_CHAIN_DEPTH
             }
         });
+        let delivery_concurrency = self
+            .delivery_concurrency
+            .map_or(DEFAULT_AI_TASK_DELIVERY_CONCURRENCY, |value| {
+                if AI_TASK_DELIVERY_CONCURRENCY_RANGE.contains(&value) {
+                    value
+                } else {
+                    issues.push("ai_tasks.delivery_concurrency must be between 1 and 64");
+                    DEFAULT_AI_TASK_DELIVERY_CONCURRENCY
+                }
+            });
+        let per_runner_concurrency =
+            self.per_runner_concurrency
+                .map_or(DEFAULT_AI_TASK_PER_RUNNER_CONCURRENCY, |value| {
+                    if AI_TASK_PER_RUNNER_CONCURRENCY_RANGE.contains(&value) {
+                        value
+                    } else {
+                        issues.push("ai_tasks.per_runner_concurrency must be between 1 and 64");
+                        DEFAULT_AI_TASK_PER_RUNNER_CONCURRENCY
+                    }
+                });
+        let lane_batch = self.lane_batch.map_or(DEFAULT_AI_TASK_LANE_BATCH, |value| {
+            if AI_TASK_LANE_BATCH_RANGE.contains(&value) {
+                value
+            } else {
+                issues.push("ai_tasks.lane_batch must be between 1 and 1000");
+                DEFAULT_AI_TASK_LANE_BATCH
+            }
+        });
+        let pool_idle_timeout_secs =
+            self.pool_idle_timeout_secs
+                .map_or(DEFAULT_AI_TASK_POOL_IDLE_TIMEOUT_SECS, |value| {
+                    if AI_TASK_POOL_IDLE_TIMEOUT_RANGE_SECS.contains(&value) {
+                        value
+                    } else {
+                        issues.push("ai_tasks.pool_idle_timeout_secs must be between 1 and 3600");
+                        DEFAULT_AI_TASK_POOL_IDLE_TIMEOUT_SECS
+                    }
+                });
+        let pool_max_idle_per_host =
+            self.pool_max_idle_per_host
+                .map_or(DEFAULT_AI_TASK_POOL_MAX_IDLE_PER_HOST, |value| {
+                    if AI_TASK_POOL_MAX_IDLE_PER_HOST_RANGE.contains(&value) {
+                        value
+                    } else {
+                        issues.push("ai_tasks.pool_max_idle_per_host must be between 1 and 64");
+                        DEFAULT_AI_TASK_POOL_MAX_IDLE_PER_HOST
+                    }
+                });
+        let tcp_keepalive_secs = self
+            .tcp_keepalive_secs
+            .map_or(DEFAULT_AI_TASK_TCP_KEEPALIVE_SECS, |value| {
+                if value <= AI_TASK_TCP_KEEPALIVE_CEILING_SECS {
+                    value
+                } else {
+                    issues.push("ai_tasks.tcp_keepalive_secs must be at most 3600");
+                    DEFAULT_AI_TASK_TCP_KEEPALIVE_SECS
+                }
+            });
         AiTasksConfig {
             processing_timeout_secs,
             lease_extension_secs,
             max_processing_secs,
             max_chain_depth,
+            delivery_pool: self.delivery_pool.unwrap_or(DEFAULT_AI_TASK_DELIVERY_POOL),
+            delivery_concurrency,
+            per_runner_concurrency,
+            lane_batch,
+            pool_idle_timeout_secs,
+            pool_max_idle_per_host,
+            tcp_keepalive_secs,
         }
     }
 }

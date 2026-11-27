@@ -12,6 +12,11 @@ name.
 
 ### Added
 
+- **Worker delivery pool, off by default.** `[ai_tasks]` gains `delivery_pool`, `delivery_concurrency`,
+  `per_runner_concurrency`, `lane_batch`, `pool_idle_timeout_secs`, `pool_max_idle_per_host` and
+  `tcp_keepalive_secs`. With the defaults the worker delivers as before; `delivery_pool = true` reuses
+  connections to runners and checks the address of every new connection, and `delivery_concurrency`
+  above 1 delivers different bots' tasks at once, each bot's in order.
 - **Intranet HTTPS toolkit.** `deploy/tls/sylvode-tls.sh` creates a private CA limited to the
   server's own IP addresses and names, issues and renews the server certificate and prints the
   Sylvode and proxy settings; `trust-client.sh` and `trust-client.ps1` install that CA on macOS,

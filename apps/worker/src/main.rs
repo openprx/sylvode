@@ -13,6 +13,7 @@ mod ai_tasks;
 mod alert_followup;
 mod email;
 mod flow;
+mod lanes;
 mod oauth_feed;
 
 /// Operation-log retention runs once per day; the first run happens at worker startup.
@@ -96,6 +97,8 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(
         concurrency = args.concurrency,
         ai_task_processing_timeout_secs,
+        ai_task_delivery_pool = config.ai_tasks.delivery_pool,
+        ai_task_delivery_concurrency = config.ai_tasks.delivery_concurrency,
         app = %cfg.app_name,
         storage_backend = ?runtime.storage.backend,
         storage_dir = %runtime.storage.dir.display(),
@@ -133,7 +136,7 @@ async fn main() -> anyhow::Result<()> {
                 tracing::info!("worker shutting down");
                 break;
             }
-            result = ai_tasks::process_pending_tasks(&state, args.concurrency, ai_task_processing_timeout_secs) => {
+            result = ai_tasks::process_pending_tasks(&state, args.concurrency, &config.ai_tasks) => {
                 if let Err(err) = result {
                     tracing::warn!(error = %err, "task polling failed");
                 }

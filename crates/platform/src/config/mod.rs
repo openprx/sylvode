@@ -125,6 +125,47 @@ pub const DEFAULT_AI_TASK_MAX_CHAIN_DEPTH: u32 = 3;
 /// Accepted range of `ai_tasks.max_chain_depth`.
 pub const AI_TASK_MAX_CHAIN_DEPTH_RANGE: std::ops::RangeInclusive<u32> = 1..=10;
 
+/// Whether the worker delivers AI tasks through the shared, address-checked connection pool.
+/// Off unless `[ai_tasks] delivery_pool` turns it on: a delivery then builds its own client.
+pub const DEFAULT_AI_TASK_DELIVERY_POOL: bool = false;
+
+/// AI task deliveries the worker runs at once. 1 is the serial delivery of a batch.
+pub const DEFAULT_AI_TASK_DELIVERY_CONCURRENCY: u32 = 1;
+
+/// Accepted range of `ai_tasks.delivery_concurrency`.
+pub const AI_TASK_DELIVERY_CONCURRENCY_RANGE: std::ops::RangeInclusive<u32> = 1..=64;
+
+/// Requests in flight to one runner address at once. Only the delivery pool applies it.
+pub const DEFAULT_AI_TASK_PER_RUNNER_CONCURRENCY: u32 = 1;
+
+/// Accepted range of `ai_tasks.per_runner_concurrency`.
+pub const AI_TASK_PER_RUNNER_CONCURRENCY_RANGE: std::ops::RangeInclusive<u32> = 1..=64;
+
+/// Tasks picked up per delivery slot in one worker tick (the pick-up limit is the worker's
+/// `--concurrency` times this).
+pub const DEFAULT_AI_TASK_LANE_BATCH: u32 = 10;
+
+/// Accepted range of `ai_tasks.lane_batch`.
+pub const AI_TASK_LANE_BATCH_RANGE: std::ops::RangeInclusive<u32> = 1..=1_000;
+
+/// Seconds an idle pooled delivery connection is kept.
+pub const DEFAULT_AI_TASK_POOL_IDLE_TIMEOUT_SECS: u64 = 30;
+
+/// Accepted range of `ai_tasks.pool_idle_timeout_secs`.
+pub const AI_TASK_POOL_IDLE_TIMEOUT_RANGE_SECS: std::ops::RangeInclusive<u64> = 1..=3_600;
+
+/// Idle pooled delivery connections kept per runner address.
+pub const DEFAULT_AI_TASK_POOL_MAX_IDLE_PER_HOST: u32 = 4;
+
+/// Accepted range of `ai_tasks.pool_max_idle_per_host`.
+pub const AI_TASK_POOL_MAX_IDLE_PER_HOST_RANGE: std::ops::RangeInclusive<u32> = 1..=64;
+
+/// Seconds between TCP keepalive probes on pooled delivery connections. 0 turns them off.
+pub const DEFAULT_AI_TASK_TCP_KEEPALIVE_SECS: u64 = 30;
+
+/// Largest accepted `ai_tasks.tcp_keepalive_secs`.
+pub const AI_TASK_TCP_KEEPALIVE_CEILING_SECS: u64 = 3_600;
+
 /// `event_dispatch` expansion-failure retry ceiling assumed unless `[flow]` overrides it.
 ///
 /// `limits-v1.md`'s own `dispatch_max_attempts` rationale ("与 `delivery_max_attempts` 同量级即可")
@@ -503,12 +544,29 @@ impl Default for AuditConfig {
 ///
 /// `max_chain_depth` is the deepest hop of a bot-to-bot chain (see
 /// [`DEFAULT_AI_TASK_MAX_CHAIN_DEPTH`]).
+///
+/// The remaining keys shape the worker's delivery to runners; every default is today's behaviour
+/// (a client per delivery, one delivery at a time):
+///
+/// - `delivery_pool` switches delivery to one long-lived client pair whose every new connection
+///   is address-checked; `pool_idle_timeout_secs`, `pool_max_idle_per_host` and
+///   `tcp_keepalive_secs` shape its connections, and `per_runner_concurrency` caps the requests in
+///   flight to one runner address.
+/// - `delivery_concurrency` is how many bots' deliveries run at once (1 is serial) and
+///   `lane_batch` multiplies the worker's `--concurrency` into the pick-up limit of one tick.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AiTasksConfig {
     pub processing_timeout_secs: u64,
     pub lease_extension_secs: u64,
     pub max_processing_secs: u64,
     pub max_chain_depth: u32,
+    pub delivery_pool: bool,
+    pub delivery_concurrency: u32,
+    pub per_runner_concurrency: u32,
+    pub lane_batch: u32,
+    pub pool_idle_timeout_secs: u64,
+    pub pool_max_idle_per_host: u32,
+    pub tcp_keepalive_secs: u64,
 }
 
 impl Default for AiTasksConfig {
@@ -518,6 +576,13 @@ impl Default for AiTasksConfig {
             lease_extension_secs: DEFAULT_AI_TASK_LEASE_EXTENSION_SECS,
             max_processing_secs: DEFAULT_AI_TASK_MAX_PROCESSING_SECS,
             max_chain_depth: DEFAULT_AI_TASK_MAX_CHAIN_DEPTH,
+            delivery_pool: DEFAULT_AI_TASK_DELIVERY_POOL,
+            delivery_concurrency: DEFAULT_AI_TASK_DELIVERY_CONCURRENCY,
+            per_runner_concurrency: DEFAULT_AI_TASK_PER_RUNNER_CONCURRENCY,
+            lane_batch: DEFAULT_AI_TASK_LANE_BATCH,
+            pool_idle_timeout_secs: DEFAULT_AI_TASK_POOL_IDLE_TIMEOUT_SECS,
+            pool_max_idle_per_host: DEFAULT_AI_TASK_POOL_MAX_IDLE_PER_HOST,
+            tcp_keepalive_secs: DEFAULT_AI_TASK_TCP_KEEPALIVE_SECS,
         }
     }
 }
