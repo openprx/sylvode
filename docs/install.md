@@ -429,6 +429,9 @@ file paths in `SYLVODE_TLS_OUT`, `SYLVODE_TLS_CERT`, `SYLVODE_TLS_KEY`, `SYLVODE
 `SYLVODE_TLS_NOT_AFTER`. If the hook fails, `renew` exits 5 and runs it again on the next call, so
 a proxy that missed a reload picks the certificate up later. `renew --check` changes nothing and
 exits 10 when renewal is due, which suits monitoring.
+Keep the threshold lower than the certificate lifetime: with `--days` given explicitly `renew`
+refuses a higher threshold, and a stored lifetime that is not above the threshold makes every run
+renew and reload.
 
 A systemd timer, `/etc/systemd/system/sylvode-tls-renew.service`:
 
@@ -464,7 +467,7 @@ Enable it with `systemctl daemon-reload && systemctl enable --now sylvode-tls-re
 cron, `/etc/cron.d/sylvode-tls`:
 
 ```
-17 3 * * * root /usr/local/sbin/sylvode-tls.sh --quiet renew --exec "systemctl reload nginx" >>/var/log/sylvode-tls.log 2>&1
+17 3 * * * root /usr/local/sbin/sylvode-tls.sh renew --quiet --exec "systemctl reload nginx" >>/var/log/sylvode-tls.log 2>&1
 ```
 
 Reload commands: nginx `systemctl reload nginx` or `nginx -s reload`; Caddy
