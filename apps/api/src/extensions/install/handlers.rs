@@ -35,6 +35,14 @@ fn not_found() -> ApiError {
     ApiError::not_found("installation not found")
 }
 
+/// `value` (a JSON object) with one more member.
+fn with_field(mut value: Value, key: &str, member: Value) -> Value {
+    if let Some(object) = value.as_object_mut() {
+        object.insert(key.to_owned(), member);
+    }
+    value
+}
+
 fn empty_object() -> Value {
     json!({})
 }
@@ -362,10 +370,14 @@ pub async fn get_installation(
     Path(installation_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
     let (row, _) = access::installation_for_admin(&state, &claims, installation_id).await?;
-    let mut answer = installation_json(&state.db, &row).await?;
+    let answer = installation_json(&state.db, &row).await?;
     // What a disable or revoke would stop, so the confirmation can name it before the change.
-    answer["forms_using_rules"] = Value::Array(forms_using_rules(&state.db, &row).await?);
-    Ok(ApiResponse::success(answer))
+    let forms = forms_using_rules(&state.db, &row).await?;
+    Ok(ApiResponse::success(with_field(
+        answer,
+        "forms_using_rules",
+        Value::Array(forms),
+    )))
 }
 
 /// `GET /api/v1/installations/{installation_id}/review`: the preview of the pending generation (or,
@@ -461,7 +473,7 @@ async fn forms_using_rules(db: &impl ConnectionTrait, row: &InstallationRow) -> 
         DbBackend::Postgres,
         "SELECT id, project_id, key, name FROM project_forms \
          WHERE workspace_id = $1 AND ($2::uuid IS NULL OR project_id = $2) \
-           AND schema::text LIKE '%\"package\": \"' || $3 || '\"%' ORDER BY name",
+           AND schema::text LIKE '%\"package\": \"' || $3::text || '\"%' ORDER BY name",
         vec![
             row.workspace_id.into(),
             row.project_id.into(),
@@ -526,11 +538,12 @@ async fn change_status(
     let after = store::load_installation(&state.db, installation_id)
         .await?
         .ok_or_else(not_found)?;
-    let mut answer = installation_json(&state.db, &after).await?;
-    if !matches!(change, Change::Enable) {
-        answer["forms_using_rules"] = Value::Array(forms_using_rules(&state.db, &after).await?);
+    let answer = installation_json(&state.db, &after).await?;
+    if matches!(change, Change::Enable) {
+        return Ok(answer);
     }
-    Ok(answer)
+    let forms = forms_using_rules(&state.db, &after).await?;
+    Ok(with_field(answer, "forms_using_rules", Value::Array(forms)))
 }
 
 /// Enabling needs a package that is still installable and, after `approver_lost`, an approver who is

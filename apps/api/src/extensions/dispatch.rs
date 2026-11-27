@@ -326,7 +326,8 @@ fn host_key(
         None if by_body => field("body", &serde_json::to_vec(body).unwrap_or_default()),
         None => field("call", &call_index.to_be_bytes()),
     }
-    format!("ext:{}", hex::encode(&hasher.finalize()[..16]))
+    let digest = hasher.finalize();
+    format!("ext:{}", hex::encode(digest.get(..16).unwrap_or_default()))
 }
 
 fn build_request(

@@ -184,6 +184,7 @@ pub async fn generation(
     .await?)
 }
 
+#[allow(clippy::too_many_arguments, reason = "one argument per column of the INSERT")]
 pub async fn insert_generation(
     db: &impl ConnectionTrait,
     installation_id: Uuid,

@@ -293,7 +293,9 @@ async fn write(
             .await?;
             forms_of_binds.insert(template.bind.clone(), form_id);
             // A form the package created is an ordinary form from now on: the bind names it.
-            bind_map[&template.bind] = json!({ "form_id": form_id });
+            if let Some(binds) = bind_map.as_object_mut() {
+                binds.insert(template.bind.clone(), json!({ "form_id": form_id }));
+            }
         }
     }
     let grants = validate_grants(&tx, &installation, &generation, &request.grants, &forms_of_binds).await?;
