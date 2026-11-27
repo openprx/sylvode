@@ -66,16 +66,25 @@ pub fn writer_for_source(source: &Value, default: Writer) -> Writer {
 /// section 6.1): the visitor scope and the site writer are derived from them.
 const SITE_ORIGIN_KEYS: [&str; 3] = ["site_id", "site_visitor_id", "operator_id"];
 
+/// The members of the origin a plugin call stamps (`extensions::provenance_source`); a client may
+/// not send them either, or a person could make a write look like a plugin acting for someone else.
+const PLUGIN_ORIGIN_KEYS: [&str; 3] = ["surface", "installation", "generation"];
+
 /// Refuses a client-supplied `source` that claims the site origin (`kind: "site"` or any of the
-/// site keys at its top level) with `400 source_reserved`.
+/// site keys at its top level), or the plugin origin (`type: "plugin"`, or `surface`, `installation`
+/// or `generation`), with `400 source_reserved`.
 ///
 /// # Errors
 /// `source_reserved` when the source claims the site origin.
 pub fn ensure_no_site_origin(source: &Value) -> Result<(), ApiError> {
     let claims_site = source.get("kind").and_then(Value::as_str) == Some("site")
-        || source
-            .as_object()
-            .is_some_and(|object| SITE_ORIGIN_KEYS.iter().any(|key| object.contains_key(*key)));
+        || source.get("type").and_then(Value::as_str) == Some("plugin")
+        || source.as_object().is_some_and(|object| {
+            SITE_ORIGIN_KEYS
+                .iter()
+                .chain(PLUGIN_ORIGIN_KEYS.iter())
+                .any(|key| object.contains_key(*key))
+        });
     if claims_site {
         Err(ApiError::bad_request_coded(
             "source_reserved",
@@ -223,6 +232,9 @@ mod site_origin_tests {
             json!({"type": "user", "site_visitor_id": "v"}),
             json!({"site_id": "s"}),
             json!({"operator_id": "o"}),
+            json!({"type": "plugin", "installation": "i", "generation": 1, "actor": "a"}),
+            json!({"type": "user", "surface": "plugin"}),
+            json!({"installation": "i"}),
         ] {
             assert!(ensure_no_site_origin(&source).is_err(), "{source}");
         }

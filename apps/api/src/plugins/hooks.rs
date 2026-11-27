@@ -90,6 +90,8 @@ struct PluginHookRow {
     key: String,
     manifest: Value,
     wasm_bytes: Option<Vec<u8>>,
+    /// `updated_at` as text: a changed plugin has another version, which invalidates its cached wasm.
+    version: String,
 }
 
 pub async fn run_field_validator_hooks(
@@ -504,14 +506,48 @@ fn merge_patch(values: &mut Value, patch: Value) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// Component bytes of legacy plugins by id and version, so a record write does not read every
+/// plugin's blob from the database. Bounded: a full cache is emptied.
+static WASM: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashMap<Uuid, (String, Arc<Vec<u8>>)>>> =
+    std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
+const WASM_CACHE_PLUGINS: usize = 64;
+
+async fn wasm_of(state: &AppState, plugin_id: Uuid, version: &str) -> Result<Option<Arc<Vec<u8>>>, ApiError> {
+    if let Some((cached, bytes)) = WASM.lock().get(&plugin_id)
+        && cached == version
+    {
+        return Ok(Some(Arc::clone(bytes)));
+    }
+    let row = state
+        .db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT wasm_bytes FROM plugins WHERE id = $1 AND updated_at::text = $2",
+            vec![plugin_id.into(), version.to_owned().into()],
+        ))
+        .await?;
+    let Some(bytes) = row.and_then(|row| row.try_get::<Option<Vec<u8>>>("", "wasm_bytes").ok().flatten()) else {
+        return Ok(None);
+    };
+    let bytes = Arc::new(bytes);
+    let mut cache = WASM.lock();
+    if cache.len() >= WASM_CACHE_PLUGINS {
+        cache.clear();
+    }
+    cache.insert(plugin_id, (version.to_owned(), Arc::clone(&bytes)));
+    Ok(Some(bytes))
+}
+
+/// The active plugins of the project with their component bytes, read from the cache when the
+/// plugin has not changed.
 async fn load_active_plugins(
     state: &AppState,
     workspace_id: Uuid,
     project_id: Uuid,
 ) -> Result<Vec<PluginHookRow>, ApiError> {
-    Ok(PluginHookRow::find_by_statement(Statement::from_sql_and_values(
+    let mut rows = PluginHookRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        r"SELECT id, workspace_id, project_id, key, manifest, wasm_bytes
+        r"SELECT id, workspace_id, project_id, key, manifest, NULL::bytea AS wasm_bytes, updated_at::text AS version
              FROM plugins
             WHERE workspace_id = $1
               AND project_id = $2
@@ -521,7 +557,13 @@ async fn load_active_plugins(
         vec![workspace_id.into(), project_id.into()],
     ))
     .all(&state.db)
-    .await?)
+    .await?;
+    for row in &mut rows {
+        row.wasm_bytes = wasm_of(state, row.id, &row.version)
+            .await?
+            .map(|bytes| bytes.as_ref().clone());
+    }
+    Ok(rows)
 }
 
 async fn insert_hook_invocation(

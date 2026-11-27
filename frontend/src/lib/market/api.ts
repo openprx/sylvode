@@ -31,6 +31,8 @@ export interface Installation {
 	status: InstallationStatus;
 	disabled_reason: 'admin' | 'approver_lost' | 'key_revoked' | null;
 	active_generation: number | null;
+	/** False when the administrator who approved the active generation no longer is one. */
+	approver_active: boolean | null;
 	generations: InstallationGeneration[];
 	grants: { capability: string; selector: GrantSelector }[];
 	/** Grants whose capability changed since they were approved: not honoured until approved again. */

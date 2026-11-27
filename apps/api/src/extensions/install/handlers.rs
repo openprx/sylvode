@@ -164,8 +164,19 @@ async fn installation_json(db: &impl ConnectionTrait, row: &InstallationRow) -> 
         .filter(|grant| grant.current_digest.as_deref() != Some(grant.plugin_ops_digest.as_str()))
         .map(|grant| json!({"capability": grant.capability, "selector": grant.selector}))
         .collect();
+    // Whether the administrator who approved the active generation still is one; `false` asks for a
+    // new approval (contract C1 §3, N-1).
+    let approver_active = match active.and_then(|generation| generation.reviewed_by) {
+        Some(approver) => Some(
+            super::live::approver_is_admin(db, row.workspace_id, approver)
+                .await
+                .map_err(|_| ApiError::internal())?,
+        ),
+        None => active.map(|_| false),
+    };
     Ok(json!({
         "id": row.id,
+        "approver_active": approver_active,
         "workspace_id": row.workspace_id,
         "scope": {"kind": row.scope_kind, "project_id": row.project_id},
         "package_key": row.package_key,
@@ -563,6 +574,7 @@ async fn enable(tx: &impl ConnectionTrait, row: &InstallationRow) -> Result<(), 
     if !stored.installable || stored.key_status != "active" {
         return Err(refuse(RefusalCode::InstallationPackageRevoked));
     }
+    super::approve::ensure_key_active(tx, row.workspace_id, &stored).await?;
     if row.disabled_reason.as_deref() == Some("approver_lost") {
         let approver_ok = match active.reviewed_by {
             Some(approver) => super::live::approver_is_admin(tx, row.workspace_id, approver)

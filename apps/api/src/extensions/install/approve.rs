@@ -206,12 +206,33 @@ pub async fn approve(
         &manifest.id,
         &manifest.rules,
     );
-    let outcome = write(state, admin, installation_id, request, &opened, &checked).await;
+    let outcome = write(state, admin, installation_id, request, &opened, &checked, &stored).await;
     // The registry is rebuilt from what the database now holds, whatever the outcome was.
     if let Err(error) = rules::refresh(&state.db).await {
         tracing::warn!(target: "sv::extensions", %error, "the plugin rule registry was not refreshed");
     }
     outcome
+}
+
+/// Refuses `installation_package_revoked` unless the package's key is active and the package still
+/// installable, holding a share lock on the key until the transaction ends.
+///
+/// # Errors
+/// `installation_package_revoked`, or a database failure.
+pub async fn ensure_key_active(
+    tx: &impl ConnectionTrait,
+    workspace_id: Uuid,
+    stored: &open::StoredPackage,
+) -> Result<(), ApiError> {
+    let locked = crate::packages::keys_lock_active(tx, stored.publisher_key_id).await?;
+    let installable = open::find_by_row(tx, workspace_id, stored.id)
+        .await?
+        .is_some_and(|row| row.installable);
+    if locked && installable {
+        Ok(())
+    } else {
+        Err(refuse(RefusalCode::InstallationPackageRevoked))
+    }
 }
 
 async fn write(
@@ -221,11 +242,15 @@ async fn write(
     request: &ApproveRequest,
     opened: &open::Opened,
     checked: &Check,
+    stored: &open::StoredPackage,
 ) -> Result<(), ApiError> {
     let tx = state.db.begin().await?;
     let installation = store::lock_installation(&tx, installation_id)
         .await?
         .ok_or_else(|| ApiError::not_found("installation not found"))?;
+    // The key was checked before the (slow) verification; check it again under a lock that makes a
+    // concurrent revocation wait, so a revoked key never ends up with an active installation.
+    ensure_key_active(&tx, installation.workspace_id, stored).await?;
     if installation.status == "revoked" {
         return Err(refuse(RefusalCode::InstallationRevoked));
     }

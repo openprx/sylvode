@@ -120,6 +120,9 @@
 					"read": "读取项目详情"
 				}
 			}
-		}
+		},
+		"wholeProject": "适用于项目中的所有表单",
+		"wholeWorkspace": "适用于工作区中的所有表单",
+		"needsReapproval": "批准它的管理员已不再是管理员，请重新批准。"
 	}
 }

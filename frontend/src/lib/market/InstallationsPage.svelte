@@ -316,6 +316,9 @@
 								<StatusChip tone={tone(installation.status)}
 									>{$t(`market.status.${installation.status}`)}</StatusChip
 								>
+								{#if installation.status === 'active' && installation.approver_active === false}
+									<div class="mt-1 text-xs text-warning">{$t('market.needsReapproval')}</div>
+								{/if}
 								{#if installation.disabled_reason}
 									<div class="mt-1 text-xs text-fg-muted">
 										{$t(`market.disabledReason.${installation.disabled_reason}`)}
@@ -509,7 +512,7 @@
 			<div class="rounded-card border border-warning p-3 text-sm text-fg">
 				<div>{$t('market.changedGrants')}</div>
 				<ul class="mt-1 list-disc pl-5">
-					{#each preview.installation.changed_grants as grant (grant.capability)}
+					{#each preview.installation.changed_grants as grant (grant.capability + JSON.stringify(grant.selector))}
 						<li>{words(grant.capability)}</li>
 					{/each}
 				</ul>
@@ -544,6 +547,12 @@
 										· {$t('market.onForm', { values: { form: request.selector.form } })}
 									{:else if request.form_bind}
 										· {$t('market.bindNote')}
+									{:else}
+										· {$t(
+											(preview.installation?.scope.kind ?? scopeKind) === 'project'
+												? 'market.wholeProject'
+												: 'market.wholeWorkspace'
+										)}
 									{/if}
 								</div>
 							</div>

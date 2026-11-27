@@ -120,6 +120,9 @@
 					"read": "Read project details"
 				}
 			}
-		}
+		},
+		"wholeProject": "on every form of the project",
+		"wholeWorkspace": "on every form of the workspace",
+		"needsReapproval": "The administrator who approved it is no longer an administrator. Approve it again."
 	}
 }

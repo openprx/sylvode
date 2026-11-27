@@ -132,12 +132,19 @@ pub(super) async fn sync_builtin_key(db: &impl ConnectionTrait, key: Option<(&st
         vec![keep.clone().into()],
     ))
     .await?;
-    db.execute(stmt(
-        "UPDATE publisher_keys SET status = 'revoked', revoked_at = COALESCE(revoked_at, now()) \
-         WHERE publisher = 'sv' AND workspace_id IS NULL AND status = 'active' AND key_id IS DISTINCT FROM $1",
-        vec![keep.into()],
-    ))
-    .await?;
+    let revoked = db
+        .query_all(stmt(
+            "UPDATE publisher_keys SET status = 'revoked', revoked_at = COALESCE(revoked_at, now()) \
+             WHERE publisher = 'sv' AND workspace_id IS NULL AND status = 'active' AND key_id IS DISTINCT FROM $1 \
+             RETURNING id",
+            vec![keep.into()],
+        ))
+        .await?;
+    // Installations that run a package signed by a key that is no longer configured stop (C3-7).
+    for row in revoked {
+        let id: Uuid = row.try_get("", "id")?;
+        crate::extensions::install::store::disable_for_revoked_key(db, id).await?;
+    }
     if let Some((key_id, public)) = key {
         db.execute(stmt(
             "INSERT INTO publisher_keys (workspace_id, publisher, key_id, public_key) VALUES (NULL, 'sv', $1, $2) \
@@ -157,7 +164,7 @@ pub(super) async fn sync_builtin_key(db: &impl ConnectionTrait, key: Option<(&st
 
 /// Takes a shared row lock on an active key, so a concurrent revocation waits for this
 /// transaction; `false` when the key is no longer active.
-pub(super) async fn lock_active(db: &impl ConnectionTrait, id: Uuid) -> Result<bool, ApiError> {
+pub(crate) async fn lock_active(db: &impl ConnectionTrait, id: Uuid) -> Result<bool, ApiError> {
     Ok(db
         .query_one(stmt(
             "SELECT 1 FROM publisher_keys WHERE id = $1 AND status = 'active' FOR SHARE",

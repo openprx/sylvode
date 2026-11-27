@@ -11,3 +11,14 @@ mod keys;
 pub mod open;
 mod store;
 mod verify;
+
+/// Takes a share lock on an active publisher key; see `keys::lock_active`.
+///
+/// # Errors
+/// A database failure.
+pub async fn keys_lock_active(
+    db: &impl sea_orm::ConnectionTrait,
+    id: uuid::Uuid,
+) -> Result<bool, crate::error::ApiError> {
+    keys::lock_active(db, id).await
+}
