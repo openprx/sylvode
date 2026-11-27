@@ -179,7 +179,7 @@ impl UnverifiedPackage {
 }
 
 fn zip_err(e: &zip::result::ZipError) -> PackageError {
-    err(ErrorCode::ArchiveInvalid, format!("zip: {e}"))
+    err(ErrorCode::ZipInvalid, format!("zip: {e}"))
 }
 
 fn read_limited<R: Read>(mut r: R, limit: u64, what: &str) -> Result<Vec<u8>> {
@@ -188,7 +188,7 @@ fn read_limited<R: Read>(mut r: R, limit: u64, what: &str) -> Result<Vec<u8>> {
         .by_ref()
         .take(limit.saturating_add(1))
         .read_to_end(&mut out)
-        .map_err(|e| err(ErrorCode::ArchiveInvalid, format!("{what}: {e}")))?;
+        .map_err(|e| err(ErrorCode::ZipInvalid, format!("{what}: {e}")))?;
     if n as u64 > limit {
         return Err(err(ErrorCode::TooLarge, format!("{what} exceeds {limit} bytes")));
     }
@@ -209,6 +209,7 @@ pub fn unpack(bytes: &[u8], limits: &Limits) -> Result<UnverifiedPackage> {
     if bytes.len() as u64 > limits.max_zip_bytes {
         return Err(err(ErrorCode::TooLarge, "zip larger than the limit"));
     }
+    crate::zipcheck::check(bytes)?;
     let mut archive = ZipArchive::new(Cursor::new(bytes)).map_err(|e| zip_err(&e))?;
     if archive.has_duplicate_names() {
         return Err(err(ErrorCode::PathInvalid, "duplicate entry names"));
@@ -396,7 +397,7 @@ pub fn pack(mut manifest: Value, contents: &BTreeMap<String, Vec<u8>>, key: &Ed2
     let mut put = |name: &str, data: &[u8]| -> Result<()> {
         zip.start_file(name, opts).map_err(|e| zip_err(&e))?;
         zip.write_all(data)
-            .map_err(|e| err(ErrorCode::ArchiveInvalid, format!("{name}: {e}")))
+            .map_err(|e| err(ErrorCode::ZipInvalid, format!("{name}: {e}")))
     };
     put(MANIFEST_NAME, &manifest_bytes)?;
     put(

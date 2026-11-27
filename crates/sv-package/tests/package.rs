@@ -9,7 +9,7 @@ fn manifest() -> Value {
     json!({
       "schema": "sv.package.v1", "kind": "page-template",
       "id": "sv/sample-pages", "version": "1.0.0",
-      "publisher": {"id": "sv", "key_id": "ed25519:0000000000000000"},
+      "publisher": {"id": "sv", "key_id": "ed25519:00000000000000000000000000000000"},
       "sv": {"min": "0.6.0", "layout": "sv.layout.v1"},
       "summary": {"en": "Sample"}, "license": "Apache-2.0",
       "binds": {"requests": {"kind": "form", "requires_fields": {"title": "text"}}},
@@ -140,7 +140,7 @@ fn limits_and_manifest_rules() {
     };
     assert_eq!(code(unpack(&bytes, &small)), ErrorCode::TooLarge);
     let mut m = manifest();
-    m["requests"] = json!(["forms.records.read@form=$bind.requests"]);
+    m["requests"] = json!([{"id": "forms.records.read", "form": "$bind.requests"}]);
     assert_eq!(code(pack(m, &contents(), &key())), ErrorCode::ManifestInvalid);
     let mut m = manifest();
     m["id"] = json!("other/sample-pages");
@@ -150,20 +150,71 @@ fn limits_and_manifest_rules() {
     assert_eq!(code(pack(m, &contents(), &key())), ErrorCode::ManifestInvalid);
 }
 
-#[test]
-fn app_requests_resolve_binds() {
+fn app_manifest() -> (Value, BTreeMap<String, Vec<u8>>) {
     let mut m = manifest();
     m["kind"] = json!("app");
-    m["components"] = json!([{"world": "action", "path": "contents/c.wasm", "exports": ["x"]}]);
+    m["wit"] = json!("sv:plugin@4.0.0");
+    m["actions"] = json!([{"name": "close_request", "world": "action", "component": "contents/c.wasm",
+                           "label": {"en": "Close"}}]);
+    m["rules"] = json!([{"name": "ref_code", "world": "field-rule", "component": "contents/r.wasm",
+                         "stages": ["validate"], "field_types": ["text"]}]);
     m["requests"] = json!([
-        "forms.records.read@form=$bind.requests",
-        "forms.records.update@form=$install"
+        {"id": "forms.records.read", "form": "$bind.requests"},
+        {"id": "forms.records.update"}
     ]);
+    m["messages"] = json!({"bad_ref": {"en": "Bad reference"}});
     let mut c = contents();
     c.insert("contents/c.wasm".into(), vec![0, 1]);
-    pack(m.clone(), &c, &key()).expect("valid app");
-    m["requests"] = json!(["forms.records.read@form=$bind.nope"]);
-    assert_eq!(code(pack(m, &c, &key())), ErrorCode::ManifestInvalid);
+    c.insert("contents/r.wasm".into(), vec![0, 2]);
+    (m, c)
+}
+
+#[test]
+fn app_manifest_fields_are_checked() {
+    let (m, c) = app_manifest();
+    let bytes = pack(m.clone(), &c, &key()).expect("valid app");
+    let pkg = unpack(&bytes, &Limits::default()).expect("unpack");
+    assert!(pkg.manifest.computed_custom_code());
+    let broken = |f: &dyn Fn(&mut Value)| {
+        let mut v = m.clone();
+        f(&mut v);
+        code(pack(v, &c, &key()))
+    };
+    let bad = ErrorCode::ManifestInvalid;
+    assert_eq!(broken(&|v| v["requests"][0]["form"] = json!("$bind.nope")), bad);
+    assert_eq!(broken(&|v| v["requests"][1]["id"] = json!("forms.*")), bad);
+    assert_eq!(broken(&|v| v["wit"] = json!("sv:plugin@3.0.0")), bad);
+    assert_eq!(
+        broken(&|v| {
+            v.as_object_mut().map(|o| o.remove("wit"));
+        }),
+        bad
+    );
+    assert_eq!(broken(&|v| v["rules"][0]["component"] = json!("contents/c.wasm")), bad);
+    assert_eq!(broken(&|v| v["actions"][0]["world"] = json!("job")), bad);
+    assert_eq!(broken(&|v| v["rules"][0]["stages"] = json!(["bogus"])), bad);
+    assert_eq!(broken(&|v| v["messages"] = json!({"Bad-Code": {"en": "x"}})), bad);
+    assert_eq!(broken(&|v| v["actions"][0]["name"] = json!("Close")), bad);
+    assert_eq!(
+        broken(&|v| v["pages"] = json!([{"route": "/x", "layout": "nope", "audience": "visitor"}])),
+        bad
+    );
+    assert_eq!(broken(&|v| v["custom_code"] = json!(false)), bad);
+    // A plugin may not carry pages; a form template may not carry actions.
+    assert_eq!(
+        broken(&|v| {
+            v["kind"] = json!("plugin");
+            v["pages"] = json!([{"route": "/x", "layout": "a.b", "audience": "visitor"}]);
+        }),
+        bad
+    );
+    assert_eq!(broken(&|v| v["kind"] = json!("form-template")), bad);
+}
+
+#[test]
+fn key_id_has_128_bits() {
+    let id = sv_package::key_id(&sv_package::public_key(&key()));
+    assert_eq!(id.len(), "ed25519:".len() + 32);
 }
 
 #[test]
@@ -187,4 +238,68 @@ fn duplicate_keys_floats_and_custom_code_are_refused() {
     let mut m = manifest();
     m["extra"] = json!(1);
     assert_eq!(code(pack(m, &contents(), &key())), ErrorCode::ManifestInvalid);
+}
+
+/// A package zip with the bytes of a deliberately inconsistent container.
+fn good_zip() -> Vec<u8> {
+    pack(manifest(), &contents(), &key()).expect("pack")
+}
+
+#[test]
+fn zip_with_leading_or_trailing_data_is_refused() {
+    let good = good_zip();
+    unpack(&good, &Limits::default()).expect("baseline");
+    let mut trailing = good.clone();
+    trailing.extend_from_slice(b"junk");
+    assert_eq!(code(unpack(&trailing, &Limits::default())), ErrorCode::ZipInvalid);
+    let mut leading = b"junk".to_vec();
+    leading.extend_from_slice(&good);
+    assert_eq!(code(unpack(&leading, &Limits::default())), ErrorCode::ZipInvalid);
+    assert_eq!(
+        code(unpack(&good[..good.len() - 5], &Limits::default())),
+        ErrorCode::ZipInvalid
+    );
+}
+
+fn find(haystack: &[u8], needle: &[u8]) -> usize {
+    haystack
+        .windows(needle.len())
+        .position(|w| w == needle)
+        .expect("pattern present")
+}
+
+#[test]
+fn local_header_must_match_the_central_directory() {
+    let good = good_zip();
+    // The first local header's CRC field differs from the central entry's.
+    let mut crc = good.clone();
+    crc[14] ^= 0xff;
+    assert_eq!(code(unpack(&crc, &Limits::default())), ErrorCode::ZipInvalid);
+    // The first local header names another file of the same length.
+    let mut name = good.clone();
+    let at = find(&name, b"sv-package.json");
+    name[at] = b'x';
+    assert_eq!(code(unpack(&name, &Limits::default())), ErrorCode::ZipInvalid);
+    // A gap between entries: shift the central directory offset past extra bytes.
+    let mut gap = good.clone();
+    let eocd = find(&gap, &[0x50, 0x4b, 0x05, 0x06]);
+    let cd = u32::from_le_bytes(gap[eocd + 16..eocd + 20].try_into().expect("4 bytes"));
+    gap.splice(cd as usize..cd as usize, *b"xxxx");
+    let eocd = find(&gap, &[0x50, 0x4b, 0x05, 0x06]);
+    gap[eocd + 16..eocd + 20].copy_from_slice(&(cd + 4).to_le_bytes());
+    assert_eq!(code(unpack(&gap, &Limits::default())), ErrorCode::ZipInvalid);
+}
+
+#[test]
+fn eocd_comment_and_zip64_markers_are_refused() {
+    let good = good_zip();
+    let mut comment = good.clone();
+    let eocd = find(&comment, &[0x50, 0x4b, 0x05, 0x06]);
+    comment[eocd + 20] = 3;
+    comment.extend_from_slice(b"abc");
+    assert_eq!(code(unpack(&comment, &Limits::default())), ErrorCode::ZipInvalid);
+    let mut z64 = good.clone();
+    let eocd = find(&z64, &[0x50, 0x4b, 0x05, 0x06]);
+    z64[eocd + 16..eocd + 20].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert_eq!(code(unpack(&z64, &Limits::default())), ErrorCode::ZipInvalid);
 }

@@ -42,11 +42,11 @@ pub fn package_digest(canonical: &[u8]) -> String {
     sha256_digest(canonical)
 }
 
-/// `ed25519:` + the first 16 hex characters of `sha256(public key)`.
+/// `ed25519:` + the first 32 hex characters (128 bits) of `sha256(public key)`.
 #[must_use]
 pub fn key_id(public_key: &[u8]) -> String {
     let h = hex(&Sha256::digest(public_key));
-    format!("ed25519:{}", h.get(..16).unwrap_or(&h))
+    format!("ed25519:{}", h.get(..32).unwrap_or(&h))
 }
 
 fn signing_input(canonical: &[u8]) -> Vec<u8> {

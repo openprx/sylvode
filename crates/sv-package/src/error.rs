@@ -27,8 +27,9 @@ pub enum ErrorCode {
     KeyRevoked,
     /// The manifest is malformed or inconsistent.
     ManifestInvalid,
-    /// The zip itself is corrupt or unreadable. Not in C3's list.
-    ArchiveInvalid,
+    /// The zip is corrupt or unreadable, or its local headers, central directory, offsets or
+    /// trailing data are inconsistent.
+    ZipInvalid,
     /// Key material is unusable. Not in C3's list.
     KeyInvalid,
 }
@@ -49,7 +50,7 @@ impl ErrorCode {
             Self::KeyUnknown => "key_unknown",
             Self::KeyRevoked => "key_revoked",
             Self::ManifestInvalid => "manifest_invalid",
-            Self::ArchiveInvalid => "archive_invalid",
+            Self::ZipInvalid => "zip_invalid",
             Self::KeyInvalid => "key_invalid",
         }
     }
