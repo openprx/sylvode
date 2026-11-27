@@ -18,7 +18,10 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use super::{
-    permissions::{denied_read_fields_from_policy, normalize_permission_subject_id, role_is_form_admin},
+    permissions::{
+        denied_read_fields_from_policy, normalize_permission_subject_id, permission_policy_allows,
+        permission_policy_record_scope, role_is_form_admin,
+    },
     read_policy::RecordReadPolicy,
     relations::relation_target_config,
     schema::parse_fields,
@@ -38,11 +41,12 @@ pub struct FormReadInput<'a> {
     pub schema: &'a Value,
 }
 
-/// One explored form: whether it hides a field from the role, and the target form key of each of
-/// its relation fields (`None` when the relation config does not resolve).
+/// One explored form: whether its policy restricts the role (see [`node_restricts`]), and the
+/// target form key of each of its relation fields (`None` when the relation config does not
+/// resolve).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FormNode {
-    pub denied_nonempty: bool,
+    pub restricts: bool,
     pub edges: Vec<Option<String>>,
 }
 
@@ -229,16 +233,26 @@ impl ReaderContext {
                 },
             );
             FormNode {
-                denied_nonempty: row
-                    .policy
-                    .as_ref()
-                    .is_some_and(|policy| !denied_read_fields_from_policy(policy).is_empty()),
+                restricts: node_restricts(row.policy.as_ref()),
                 edges,
             }
         });
         self.nodes.insert(cache_key, node.clone());
         Ok(node)
     }
+}
+
+/// Whether a target form's policy row for the role restricts what a relation snapshot of it may
+/// show: a read-denied field, a denied `form.view` (the reader may not see the form at all), or a
+/// record scope limited to owned records (the reader may not see most of its records). No row
+/// means the permissive defaults, which restrict nothing.
+#[must_use]
+pub fn node_restricts(policy: Option<&Value>) -> bool {
+    policy.is_some_and(|policy| {
+        !denied_read_fields_from_policy(policy).is_empty()
+            || !permission_policy_allows(policy, "form.view")
+            || permission_policy_record_scope(policy) == "owned"
+    })
 }
 
 fn relation_edge(schema: &Value, field_key: &str) -> Option<String> {
@@ -272,7 +286,7 @@ pub fn restricted_form_keys(explored: &BTreeMap<String, Option<FormNode>>) -> BT
             let is_restricted = match node {
                 None => true,
                 Some(node) => {
-                    node.denied_nonempty
+                    node.restricts
                         || node
                             .edges
                             .iter()
@@ -292,12 +306,26 @@ pub fn restricted_form_keys(explored: &BTreeMap<String, Option<FormNode>>) -> BT
 
 #[cfg(test)]
 mod tests {
-    use super::{FormNode, edge_is_restricted, restricted_form_keys};
+    use super::{FormNode, edge_is_restricted, node_restricts, restricted_form_keys};
+    use serde_json::json;
+
+    #[test]
+    fn a_hidden_or_owned_scoped_target_form_restricts() {
+        assert!(!node_restricts(None));
+        assert!(!node_restricts(Some(&json!({}))));
+        assert!(!node_restricts(Some(
+            &json!({"actions": {"form.view": true}, "record_scope": "all"})
+        )));
+        assert!(node_restricts(Some(&json!({"fields": {"salary": {"read": false}}}))));
+        assert!(node_restricts(Some(&json!({"actions": {"form.view": false}}))));
+        assert!(node_restricts(Some(&json!({"record_scope": "owned"}))));
+        assert!(node_restricts(Some(&json!({"record_scope": "own"}))));
+    }
     use std::collections::BTreeMap;
 
     fn node(denied: bool, edges: &[Option<&str>]) -> Option<FormNode> {
         Some(FormNode {
-            denied_nonempty: denied,
+            restricts: denied,
             edges: edges.iter().map(|edge| edge.map(str::to_string)).collect(),
         })
     }

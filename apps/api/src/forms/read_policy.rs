@@ -160,13 +160,18 @@ impl RecordReadPolicy {
     }
 }
 
-/// Reduces a relation value to its reference keys (allow-list, so `label`, `name`, `title` and
-/// `display` all go).
+/// Reduces a relation value to its reference keys (strict allow-list: `label`, `name`, `title`,
+/// `display` and any non-object list item go; a bare scalar becomes `null`).
 pub fn reduce_relation_value(value: &mut Value) {
     match value {
         Value::Object(object) => object.retain(|key, _| RELATION_REFERENCE_KEYS.contains(&key.as_str())),
-        Value::Array(items) => items.iter_mut().for_each(reduce_relation_value),
-        _ => {}
+        // Only reference objects survive in a list; a bare string or number could be a label.
+        Value::Array(items) => {
+            items.retain(Value::is_object);
+            items.iter_mut().for_each(reduce_relation_value);
+        }
+        // A bare scalar in a restricted relation has no reference shape and may be a label.
+        other => *other = Value::Null,
     }
 }
 
@@ -399,12 +404,13 @@ mod tests {
 
     #[test]
     fn values_drop_denied_keys_and_reduce_relation_values_to_their_reference() {
-        let reader = policy("{name}", &["salary"], &["customer", "lines"]);
+        let reader = policy("{name}", &["salary"], &["customer", "lines", "bare"]);
         let values = json!({
             "name": "Ada",
             "salary": "9000",
             "customer": {"record_id": "r1", "form_key": "c", "title": "x", "label": "y", "name": "z"},
-            "lines": [{"record_id": "r2", "display": "secret"}],
+            "lines": [{"record_id": "r2", "display": "secret"}, "secret label", 7],
+            "bare": "label",
             "other": {"record_id": "r3", "title": "kept"}
         });
 
@@ -413,6 +419,7 @@ mod tests {
         assert!(filtered.get("salary").is_none());
         assert_eq!(filtered["customer"], json!({"record_id": "r1", "form_key": "c"}));
         assert_eq!(filtered["lines"], json!([{"record_id": "r2"}]));
+        assert_eq!(filtered["bare"], json!(null));
         assert_eq!(filtered["other"]["title"], "kept");
     }
 

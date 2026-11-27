@@ -4327,7 +4327,7 @@ pub async fn list_record_children(
 ) -> Result<impl IntoResponse, ApiError> {
     let record = find_record(&state, record_id).await?;
     let form = find_form(&state, record.form_id).await?;
-    let (actor_id, role, is_bot) =
+    let (actor_id, role, _) =
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "form.view").await?;
     ensure_record_scope_allows_created_by(&state, form.id, &role, actor_id, record.created_by).await?;
     let page = query.page.unwrap_or(1).max(1);
@@ -4346,7 +4346,9 @@ pub async fn list_record_children(
     where_parts.push(format!("child.workspace_id = ${}", values.len()));
     values.push(record.project_id.into());
     where_parts.push(format!("child.project_id = ${}", values.len()));
-    if !is_bot && !role_is_form_admin(&role) {
+    // Bots resolve to a workspace role and are scoped like any other holder of that role
+    // (`forms::permissions::role_is_form_admin`).
+    if !role_is_form_admin(&role) {
         values.push(actor_id.into());
         let actor_idx = values.len();
         values.push(normalize_permission_subject_id(&role)?.into());
