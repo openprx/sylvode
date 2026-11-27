@@ -117,9 +117,12 @@ pub enum Find {
     Query(&'static str),
 }
 
-/// How the target of a site route is found. Filled by the site lane (contract C3).
+/// How the target of a site route is found (contract C3 section 6.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SiteFind {}
+pub enum SiteFind {
+    /// The site is the one whose `slug` is the `{slug}` path parameter.
+    Slug,
+}
 
 /// What a route is scoped to. The bot class is a 1:1 image of it (see [`Scope::bot_class`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -333,10 +336,16 @@ pub const fn console(op: &'static str, method: Method, path: &'static str, scope
     entry(op, method, path, scope, risk, Exposure::CONSOLE)
 }
 
+/// A route of the public site surface: site exposure only, scope `site` by slug.
+#[must_use]
+pub const fn site(op: &'static str, method: Method, path: &'static str, risk: Risk) -> Entry {
+    entry(op, method, path, Scope::Site(SiteFind::Slug), risk, Exposure::SITE)
+}
+
 /// What a table file needs: the builders and every variant name.
 pub mod dsl {
     pub use super::Method::{Delete, Get, Patch, Post, Put};
     pub use super::Risk::{Admin, Destructive, Read, Secret, Write};
     pub use super::Scope::{Filtered, Global, InstanceAdmin, Own, Project, Public, Workspace, WorkspaceAdmin};
-    pub use super::{Entry, Find, bot, console};
+    pub use super::{Entry, Find, bot, console, site};
 }

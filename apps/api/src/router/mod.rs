@@ -95,6 +95,9 @@ pub fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform
         .layer(TraceLayer::new_for_http().make_span_with(routes::collab::trace_span))
         .layer(CorsLayer::permissive())
         .layer(CompressionLayer::new())
+        // The public site API brings its own layer stack (contract C3 section 6.4): merged after
+        // the global layers, so neither the permissive CORS nor the 200 MiB limit reaches it.
+        .merge(site::public_routes(&auth_state))
         .with_state(state)
 }
 

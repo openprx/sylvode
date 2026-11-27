@@ -34,7 +34,7 @@ pub enum BootError {
 }
 
 /// The verbs of a capability id.
-const VERBS: [&str; 31] = [
+const VERBS: [&str; 32] = [
     "read",
     "create",
     "update",
@@ -66,6 +66,7 @@ const VERBS: [&str; 31] = [
     "sign",
     "refresh",
     "import",
+    "publish",
 ];
 
 /// Areas whose ids are never dispatchable for a plugin (contract C1 §2.4, check 6).

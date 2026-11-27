@@ -29,6 +29,7 @@ DELETE /api/v1/proposals/{id}/impact-review Project Proposal("id") false
 DELETE /api/v1/proposals/{id}/veto Project Proposal("id") false
 DELETE /api/v1/proposals/{id}/votes/mine Project Proposal("id") false
 DELETE /api/v1/proposals/{proposal_id}/issues/{issue_id} Project Proposal("proposal_id") false
+DELETE /api/v1/site-pages/{page_id} NoProject - false
 DELETE /api/v1/sprints/{id} Project Table("sprints","id") false
 DELETE /api/v1/trust-scores/appeals/{id} Admin - false
 DELETE /api/v1/vetoers Admin - false
@@ -149,6 +150,7 @@ GET /api/v1/projects/{project_id}/nav/config Project Project("project_id") false
 GET /api/v1/projects/{project_id}/plugins Project Project("project_id") false
 GET /api/v1/projects/{project_id}/release-readiness Project Project("project_id") false
 GET /api/v1/projects/{project_id}/resources Project Project("project_id") false
+GET /api/v1/projects/{project_id}/sites Project Project("project_id") false
 GET /api/v1/projects/{project_id}/sprints Project Project("project_id") false
 GET /api/v1/projects/{project_id}/workflow/effective Project Project("project_id") false
 GET /api/v1/proposal-templates Refused - false
@@ -166,6 +168,10 @@ GET /api/v1/proposals/{id}/votes Project Proposal("id") false
 GET /api/v1/scenario-templates NoProject - false
 GET /api/v1/scenario-templates/{key} NoProject - false
 GET /api/v1/search Filtered - false
+GET /api/v1/sites/{id} Project Table("sites","id") false
+GET /api/v1/sites/{id}/bindings Project Table("sites","id") false
+GET /api/v1/sites/{id}/pages Project Table("sites","id") false
+GET /api/v1/sites/{id}/roles Project Table("sites","id") false
 GET /api/v1/slots NoProject - false
 GET /api/v1/slots/{slot_id}/placements Project Query("project_id") false
 GET /api/v1/sprints/{id} Project Table("sprints","id") false
@@ -263,6 +269,8 @@ PATCH /api/v1/projects/{project_id}/domains/{id} Project Project("project_id") f
 PATCH /api/v1/projects/{project_id}/resources/{resource_id} Project Project("project_id") false
 PATCH /api/v1/proposals/{id} Project Proposal("id") false
 PATCH /api/v1/proposals/{id}/impact-review Project Proposal("id") false
+PATCH /api/v1/site-pages/{page_id} NoProject - false
+PATCH /api/v1/sites/{id} Project Table("sites","id") false
 PATCH /api/v1/trust-scores/appeals/{id} Admin - false
 PATCH /api/v1/workspaces/{workspace_id}/members/{user_id} Admin - false
 PATCH /api/v1/workspaces/{workspace_id}/webhooks/{webhook_id} Admin - false
@@ -332,6 +340,7 @@ POST /api/v1/projects/{project_id}/issues Project Project("project_id") false
 POST /api/v1/projects/{project_id}/plugins Project Project("project_id") false
 POST /api/v1/projects/{project_id}/resources Project Project("project_id") false
 POST /api/v1/projects/{project_id}/scenario-templates/{template_key}/install Project Project("project_id") false
+POST /api/v1/projects/{project_id}/sites Project Project("project_id") false
 POST /api/v1/projects/{project_id}/sprints Project Project("project_id") false
 POST /api/v1/proposal-templates Refused - false
 POST /api/v1/proposals Own - false
@@ -345,6 +354,7 @@ POST /api/v1/proposals/{id}/veto Project Proposal("id") false
 POST /api/v1/proposals/{id}/veto/escalation Project Proposal("id") false
 POST /api/v1/proposals/{id}/veto/escalation/vote Project Proposal("id") false
 POST /api/v1/proposals/{id}/votes Project Proposal("id") false
+POST /api/v1/sites/{id}/pages Project Table("sites","id") false
 POST /api/v1/trust-scores/appeals Admin - false
 POST /api/v1/upload Own - false
 POST /api/v1/uploads/signatures/{file_name}/signed-url Refused - false

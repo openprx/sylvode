@@ -11,6 +11,7 @@ const fn channel(principal: &Principal) -> Exposure {
         Principal::Bot { .. } => Exposure::BOT,
         Principal::Delegated { .. } => Exposure::OAUTH,
         Principal::Plugin { .. } | Principal::Installation { .. } => Exposure::PLUGIN,
+        Principal::SiteVisitor { .. } | Principal::SiteOperator { .. } => Exposure::SITE,
     }
 }
 
@@ -19,7 +20,8 @@ const fn channel(principal: &Principal) -> Exposure {
 /// failure returns:
 ///
 /// 1. the entry's exposure must contain the principal's channel;
-/// 2. a user, a bot or a delegated caller needs nothing more here;
+/// 2. a user, a bot, a delegated caller or a site principal needs nothing more here (the site
+///    handlers apply the binding projection);
 /// 3. a plugin or an installation needs the id in the generation's requested ids, a grant with
 ///    this id, a target in its own workspace, and a grant whose selector matches the target.
 ///
@@ -50,7 +52,11 @@ pub fn allowed_pre(principal: &Principal, entry: &Entry) -> Result<(), Refusal> 
         return Err(refuse(RefusalCode::CapabilityNotExposed));
     }
     let installation = match principal {
-        Principal::User { .. } | Principal::Bot { .. } | Principal::Delegated { .. } => return Ok(()),
+        Principal::User { .. }
+        | Principal::Bot { .. }
+        | Principal::Delegated { .. }
+        | Principal::SiteVisitor { .. }
+        | Principal::SiteOperator { .. } => return Ok(()),
         Principal::Plugin { installation, .. } | Principal::Installation { installation, .. } => installation,
     };
     check_requested_and_granted(installation, capability).map_err(refuse)

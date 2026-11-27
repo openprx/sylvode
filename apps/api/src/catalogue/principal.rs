@@ -69,6 +69,58 @@ pub enum Principal {
         installation: InstallationView,
         approver_user_id: Uuid,
     },
+    /// An anonymous visitor of a public site; `visitor_id` once the visitor cookie exists.
+    SiteVisitor {
+        site_id: Uuid,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        visitor_id: Option<Uuid>,
+    },
+    /// A workspace member signed in to a public site with a site role.
+    SiteOperator {
+        site_id: Uuid,
+        workspace_id: Uuid,
+        project_id: Uuid,
+        user_id: Uuid,
+        role: SiteRole,
+    },
+}
+
+/// The role of a site operator (`site_roles.role`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SiteRole {
+    Operator,
+    Editor,
+}
+
+impl SiteRole {
+    /// The stored name.
+    #[must_use]
+    pub const fn as_db(self) -> &'static str {
+        match self {
+            Self::Operator => "site_operator",
+            Self::Editor => "site_editor",
+        }
+    }
+
+    /// The name on the site API.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Operator => "operator",
+            Self::Editor => "editor",
+        }
+    }
+
+    /// The role of a stored name, or of its site API name.
+    #[must_use]
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "site_operator" | "operator" => Some(Self::Operator),
+            "site_editor" | "editor" => Some(Self::Editor),
+            _ => None,
+        }
+    }
 }
 
 /// The target of an operation, resolved by the caller of the checker.
