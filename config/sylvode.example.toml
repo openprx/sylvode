@@ -444,16 +444,6 @@ enabled = false
 # builtin_dir = "/etc/sylvode/packages"
 
 # ---------------------------------------------------------------------------------------------
-# [extensions] — the plugin host.
-#
-# dev_invoke_enabled registers a temporary instance-admin route that runs a plugin component as any
-# member of a workspace. It is for test stacks only and is removed with the installations batch.
-# Off by default.
-# ---------------------------------------------------------------------------------------------
-[extensions]
-# dev_invoke_enabled = false
-
-# ---------------------------------------------------------------------------------------------
 # [site] — the public site API (`/api/site/v1`). Optional; both switches are off by default.
 #
 # same_origin_trial serves sites that have no `allowed_origin` setting under this server's own

@@ -28,7 +28,6 @@ use uuid::Uuid;
 use crate::catalogue::{Principal, Refusal, RefusalCode, allowed_pre, allowed_target, by_route};
 use crate::error::ApiError;
 
-pub mod dev;
 pub mod dispatch;
 pub mod host;
 pub mod resource;

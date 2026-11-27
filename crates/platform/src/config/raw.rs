@@ -19,7 +19,6 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use super::email::{RawEmail, validate_public_url};
-use super::extensions::RawExtensions;
 use super::inbound::RawInbound;
 use super::oauth::{RawOAuth, UrlRole, validate_forward_secret, validate_url};
 use super::packages::RawPackages;
@@ -97,7 +96,6 @@ pub(super) struct RawConfig {
     #[serde(default)]
     packages: RawPackages,
     #[serde(default)]
-    extensions: RawExtensions,
     site: RawSite,
     #[serde(default)]
     email: RawEmail,
@@ -289,7 +287,6 @@ impl RawConfig {
         let oauth = self.oauth.validate(&mut issues);
         let inbound = self.inbound.validate(&mut issues);
         let packages = self.packages.validate(&mut issues);
-        let extensions = self.extensions.validate();
         let site = self.site.validate();
         let email = self.email.validate(server.public_url.as_deref(), &mut issues);
         cross_check_oauth_and_mcp(oauth.as_ref(), &mcp, &mut issues);
@@ -322,7 +319,6 @@ impl RawConfig {
             oauth,
             inbound,
             packages,
-            extensions,
             site,
             email,
         })

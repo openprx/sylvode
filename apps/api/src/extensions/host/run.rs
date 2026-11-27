@@ -155,7 +155,6 @@ pub(super) async fn invoke_with(
         log_lines: telemetry.log_lines,
         host_denials: telemetry.denials,
         last_denial: telemetry.last_denial,
-        dev_admin: None,
     };
     emit(&record);
     Invocation { result, record }

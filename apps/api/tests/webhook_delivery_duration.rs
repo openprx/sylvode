@@ -91,7 +91,6 @@ fn install_config(receiver_port: u16) {
         oauth: None,
         inbound: platform::config::InboundConfig::default(),
         packages: platform::config::PackagesConfig::default(),
-        extensions: platform::config::ExtensionsConfig::default(),
         site: platform::config::SiteConfig::default(),
         email: None,
     })

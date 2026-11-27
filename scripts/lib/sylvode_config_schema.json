@@ -80,7 +80,6 @@
       "followup_interval_secs"
     ],
     "packages": ["builtin_public_key", "builtin_dir"],
-    "extensions": ["dev_invoke_enabled"],
     "site": ["same_origin_trial", "cookie_insecure"]
   },
   "retired": {}
