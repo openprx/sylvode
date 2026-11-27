@@ -1,0 +1,11 @@
+{
+  "schema": "sv.layout.v1",
+  "key": "service.request.actions",
+  "title": {"en": "Request actions", "zh": "请求操作"},
+  "params": {"record_id": {"type": "string", "required": true}},
+  "actions": {
+    "close": {"kind": "invoke", "package": "qa/service-desk", "export": "close_request",
+              "input": {"record_id": "$params.record_id"}, "confirm": {"en": "Close this request?", "zh": "关闭此请求？"}}
+  },
+  "root": {"type": "button", "props": {"label": {"en": "Close request", "zh": "关闭请求"}, "variant": "danger"}, "on_click": "close"}
+}

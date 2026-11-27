@@ -1,0 +1,19 @@
+{
+  "key": "service_requests",
+  "name": "Service requests",
+  "description": "Created by the service-desk package",
+  "title_template": "{title}",
+  "schema": {
+    "version": "sv.form.schema.v2",
+    "fields": [
+      {"field_id": "fld_title_000001", "key": "title", "label": "Title", "type": "text", "required": true},
+      {"field_id": "fld_reference_000001", "key": "reference", "label": "Reference", "type": "text",
+       "rules": {
+         "normalize": [{"plugin": {"package": "qa/service-desk", "rule": "reference_code"}}],
+         "validate": [{"plugin": {"package": "qa/service-desk", "rule": "reference_code"}}]
+       }},
+      {"field_id": "fld_status_000001", "key": "status", "label": "Status", "type": "text"},
+      {"field_id": "fld_assignee_000001", "key": "assignee", "label": "Assignee", "type": "text"}
+    ]
+  }
+}

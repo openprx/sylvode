@@ -58,6 +58,31 @@ fn uuid_key(selector: &Value, key: &str) -> Option<Uuid> {
     selector.get(key)?.as_str().and_then(|text| Uuid::parse_str(text).ok())
 }
 
+/// The grants a call may use: those approved against the capability's current `plugin_ops_digest`
+/// (a grant approved against another digest is not honoured until it is approved again) and whose
+/// selector keys parse (a selector that does not parse never matches, so the grant is dropped).
+fn honoured_grants(rows: Vec<GrantRow>) -> Vec<Grant> {
+    rows.into_iter()
+        .filter(|grant| grant.current_digest.as_deref() == Some(grant.plugin_ops_digest.as_str()))
+        .filter_map(|grant| {
+            let project = grant
+                .selector
+                .get("project")
+                .map(|_| uuid_key(&grant.selector, "project"));
+            let form = grant.selector.get("form").map(|_| uuid_key(&grant.selector, "form"));
+            if matches!(project, Some(None)) || matches!(form, Some(None)) {
+                return None;
+            }
+            Some(Grant {
+                capability: grant.capability,
+                project: project.flatten(),
+                form: form.flatten(),
+                plugin_ops_digest: grant.plugin_ops_digest,
+            })
+        })
+        .collect()
+}
+
 /// Loads the installation and its active generation.
 ///
 /// # Errors
@@ -103,25 +128,7 @@ pub async fn load(db: &impl ConnectionTrait, installation_id: Uuid) -> Result<Li
     .all(db)
     .await
     .map_err(unavailable)?;
-    let grants = grants
-        .into_iter()
-        // A grant approved against another digest of its id is not honoured until it is approved
-        // again; a selector key that does not parse never matches, so the grant is dropped.
-        .filter(|grant| grant.current_digest.as_deref() == Some(grant.plugin_ops_digest.as_str()))
-        .filter_map(|grant| {
-            let project = grant.selector.get("project").map(|_| uuid_key(&grant.selector, "project"));
-            let form = grant.selector.get("form").map(|_| uuid_key(&grant.selector, "form"));
-            if matches!(project, Some(None)) || matches!(form, Some(None)) {
-                return None;
-            }
-            Some(Grant {
-                capability: grant.capability,
-                project: project.flatten(),
-                form: form.flatten(),
-                plugin_ops_digest: grant.plugin_ops_digest,
-            })
-        })
-        .collect();
+    let grants = honoured_grants(grants);
     Ok(Live {
         view: InstallationView {
             installation_id,
@@ -196,4 +203,40 @@ pub async fn disable_for_lost_approver(db: &impl ConnectionTrait, installation_i
     .await
     .map_err(|_| LoadError::Unavailable)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use uuid::Uuid;
+
+    use super::{GrantRow, honoured_grants};
+
+    fn row(selector: serde_json::Value, stored: &str, current: Option<&str>) -> GrantRow {
+        GrantRow {
+            capability: "forms.records.update".to_string(),
+            selector,
+            plugin_ops_digest: stored.to_string(),
+            current_digest: current.map(str::to_owned),
+        }
+    }
+
+    /// A grant approved against an older digest of its id, or whose id is gone, is not loaded; so is
+    /// a grant whose selector does not parse. A valid selector becomes its project and form.
+    #[test]
+    fn only_current_grants_with_a_valid_selector_are_honoured() {
+        let form = Uuid::from_u128(5);
+        let honoured = honoured_grants(vec![
+            row(json!({"form": form.to_string()}), "sha256:a", Some("sha256:a")),
+            row(json!({}), "sha256:a", Some("sha256:b")),
+            row(json!({}), "sha256:a", None),
+            row(json!({"form": "not-a-uuid"}), "sha256:a", Some("sha256:a")),
+            row(json!({"project": 3}), "sha256:a", Some("sha256:a")),
+            row(json!({}), "sha256:a", Some("sha256:a")),
+        ]);
+        assert_eq!(honoured.len(), 2);
+        assert_eq!(honoured[0].form, Some(form));
+        assert_eq!(honoured[1].form, None);
+        assert_eq!(honoured[1].project, None);
+    }
 }

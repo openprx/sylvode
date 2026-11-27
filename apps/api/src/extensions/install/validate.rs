@@ -469,3 +469,112 @@ pub fn scope_error(kind: &str, project_id: Option<Uuid>) -> Option<&'static str>
         _ => Some("scope.kind must be workspace or project"),
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use serde_json::{Value, json};
+    use sv_package::{KeyLookup, Limits, generate_pkcs8, keypair_from_pkcs8, pack, public_key, unpack};
+    use uuid::Uuid;
+
+    use super::{Check, check_components, check_layout_slots, check_requests, compare_fields, parse_template};
+    use crate::packages::open::Opened;
+
+    const MANIFEST: &str = include_str!("../../../../../examples/plugins/service-desk-package/sv-package.json");
+    const FORM: &str =
+        include_str!("../../../../../examples/plugins/service-desk-package/contents/forms/requests.json");
+    const LAYOUT: &str =
+        include_str!("../../../../../examples/plugins/service-desk-package/contents/layouts/actions.json");
+    const ACTION: &[u8] = include_bytes!("../../../../../examples/plugins/dist/service-desk-action.wasm");
+    const RULE: &[u8] = include_bytes!("../../../../../examples/plugins/dist/service-desk-rule.wasm");
+
+    /// The sample package of the real tests, signed with a throw-away key and verified again.
+    fn sample() -> Opened {
+        let pair = keypair_from_pkcs8(&generate_pkcs8().expect("key")).expect("pair");
+        let contents: BTreeMap<String, Vec<u8>> = BTreeMap::from([
+            ("contents/forms/requests.json".to_string(), FORM.as_bytes().to_vec()),
+            ("contents/layouts/actions.json".to_string(), LAYOUT.as_bytes().to_vec()),
+            (
+                "contents/components/service-desk-action.wasm".to_string(),
+                ACTION.to_vec(),
+            ),
+            ("contents/components/service-desk-rule.wasm".to_string(), RULE.to_vec()),
+        ]);
+        let manifest: Value = serde_json::from_str(MANIFEST).expect("manifest");
+        let bytes = pack(manifest, &contents, &pair).expect("packed");
+        let unpacked = unpack(&bytes, &Limits::default()).expect("unpacked");
+        let package = unpacked
+            .verify(|_| KeyLookup::Active(public_key(&pair)))
+            .expect("verified");
+        Opened {
+            custom_code: true,
+            package,
+        }
+    }
+
+    /// The sample package fits a project: its component and rule load, its requests exist, its layout
+    /// fits its slot, its form template is a valid schema, and the form carries the fields it requires.
+    #[tokio::test]
+    async fn the_sample_package_fits_a_project() {
+        let opened = sample();
+        let mut check = Check::default();
+        check_components(&opened, &mut check).await;
+        check_requests(&opened.package.manifest, &mut check);
+        check_layout_slots(&opened, &mut check);
+        let from = opened.package.manifest.binds["requests"]
+            .create_from
+            .clone()
+            .expect("a template");
+        let template = parse_template(&opened, "requests", &from, Uuid::new_v4(), Uuid::new_v4(), &mut check);
+        assert!(check.valid(), "{:?}", check.problems);
+        let template = template.expect("the template parses");
+        assert_eq!(template.key, "service_requests");
+        let (missing, mismatched) = compare_fields(
+            &template.schema,
+            &opened.package.manifest.binds["requests"].requires_fields,
+        );
+        assert!(missing.is_empty() && mismatched.is_empty());
+        // A form without the fields is reported field by field.
+        let (missing, mismatched) = compare_fields(
+            &json!({"fields": [{"key": "title", "type": "number"}]}),
+            &opened.package.manifest.binds["requests"].requires_fields,
+        );
+        assert_eq!(missing, ["assignee", "reference", "status"]);
+        assert_eq!(mismatched.len(), 1);
+    }
+
+    /// A layout that does not fit the slot it is placed in is refused for that slot only.
+    #[test]
+    fn a_layout_is_checked_in_each_slot_it_is_placed_in() {
+        let mut opened = sample();
+        let mut manifest = opened.package.manifest.clone();
+        manifest.layouts[0].slots = vec!["project.home.widgets".to_string(), "no.such.slot".to_string()];
+        opened.package = {
+            // Rebuild a verified package around the changed manifest by packing again.
+            let pair = keypair_from_pkcs8(&generate_pkcs8().expect("key")).expect("pair");
+            let contents: BTreeMap<String, Vec<u8>> = opened
+                .package
+                .files
+                .iter()
+                .map(|(path, data)| (path.clone(), data.clone()))
+                .collect();
+            let mut value = serde_json::to_value(&manifest).expect("value");
+            value["files"] = json!({});
+            let bytes = pack(value, &contents, &pair).expect("packed");
+            unpack(&bytes, &Limits::default())
+                .expect("unpacked")
+                .verify(|_| KeyLookup::Active(public_key(&pair)))
+                .expect("verified")
+        };
+        let mut check = Check::default();
+        check_layout_slots(&opened, &mut check);
+        let codes: Vec<(&str, &str)> = check.problems.iter().map(|p| (p.code, p.path.as_str())).collect();
+        assert!(codes.contains(&(
+            "slot_node_not_allowed",
+            "/layouts/service.request.actions/project.home.widgets"
+        )));
+        assert!(codes.contains(&("slot_unknown", "/layouts/service.request.actions/no.such.slot")));
+    }
+}
