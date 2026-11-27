@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+
 use std::collections::BTreeMap;
 use std::io::{Cursor, Write};
 

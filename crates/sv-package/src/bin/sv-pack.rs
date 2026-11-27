@@ -19,7 +19,7 @@ use std::process::ExitCode;
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use sv_package::{Limits, MANIFEST_NAME, PackageError};
+use sv_package::{Limits, MANIFEST_NAME};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -46,13 +46,9 @@ fn io<E: std::fmt::Display>(what: &str) -> impl FnOnce(E) -> String + '_ {
     move |e| format!("{what}: {e}")
 }
 
-fn pe(e: PackageError) -> String {
-    e.to_string()
-}
-
 fn keygen(key_path: &str, public_path: &str) -> Result<(), String> {
-    let pkcs8 = sv_package::generate_pkcs8().map_err(pe)?;
-    let pair = sv_package::keypair_from_pkcs8(&pkcs8).map_err(pe)?;
+    let pkcs8 = sv_package::generate_pkcs8().map_err(|e| e.to_string())?;
+    let pair = sv_package::keypair_from_pkcs8(&pkcs8).map_err(|e| e.to_string())?;
     let public = sv_package::public_key(&pair);
     write_secret(Path::new(key_path), &pkcs8)?;
     fs::write(public_path, format!("{}\n", URL_SAFE_NO_PAD.encode(&public))).map_err(io("write public key"))?;
@@ -96,17 +92,18 @@ fn collect(root: &Path, dir: &Path, out: &mut BTreeMap<String, Vec<u8>>) -> Resu
 
 fn pack(dir: &str, key_path: &str, out: &str) -> Result<(), String> {
     let root = Path::new(dir);
-    let manifest =
-        sv_package::parse_manifest(&fs::read(root.join(MANIFEST_NAME)).map_err(io("read manifest"))?).map_err(pe)?;
+    let manifest = sv_package::parse_manifest(&fs::read(root.join(MANIFEST_NAME)).map_err(io("read manifest"))?)
+        .map_err(|e| e.to_string())?;
     let mut contents = BTreeMap::new();
     let contents_dir = root.join("contents");
     if contents_dir.is_dir() {
         collect(root, &contents_dir, &mut contents)?;
     }
-    let pair = sv_package::keypair_from_pkcs8(&fs::read(key_path).map_err(io("read key"))?).map_err(pe)?;
-    let bytes = sv_package::pack(manifest, &contents, &pair).map_err(pe)?;
+    let pair =
+        sv_package::keypair_from_pkcs8(&fs::read(key_path).map_err(io("read key"))?).map_err(|e| e.to_string())?;
+    let bytes = sv_package::pack(manifest, &contents, &pair).map_err(|e| e.to_string())?;
     fs::write(out, &bytes).map_err(io("write package"))?;
-    let pkg = sv_package::unpack(&bytes, &Limits::default()).map_err(pe)?;
+    let pkg = sv_package::unpack(&bytes, &Limits::default()).map_err(|e| e.to_string())?;
     println!("digest {}", pkg.digest);
     println!("blob_digest {}", pkg.blob_digest);
     Ok(())
@@ -114,7 +111,7 @@ fn pack(dir: &str, key_path: &str, out: &str) -> Result<(), String> {
 
 fn inspect(path: &str) -> Result<(), String> {
     let bytes = fs::read(path).map_err(io("read package"))?;
-    let pkg = sv_package::unpack(&bytes, &Limits::default()).map_err(pe)?;
+    let pkg = sv_package::unpack(&bytes, &Limits::default()).map_err(|e| e.to_string())?;
     println!("id {}", pkg.manifest.id);
     println!("version {}", pkg.manifest.version);
     println!("key_id {}", pkg.manifest.publisher.key_id);
