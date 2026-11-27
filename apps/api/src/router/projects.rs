@@ -39,24 +39,6 @@ pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
                 )),
         )
         .route(
-            "/api/v1/scenario-templates",
-            get(routes::scenario_template::list_scenario_templates).route_layer(
-                axum_middleware::from_fn_with_state(
-                    auth_state.clone(),
-                    middleware::bot_auth::bot_or_user_auth_middleware,
-                ),
-            ),
-        )
-        .route(
-            "/api/v1/scenario-templates/{key}",
-            get(routes::scenario_template::get_scenario_template).route_layer(
-                axum_middleware::from_fn_with_state(
-                    auth_state.clone(),
-                    middleware::bot_auth::bot_or_user_auth_middleware,
-                ),
-            ),
-        )
-        .route(
             "/api/v1/workspaces/{workspace_id}/projects",
             post(routes::project::create_project)
                 .get(routes::project::list_projects)
@@ -76,13 +58,11 @@ pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
                 )),
         )
         .route(
-            "/api/v1/projects/{project_id}/scenario-templates/{template_key}/install",
-            post(routes::project::install_project_scenario_template).route_layer(
-                axum_middleware::from_fn_with_state(
-                    auth_state.clone(),
-                    middleware::bot_auth::bot_or_user_auth_middleware,
-                ),
-            ),
+            "/api/v1/projects/{project_id}/template-install",
+            post(routes::project::install_project_template).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::auth::jwt_auth_middleware,
+            )),
         )
         .route(
             "/api/v1/projects/{project_id}/resources",

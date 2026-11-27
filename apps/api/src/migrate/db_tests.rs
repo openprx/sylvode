@@ -844,7 +844,7 @@ async fn a_half_built_database_only_adopts_what_it_actually_has() {
 
     let ledger = ledger(&scratch.db).await;
     assert_eq!(status_of(&ledger, "0001_init.sql"), "adopted");
-    assert_eq!(status_of(&ledger, "0029_scenario_templates.sql"), "adopted");
+    assert_eq!(status_of(&ledger, "0029_scenario_templates.sql"), "applied");
     assert_eq!(status_of(&ledger, "0030_universal_forms.sql"), "applied");
     assert_eq!(status_of(&ledger, "0038_form_permissions.sql"), "applied");
     assert!(

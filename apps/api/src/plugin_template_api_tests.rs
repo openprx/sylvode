@@ -1,5 +1,5 @@
-//! Plugins and scenario templates through the real router: one active version per plugin key, and
-//! the built-in templates (the restaurant order line calculates its total itself). Uses the fixture
+//! Plugins and the restaurant template forms through the real router: one active version per plugin
+//! key, and the restaurant order line, which calculates its total itself. Uses the fixture
 //! of `item_api_tests` against a scratch `PostgreSQL` (skipped without `OPENPR_TEST_DATABASE_URL`).
 #![allow(
     clippy::indexing_slicing,
@@ -164,8 +164,17 @@ async fn new_record(api: &Api, form: &str, values: Value) -> Value {
     answer.data().clone()
 }
 
+/// The restaurant template package's form files, in dependency order.
+const RESTAURANT_FORMS: [&str; 5] = [
+    include_str!("../../../packages/builtin/restaurant-ordering/contents/forms/table.json"),
+    include_str!("../../../packages/builtin/restaurant-ordering/contents/forms/sku.json"),
+    include_str!("../../../packages/builtin/restaurant-ordering/contents/forms/menu_category.json"),
+    include_str!("../../../packages/builtin/restaurant-ordering/contents/forms/order.json"),
+    include_str!("../../../packages/builtin/restaurant-ordering/contents/forms/order_line.json"),
+];
+
 #[tokio::test]
-async fn a_restaurant_project_computes_the_line_total_from_quantity_and_unit_price() {
+async fn a_restaurant_order_line_computes_the_total_from_quantity_and_unit_price() {
     let Some(api) = Api::new("restaurant_line_total").await else {
         return;
     };
@@ -173,24 +182,19 @@ async fn a_restaurant_project_computes_the_line_total_from_quantity_and_unit_pri
         .post(
             &format!("/api/v1/workspaces/{}/projects", api.ws),
             api.alice,
-            json!({"key": "REST", "name": "Restaurant", "scenario_template_key": "restaurant_ordering_default"}),
+            json!({"key": "REST", "name": "Restaurant"}),
         )
         .await;
     assert_eq!(created.code(), Some(0), "{}", created.body);
     let project = Uuid::parse_str(created.data()["id"].as_str().expect("id")).expect("uuid");
-    // No plugin was installed for the project, and the template lists no calculation role.
-    assert_eq!(
-        api.db_count(
-            "SELECT COUNT(*)::bigint AS n FROM plugins WHERE project_id = $1",
-            project
-        )
-        .await,
-        0
-    );
-    let roles = api
-        .db_strings("SELECT jsonb_array_elements(ai_roles)->>'key' AS v FROM scenario_templates WHERE key = 'restaurant_ordering_default' AND workspace_id IS NULL")
-        .await;
-    assert!(!roles.iter().any(|role| role == "restaurant_calc"), "{roles:?}");
+    // The forms of the package source, created like any user would create them.
+    for source in RESTAURANT_FORMS {
+        let form: Value = serde_json::from_str(source).expect("form file");
+        let made = api
+            .post(&format!("/api/v1/projects/{project}/forms"), api.alice, form)
+            .await;
+        assert_eq!(made.code(), Some(0), "{}", made.body);
+    }
 
     let forms = forms_by_key(&api, project).await;
     let order_line = forms.get("order_line").expect("order_line form").clone();
@@ -226,42 +230,6 @@ async fn a_restaurant_project_computes_the_line_total_from_quantity_and_unit_pri
         [json!("19.98"), json!("5.50"), json!("37.02")],
         "the total follows the inputs, it is not a constant"
     );
-    api.finish().await;
-}
-
-#[tokio::test]
-async fn every_built_in_template_still_creates_a_project_without_plugins() {
-    let Some(api) = Api::new("every_template_project").await else {
-        return;
-    };
-    let templates = api
-        .db_strings("SELECT key AS v FROM scenario_templates WHERE workspace_id IS NULL ORDER BY key")
-        .await;
-    assert!(templates.len() >= 6, "{templates:?}");
-    for (index, key) in templates.iter().enumerate() {
-        let created = api
-            .post(
-                &format!("/api/v1/workspaces/{}/projects", api.ws),
-                api.alice,
-                json!({"key": format!("TP{index}"), "name": format!("from {key}"), "scenario_template_key": key}),
-            )
-            .await;
-        assert_eq!(created.code(), Some(0), "{key}: {}", created.body);
-        let project = Uuid::parse_str(created.data()["id"].as_str().expect("id")).expect("uuid");
-        assert_eq!(
-            api.db_count(
-                "SELECT COUNT(*)::bigint AS n FROM plugins WHERE project_id = $1",
-                project
-            )
-            .await,
-            0,
-            "{key} installs no plugin"
-        );
-        let forms = forms_by_key(&api, project).await;
-        assert!(!forms.is_empty(), "{key} has forms");
-        let guide = api.get(&format!("/api/v1/scenario-templates/{key}"), api.alice).await;
-        assert_eq!(guide.code(), Some(0), "{key}: {}", guide.body);
-    }
     api.finish().await;
 }
 

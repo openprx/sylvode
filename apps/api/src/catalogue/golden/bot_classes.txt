@@ -165,8 +165,6 @@ GET /api/v1/proposals/{id}/issues Project Proposal("id") false
 GET /api/v1/proposals/{id}/timeline Project Proposal("id") false
 GET /api/v1/proposals/{id}/veto Project Proposal("id") false
 GET /api/v1/proposals/{id}/votes Project Proposal("id") false
-GET /api/v1/scenario-templates NoProject - false
-GET /api/v1/scenario-templates/{key} NoProject - false
 GET /api/v1/search Filtered - false
 GET /api/v1/sites/{id} Project Table("sites","id") false
 GET /api/v1/sites/{id}/bindings Project Table("sites","id") false
@@ -336,12 +334,10 @@ POST /api/v1/projects/{project_id}/bot-connections/{bot_id}/rotate Admin - false
 POST /api/v1/projects/{project_id}/check-results Project Project("project_id") false
 POST /api/v1/projects/{project_id}/domains Project Project("project_id") false
 POST /api/v1/projects/{project_id}/forms Project Project("project_id") false
-POST /api/v1/projects/{project_id}/forms/from-template Project Project("project_id") false
 POST /api/v1/projects/{project_id}/inbound-sources Admin - false
 POST /api/v1/projects/{project_id}/issues Project Project("project_id") false
 POST /api/v1/projects/{project_id}/plugins Project Project("project_id") false
 POST /api/v1/projects/{project_id}/resources Project Project("project_id") false
-POST /api/v1/projects/{project_id}/scenario-templates/{template_key}/install Project Project("project_id") false
 POST /api/v1/projects/{project_id}/sites Project Project("project_id") false
 POST /api/v1/projects/{project_id}/sprints Project Project("project_id") false
 POST /api/v1/proposal-templates Refused - false

@@ -19,13 +19,6 @@ pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
                 )),
         )
         .route(
-            "/api/v1/projects/{project_id}/forms/from-template",
-            post(routes::form::create_project_form_from_template).route_layer(axum_middleware::from_fn_with_state(
-                auth_state.clone(),
-                middleware::bot_auth::bot_or_user_auth_middleware,
-            )),
-        )
-        .route(
             "/api/v1/forms/{form_id}",
             get(routes::form::get_form)
                 .patch(routes::form::update_form)

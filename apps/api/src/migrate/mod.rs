@@ -292,10 +292,9 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
     ("0026_connectors_invocations.sql", SchemaProbe::Superseded),
     ("0027_check_results.sql", SchemaProbe::Relation("check_results")),
     ("0028_invocation_tool_calls.sql", SchemaProbe::Superseded),
-    (
-        "0029_scenario_templates.sql",
-        SchemaProbe::Relation("scenario_templates"),
-    ),
+    // Dropped by 0141; this file is idempotent, so a database that has the table is not adopted but
+    // executed in order (it is dropped again by 0141).
+    ("0029_scenario_templates.sql", SchemaProbe::Superseded),
     (
         "0030_universal_forms.sql",
         SchemaProbe::Relation("form_record_field_index"),
@@ -673,6 +672,10 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
         SchemaProbe::Trigger("artefact_drafts", "trg_sv_hint_draft_status"),
     ),
     ("0140_nav.sql", SchemaProbe::Relation("nav_user_prefs")),
+    (
+        "0141_drop_scenario_templates.sql",
+        SchemaProbe::RelationAbsent("scenario_templates"),
+    ),
     ("0142_cap_record_titles.sql", SchemaProbe::Rerunnable),
 ];
 

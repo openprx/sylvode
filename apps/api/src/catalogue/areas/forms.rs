@@ -24,7 +24,6 @@ pub static ENTRIES: &[Entry] = &[
     bot("forms.field_types.read", Get, "/api/v1/field-types", Global, Read),
     bot("forms.forms.create", Post, "/api/v1/projects/{project_id}/forms", Project(Find::Project("project_id")), Write),
     bot("forms.forms.create/duplicate", Post, "/api/v1/forms/{form_id}/duplicate", Project(Find::Table("project_forms","form_id")), Write),
-    bot("forms.forms.create/from_template", Post, "/api/v1/projects/{project_id}/forms/from-template", Project(Find::Project("project_id")), Write),
     bot("forms.forms.delete", Delete, "/api/v1/forms/{form_id}", Project(Find::Table("project_forms","form_id")), Destructive),
     bot("forms.forms.read", Get, "/api/v1/forms/{form_id}", Project(Find::Table("project_forms","form_id")), Read).oauth().plugin(),
     bot("forms.forms.read/events", Get, "/api/v1/forms/{form_id}/events", Project(Find::Table("project_forms","form_id")), Read),
@@ -89,7 +88,7 @@ mod tests {
     fn the_classes_of_the_area() {
         assert_eq!(
             bot_class_counts(ENTRIES),
-            BTreeMap::from([("no project", 1), ("project-resolved", 69)]),
+            BTreeMap::from([("no project", 1), ("project-resolved", 68)]),
             "the classes of the forms routes changed"
         );
     }

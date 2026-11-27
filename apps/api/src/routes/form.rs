@@ -199,15 +199,6 @@ pub struct DuplicateFormRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct CreateFormFromTemplateRequest {
-    pub template_key: String,
-    pub key: Option<String>,
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub title_template: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct UpdateFormRequest {
     pub name: Option<String>,
     pub description: Option<String>,
@@ -339,15 +330,6 @@ pub struct FormSchemaVersionResponse {
     pub changed_by: Option<Uuid>,
     pub change_summary: String,
     pub created_at: platform::timestamp::Timestamp,
-}
-
-#[derive(Debug, FromQueryResult)]
-struct ScenarioFormTemplateRow {
-    key: String,
-    name: String,
-    description: String,
-    industry: String,
-    field_schema: Value,
 }
 
 #[derive(Debug, Serialize, FromQueryResult)]
@@ -792,106 +774,6 @@ pub async fn duplicate_form(
     tx.commit().await?;
 
     Ok(ApiResponse::success(duplicated_form))
-}
-
-pub async fn create_project_form_from_template(
-    State(state): State<AppState>,
-    Extension(claims): Extension<JwtClaims>,
-    bot: Option<Extension<BotAuthContext>>,
-    Path(project_id): Path<Uuid>,
-    Json(req): Json<CreateFormFromTemplateRequest>,
-) -> Result<impl IntoResponse, ApiError> {
-    let (workspace_id, actor_id) =
-        ensure_project_actor(&state, &claims, bot.as_ref().map(|b| &b.0), project_id).await?;
-    let template_key = normalize_key(&req.template_key).map_err(ApiError::BadRequest)?;
-    let template = load_form_scenario_template(&state, workspace_id, &template_key).await?;
-    let requested_key = req
-        .key
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map_or_else(|| default_form_key_from_template(&template.key), str::to_string);
-    let form_key = normalize_key(&requested_key).map_err(ApiError::BadRequest)?;
-    let name = req
-        .name
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(&template.name)
-        .to_string();
-    let description = req
-        .description
-        .unwrap_or_else(|| format!("{} ({})", template.description, template.industry));
-    let schema = normalize_scenario_field_schema(
-        template.field_schema,
-        Some(SchemaScope {
-            workspace_id,
-            project_id,
-        }),
-    )?;
-    let title_template = req
-        .title_template
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map_or_else(|| default_title_template_from_schema(&schema), str::to_string);
-    let detail_layout = default_detail_layout_for_schema(&schema);
-    let form_id = Uuid::new_v4();
-    let source = json!({
-        "type": if actor_id.is_some() { "user" } else { "bot" },
-        "actor_id": actor_id,
-        "origin": "scenario_template",
-        "scenario_template_key": template.key
-    });
-    let tx = state.db.begin().await?;
-
-    tx.execute(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        r"
-                INSERT INTO project_forms (
-                    id, workspace_id, project_id, key, name, description, icon, color,
-                    title_template, schema, detail_layout, created_by, created_at, updated_at
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), now())
-            ",
-        vec![
-            form_id.into(),
-            workspace_id.into(),
-            project_id.into(),
-            form_key.into(),
-            name.into(),
-            description.into(),
-            Option::<String>::None.into(),
-            Some("#2563eb".to_string()).into(),
-            title_template.into(),
-            schema.clone().into(),
-            detail_layout.clone().into(),
-            actor_id.into(),
-        ],
-    ))
-    .await
-    .map_err(key_violation)?;
-    let form = find_form_with_conn(&tx, form_id).await?;
-    create_default_template_views(&tx, &form, &schema, actor_id).await?;
-    insert_form_event(
-        &tx,
-        &form,
-        None,
-        "form.created_from_template",
-        actor_id,
-        source,
-        json!({
-            "form_id": form.id,
-            "key": form.key,
-            "name": form.name,
-            "scenario_template_key": template.key
-        }),
-    )
-    .await?;
-    insert_schema_version(&tx, &form, actor_id, "scenario template baseline schema").await?;
-    tx.commit().await?;
-
-    Ok(ApiResponse::success(form))
 }
 
 pub async fn get_form(
@@ -7341,142 +7223,6 @@ async fn form_key_exists(state: &AppState, project_id: Uuid, key: &str) -> Resul
         > 0)
 }
 
-async fn load_form_scenario_template(
-    state: &AppState,
-    workspace_id: Uuid,
-    template_key: &str,
-) -> Result<ScenarioFormTemplateRow, ApiError> {
-    ScenarioFormTemplateRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        r"
-            SELECT key, name, description, industry, field_schema
-            FROM scenario_templates
-            WHERE key = $1
-              AND (workspace_id IS NULL OR workspace_id = $2)
-            ORDER BY (workspace_id IS NULL) ASC
-            LIMIT 1
-        ",
-        vec![template_key.to_string().into(), workspace_id.into()],
-    ))
-    .one(&state.db)
-    .await?
-    .ok_or_else(|| ApiError::NotFound("scenario template not found".to_string()))
-}
-
-fn default_form_key_from_template(template_key: &str) -> String {
-    template_key
-        .trim()
-        .strip_suffix("_default")
-        .unwrap_or_else(|| template_key.trim())
-        .to_string()
-}
-
-fn normalize_scenario_field_schema(schema: Value, scope: Option<SchemaScope>) -> Result<Value, ApiError> {
-    let mut schema = ensure_json_object(schema, "template field_schema")?;
-    let object = schema
-        .as_object_mut()
-        .ok_or_else(|| ApiError::BadRequest("template field_schema must be a JSON object".to_string()))?;
-    object
-        .entry("version".to_string())
-        .or_insert_with(|| json!(SCHEMA_VERSION));
-    if let Some(fields) = object.get_mut("fields").and_then(Value::as_array_mut) {
-        for field in fields {
-            if let Some(field_object) = field.as_object_mut()
-                && field_object.get("type").and_then(Value::as_str) == Some("select")
-            {
-                field_object.insert("type".to_string(), json!("single_select"));
-            }
-        }
-    }
-    let schema = ensure_schema_field_ids(schema).map_err(ApiError::BadRequest)?;
-    ensure_valid_schema(&schema, scope)?;
-    Ok(schema)
-}
-
-fn schema_field_keys(schema: &Value) -> Vec<String> {
-    schema
-        .get("fields")
-        .and_then(Value::as_array)
-        .map(|fields| {
-            fields
-                .iter()
-                .filter_map(|field| field.get("key").and_then(Value::as_str))
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default()
-}
-
-fn default_title_template_from_schema(schema: &Value) -> String {
-    let fields = schema.get("fields").and_then(Value::as_array);
-    let title_key = fields
-        .and_then(|fields| {
-            fields
-                .iter()
-                .find(|field| field.get("required").and_then(Value::as_bool).unwrap_or(false))
-                .and_then(|field| field.get("key").and_then(Value::as_str))
-                .or_else(|| fields.iter().find_map(|field| field.get("key").and_then(Value::as_str)))
-        })
-        .unwrap_or("id");
-    format!("{{{title_key}}}")
-}
-
-fn default_detail_layout_for_schema(schema: &Value) -> Value {
-    let fields = schema_field_keys(schema);
-    json!({
-        "sections": [
-            {
-                "key": "main",
-                "title": "Main",
-                "fields": fields
-            }
-        ]
-    })
-}
-
-async fn create_default_template_views(
-    tx: &DatabaseTransaction,
-    form: &FormResponse,
-    schema: &Value,
-    created_by: Option<Uuid>,
-) -> Result<(), ApiError> {
-    let columns = schema_field_keys(schema).into_iter().take(8).collect::<Vec<_>>();
-    let views = [
-        json!({"key": "grid", "name": "Grid", "view_type": "grid", "config": {"columns": columns.clone()}}),
-        json!({"key": "detail", "name": "Detail", "view_type": "detail", "config": {"sections": [{"key": "main", "fields": columns}]}}),
-    ];
-    for view in views {
-        let view_id = Uuid::new_v4();
-        let key = view.get("key").and_then(Value::as_str).unwrap_or("grid");
-        let name = view.get("name").and_then(Value::as_str).unwrap_or(key);
-        let view_type = view.get("view_type").and_then(Value::as_str).unwrap_or("grid");
-        let config = view.get("config").cloned().unwrap_or_else(|| json!({}));
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            r"
-                INSERT INTO form_views (
-                    id, workspace_id, project_id, form_id, key, name, view_type,
-                    config, created_by, created_at, updated_at
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), now())
-            ",
-            vec![
-                view_id.into(),
-                form.workspace_id.into(),
-                form.project_id.into(),
-                form.id.into(),
-                key.to_string().into(),
-                name.to_string().into(),
-                view_type.to_string().into(),
-                config.into(),
-                created_by.into(),
-            ],
-        ))
-        .await?;
-    }
-    Ok(())
-}
-
 fn required_trimmed(value: &str, field: &str) -> Result<String, ApiError> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -7695,12 +7441,10 @@ mod tests {
     use super::{
         AttachmentPackageArtifact, BusinessEventResponse, CHILD_AGGREGATE_COUNT_SQL, CHILD_AGGREGATE_DECIMAL_SQL,
         EventScope, ImportRecordsFileRequest, PARENT_REQUIRED_CHILD_TABLES_SQL, RECALCULATE_PARENT_RECORDS_SQL,
-        attachment_claimed_object_keys, default_form_key_from_template, default_title_template_from_schema,
-        ensure_can_read_job_result, ensure_link_target_scope, filter_event_response_values,
-        import_records_request_from_uploaded_file_without_mapping, job_listing_owner_filter,
-        normalize_scenario_field_schema, owned_record_event_predicate, push_event_scope_filters,
-        record_claimed_object_keys, required_child_table_would_be_emptied, summarize_job_result, total_pages,
-        write_attachment_package_artifact,
+        attachment_claimed_object_keys, ensure_can_read_job_result, ensure_link_target_scope,
+        filter_event_response_values, import_records_request_from_uploaded_file_without_mapping,
+        job_listing_owner_filter, owned_record_event_predicate, push_event_scope_filters, record_claimed_object_keys,
+        required_child_table_would_be_emptied, summarize_job_result, total_pages, write_attachment_package_artifact,
     };
     use crate::{
         error::ApiError,
@@ -8163,34 +7907,6 @@ mod tests {
 
         assert_eq!(claimed.len(), 1);
         assert!(claimed.contains("storage/key.png"));
-    }
-
-    #[test]
-    fn normalizes_scenario_template_field_schema_for_form_use() {
-        let schema = normalize_scenario_field_schema(
-            json!({
-                "fields": [
-                    {"key": "name", "label": "Name", "type": "text", "required": true},
-                    {"key": "status", "label": "Status", "type": "select", "options": ["open", "closed"]}
-                ]
-            }),
-            None,
-        )
-        .unwrap();
-
-        assert_eq!(schema["version"], "sv.form.schema.v2");
-        assert_eq!(schema["fields"][1]["type"], "single_select");
-        assert!(schema["fields"][0]["field_id"].as_str().is_some());
-        assert_eq!(default_title_template_from_schema(&schema), "{name}");
-    }
-
-    #[test]
-    fn derives_default_form_key_from_template_key() {
-        assert_eq!(
-            default_form_key_from_template("restaurant_ordering_default"),
-            "restaurant_ordering"
-        );
-        assert_eq!(default_form_key_from_template("custom_ops"), "custom_ops");
     }
 
     #[tokio::test]

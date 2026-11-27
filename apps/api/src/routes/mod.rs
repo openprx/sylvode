@@ -40,7 +40,6 @@ pub mod proposal;
 mod proposal_mentions;
 pub mod proposal_template;
 pub mod release_readiness;
-pub mod scenario_template;
 pub mod search;
 pub mod sprint;
 pub mod trust_score;

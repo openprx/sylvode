@@ -76,9 +76,7 @@ pub static ENTRIES: &[Entry] = &[
     bot("projects.resources.delete", Delete, "/api/v1/projects/{project_id}/resources/{resource_id}", Project(Find::Project("project_id")), Destructive),
     bot("projects.resources.read/list", Get, "/api/v1/projects/{project_id}/resources", Project(Find::Project("project_id")), Read),
     bot("projects.resources.update", Patch, "/api/v1/projects/{project_id}/resources/{resource_id}", Project(Find::Project("project_id")), Write),
-    bot("projects.scenario_templates.install", Post, "/api/v1/projects/{project_id}/scenario-templates/{template_key}/install", Project(Find::Project("project_id")), Write),
-    bot("projects.scenario_templates.read", Get, "/api/v1/scenario-templates/{key}", Global, Read),
-    bot("projects.scenario_templates.read/list", Get, "/api/v1/scenario-templates", Global, Read),
+    console("projects.templates.install", Post, "/api/v1/projects/{project_id}/template-install", Project(Find::Project("project_id")), Admin),
     bot("tasks.change_hints.read", Get, "/api/v1/bot/change-hints", Own, Read),
     bot("tasks.protocol.read", Get, "/api/v1/ai/protocol", Global, Read),
     bot("tasks.runner.report", Put, "/api/v1/ai/runner/report", Global, Write),
@@ -106,10 +104,10 @@ mod tests {
             bot_class_counts(ENTRIES),
             BTreeMap::from([
                 ("admin", 13),
-                ("no project", 12),
+                ("no project", 10),
                 ("own resource", 1),
                 ("filtered", 1),
-                ("project-resolved", 29),
+                ("project-resolved", 28),
                 ("refused", 6)
             ]),
             "the classes of the projects routes changed"
