@@ -76,6 +76,7 @@ const RULES: readonly TitleRule[] = [
 	rule(/^\/workspace\/[^/]+\/projects\/[^/]+\/settings\/navigation$/, 'shell.sections.navigation'),
 	rule(/^\/workspace\/[^/]+\/settings\/navigation$/, 'shell.sections.navigation'),
 	rule(/^\/workspace\/[^/]+\/projects\/[^/]+\/settings\/drafts$/, 'drafts.title'),
+	rule(/^\/workspace\/[^/]+\/settings\/installations$/, 'shell.sections.installations'),
 	rule(/^\/workspace\/[^/]+\/projects\/[^/]+\/pages\/[^/]+$/, 'nav.page.title'),
 	rule(/^\/workspace\/[^/]+\/pages\/[^/]+$/, 'nav.page.title'),
 	rule(/^\/workspace\/[^/]+\/projects\/[^/]+\/forms$/, 'pageTitle.projectForms'),

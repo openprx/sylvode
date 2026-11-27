@@ -54,6 +54,7 @@ suite.check('settings mode by route', () => {
 		[`/workspace/${W}/settings/flow/operations`, 'workspace', 'flow'],
 		[`/workspace/${W}/settings/flow/package/imports/i`, 'workspace', 'flow'],
 		[`/workspace/${W}/settings/navigation`, 'workspace', 'navigation'],
+		[`/workspace/${W}/settings/installations`, 'workspace', 'installations'],
 		[`/workspace/${W}/projects/${P}/settings/navigation`, 'project', 'navigation'],
 		[`/workspace/${W}/settings`, 'workspace', 'general'],
 		[`/workspace/${W}/members`, 'workspace', 'members'],
@@ -199,7 +200,8 @@ suite.check('settings groups follow the viewer', () => {
 			`/workspace/${W}/connections`,
 			`/workspace/${W}/workflows`,
 			`/workspace/${W}/settings/flow`,
-			`/workspace/${W}/settings/navigation`
+			`/workspace/${W}/settings/navigation`,
+			`/workspace/${W}/settings/installations`
 		],
 		'workspace hrefs keep today URLs'
 	);

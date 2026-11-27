@@ -1,0 +1,125 @@
+{
+	"market": {
+		"title": "Installations",
+		"lead": "Packages installed in this workspace. A package asks for capabilities; you decide which of them it gets. Nothing it brings is created until you approve.",
+		"loading": "Loading...",
+		"empty": "Nothing is installed.",
+		"loadFailed": "The installations could not be loaded.",
+		"request": "Install a package",
+		"package": "Package",
+		"choosePackage": "Choose a package",
+		"noPackages": "There are no packages to install. Upload one first.",
+		"scope": "Install for",
+		"scopeWorkspace": "The whole workspace",
+		"scopeProject": "One project (project id)",
+		"projectId": "Project id",
+		"binds": "Forms the package works on",
+		"bindCreate": "Create a new form",
+		"bindExisting": "Use an existing form (form id)",
+		"formId": "Form id",
+		"preview": "Check",
+		"submit": "Request installation",
+		"requested": "Installation requested. It is pending until it is approved.",
+		"previewFailed": "The package could not be checked.",
+		"requestFailed": "The installation could not be requested.",
+		"colPackage": "Package",
+		"colScope": "Scope",
+		"colStatus": "Status",
+		"colVersion": "Version",
+		"review": "Review",
+		"disable": "Disable",
+		"enable": "Enable",
+		"revoke": "Revoke",
+		"log": "Invocations",
+		"scopeWorkspaceShort": "Workspace",
+		"scopeProjectShort": "Project",
+		"status": {
+			"pending": "Waiting for approval",
+			"active": "Active",
+			"disabled": "Disabled",
+			"revoked": "Revoked"
+		},
+		"disabledReason": {
+			"admin": "Disabled by an administrator",
+			"approver_lost": "The administrator who approved it is no longer an administrator",
+			"key_revoked": "The publisher's signing key was revoked"
+		},
+		"reviewTitle": "Review {name}",
+		"version": "Version {version}",
+		"customCode": "This package runs code on the server.",
+		"changedGrants": "These approvals are no longer valid because what the capability can do has changed. Approve them again:",
+		"asks": "It asks for",
+		"asksNothing": "It asks for no capabilities.",
+		"newRequest": "new",
+		"onForm": "on the form {form}",
+		"bindNote": "Applies to the form this package creates.",
+		"risk": {
+			"read": "Reads",
+			"write": "Changes data",
+			"destructive": "Deletes data",
+			"admin": "Administers",
+			"secret": "Handles secrets",
+			"unknown": "Unknown"
+		},
+		"creates": "On approval it creates",
+		"createsForms": "Forms: {list}",
+		"createsLayouts": "Layouts: {list}",
+		"createsPlacements": "Placed in: {list}",
+		"createsPages": "Pages: {list}",
+		"createsNothing": "Nothing.",
+		"problems": "This package does not fit here",
+		"approveSubset": "Approving fewer capabilities than it asks for makes the parts of the package that need them stop working.",
+		"approve": "Approve selected",
+		"reject": "Reject",
+		"approved": "Approved.",
+		"rejected": "Rejected.",
+		"actionFailed": "The change could not be made.",
+		"disableTitle": "Disable {name}?",
+		"disableBody": "Its actions stop at once. You can enable it again.",
+		"revokeTitle": "Revoke {name}?",
+		"revokeBody": "This cannot be undone. Its actions stop at once and the layouts and placements it added are deleted. Forms it created stay.",
+		"formsUsingRules": "Writes to these forms are refused while the installation is not active:",
+		"enabled": "Enabled.",
+		"disabled": "Disabled.",
+		"revoked": "Revoked.",
+		"logTitle": "Invocations of {name}",
+		"logEmpty": "Nothing has run yet.",
+		"logColWhen": "When",
+		"logColEntry": "Entry",
+		"logColOutcome": "Outcome",
+		"logColDuration": "Duration",
+		"logNote": "Only digests and sizes are kept, for 30 days.",
+		"cap": {
+			"forms": {
+				"forms": {
+					"read": "Read forms and their fields"
+				},
+				"records": {
+					"read": "Read records",
+					"create": "Create records",
+					"update": "Change records"
+				},
+				"record_comments": {
+					"read": "Read comments on records",
+					"create": "Write comments on records"
+				}
+			},
+			"work_items": {
+				"items": {
+					"read": "Read work items",
+					"create": "Create work items",
+					"update": "Change work items"
+				},
+				"comments": {
+					"read": "Read comments on work items",
+					"create": "Write comments on work items"
+				}
+			},
+			"projects": {
+				"projects": {
+					"read": "Read project details"
+				}
+			}
+		}
+	}
+}

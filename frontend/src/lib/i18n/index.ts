@@ -3,19 +3,19 @@ import { init, locale, register } from 'svelte-i18n';
 import { mergeMessages, type Messages } from '../ui/foundations/messages';
 
 // Each `lib/ui` component and each feature folder under `lib/` (`shell`, `surface`, `project`, `oauth`,
-// `milestones`, `notifications`, `governance`, `admin`, `setup`, `flow`, `webhooks`, `people`, `nav`, `forms`) keeps its own
+// `milestones`, `notifications`, `governance`, `admin`, `setup`, `flow`, `webhooks`, `people`, `nav`, `forms`, `market`) keeps its own
 // messages in `locale.<lang>.json` next to the code; they are merged into the app dictionary here, so
 // adding a feature never edits the shared locale files. A new feature folder is added to both globs and to
 // the list in `tests/features/locale-modules.test.ts`.
 const uiZh = import.meta.glob<Messages>(
-	'../{ui,shell,surface,project,oauth,milestones,notifications,governance,admin,setup,flow,webhooks,people,nav,forms}/**/locale.zh.json',
+	'../{ui,shell,surface,project,oauth,milestones,notifications,governance,admin,setup,flow,webhooks,people,nav,forms,market}/**/locale.zh.json',
 	{
 		eager: true,
 		import: 'default'
 	}
 );
 const uiEn = import.meta.glob<Messages>(
-	'../{ui,shell,surface,project,oauth,milestones,notifications,governance,admin,setup,flow,webhooks,people,nav,forms}/**/locale.en.json',
+	'../{ui,shell,surface,project,oauth,milestones,notifications,governance,admin,setup,flow,webhooks,people,nav,forms,market}/**/locale.en.json',
 	{
 		eager: true,
 		import: 'default'

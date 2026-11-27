@@ -1,0 +1,125 @@
+{
+	"market": {
+		"title": "安装项",
+		"lead": "本工作区已安装的软件包。软件包会申请权限，由你决定授予哪些；批准之前，它带来的内容都不会创建。",
+		"loading": "加载中...",
+		"empty": "尚未安装任何内容。",
+		"loadFailed": "无法加载安装项。",
+		"request": "安装软件包",
+		"package": "软件包",
+		"choosePackage": "选择软件包",
+		"noPackages": "没有可安装的软件包，请先上传。",
+		"scope": "安装范围",
+		"scopeWorkspace": "整个工作区",
+		"scopeProject": "单个项目（项目 ID）",
+		"projectId": "项目 ID",
+		"binds": "软件包使用的表单",
+		"bindCreate": "新建表单",
+		"bindExisting": "使用现有表单（表单 ID）",
+		"formId": "表单 ID",
+		"preview": "检查",
+		"submit": "申请安装",
+		"requested": "已申请安装，批准之前处于待批准状态。",
+		"previewFailed": "无法检查该软件包。",
+		"requestFailed": "无法申请安装。",
+		"colPackage": "软件包",
+		"colScope": "范围",
+		"colStatus": "状态",
+		"colVersion": "版本",
+		"review": "审阅",
+		"disable": "停用",
+		"enable": "启用",
+		"revoke": "撤销",
+		"log": "调用记录",
+		"scopeWorkspaceShort": "工作区",
+		"scopeProjectShort": "项目",
+		"reviewTitle": "审阅 {name}",
+		"version": "版本 {version}",
+		"customCode": "该软件包会在服务器上运行代码。",
+		"changedGrants": "以下批准已失效，因为该权限的能力范围发生了变化，请重新批准：",
+		"asks": "它申请的权限",
+		"asksNothing": "它不申请任何权限。",
+		"newRequest": "新增",
+		"onForm": "限于表单 {form}",
+		"bindNote": "适用于该软件包创建的表单。",
+		"creates": "批准后会创建",
+		"createsForms": "表单：{list}",
+		"createsLayouts": "布局：{list}",
+		"createsPlacements": "放置位置：{list}",
+		"createsPages": "页面：{list}",
+		"createsNothing": "无。",
+		"problems": "该软件包不适用于此处",
+		"approveSubset": "只批准一部分权限会让软件包中依赖其余权限的功能停止工作。",
+		"approve": "批准所选",
+		"reject": "拒绝",
+		"approved": "已批准。",
+		"rejected": "已拒绝。",
+		"actionFailed": "无法完成该操作。",
+		"disableTitle": "停用 {name}？",
+		"disableBody": "它的操作会立即停止，之后可以重新启用。",
+		"revokeTitle": "撤销 {name}？",
+		"revokeBody": "此操作无法撤销。它的操作会立即停止，它添加的布局和放置位置会被删除，它创建的表单会保留。",
+		"formsUsingRules": "安装项未启用期间，对以下表单的写入会被拒绝：",
+		"enabled": "已启用。",
+		"disabled": "已停用。",
+		"revoked": "已撤销。",
+		"logTitle": "{name} 的调用记录",
+		"logEmpty": "尚未运行过。",
+		"logColWhen": "时间",
+		"logColEntry": "入口",
+		"logColOutcome": "结果",
+		"logColDuration": "耗时",
+		"logNote": "仅保留摘要和大小，保留 30 天。",
+		"status": {
+			"pending": "待批准",
+			"active": "已启用",
+			"disabled": "已停用",
+			"revoked": "已撤销"
+		},
+		"disabledReason": {
+			"admin": "已被管理员停用",
+			"approver_lost": "批准它的管理员已不再是管理员",
+			"key_revoked": "发布者的签名密钥已被撤销"
+		},
+		"risk": {
+			"read": "读取",
+			"write": "修改数据",
+			"destructive": "删除数据",
+			"admin": "管理",
+			"secret": "处理密钥",
+			"unknown": "未知"
+		},
+		"cap": {
+			"forms": {
+				"forms": {
+					"read": "读取表单及其字段"
+				},
+				"records": {
+					"read": "读取记录",
+					"create": "创建记录",
+					"update": "修改记录"
+				},
+				"record_comments": {
+					"read": "读取记录评论",
+					"create": "撰写记录评论"
+				}
+			},
+			"work_items": {
+				"items": {
+					"read": "读取工作项",
+					"create": "创建工作项",
+					"update": "修改工作项"
+				},
+				"comments": {
+					"read": "读取工作项评论",
+					"create": "撰写工作项评论"
+				}
+			},
+			"projects": {
+				"projects": {
+					"read": "读取项目详情"
+				}
+			}
+		}
+	}
+}

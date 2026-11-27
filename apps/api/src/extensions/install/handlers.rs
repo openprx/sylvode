@@ -362,7 +362,10 @@ pub async fn get_installation(
     Path(installation_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
     let (row, _) = access::installation_for_admin(&state, &claims, installation_id).await?;
-    Ok(ApiResponse::success(installation_json(&state.db, &row).await?))
+    let mut answer = installation_json(&state.db, &row).await?;
+    // What a disable or revoke would stop, so the confirmation can name it before the change.
+    answer["forms_using_rules"] = Value::Array(forms_using_rules(&state.db, &row).await?);
+    Ok(ApiResponse::success(answer))
 }
 
 /// `GET /api/v1/installations/{installation_id}/review`: the preview of the pending generation (or,

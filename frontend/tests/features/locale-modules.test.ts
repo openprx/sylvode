@@ -25,7 +25,8 @@ const MERGED_ROOTS = [
 	'webhooks',
 	'people',
 	'nav',
-	'forms'
+	'forms',
+	'market'
 ];
 
 function globRoots(language: 'en' | 'zh'): string[] {

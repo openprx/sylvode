@@ -83,7 +83,13 @@ export function resolveRoute(url: URL, routeId: string | null = null): RouteCont
 		return inSettings(
 			settings(
 				'workspace',
-				segs[3] === 'flow' ? 'flow' : segs[3] === 'navigation' ? 'navigation' : 'general'
+				segs[3] === 'flow'
+					? 'flow'
+					: segs[3] === 'navigation'
+						? 'navigation'
+						: segs[3] === 'installations'
+							? 'installations'
+							: 'general'
 			)
 		);
 	if (inWorkspace && wsSection && WORKSPACE_SETTINGS_PAGES.has(wsSection))

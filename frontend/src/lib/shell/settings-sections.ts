@@ -99,6 +99,11 @@ export function settingsGroups(viewer: SettingsViewer): SettingsGroupModel[] {
 					id: 'navigation',
 					labelKey: 'shell.sections.navigation',
 					href: `${base}/settings/navigation`
+				},
+				{
+					id: 'installations',
+					labelKey: 'shell.sections.installations',
+					href: `${base}/settings/installations`
 				}
 			]
 		});
