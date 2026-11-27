@@ -14,8 +14,9 @@ use sea_orm::{ConnectionTrait, DatabaseTransaction, DbBackend, FromQueryResult, 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::Sha256;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::str::FromStr;
+use std::sync::Arc;
 use time::Duration;
 use uuid::Uuid;
 
@@ -44,6 +45,7 @@ use crate::{
         },
         projections::refresh_record_projection,
         read_policy::{RecordReadPolicy, render_record_title, title_display_value},
+        reader_context::{FormReadInput, ReaderContext},
         record_comments::{
             CreateRecordCommentRequest, InsertRecordCommentInput, ListRecordCommentsQuery, count_record_comments,
             find_record_comment, insert_record_comment, list_record_comments, record_comment_page,
@@ -1338,7 +1340,7 @@ pub async fn list_form_records(
     )
     .await?;
 
-    let read_policy = record_read_policy(&state, &form, &role).await?;
+    let read_policy = ReaderContext::new(&role).policy(&state.db, (&form).into()).await?;
     let read_guard = read_policy.query_guard();
     let view_query = record_query_config_from_view(&state, form_id, query.view_id, actor_id).await?;
     let sort = query.sort.as_deref().or(view_query.sort.as_deref());
@@ -1600,7 +1602,7 @@ async fn export_records_for_form(
         &mut next_idx,
     )
     .await?;
-    let read_policy = record_read_policy(state, form, role).await?;
+    let read_policy = ReaderContext::new(role).policy(&state.db, form.into()).await?;
     let read_guard = read_policy.query_guard();
     append_record_filter_expression_sql(
         &fields,
@@ -1907,7 +1909,7 @@ async fn build_attachment_package_for_form(
 ) -> Result<AttachmentPackageArtifact, ApiError> {
     let fields = parse_fields(&form.schema).map_err(ApiError::BadRequest)?;
     let denied_read_fields = denied_read_field_keys(state, form.id, role).await?;
-    let read_policy = record_read_policy(state, form, role).await?;
+    let read_policy = ReaderContext::new(role).policy(&state.db, form.into()).await?;
     let record_ids =
         visible_form_record_ids_for_export(state, form, &fields, &read_policy, actor_id, role, view_id).await?;
     let attachments = form_attachments_for_package(state, form.id, Some(&record_ids), &denied_read_fields).await?;
@@ -2706,7 +2708,7 @@ async fn import_form_record_rows(
         .await?;
         created.push(record);
     }
-    let read_policy = record_read_policy(state, form, role).await?;
+    let read_policy = ReaderContext::new(role).policy(&state.db, form.into()).await?;
     let created = created
         .into_iter()
         .map(|record| filter_record_response_values(record, &read_policy))
@@ -3373,7 +3375,7 @@ pub async fn create_form_record(
     let (actor_id, role, is_bot) =
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "record.create").await?;
     let record = create_record_for_form(&state, &form, actor_id, &role, is_bot, req).await?;
-    let read_policy = record_read_policy(&state, &form, &role).await?;
+    let read_policy = ReaderContext::new(&role).policy(&state.db, (&form).into()).await?;
     Ok(ApiResponse::success(filter_record_response_values(
         record,
         &read_policy,
@@ -3429,7 +3431,7 @@ pub async fn preview_form_record_recalculation(
     let with_defaults = apply_default_values(&form.schema, req.values)?;
     let calculated = calculate_values(&state, &form, None, with_defaults).await?;
     let normalized = validate_and_normalize_values(&form.schema, calculated.clone())?;
-    let read_policy = record_read_policy(&state, &form, &role).await?;
+    let read_policy = ReaderContext::new(&role).policy(&state.db, (&form).into()).await?;
     Ok(ApiResponse::success(RecalculatePreviewResponse {
         form_id,
         schema_version: form.schema_version,
@@ -3449,7 +3451,7 @@ pub async fn get_form_record(
     let (actor_id, role, _) =
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "form.view").await?;
     ensure_record_scope_allows_created_by(&state, form.id, &role, actor_id, record.created_by).await?;
-    let read_policy = record_read_policy(&state, &form, &role).await?;
+    let read_policy = ReaderContext::new(&role).policy(&state.db, (&form).into()).await?;
     let mut extensions = axum::http::Extensions::new();
     extensions.insert(claims);
     if let Some(Extension(bot_ctx)) = bot {
@@ -3567,7 +3569,7 @@ pub async fn recalculate_form_record(
     recalculate_parent_records_for_child(&state, record_id, updated_by).await?;
 
     let record = find_record(&state, record_id).await?;
-    let read_policy = record_read_policy(&state, &form, &role).await?;
+    let read_policy = ReaderContext::new(&role).policy(&state.db, (&form).into()).await?;
     Ok(ApiResponse::success(filter_record_response_values(
         record,
         &read_policy,
@@ -3589,7 +3591,7 @@ pub async fn list_form_events(
     } else {
         None
     };
-    let read_policy = record_read_policy(&state, &form, &role).await?;
+    let read_policy = ReaderContext::new(&role).policy(&state.db, (&form).into()).await?;
     list_business_events(
         &state,
         EventScope::Form {
@@ -3615,7 +3617,7 @@ pub async fn list_form_record_events(
     let (actor_id, role, _) =
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "form.view").await?;
     ensure_record_scope_allows_created_by(&state, form.id, &role, actor_id, record.created_by).await?;
-    let read_policy = record_read_policy(&state, &form, &role).await?;
+    let read_policy = ReaderContext::new(&role).policy(&state.db, (&form).into()).await?;
     list_business_events(
         &state,
         EventScope::Record {
@@ -3714,7 +3716,7 @@ pub async fn update_form_record(
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "record.update").await?;
     ensure_record_scope_allows_created_by(&state, form.id, &role, actor_id, record.created_by).await?;
     let record = update_record_for_form(&state, &form, record, actor_id, &role, is_bot, req).await?;
-    let read_policy = record_read_policy(&state, &form, &role).await?;
+    let read_policy = ReaderContext::new(&role).policy(&state.db, (&form).into()).await?;
     Ok(ApiResponse::success(filter_record_response_values(
         record,
         &read_policy,
@@ -4041,7 +4043,7 @@ pub async fn restore_form_record(
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "record.delete").await?;
     ensure_record_scope_allows_created_by(&state, form.id, &role, actor_id, record.created_by).await?;
     let restored = restore_record_for_form(&state, &form, record, actor_id, is_bot, query.idempotency_key).await?;
-    let read_policy = record_read_policy(&state, &form, &role).await?;
+    let read_policy = ReaderContext::new(&role).policy(&state.db, (&form).into()).await?;
     Ok(ApiResponse::success(filter_record_response_values(
         restored,
         &read_policy,
@@ -4229,7 +4231,9 @@ pub async fn list_relation_targets(
     .ok_or_else(|| ApiError::NotFound("relation target form not found".to_string()))?;
     let (target_actor_id, target_role, _) =
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &target_form, "form.view").await?;
-    let target_read_policy = record_read_policy(&state, &target_form, &target_role).await?;
+    let target_read_policy = ReaderContext::new(&target_role)
+        .policy(&state.db, (&target_form).into())
+        .await?;
 
     let mut where_parts = vec!["form_id = $1".to_string(), "archived_at IS NULL".to_string()];
     let mut values: Vec<sea_orm::Value> = vec![target_form.id.into()];
@@ -4392,11 +4396,21 @@ pub async fn list_record_children(
         .all(&state.db)
         .await?;
     let mut items = Vec::with_capacity(rows.len());
+    // One form check and one read policy per child form per request.
+    let mut child_policies: HashMap<Uuid, Arc<RecordReadPolicy>> = HashMap::new();
     for row in rows {
-        let child_form = find_form(&state, row.form_id).await?;
-        let (_, child_role, _) =
-            require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &child_form, "form.view").await?;
-        let read_policy = record_read_policy(&state, &child_form, &child_role).await?;
+        let read_policy = if let Some(policy) = child_policies.get(&row.form_id) {
+            Arc::clone(policy)
+        } else {
+            let child_form = find_form(&state, row.form_id).await?;
+            let (_, child_role, _) =
+                require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &child_form, "form.view").await?;
+            let policy = ReaderContext::new(&child_role)
+                .policy(&state.db, (&child_form).into())
+                .await?;
+            child_policies.insert(row.form_id, Arc::clone(&policy));
+            policy
+        };
         let record = RecordResponse {
             id: row.record_id,
             workspace_id: row.workspace_id,
@@ -4491,7 +4505,9 @@ pub async fn create_child_record(
         is_bot,
     )
     .await?;
-    let read_policy = record_read_policy(&state, &child_form, &child_role).await?;
+    let read_policy = ReaderContext::new(&child_role)
+        .policy(&state.db, (&child_form).into())
+        .await?;
 
     Ok(ApiResponse::success(ChildRecordMutationResponse {
         link,
@@ -4554,7 +4570,9 @@ pub async fn update_child_record(
         },
     )
     .await?;
-    let read_policy = record_read_policy(&state, &child_form, &child_role).await?;
+    let read_policy = ReaderContext::new(&child_role)
+        .policy(&state.db, (&child_form).into())
+        .await?;
 
     Ok(ApiResponse::success(ChildRecordMutationResponse {
         link,
@@ -4603,7 +4621,9 @@ pub async fn archive_child_record(
     };
     let link = find_parent_child_link(&state, record_id, child_record_id, relation_key.as_deref()).await?;
     let archived = archive_record_for_form(&state, &child_form, child_record, actor_id, is_bot, None).await?;
-    let read_policy = record_read_policy(&state, &child_form, &child_role).await?;
+    let read_policy = ReaderContext::new(&child_role)
+        .policy(&state.db, (&child_form).into())
+        .await?;
 
     Ok(ApiResponse::success(ChildRecordMutationResponse {
         link,
@@ -4652,7 +4672,9 @@ pub async fn restore_child_record(
     };
     let link = find_parent_child_link(&state, record_id, child_record_id, relation_key.as_deref()).await?;
     let restored = restore_record_for_form(&state, &child_form, child_record, actor_id, is_bot, None).await?;
-    let read_policy = record_read_policy(&state, &child_form, &child_role).await?;
+    let read_policy = ReaderContext::new(&child_role)
+        .policy(&state.db, (&child_form).into())
+        .await?;
 
     Ok(ApiResponse::success(ChildRecordMutationResponse {
         link,
@@ -6101,7 +6123,7 @@ async fn preview_import_rows(
         ));
     }
 
-    let read_policy = record_read_policy(state, form, role).await?;
+    let read_policy = ReaderContext::new(role).policy(&state.db, form.into()).await?;
     let mut previews = Vec::with_capacity(rows.len());
     for (index, row) in rows.iter().enumerate() {
         let row_number = row.row_number.unwrap_or(index + 1);
@@ -6230,63 +6252,16 @@ fn filter_record_response_values(mut record: RecordResponse, policy: &RecordRead
     record
 }
 
-/// Builds the read policy of `role` on `form`, including which relation fields point at a form that
-/// hides fields from this role (an unresolvable target counts as restricted).
-pub(crate) async fn record_read_policy(
-    state: &AppState,
-    form: &FormResponse,
-    role: &str,
-) -> Result<RecordReadPolicy, ApiError> {
-    let denied_read_fields = denied_read_field_keys(state, form.id, role).await?;
-    let mut restricted_relation_fields = BTreeSet::new();
-    if !role_is_form_admin(role) {
-        let fields = parse_fields(&form.schema).map_err(ApiError::BadRequest)?;
-        let mut target_restricted: BTreeMap<String, bool> = BTreeMap::new();
-        for field in fields.iter().filter(|field| field.field_type == "relation") {
-            let Ok(config) = relation_target_config(&form.schema, Some(&field.key), None) else {
-                restricted_relation_fields.insert(field.key.clone());
-                continue;
-            };
-            let restricted = if let Some(restricted) = target_restricted.get(&config.form_key) {
-                *restricted
-            } else {
-                let restricted = relation_target_restricts_reader(state, form, &config.form_key, role).await?;
-                target_restricted.insert(config.form_key.clone(), restricted);
-                restricted
-            };
-            if restricted {
-                restricted_relation_fields.insert(field.key.clone());
-            }
+impl<'a> From<&'a FormResponse> for FormReadInput<'a> {
+    fn from(form: &'a FormResponse) -> Self {
+        FormReadInput {
+            id: form.id,
+            workspace_id: form.workspace_id,
+            project_id: form.project_id,
+            title_template: &form.title_template,
+            schema: &form.schema,
         }
     }
-    Ok(RecordReadPolicy::new(
-        form.title_template.clone(),
-        denied_read_fields,
-        restricted_relation_fields,
-    ))
-}
-
-async fn relation_target_restricts_reader(
-    state: &AppState,
-    form: &FormResponse,
-    target_form_key: &str,
-    role: &str,
-) -> Result<bool, ApiError> {
-    let target = RecordIdRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        "SELECT id FROM project_forms WHERE workspace_id = $1 AND project_id = $2 AND key = $3",
-        vec![
-            form.workspace_id.into(),
-            form.project_id.into(),
-            target_form_key.to_string().into(),
-        ],
-    ))
-    .one(&state.db)
-    .await?;
-    let Some(target) = target else {
-        return Ok(true);
-    };
-    Ok(!denied_read_field_keys(state, target.id, role).await?.is_empty())
 }
 
 /// Applies field level read permissions to an event before it leaves the API.

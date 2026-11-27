@@ -2587,7 +2587,9 @@ pub async fn list_scope_references(
             // The stored title is rendered from every field; a reader with denied fields gets one
             // rendered from the readable fields only.
             let form = crate::routes::form::find_form(state, target.form_id).await?;
-            let base = crate::routes::form::record_read_policy(state, &form, &actor.role).await?;
+            let base = crate::forms::reader_context::ReaderContext::new(&actor.role)
+                .policy(&state.db, (&form).into())
+                .await?;
             let policy = crate::forms::read_policy::RecordReadPolicy::new(
                 target.title_template.clone(),
                 permission.denied_read_fields.clone(),
