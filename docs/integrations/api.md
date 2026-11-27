@@ -296,7 +296,7 @@ Task lists for people:
 |---|---|---|---|
 | GET | `/api/v1/projects/{project_id}/ai/tasks` | Project member | `status` filter (`pending`, `processing`, `acknowledged`, `completed`, `failed`, `cancelled`), `page`, `per_page` (default 20, maximum 100). |
 | POST | `/api/v1/projects/{project_id}/ai/tasks` | Workspace owner or admin, or instance administrator | `{"ai_participant_id", "task_type", "reference_type", "reference_id", "priority", "payload", "idempotency_key", "max_attempts"}`; `task_type` is `issue_assigned`, `review_requested`, `comment_requested` or `vote_requested`; `reference_type` is `work_item`, `proposal` or `comment`. |
-| GET | `/api/v1/issues/{issue_id}/ai-tasks` | Project member | The tasks of one work item. |
+| GET | `/api/v1/issues/{issue_id}/ai-tasks` | Project member | The tasks of one work item, newest first, paged (`page`, `per_page`; default 5, maximum 50); each task carries its newest 100 events. |
 
 ## Alerts
 
@@ -557,7 +557,7 @@ already take part in it); picked ids are accepted as before, and `state` is `act
 account. A Flow comment's `mentions` are the same person objects (they were ids before), and its
 `resolved_by` is a person `{id, name, is_bot, state}` too, `null` while the comment is open.
 
-The activity of a work item (`GET /issues/{issue_id}/activities`) adds `people` to the paged answer:
+The comments of a work item (`GET /issues/{issue_id}/comments`) and its activity (`GET /issues/{issue_id}/activities`) are listed newest first and paged with `page` and `per_page` (comments: default 20, activity: default 30, maximum 100 each). The activity records `created`, `title_changed`, `description_changed`, `status_changed`, `priority_changed`, `assigned`, `due_date_changed`, `sprint_changed`, `milestone_changed`, `label_added`, `label_removed`, `page_linked`, `page_unlinked`, `comment_added`, `comment_edited` and `comment_deleted`, one entry for each change of the item. The activity answer adds `people` to the paged answer:
 an object keyed by user id with `{id, name, is_bot, state}` for every person an entry names (its
 actor, and the assignee before and after in `assigned` entries). The activity feed of the caller
 across workspaces (`GET /my/activities`) answers the same way: each entry's actor and `assigned`

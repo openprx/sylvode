@@ -2,7 +2,7 @@
 #![allow(clippy::trait_duplication_in_bounds)]
 
 use axum::Json;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Metadata the bot-operation middleware can inspect without buffering a response body.
@@ -90,5 +90,85 @@ impl<T: Serialize> PaginatedData<T> {
             per_page: total,
             total_pages: 1,
         }
+    }
+}
+
+/// The `page` and `per_page` query parameters of a paged list.
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+pub struct PageQuery {
+    pub page: Option<i64>,
+    pub per_page: Option<i64>,
+}
+
+/// A page request with its defaults applied: `page` from 1, `per_page` between 1 and the list's
+/// maximum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Paging {
+    pub page: i64,
+    pub per_page: i64,
+}
+
+impl PageQuery {
+    pub fn resolve(self, default_per_page: i64, max_per_page: i64) -> Paging {
+        Paging {
+            page: self.page.unwrap_or(1).max(1),
+            per_page: self.per_page.unwrap_or(default_per_page).clamp(1, max_per_page),
+        }
+    }
+}
+
+impl Paging {
+    /// Rows to skip before this page.
+    pub const fn offset(self) -> i64 {
+        (self.page - 1).saturating_mul(self.per_page)
+    }
+}
+
+impl<T: Serialize> PaginatedData<T> {
+    /// One page of a list of `total` entries.
+    pub const fn page(items: Vec<T>, total: i64, paging: Paging) -> Self {
+        Self {
+            items,
+            total,
+            page: paging.page,
+            per_page: paging.per_page,
+            total_pages: if total == 0 {
+                0
+            } else {
+                total / paging.per_page + (total % paging.per_page != 0) as i64
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod paging_tests {
+    use super::{PageQuery, PaginatedData, Paging};
+
+    #[test]
+    fn defaults_and_limits_apply() {
+        let none = PageQuery::default().resolve(20, 100);
+        assert_eq!(none, Paging { page: 1, per_page: 20 });
+        assert_eq!(none.offset(), 0);
+        let odd = PageQuery {
+            page: Some(0),
+            per_page: Some(5000),
+        }
+        .resolve(20, 100);
+        assert_eq!(odd, Paging { page: 1, per_page: 100 });
+        let third = PageQuery {
+            page: Some(3),
+            per_page: Some(30),
+        }
+        .resolve(20, 100);
+        assert_eq!(third.offset(), 60);
+    }
+
+    #[test]
+    fn total_pages_round_up() {
+        let paging = Paging { page: 2, per_page: 20 };
+        let data = PaginatedData::<u8>::page(Vec::new(), 41, paging);
+        assert_eq!((data.total, data.page, data.per_page, data.total_pages), (41, 2, 20, 3));
+        assert_eq!(PaginatedData::<u8>::page(Vec::new(), 0, paging).total_pages, 0);
     }
 }
