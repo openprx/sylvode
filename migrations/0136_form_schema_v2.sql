@@ -39,6 +39,7 @@ DECLARE
   raw_text TEXT;
   rule_value JSONB;
   existing_validate JSONB;
+  length_ok BOOLEAN;
   text_types CONSTANT TEXT[] := ARRAY['text', 'textarea', 'phone', 'email', 'address', 'scan'];
 BEGIN
   IF validation IS NOT NULL AND jsonb_typeof(validation) = 'object' THEN
@@ -93,9 +94,15 @@ BEGIN
     raw := validation->'max_length';
     IF raw IS NOT NULL AND jsonb_typeof(raw) <> 'null' THEN
       raw_text := btrim(raw #>> '{}');
+      -- Decided before the IF: PL/pgSQL ends an IF condition at the first THEN, so a CASE
+      -- expression cannot appear inside one.
+      length_ok := raw_text ~ '^[0-9]{1,7}$';
+      IF length_ok THEN
+        length_ok := raw_text::INTEGER BETWEEN 1 AND 1048576;
+      END IF;
       IF (ftype = ANY (text_types) OR ftype = 'rich_text')
          AND jsonb_typeof(raw) IN ('number', 'string')
-         AND CASE WHEN raw_text ~ '^[0-9]{1,7}$' THEN raw_text::INTEGER BETWEEN 1 AND 1048576 ELSE false END THEN
+         AND length_ok THEN
         new_rules := new_rules || jsonb_build_array(
           jsonb_build_object('rule', 'max_length', 'value', raw_text::INTEGER));
       ELSE

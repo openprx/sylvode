@@ -1989,3 +1989,94 @@ async fn the_legacy_objects_migration_keeps_only_package_imports() {
     assert!(insert_job("legacy_pages", "again").await.is_err(), "the check is back");
     scratch.drop_self().await;
 }
+
+/// The low-code migrations (0133-0140) apply on a fresh database, each re-runs as a no-op, and
+/// the runner's replay start succeeds after them. 0136 also rewrites a v1 form schema it finds.
+#[tokio::test]
+async fn low_code_migrations_apply_and_rerun() {
+    let scratch = scratch_or_skip!("low_code_rerun");
+    let db = scratch.connection();
+    run_migrations_with(db, MigrationOptions::default())
+        .await
+        .expect("a fresh database migrates cleanly");
+    let low_code: Vec<(&str, &str)> = MIGRATIONS
+        .iter()
+        .copied()
+        .filter(|(name, _)| ("0133".."0141").contains(&name.get(..4).unwrap_or_default()))
+        .collect();
+    assert_eq!(low_code.len(), 8, "0133 through 0140 are registered");
+    for (name, sql) in &low_code {
+        db.execute_unprepared(&format!("BEGIN; {sql}\nCOMMIT;"))
+            .await
+            .unwrap_or_else(|err| panic!("{name} does not re-run: {err}"));
+    }
+
+    db.execute_unprepared(
+        r#"INSERT INTO scenario_templates (key, name, project_type_key, field_schema)
+           SELECT 'mig_v1_check', 'v1 check', key,
+                  '{"version":"openpr.form.schema.v1","fields":[
+                     {"key":"qty","type":"integer","validation":{"min":1,"max":"10"},"default_value":2},
+                     {"key":"code","type":"text","validation":{"pattern":"[A-Z]+","max_length":"8"},
+                      "policy":{"read_only":true}},
+                     {"key":"flag","type":"boolean","validation":{"max_length":3}},
+                     {"key":"when","type":"datetime","validation":{"min":"2026-01-01T10:00"}}]}'::jsonb
+             FROM project_types LIMIT 1"#,
+    )
+    .await
+    .expect("a v1 template row is inserted");
+    let sql_0136 = low_code
+        .iter()
+        .find(|(name, _)| name.starts_with("0136"))
+        .map(|(_, sql)| *sql)
+        .expect("0136 is registered");
+    db.execute_unprepared(&format!("BEGIN; {sql_0136}\nCOMMIT;"))
+        .await
+        .expect("0136 rewrites the v1 row");
+    let rewritten: serde_json::Value = serde_json::from_str(
+        &scalar_text(
+            db,
+            "SELECT field_schema::text AS v FROM scenario_templates WHERE key = 'mig_v1_check'",
+        )
+        .await,
+    )
+    .expect("the rewritten schema is JSON");
+    assert_eq!(rewritten["version"], "sv.form.schema.v2");
+    let fields = &rewritten["fields"];
+    assert_eq!(
+        fields[0]["rules"]["validate"],
+        serde_json::json!([{"rule": "min", "value": 1}, {"rule": "max", "value": 10}])
+    );
+    assert_eq!(fields[0]["default"], serde_json::json!({"value": 2}));
+    assert!(fields[0].get("validation").is_none() && fields[0].get("default_value").is_none());
+    assert_eq!(
+        fields[1]["rules"]["validate"],
+        serde_json::json!([{"rule": "pattern", "value": "^(?:[A-Z]+)$"}, {"rule": "max_length", "value": 8}])
+    );
+    assert_eq!(fields[1]["read_only"], true);
+    assert!(fields[1].get("policy").is_none());
+    assert!(
+        fields[2].get("rules").is_none(),
+        "a rule that does not fit the type is dropped"
+    );
+    assert_eq!(
+        fields[3]["rules"]["validate"],
+        serde_json::json!([{"rule": "min", "value": "2026-01-01T10:00:00Z"}])
+    );
+
+    let replay = MigrationOptions {
+        replay: true,
+        continue_on_error: false,
+    };
+    run_migrations_with(db, replay)
+        .await
+        .expect("a replay start re-executes every file without failing");
+    let ledger = ledger(db).await;
+    for (name, _) in &low_code {
+        assert_eq!(
+            status_of(&ledger, name),
+            "applied",
+            "{name} stays applied after the replay"
+        );
+    }
+    scratch.drop_self().await;
+}
