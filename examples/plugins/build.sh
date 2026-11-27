@@ -2,7 +2,9 @@
 # Builds the guest plugins into components under dist/ and records their SHA-256 in dist/SHA256SUMS.
 #
 #   ./build.sh           build, then write dist/ and dist/SHA256SUMS
-#   ./build.sh --check   build, then compare with the committed dist/SHA256SUMS (exit 1 on a difference)
+#   ./build.sh --check   verify the committed dist/*.wasm against the committed dist/SHA256SUMS, build,
+#                        then compare every fresh component and the fresh sums with the committed ones
+#                        (exit 1 on a difference)
 #
 # Needs the Rust target wasm32-unknown-unknown and `wasm-tools` (cargo install wasm-tools --locked,
 # used with 1.263.0). The toolchain is pinned by the repository's rust-toolchain.toml and the
@@ -41,7 +43,17 @@ done
 (cd "$out" && shasum -a 256 -- *.wasm | LC_ALL=C sort -k2 > SHA256SUMS)
 
 if [ "$mode" = "--check" ]; then
-  if diff -u "$here/dist/SHA256SUMS" "$out/SHA256SUMS"; then
+  # The host tests embed dist/*.wasm, so a swapped binary with an untouched sums file must fail here.
+  if ! (cd "$here/dist" && shasum -a 256 -c SHA256SUMS >/dev/null); then
+    echo "a committed dist/*.wasm does not match dist/SHA256SUMS" >&2
+    rm -rf "$out"
+    exit 1
+  fi
+  same=1
+  for committed in "$here"/dist/*.wasm; do
+    cmp -s "$committed" "$out/$(basename "$committed")" || { echo "dist/$(basename "$committed") differs from a fresh build" >&2; same=0; }
+  done
+  if [ "$same" = 1 ] && diff -u "$here/dist/SHA256SUMS" "$out/SHA256SUMS"; then
     echo "dist/ matches a fresh build"
     rm -rf "$out"
   else
