@@ -2,13 +2,11 @@
 
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { locale, t } from 'svelte-i18n';
+	import { t } from 'svelte-i18n';
 	import { onMount, untrack } from 'svelte';
-	import { authStore } from '#lib/stores/auth.js';
-	import { resolvedTheme } from '#lib/theme.js';
-	import { get } from 'svelte/store';
 	import { provideRuntime } from './context';
 	import { LayoutRuntime } from './runtime.svelte';
+	import { currentViewer, paramsFromSlot, slotValues } from './scope';
 	import LayoutNode from './LayoutNode.svelte';
 	import type { LayoutSpec, SlotContextParams } from './types';
 
@@ -26,11 +24,8 @@
 
 	// The runtime is built once per mounted placement; the slot re-keys it when the context changes.
 	const runtime = untrack(() => {
-		const slot: Record<string, unknown> = { ...context };
-		const params: Record<string, unknown> = {};
-		for (const name of Object.keys(spec.params ?? {})) {
-			if (name in slot) params[name] = slot[name];
-		}
+		const slot = slotValues(context);
+		const params = paramsFromSlot(spec, slot);
 		return new LayoutRuntime({
 			spec,
 			context,
@@ -38,12 +33,7 @@
 			slot,
 			params,
 			installations,
-			viewer: {
-				id: get(authStore).user?.id ?? '',
-				role: get(authStore).user?.role ?? 'member',
-				locale: get(locale) ?? 'en',
-				theme: get(resolvedTheme)
-			},
+			viewer: currentViewer(),
 			// eslint-disable-next-line svelte/no-navigation-without-resolve -- the runtime builds full app paths
 			navigate: (path) => void goto(path)
 		});

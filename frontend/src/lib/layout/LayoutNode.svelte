@@ -112,7 +112,7 @@
 	const trend = $derived(cfg.trend === undefined ? '' : displayValue(value(cfg.trend)));
 </script>
 
-{#if evaluateWhen(node.when)}
+{#if evaluateWhen(node.when, runtime.scope)}
 	{#if node.type === 'stack'}
 		<div
 			class="flex min-w-0 {cfg.direction === 'horizontal'

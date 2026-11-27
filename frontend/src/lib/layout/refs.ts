@@ -1,4 +1,5 @@
 import type { I18nText, RefScope, TextValue } from './types';
+import { evaluateText } from './when';
 
 const REF = /^\$(params|data|slot|viewer|actions)((?:\.[a-z_][a-z0-9_]*|\[[0-9]{1,4}\])*)$/;
 
@@ -66,11 +67,15 @@ export function displayValue(value: unknown): string {
 }
 
 /**
- * Text of a literal, an i18n map (locale, then `en`, then any entry), or a reference. A computed
- * `{cel}` value is shown empty until the shared rules mirror is available (see `when.ts`).
+ * Text of a literal, an i18n map (locale, then `en`, then any entry), a reference, or a computed
+ * `{cel}` value (display only; empty on any error, see `when.ts`).
  */
 export function resolveText(value: TextValue | unknown, scope: RefScope, locale: string): string {
 	if (typeof value === 'string') return displayValue(resolveValue(value, scope));
+	if (value !== null && typeof value === 'object' && 'cel' in value) {
+		const source = (value as { cel: unknown }).cel;
+		return typeof source === 'string' ? evaluateText(source, scope) : '';
+	}
 	if (isI18nMap(value)) {
 		return value[locale] ?? value.en ?? Object.values(value)[0] ?? '';
 	}

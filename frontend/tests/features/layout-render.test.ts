@@ -13,12 +13,13 @@ const scope: RefScope = {
 	actions: {}
 };
 
-test('when: literals are evaluated, anything else stays visible', () => {
-	assert.equal(evaluateWhen('false'), false);
-	assert.equal(evaluateWhen(' FALSE '), false);
-	assert.equal(evaluateWhen('true'), true);
-	assert.equal(evaluateWhen(undefined), true);
-	assert.equal(evaluateWhen("data.req.values.status != 'closed'"), true);
+test('when: CEL in the layout_when environment; errors hide', () => {
+	assert.equal(evaluateWhen('false', scope), false);
+	assert.equal(evaluateWhen('true', scope), true);
+	assert.equal(evaluateWhen(undefined, scope), true);
+	assert.equal(evaluateWhen("data.req.values.status != 'closed'", scope), true);
+	assert.equal(evaluateWhen("data.req.values.status == 'closed'", scope), false);
+	assert.equal(evaluateWhen('unknown_name == 1', scope), false);
 });
 
 test('refs: paths, indexes and missing values', () => {
