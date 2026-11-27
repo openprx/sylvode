@@ -1,5 +1,5 @@
 //! Strict JSON parsing for manifests: duplicate keys refused, numbers must be integers within
-//! +-2^53 (so every parser and the canonicaliser see the same document).
+//! +-2^53, no U+0000 in strings or keys (PostgreSQL `jsonb` cannot store it) (so every parser and the canonicaliser see the same document).
 
 use std::fmt;
 
@@ -27,7 +27,7 @@ impl<'de> Visitor<'de> for V {
     }
 
     fn visit_i64<E: de::Error>(self, v: i64) -> std::result::Result<Strict, E> {
-        if v.abs() > MAX_SAFE {
+        if !(-MAX_SAFE..=MAX_SAFE).contains(&v) {
             return Err(E::custom("integer outside +-2^53"));
         }
         Ok(Strict(Value::from(v)))
@@ -45,6 +45,9 @@ impl<'de> Visitor<'de> for V {
     }
 
     fn visit_str<E: de::Error>(self, v: &str) -> std::result::Result<Strict, E> {
+        if v.contains('\0') {
+            return Err(E::custom("U+0000 in a string"));
+        }
         Ok(Strict(Value::String(v.to_owned())))
     }
 
@@ -63,6 +66,9 @@ impl<'de> Visitor<'de> for V {
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> std::result::Result<Strict, A::Error> {
         let mut out = Map::new();
         while let Some((k, Strict(v))) = map.next_entry::<String, Strict>()? {
+            if k.contains('\0') {
+                return Err(de::Error::custom("U+0000 in a key"));
+            }
             if out.contains_key(&k) {
                 return Err(de::Error::custom(format!("duplicate key `{k}`")));
             }

@@ -61,13 +61,13 @@ fn keygen(key_path: &str, public_path: &str) -> Result<(), String> {
 }
 
 fn write_secret(path: &Path, data: &[u8]) -> Result<(), String> {
+    #[cfg(unix)]
     use std::os::unix::fs::OpenOptionsExt;
-    let mut f = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
-        .map_err(io("create key file"))?;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut f = options.open(path).map_err(io("create key file"))?;
     f.write_all(data).map_err(io("write key file"))
 }
 
@@ -96,9 +96,8 @@ fn collect(root: &Path, dir: &Path, out: &mut BTreeMap<String, Vec<u8>>) -> Resu
 
 fn pack(dir: &str, key_path: &str, out: &str) -> Result<(), String> {
     let root = Path::new(dir);
-    let manifest: serde_json::Value =
-        serde_json::from_slice(&fs::read(root.join(MANIFEST_NAME)).map_err(io("read manifest"))?)
-            .map_err(io("manifest JSON"))?;
+    let manifest =
+        sv_package::parse_manifest(&fs::read(root.join(MANIFEST_NAME)).map_err(io("read manifest"))?).map_err(pe)?;
     let mut contents = BTreeMap::new();
     let contents_dir = root.join("contents");
     if contents_dir.is_dir() {

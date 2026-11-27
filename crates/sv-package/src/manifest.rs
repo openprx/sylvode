@@ -454,7 +454,7 @@ impl Manifest {
                 return Err(bad(format!("bind `{name}` requires too many fields")));
             }
             for (field, ty) in &b.requires_fields {
-                if !ident(ty) || field.is_empty() || field.len() > 64 {
+                if !ident(ty) || !entry_name(field) {
                     return Err(bad(format!("bind `{name}`: bad requires_fields entry `{field}`")));
                 }
             }

@@ -34,6 +34,7 @@ CREATE TABLE packages (
   kind TEXT NOT NULL CHECK (kind IN ('form-template','page-template','app','plugin')),
   publisher_key_id UUID NOT NULL REFERENCES publisher_keys(id),
   manifest JSONB NOT NULL,
+  files JSONB NOT NULL CHECK (jsonb_typeof(files) = 'array'),   -- [{path,size}] from the verified package; GET never reads the blob
   custom_code BOOLEAN NOT NULL,
   tier TEXT NOT NULL CHECK (tier IN ('builtin','private')),
   installable BOOLEAN NOT NULL DEFAULT true,

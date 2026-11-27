@@ -231,6 +231,20 @@ fn duplicate_keys_floats_and_custom_code_are_refused() {
         code(sv_package::parse_manifest(b"{\"a\":9007199254740993}")),
         ErrorCode::ManifestInvalid
     );
+    for bad in [
+        "{\"a\":-9223372036854775808}",
+        "{\"a\":9007199254740993}",
+        "{\"a\":-9007199254740993}",
+        "{\"a\":\"x\\u0000y\"}",
+        "{\"a\\u0000\":1}",
+    ] {
+        assert_eq!(
+            code(sv_package::parse_manifest(bad.as_bytes())),
+            ErrorCode::ManifestInvalid,
+            "{bad}"
+        );
+    }
+    assert!(sv_package::parse_manifest(b"{\"a\":9007199254740992,\"b\":-9007199254740992}").is_ok());
     assert!(sv_package::parse_manifest(br#"{"a":[1,{"b":null}]}"#).is_ok());
     let mut m = manifest();
     m["custom_code"] = json!(true);
