@@ -467,6 +467,67 @@ pub(crate) fn effective_write(list: &[String], fields: &[SiteField], excluded: &
         .collect()
 }
 
+/// The lists of a projection after the read-time checks, one per audience side: visitor read,
+/// visitor submit, operator read, operator update.
+fn effective_lists(projection: &Projection, fields: &[SiteField], title_template: &str) -> [Vec<String>; 4] {
+    let none = BTreeSet::new();
+    let read = |audience| {
+        projection
+            .read(audience)
+            .map(|read| effective_read(read, fields, title_template, &none).fields)
+            .unwrap_or_default()
+    };
+    let submit = projection
+        .visitor
+        .submit
+        .as_ref()
+        .map(|submit| effective_write(&submit.fields, fields, &none))
+        .unwrap_or_default();
+    let update = projection
+        .operator
+        .update
+        .as_ref()
+        .map(|update| effective_write(&update.fields, fields, &none))
+        .unwrap_or_default();
+    [read(Audience::Visitor), submit, read(Audience::Operator), update]
+}
+
+/// Whether what the site shows of a field differs between two schemas.
+fn shown_differently(old: &SiteField, new: &SiteField) -> bool {
+    old.label != new.label
+        || old.field_type != new.field_type
+        || old.required != new.required
+        || old.options != new.options
+        || old.masked != new.masked
+}
+
+/// What a schema change does to a saved projection: the listed fields that stop qualifying under
+/// the new schema (`lost`), and the fields still shown whose label, type, options, requiredness
+/// or masking change (`changed`). Both sorted, without duplicates.
+pub(crate) fn affected(
+    raw: &Value,
+    title_template: &str,
+    old: &[SiteField],
+    new: &[SiteField],
+) -> (Vec<String>, Vec<String>) {
+    let projection = Projection::stored(raw);
+    let before = effective_lists(&projection, old, title_template);
+    let after = effective_lists(&projection, new, title_template);
+    let mut lost = BTreeSet::new();
+    let mut changed = BTreeSet::new();
+    for (before, after) in before.iter().zip(&after) {
+        lost.extend(before.iter().filter(|key| !after.contains(key)).cloned());
+        for key in after {
+            if let (Some(old_field), Some(new_field)) = (find(old, key), find(new, key))
+                && shown_differently(old_field, new_field)
+            {
+                changed.insert(key.clone());
+            }
+        }
+    }
+    (lost.into_iter().collect(), changed.into_iter().collect())
+}
+
 /// The `{key}` placeholders of a title template.
 pub(crate) fn template_keys(template: &str) -> Vec<String> {
     let mut keys = Vec::new();
@@ -631,6 +692,30 @@ mod tests {
             effective_write(&list, &fields, &BTreeSet::from(["phone".to_string()])),
             vec!["title".to_string()]
         );
+    }
+
+    #[test]
+    fn a_schema_change_reports_lost_and_changed_projection_fields() {
+        let projection = json!({
+            "visitor": {"read": {"fields": ["title", "status", "created_at"], "scope": "own"},
+                        "submit": {"fields": ["title", "phone"]}},
+            "operator": {"read": {"fields": ["title", "qty"], "scope": "all"}}
+        });
+        let old = site_fields(&schema()).unwrap();
+        assert_eq!(affected(&projection, "{title}", &old, &old), (vec![], vec![]));
+        let mut changed = schema();
+        // `phone` leaves the form; `status` gets a new label; `qty` (operator only) a new label too.
+        let fields = changed["fields"].as_array_mut().unwrap();
+        fields.retain(|field| field["key"] != "phone");
+        for field in fields.iter_mut() {
+            if field["key"] == "status" || field["key"] == "qty" {
+                field["label"] = json!("Renamed");
+            }
+        }
+        let new = site_fields(&changed).unwrap();
+        let (lost, changed) = affected(&projection, "{title}", &old, &new);
+        assert_eq!(lost, vec!["phone".to_string()]);
+        assert_eq!(changed, vec!["qty".to_string(), "status".to_string()]);
     }
 
     #[test]

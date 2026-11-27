@@ -917,6 +917,7 @@ pub async fn update_form(
     let mut values = Vec::new();
     let mut changed_fields = Vec::new();
     let mut schema_changed = false;
+    let mut new_schema = None;
     let mut idx = 1;
     macro_rules! push_set {
         ($column:literal, $value:expr) => {{
@@ -958,6 +959,7 @@ pub async fn update_form(
         )?;
         changed_fields.push("schema");
         schema_changed = true;
+        new_schema = Some(schema.clone());
         push_set!("schema", schema.into());
     }
     if let Some(detail_layout) = req.detail_layout {
@@ -969,7 +971,7 @@ pub async fn update_form(
         );
     }
     if set_parts.is_empty() {
-        return Ok(ApiResponse::success(form));
+        return Ok(ApiResponse::success(form).into_response());
     }
     if schema_changed {
         if let Some(expected) = req.expected_schema_version
@@ -1022,7 +1024,22 @@ pub async fn update_form(
     }
     tx.commit().await?;
 
-    Ok(ApiResponse::success(updated_form))
+    // Site bindings whose projection loses or changes fields: a warning, never a refusal.
+    let warnings = match &new_schema {
+        Some(schema) => {
+            crate::site::projection_affected(&state.db, form_id, &updated_form.title_template, &form.schema, schema)
+                .await?
+        }
+        None => Vec::new(),
+    };
+    if warnings.is_empty() {
+        return Ok(ApiResponse::success(updated_form).into_response());
+    }
+    let mut body = serde_json::to_value(&updated_form).map_err(|_| ApiError::Internal)?;
+    if let Some(object) = body.as_object_mut() {
+        object.insert("warnings".to_string(), Value::Array(warnings));
+    }
+    Ok(ApiResponse::success(body).into_response())
 }
 
 pub async fn delete_form(
