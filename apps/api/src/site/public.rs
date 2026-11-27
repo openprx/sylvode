@@ -361,6 +361,14 @@ pub async fn submit_record(
             "you may not create these records",
         ));
     }
+    // The form's plugin rules are loaded before the transaction opens.
+    let rules = crate::extensions::rules::PreparedRules::prepare(
+        &state,
+        binding.form.workspace_id,
+        binding.form.project_id,
+        &binding.form.schema,
+    )
+    .await?;
     let tx = state.db.begin().await?;
     let mut new_cookie = None;
     let (actor, source);
@@ -419,21 +427,22 @@ pub async fn submit_record(
             };
         }
     }
-    let creation = create_record_as(
-        &state,
-        &tx,
-        &binding.form,
-        actor,
-        NativeRecordCreateRequest {
-            record_id: None,
-            values: Value::Object(body.values),
-            title: None,
-            source,
-            idempotency_key: None,
-        },
-    )
-    .await
-    .map_err(|error| records::redact_field_errors(error.into(), &allowed))?;
+    let creation = rules
+        .scope(create_record_as(
+            &state,
+            &tx,
+            &binding.form,
+            actor,
+            NativeRecordCreateRequest {
+                record_id: None,
+                values: Value::Object(body.values),
+                title: None,
+                source,
+                idempotency_key: None,
+            },
+        ))
+        .await
+        .map_err(|error| records::redact_field_errors(error.into(), &allowed))?;
     tx.commit().await?;
     let record = finish_record_creation(&state, &binding.form, &creation).await?;
     let mut response = ok(

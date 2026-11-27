@@ -3884,9 +3884,16 @@ pub(crate) async fn update_record_for_site(
     role: &str,
     req: UpdateRecordRequest,
 ) -> Result<RecordResponse, ApiError> {
-    update_record_for_form_internal(state, form, record, actor_id, role, false, req, None)
-        .await
-        .map(|(record, _)| record)
+    // The site operator update opens its transaction inside; its plugin rules are loaded first.
+    crate::extensions::rules::PreparedRules::around(
+        state,
+        form.workspace_id,
+        form.project_id,
+        &form.schema,
+        update_record_for_form_internal(state, form, record, actor_id, role, false, req, None),
+    )
+    .await?
+    .map(|(record, _)| record)
 }
 
 async fn update_record_for_form_internal(
@@ -5401,6 +5408,10 @@ async fn recalculate_record_values(
     let record = find_record(state, record_id).await?;
     let form = find_form(state, record.form_id).await?;
     let source = json!({ "type": "system", "operation": event_type });
+    // A parent recalculated after a child write: its plugin rules are loaded before its transaction.
+    let rules =
+        crate::extensions::rules::PreparedRules::prepare(state, form.workspace_id, form.project_id, &form.schema)
+            .await?;
     let tx = state.db.begin().await?;
     let calculated = calculate_values(state, &form, Some(record_id), record.values.clone()).await?;
     let with_autonumber = apply_autonumber_values(&tx, &form, Some(&record.values), calculated).await?;
@@ -5411,7 +5422,14 @@ async fn recalculate_record_values(
         Writer::Recalculate,
         BTreeSet::new(),
     );
-    let recalculated = validate_recalculated(&form.schema, &ctx, with_autonumber, &record.values).await?;
+    let recalculated = rules
+        .scope(validate_recalculated(
+            &form.schema,
+            &ctx,
+            with_autonumber,
+            &record.values,
+        ))
+        .await?;
     let carried = CarriedError::for_reader(recalculated.carried, Some(record_id), &BTreeSet::new());
     log_carried(form.id, &carried);
     let values = recalculated.values;
