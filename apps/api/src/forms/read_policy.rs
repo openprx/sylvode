@@ -37,7 +37,10 @@ pub fn ensure_field_readable(denied_read_fields: &BTreeSet<String>, field_key: &
 /// What a record query may touch for one caller of one form.
 #[derive(Debug, Clone, Copy)]
 pub struct QueryReadGuard<'a> {
+    /// Fields the caller may not read: no filter or sort on them.
     pub denied_read_fields: &'a BTreeSet<String>,
+    /// Fields whose content may not show through the title (denied fields and restricted relations).
+    pub title_excluded_fields: &'a BTreeSet<String>,
     pub title_template: &'a str,
 }
 
@@ -47,62 +50,122 @@ impl QueryReadGuard<'_> {
         ensure_field_readable(self.denied_read_fields, field_key)
     }
 
-    /// Refuses ordering or matching on the stored title when the title template renders a field
-    /// the caller may not read: the order (or a match) of titles would reveal that field.
+    /// Refuses ordering or matching on the stored title when the title template renders an excluded
+    /// field: the order (or a match) of titles would reveal that field.
     pub fn ensure_title_queryable(&self) -> Result<(), ApiError> {
-        match first_denied_template_field(self.title_template, self.denied_read_fields) {
+        match first_excluded_template_field(self.title_template, self.title_excluded_fields) {
             Some(field_key) => Err(field_read_denied(field_key)),
             None => Ok(()),
         }
     }
 }
 
-/// The first read-denied field the title template renders, if any.
-pub fn first_denied_template_field<'a>(template: &str, denied_read_fields: &'a BTreeSet<String>) -> Option<&'a str> {
-    denied_read_fields
+/// The first excluded field the title template renders, if any.
+pub fn first_excluded_template_field<'a>(template: &str, excluded_fields: &'a BTreeSet<String>) -> Option<&'a str> {
+    excluded_fields
         .iter()
         .find(|field_key| template.contains(&placeholder(field_key)))
         .map(String::as_str)
 }
 
-/// Everything a record response must hide from one reader of one form.
-#[derive(Debug, Clone, Default)]
+/// Keys a relation value keeps for a reader its target form restricts: the reference, never a
+/// label rendered from the target's values.
+const RELATION_REFERENCE_KEYS: [&str; 2] = ["record_id", "form_key"];
+
+/// Everything a record response must hide from one reader of one form, decided from one
+/// exclusion set: the read-denied fields plus the relation fields whose target restricts the
+/// reader. Every outlet asks this policy for titles, values and query guards.
+#[derive(Debug, Clone)]
 pub struct RecordReadPolicy {
-    pub title_template: String,
-    pub denied_read_fields: BTreeSet<String>,
-    /// Relation fields whose target form hides at least one field from this reader. Their stored
-    /// snapshot (`title`, `display`) was rendered from the target's full values and is dropped.
-    pub restricted_relation_fields: BTreeSet<String>,
+    title_template: String,
+    denied_read_fields: BTreeSet<String>,
+    restricted_relation_fields: BTreeSet<String>,
+    excluded_fields: BTreeSet<String>,
 }
 
 impl RecordReadPolicy {
-    /// Drops the `title`/`display` snapshot from relation values whose target form restricts this
-    /// reader. The record id stays, so the client resolves a label through the filtered
-    /// relation-target listing.
     #[must_use]
-    pub fn redact_relation_snapshots(&self, mut values: Value) -> Value {
-        if self.restricted_relation_fields.is_empty() {
+    pub fn new(title_template: String, denied: BTreeSet<String>, restricted: BTreeSet<String>) -> Self {
+        let excluded_fields = denied.union(&restricted).cloned().collect();
+        Self {
+            title_template,
+            denied_read_fields: denied,
+            restricted_relation_fields: restricted,
+            excluded_fields,
+        }
+    }
+
+    #[must_use]
+    pub fn unrestricted(title_template: String) -> Self {
+        Self::new(title_template, BTreeSet::new(), BTreeSet::new())
+    }
+
+    #[must_use]
+    pub fn denied_read_fields(&self) -> &BTreeSet<String> {
+        &self.denied_read_fields
+    }
+
+    #[must_use]
+    pub fn restricted_relation_fields(&self) -> &BTreeSet<String> {
+        &self.restricted_relation_fields
+    }
+
+    #[must_use]
+    pub fn excluded_fields(&self) -> &BTreeSet<String> {
+        &self.excluded_fields
+    }
+
+    #[must_use]
+    pub fn is_unrestricted(&self) -> bool {
+        self.excluded_fields.is_empty()
+    }
+
+    /// The record title for this reader. Unrestricted: the stored title. Otherwise the stored (or
+    /// writer-supplied) title is discarded and rendered again without the excluded fields.
+    #[must_use]
+    pub fn title(&self, record_id: Uuid, stored: String, values: &Value) -> String {
+        if self.is_unrestricted() {
+            return stored;
+        }
+        render_record_title(&self.title_template, record_id, values, &self.excluded_fields)
+    }
+
+    /// Values for this reader: denied keys removed, restricted relation values reduced to
+    /// `{record_id, form_key}` (an object, or each object of an array).
+    #[must_use]
+    pub fn values(&self, mut values: Value) -> Value {
+        if self.is_unrestricted() {
             return values;
         }
-        let Some(object) = values.as_object_mut() else {
-            return values;
-        };
-        for field_key in &self.restricted_relation_fields {
-            if let Some(value) = object.get_mut(field_key) {
-                strip_relation_snapshot(value);
+        if let Some(object) = values.as_object_mut() {
+            for field_key in &self.denied_read_fields {
+                object.remove(field_key);
+            }
+            for field_key in &self.restricted_relation_fields {
+                if let Some(value) = object.get_mut(field_key) {
+                    reduce_relation_value(value);
+                }
             }
         }
         values
     }
+
+    #[must_use]
+    pub fn query_guard(&self) -> QueryReadGuard<'_> {
+        QueryReadGuard {
+            denied_read_fields: &self.denied_read_fields,
+            title_excluded_fields: &self.excluded_fields,
+            title_template: &self.title_template,
+        }
+    }
 }
 
-fn strip_relation_snapshot(value: &mut Value) {
+/// Reduces a relation value to its reference keys (allow-list, so `label`, `name`, `title` and
+/// `display` all go).
+pub fn reduce_relation_value(value: &mut Value) {
     match value {
-        Value::Object(object) => {
-            object.remove("title");
-            object.remove("display");
-        }
-        Value::Array(items) => items.iter_mut().for_each(strip_relation_snapshot),
+        Value::Object(object) => object.retain(|key, _| RELATION_REFERENCE_KEYS.contains(&key.as_str())),
+        Value::Array(items) => items.iter_mut().for_each(reduce_relation_value),
         _ => {}
     }
 }
@@ -117,7 +180,7 @@ pub const MAX_TITLE_CHARS: usize = 1_024;
 /// Renders a record title from its template in one pass.
 ///
 /// The template is scanned once, left to right. `{id}` becomes the record id; `{key}` becomes the
-/// display value of `key`, or nothing when the key is read-denied or has no value. Inserted text
+/// display value of `key`, or nothing when the key is excluded or has no value. Inserted text
 /// is never scanned again, so a value that itself contains `{other}` stays literal and the output
 /// cannot grow beyond the template plus each value once. The result is capped at
 /// [`MAX_TITLE_CHARS`]; an empty result falls back to the record id.
@@ -125,7 +188,7 @@ pub fn render_record_title(
     template: &str,
     record_id: Uuid,
     values: &Value,
-    denied_read_fields: &BTreeSet<String>,
+    excluded_fields: &BTreeSet<String>,
 ) -> String {
     let mut title = String::new();
     let mut chars = 0usize;
@@ -138,7 +201,7 @@ pub fn render_record_title(
         if let Some((key, end)) = token {
             if key == "id" {
                 push_capped(&mut title, &mut chars, &record_id.to_string());
-            } else if !denied_read_fields.contains(key)
+            } else if !excluded_fields.contains(key)
                 && let Some(value) = values.get(key)
             {
                 push_capped(&mut title, &mut chars, &title_display_value(value));
@@ -171,20 +234,41 @@ pub fn cap_title(title: String) -> String {
 }
 
 /// The text a single field value contributes to a title or a relation label.
+///
+/// A relation object (it has `record_id`) renders its `title`, else its `display`, else nothing;
+/// an array renders its items joined by `", "`, empties skipped. Never raw JSON.
 pub fn title_display_value(value: &Value) -> String {
-    if let Some(value) = value.as_str() {
-        return value.to_string();
-    }
-    if let Some(decimal) = value.get("decimal").and_then(Value::as_str) {
-        if let Some(currency) = value.get("currency").and_then(Value::as_str) {
-            return format!("{decimal} {currency}");
+    match value {
+        Value::Null => String::new(),
+        Value::String(text) => text.clone(),
+        Value::Bool(flag) => flag.to_string(),
+        Value::Number(number) => number.to_string(),
+        Value::Array(items) => items
+            .iter()
+            .map(title_display_value)
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join(", "),
+        Value::Object(object) => {
+            if object.contains_key("record_id") {
+                return ["title", "display"]
+                    .into_iter()
+                    .find_map(|key| object.get(key).and_then(Value::as_str).filter(|text| !text.is_empty()))
+                    .unwrap_or_default()
+                    .to_string();
+            }
+            if let Some(decimal) = object.get("decimal").and_then(Value::as_str) {
+                if let Some(currency) = object.get("currency").and_then(Value::as_str) {
+                    return format!("{decimal} {currency}");
+                }
+                return decimal.to_string();
+            }
+            if let Some(number) = object.get("value").and_then(Value::as_i64) {
+                return number.to_string();
+            }
+            value.to_string()
         }
-        return decimal.to_string();
     }
-    if let Some(value) = value.get("value").and_then(Value::as_i64) {
-        return value.to_string();
-    }
-    value.to_string()
 }
 
 fn is_placeholder_key(key: &str) -> bool {
@@ -205,37 +289,23 @@ fn push_capped(title: &mut String, chars: &mut usize, text: &str) {
     }
 }
 
-/// The record title as this reader may see it.
-///
-/// With no denied field the stored title is returned unchanged. Otherwise the stored title is
-/// discarded (it was rendered from every field, or supplied by a writer who could read them) and
-/// the title is rendered again from the template, skipping the denied fields.
-pub fn reader_title(
-    template: &str,
-    record_id: Uuid,
-    stored_title: String,
-    values: &Value,
-    denied_read_fields: &BTreeSet<String>,
-) -> String {
-    if denied_read_fields.is_empty() {
-        return stored_title;
-    }
-    render_record_title(template, record_id, values, denied_read_fields)
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        FIELD_READ_DENIED, MAX_TITLE_CHARS, QueryReadGuard, RecordReadPolicy, cap_title, ensure_field_readable,
-        reader_title, render_record_title,
+        FIELD_READ_DENIED, MAX_TITLE_CHARS, RecordReadPolicy, cap_title, ensure_field_readable, render_record_title,
+        title_display_value,
     };
     use crate::error::ApiError;
     use serde_json::json;
     use std::collections::BTreeSet;
     use uuid::Uuid;
 
-    fn denied(keys: &[&str]) -> BTreeSet<String> {
+    fn set(keys: &[&str]) -> BTreeSet<String> {
         keys.iter().map(|key| (*key).to_string()).collect()
+    }
+
+    fn policy(template: &str, denied: &[&str], restricted: &[&str]) -> RecordReadPolicy {
+        RecordReadPolicy::new(template.to_string(), set(denied), set(restricted))
     }
 
     #[test]
@@ -282,84 +352,102 @@ mod tests {
     }
 
     #[test]
-    fn relation_snapshots_lose_their_title_when_the_target_restricts_the_reader() {
-        let policy = RecordReadPolicy {
-            restricted_relation_fields: denied(&["customer"]),
-            ..RecordReadPolicy::default()
-        };
+    fn relation_values_render_their_label_and_arrays_join() {
+        assert_eq!(
+            title_display_value(&json!({"record_id": "r1", "title": "ACME"})),
+            "ACME"
+        );
+        assert_eq!(title_display_value(&json!({"record_id": "r1", "display": "D"})), "D");
+        assert_eq!(title_display_value(&json!({"record_id": "r1"})), "");
+        assert_eq!(
+            title_display_value(&json!([{"record_id": "r1", "title": "A"}, {"record_id": "r2"}, "b"])),
+            "A, b"
+        );
+    }
+
+    #[test]
+    fn a_restricted_relation_alone_rerenders_the_title_without_it() {
+        let record_id = Uuid::new_v4();
+        let values = json!({"name": "Ada", "customer": {"record_id": "r1", "title": "Ada 9000"}});
+        let reader = policy("{name} {customer}", &[], &["customer"]);
+
+        for stored in ["Ada Ada 9000", "custom Ada 9000"] {
+            let title = reader.title(record_id, stored.to_string(), &values);
+            assert!(title.contains("Ada"));
+            assert!(!title.contains("9000"));
+            assert!(!title.contains("r1"));
+        }
+    }
+
+    #[test]
+    fn the_exclusion_set_is_the_union_and_drives_unrestricted() {
+        let reader = policy("{name}", &["salary"], &["customer"]);
+        assert_eq!(reader.excluded_fields(), &set(&["salary", "customer"]));
+        assert!(!reader.is_unrestricted());
+        assert!(!policy("{name}", &["salary"], &[]).is_unrestricted());
+        assert!(!policy("{name}", &[], &["customer"]).is_unrestricted());
+        assert!(RecordReadPolicy::unrestricted("{name}".to_string()).is_unrestricted());
+        assert_eq!(
+            RecordReadPolicy::unrestricted("{name}".to_string()).title(
+                Uuid::new_v4(),
+                "stored".to_string(),
+                &json!({})
+            ),
+            "stored"
+        );
+    }
+
+    #[test]
+    fn values_drop_denied_keys_and_reduce_relation_values_to_their_reference() {
+        let reader = policy("{name}", &["salary"], &["customer", "lines"]);
         let values = json!({
-            "customer": {"record_id": "r1", "title": "ACME 9000", "display": "9000", "form_key": "c"},
-            "lines": [{"record_id": "r2", "title": "secret"}],
+            "name": "Ada",
+            "salary": "9000",
+            "customer": {"record_id": "r1", "form_key": "c", "title": "x", "label": "y", "name": "z"},
+            "lines": [{"record_id": "r2", "display": "secret"}],
             "other": {"record_id": "r3", "title": "kept"}
         });
 
-        let redacted = policy.redact_relation_snapshots(values);
+        let filtered = reader.values(values);
 
-        assert_eq!(redacted["customer"], json!({"record_id": "r1", "form_key": "c"}));
-        assert_eq!(redacted["other"]["title"], "kept");
-        assert_eq!(redacted["lines"][0]["title"], "secret");
+        assert!(filtered.get("salary").is_none());
+        assert_eq!(filtered["customer"], json!({"record_id": "r1", "form_key": "c"}));
+        assert_eq!(filtered["lines"], json!([{"record_id": "r2"}]));
+        assert_eq!(filtered["other"]["title"], "kept");
     }
 
     #[test]
-    fn reader_title_drops_every_fragment_of_a_denied_field() {
+    fn title_queries_are_refused_when_the_template_renders_a_restricted_relation() {
+        let restricted = policy("{name} {customer}", &[], &["customer"]);
+        let clean = policy("{name}", &[], &["customer"]);
+
+        assert!(restricted.query_guard().ensure_title_queryable().is_err());
+        assert!(clean.query_guard().ensure_title_queryable().is_ok());
+        assert!(restricted.query_guard().ensure_field_readable("customer").is_ok());
+        assert!(
+            policy("{name}", &["salary"], &[])
+                .query_guard()
+                .ensure_field_readable("salary")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_denied_field_leaves_no_fragment_in_the_title() {
         let record_id = Uuid::new_v4();
+        let reader = policy("{name} {salary}", &["salary"], &[]);
         let values = json!({"name": "Ada", "salary": "9000"});
-        let stored = "Ada 9000".to_string();
 
-        let title = reader_title("{name} {salary}", record_id, stored, &values, &denied(&["salary"]));
-
-        assert_eq!(title.trim(), "Ada");
-        assert!(!title.contains("9000"));
-        assert!(!title.contains("salary"));
-    }
-
-    #[test]
-    fn reader_title_ignores_a_writer_supplied_title_when_fields_are_denied() {
-        let record_id = Uuid::new_v4();
-        let values = json!({"name": "Ada", "salary": "9000"});
-
-        let title = reader_title(
-            "{name}",
-            record_id,
-            "custom 9000".to_string(),
-            &values,
-            &denied(&["salary"]),
+        assert_eq!(reader.title(record_id, "Ada 9000".to_string(), &values).trim(), "Ada");
+        assert_eq!(
+            policy("{salary}", &["salary"], &[]).title(record_id, "9000".to_string(), &values),
+            record_id.to_string()
         );
-
-        assert_eq!(title, "Ada");
-    }
-
-    #[test]
-    fn reader_title_keeps_the_stored_title_without_denied_fields() {
-        let title = reader_title(
-            "{name}",
-            Uuid::new_v4(),
-            "stored".to_string(),
-            &json!({"name": "Ada"}),
-            &BTreeSet::new(),
-        );
-
-        assert_eq!(title, "stored");
-    }
-
-    #[test]
-    fn reader_title_falls_back_to_the_record_id_when_nothing_readable_remains() {
-        let record_id = Uuid::new_v4();
-
-        let title = reader_title(
-            "{salary}",
-            record_id,
-            "9000".to_string(),
-            &json!({"salary": "9000"}),
-            &denied(&["salary"]),
-        );
-
-        assert_eq!(title, record_id.to_string());
     }
 
     #[test]
     fn queries_on_denied_fields_are_refused_with_a_typed_code_and_no_value() {
-        let denied = denied(&["salary"]);
+        let denied = set(&["salary"]);
         let error = ensure_field_readable(&denied, "salary").expect_err("denied field must be refused");
 
         match error {
@@ -373,21 +461,5 @@ mod tests {
             other => panic!("unexpected error: {other:?}"),
         }
         assert!(ensure_field_readable(&denied, "name").is_ok());
-    }
-
-    #[test]
-    fn title_queries_are_refused_only_when_the_template_renders_a_denied_field() {
-        let denied = denied(&["salary"]);
-        let leaking = QueryReadGuard {
-            denied_read_fields: &denied,
-            title_template: "{name} {salary}",
-        };
-        let safe = QueryReadGuard {
-            denied_read_fields: &denied,
-            title_template: "{name}",
-        };
-
-        assert!(leaking.ensure_title_queryable().is_err());
-        assert!(safe.ensure_title_queryable().is_ok());
     }
 }

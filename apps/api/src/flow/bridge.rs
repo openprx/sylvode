@@ -2586,27 +2586,15 @@ pub async fn list_scope_references(
         let (title, summary) = if row.target_type == "form_record" {
             // The stored title is rendered from every field; a reader with denied fields gets one
             // rendered from the readable fields only.
-            let title = crate::forms::read_policy::reader_title(
-                &target.title_template,
-                row.target_id,
-                target.title,
-                &target.summary,
-                &permission.denied_read_fields,
-            );
-            let summary = permission
-                .denied_read_fields
-                .iter()
-                .fold(target.summary, |mut values, key| {
-                    if let Some(values) = values.as_object_mut() {
-                        values.remove(key);
-                    }
-                    values
-                });
-            // Relation snapshots rendered from a target form that hides fields from this reader
-            // leave the summary, whether or not the record's own form denies anything.
             let form = crate::routes::form::find_form(state, target.form_id).await?;
-            let read_policy = crate::routes::form::record_read_policy(state, &form, &actor.role).await?;
-            (title, read_policy.redact_relation_snapshots(summary))
+            let base = crate::routes::form::record_read_policy(state, &form, &actor.role).await?;
+            let policy = crate::forms::read_policy::RecordReadPolicy::new(
+                target.title_template.clone(),
+                permission.denied_read_fields.clone(),
+                base.restricted_relation_fields().clone(),
+            );
+            let title = policy.title(row.target_id, target.title, &target.summary);
+            (title, policy.values(target.summary))
         } else {
             (target.title, target.summary)
         };

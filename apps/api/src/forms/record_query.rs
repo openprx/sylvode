@@ -419,6 +419,7 @@ mod tests {
     fn open_guard(denied: &BTreeSet<String>) -> QueryReadGuard<'_> {
         QueryReadGuard {
             denied_read_fields: denied,
+            title_excluded_fields: denied,
             title_template: "{name} {salary}",
         }
     }
