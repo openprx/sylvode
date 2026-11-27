@@ -12,6 +12,10 @@ name.
 
 ### Added
 
+- **Runner: timing log events.** Info-level `delivery answered` (check, enqueue and total time per
+  delivery), `task pushed`, `task left session` and `queue depth` lines, with whole-millisecond
+  timings, show where delivery time goes. They carry ids, counts and fixed words only: never a
+  token, URL, request body or screen text. No behaviour change.
 - **Intranet HTTPS toolkit.** `deploy/tls/sylvode-tls.sh` creates a private CA limited to the
   server's own IP addresses and names, issues and renews the server certificate and prints the
   Sylvode and proxy settings; `trust-client.sh` and `trust-client.ps1` install that CA on macOS,
