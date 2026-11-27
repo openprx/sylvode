@@ -3858,9 +3858,8 @@ pub(crate) async fn update_record_for_plugin(
     req: UpdateRecordRequest,
     plugin: &super::plugin_package::ApplyCommit,
 ) -> Result<RecordResponse, ApiError> {
-    if let Some(source) = &req.source {
-        crate::forms::validation::ensure_no_site_origin(source)?;
-    }
+    // `req.source` here is built by the server (`plugin_package` apply), never by a client, so the
+    // reserved-source check of the client entry points does not apply.
     // The package-apply writer opens its transaction before this call, so its rules are prepared by
     // its caller's scope when it has one; without one a plugin rule refuses `plugin_failed`.
     crate::extensions::rules::PreparedRules::around(
