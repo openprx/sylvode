@@ -180,7 +180,12 @@
 			!extensionSupported
 		) {
 			checking = false;
-			error = catalog.code === 403 ? 'plugins.manageDenied' : 'plugins.creator.unavailable';
+			error =
+				catalog.error_code === 'feature_disabled'
+					? 'plugins.featureDisabled'
+					: catalog.code === 403
+						? 'plugins.manageDenied'
+						: 'plugins.creator.unavailable';
 			return;
 		}
 		allowed = true;

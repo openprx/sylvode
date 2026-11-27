@@ -4573,6 +4573,7 @@
 		"projectSettings": "Project settings · Plugins",
 		"backToForms": "Back to Forms",
 		"manageDenied": "Only workspace owners and administrators can manage project plugins.",
+		"featureDisabled": "Project plugin packages are switched off on this server.",
 		"manageUnavailable": "Project plugins could not be loaded. Reload the page to try again.",
 		"installPackage": "Install package",
 		"packageFile": "Plugin package (.json)",

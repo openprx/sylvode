@@ -4573,6 +4573,7 @@
 		"projectSettings": "项目设置 · 插件",
 		"backToForms": "返回表单",
 		"manageDenied": "只有工作区所有者和管理员可以管理项目插件。",
+		"featureDisabled": "此服务器未启用项目插件包。",
 		"manageUnavailable": "无法加载项目插件。请刷新后重试。",
 		"installPackage": "安装插件包",
 		"packageFile": "插件包（.json）",

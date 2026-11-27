@@ -109,7 +109,12 @@
 		loading = false;
 		allowed = metadata.data?.workspace_id === workspace && response.code === 0 && !!response.data;
 		if (!response.data || !allowed) {
-			error = response.code === 403 ? 'plugins.manageDenied' : 'plugins.manageUnavailable';
+			error =
+				response.error_code === 'feature_disabled'
+					? 'plugins.featureDisabled'
+					: response.code === 403
+						? 'plugins.manageDenied'
+						: 'plugins.manageUnavailable';
 			return;
 		}
 		packages = response.data.items;

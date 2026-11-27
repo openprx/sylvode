@@ -50,7 +50,12 @@
 		loading = false;
 		if (result.code !== 0 || !Array.isArray(result.data)) {
 			receipts = [];
-			loadError = result.code === 403 ? 'plugins.manageDenied' : 'plugins.historyError';
+			loadError =
+				result.error_code === 'feature_disabled'
+					? 'plugins.featureDisabled'
+					: result.code === 403
+						? 'plugins.manageDenied'
+						: 'plugins.historyError';
 			return;
 		}
 		receipts = result.data;
