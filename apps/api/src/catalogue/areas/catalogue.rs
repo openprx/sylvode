@@ -1,6 +1,6 @@
 //! Catalogue entries of the `catalogue` router area (`router/catalogue.rs`).
 
-use crate::catalogue::types::dsl::*;
+use crate::catalogue::types::dsl::{Entry, Get, Global, Read, bot};
 
 #[rustfmt::skip]
 pub static ENTRIES: &[Entry] = &[

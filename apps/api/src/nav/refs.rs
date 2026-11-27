@@ -129,9 +129,7 @@ pub fn locate(target: &Target, at: &Where, refs: &Refs) -> Option<Place> {
                     "project" => at.project_id == Some(layout.scope_id),
                     _ => false,
                 };
-                if !in_scope {
-                    Place::OutOfScope
-                } else {
+                if in_scope {
                     let root = at.project_id.map_or_else(
                         || base(at.workspace_id),
                         |project| project_base(at.workspace_id, project),
@@ -140,6 +138,8 @@ pub fn locate(target: &Target, at: &Where, refs: &Refs) -> Option<Place> {
                         name: layout.key.clone(),
                         href: format!("{root}/pages/{layout_id}"),
                     }
+                } else {
+                    Place::OutOfScope
                 }
             }
         },

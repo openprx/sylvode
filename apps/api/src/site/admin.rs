@@ -79,14 +79,15 @@ fn is_route(route: &str) -> bool {
         return false;
     };
     rest.split('/').enumerate().all(|(index, part)| {
-        if let Some(name) = part.strip_prefix(':') {
-            index > 0 && !name.is_empty() && name.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
-        } else {
-            !part.is_empty()
-                && part
-                    .bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-        }
+        part.strip_prefix(':').map_or_else(
+            || {
+                !part.is_empty()
+                    && part
+                        .bytes()
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            },
+            |name| index > 0 && !name.is_empty() && name.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'),
+        )
     })
 }
 

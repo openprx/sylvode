@@ -605,9 +605,10 @@ pub struct ApproveRequest {
     grants: Option<Vec<Value>>,
 }
 
-/// `POST /api/v1/drafts/{id}/approve`: judges the draft again against the current state; when the
-/// digest the reviewer saw is no longer the digest of that state, stores the new report and diff
-/// and refuses `draft_stale`. Otherwise saves through the ordinary path and closes the draft.
+/// `POST /api/v1/drafts/{id}/approve`: judges the draft again against the current state.
+///
+/// When the digest the reviewer saw is no longer the digest of that state, stores the new report
+/// and diff and refuses `draft_stale`. Otherwise saves through the ordinary path and closes the draft.
 pub async fn approve_draft(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,

@@ -109,7 +109,7 @@ pub fn bot_class(method: &str, path: &str) -> Option<(Class, bool)> {
 
 /// Every route a bot can reach, with its class.
 pub fn bot_routes() -> impl Iterator<Item = RunnerRoute> {
-    entries().filter_map(|entry| bot_route(entry))
+    entries().filter_map(bot_route)
 }
 
 /// The number of bot routes per class name of one table.
@@ -203,7 +203,7 @@ mod tests {
         );
         assert!(by_route("GET", "/api/v1/not-a-route").is_none());
         assert_eq!(
-            by_op("forms.forms.read/schema_summary").map(|e| e.capability()),
+            by_op("forms.forms.read/schema_summary").map(super::types::Entry::capability),
             Some("forms.forms.read")
         );
         assert!(super::knows_path("/health") && !super::knows_path("/nothing"));

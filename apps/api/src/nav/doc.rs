@@ -100,7 +100,7 @@ pub fn builtin_applies(page: &str, project_type: Option<&str>) -> bool {
     !(project_type == Some("custom_form") && WORK_ITEM_BUILTINS.contains(&page))
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NavDoc {
     pub schema: String,
@@ -108,7 +108,7 @@ pub struct NavDoc {
     pub sections: Vec<Section>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Section {
     pub id: String,
@@ -119,7 +119,7 @@ pub struct Section {
     pub entries: Vec<EntryDoc>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EntryDoc {
     pub id: String,
@@ -136,7 +136,7 @@ pub struct EntryDoc {
     pub locked: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Target {
     Builtin { page: String },
@@ -448,10 +448,12 @@ pub fn defaults(scope: NavScope, project_type: Option<&str>) -> NavDoc {
 mod tests {
     use super::*;
 
+    #[allow(clippy::needless_pass_by_value)]
     fn doc(entries: Value) -> Value {
         json!({"schema": "sv.nav.v1", "scope": "project", "sections": [{"id": "main", "entries": entries}]})
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn entry(id: &str, target: Value) -> Value {
         json!({"id": id, "target": target})
     }

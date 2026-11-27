@@ -111,9 +111,11 @@ impl InternalCall {
     }
 }
 
-/// The claims of an internal call: the invoking user, live. A user who is gone or deactivated, or
-/// whose sessions were revoked since the invocation started (logout-all, password reset), or who is
-/// not a person (a bot or AI user), is refused `403 forbidden` and the invocation ends.
+/// The claims of an internal call: the invoking user, live.
+///
+/// A user who is gone or deactivated, or whose sessions were revoked since the invocation started
+/// (logout-all, password reset), or who is not a person (a bot or AI user), is refused `403
+/// forbidden` and the invocation ends.
 ///
 /// # Errors
 /// `Forbidden` as above; a database failure.
@@ -149,9 +151,11 @@ pub async fn internal_claims(state: &AppState, call: &InternalCall) -> Result<Jw
 }
 
 /// The authentication branch of an internal call, shared by the two authentication middlewares: no
-/// token is parsed. The call is checked once more against the entry of the matched route and the
-/// resolved target, the invoking user is loaded live, and the handler runs with that user's claims
-/// and the plugin marker ([`current`]).
+/// token is parsed.
+///
+/// The call is checked once more against the entry of the matched route and the resolved target,
+/// the invoking user is loaded live, and the handler runs with that user's claims and the plugin
+/// marker ([`current`]).
 ///
 /// # Errors
 /// `plugin_reentry` for a depth other than 1, a catalogue refusal when the principal is not

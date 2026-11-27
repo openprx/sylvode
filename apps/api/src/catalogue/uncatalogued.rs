@@ -51,8 +51,9 @@ pub fn is_uncatalogued(path: &str) -> bool {
 }
 
 /// Findings of the OAuth router against [`UNCATALOGUED`]: a path registered but not listed, and a
-/// listed path no OAuth source registers. `catalogued` are the paths of the area tables; a path in
-/// both lists is a finding too.
+/// listed path no OAuth source registers.
+///
+/// `catalogued` are the paths of the area tables; a path in both lists is a finding too.
 #[must_use]
 pub fn findings(oauth_sources: &[(&str, &str)], catalogued: &BTreeSet<&str>) -> Vec<String> {
     let registered = scan_paths(oauth_sources);

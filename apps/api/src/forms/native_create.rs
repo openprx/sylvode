@@ -234,11 +234,10 @@ pub async fn create_record_as(
         &normalized,
     )
     .await?;
-    let title = req
-        .title
-        .filter(|value| !value.trim().is_empty())
-        .map(crate::forms::read_policy::cap_title)
-        .unwrap_or_else(|| render_title(&form.title_template, record_id, &normalized));
+    let title = req.title.filter(|value| !value.trim().is_empty()).map_or_else(
+        || render_title(&form.title_template, record_id, &normalized),
+        crate::forms::read_policy::cap_title,
+    );
 
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,

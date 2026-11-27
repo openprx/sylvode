@@ -17,22 +17,22 @@ use super::http::SiteError;
 use super::store::{self, SiteRow};
 use crate::catalogue::{self, Principal, Resource, SiteRole};
 
-pub(crate) const VISITOR_COOKIE: &str = "sv_site_v";
-pub(crate) const OPERATOR_COOKIE: &str = "sv_site_op";
+pub const VISITOR_COOKIE: &str = "sv_site_v";
+pub const OPERATOR_COOKIE: &str = "sv_site_op";
 /// 180 days.
 const VISITOR_MAX_AGE_SECS: i64 = 15_552_000;
 /// An operator session ends after an hour without a request.
-pub(crate) const OPERATOR_IDLE_SECS: i64 = 3_600;
+pub const OPERATOR_IDLE_SECS: i64 = 3_600;
 /// ... and eight hours after login in any case.
-pub(crate) const OPERATOR_ABSOLUTE_SECS: i64 = 28_800;
+pub const OPERATOR_ABSOLUTE_SECS: i64 = 28_800;
 
 /// A fresh credential: the cookie value and the hash that is stored.
-pub(crate) struct Token {
+pub struct Token {
     pub(crate) value: String,
     pub(crate) hash: Vec<u8>,
 }
 
-pub(crate) fn new_token() -> Token {
+pub fn new_token() -> Token {
     let mut bytes = [0_u8; 32];
     rand::rngs::OsRng.fill_bytes(&mut bytes);
     let value = URL_SAFE_NO_PAD.encode(bytes);
@@ -43,7 +43,7 @@ pub(crate) fn new_token() -> Token {
 }
 
 /// The stored hash of a cookie value; `None` unless it decodes to exactly 32 bytes.
-pub(crate) fn token_hash(value: &str) -> Option<Vec<u8>> {
+pub fn token_hash(value: &str) -> Option<Vec<u8>> {
     let bytes = URL_SAFE_NO_PAD.decode(value.trim()).ok()?;
     (bytes.len() == 32).then(|| Sha256::digest(&bytes).to_vec())
 }
@@ -53,7 +53,7 @@ fn cookie_hash(headers: &HeaderMap, name: &str) -> Option<Vec<u8>> {
 }
 
 /// The `Set-Cookie` value of a site cookie, scoped to the site's API path.
-pub(crate) fn cookie(name: &str, value: &str, slug: &str, max_age: i64) -> String {
+pub fn cookie(name: &str, value: &str, slug: &str, max_age: i64) -> String {
     let secure = if crate::config::runtime().site.cookie_insecure {
         ""
     } else {
@@ -62,21 +62,21 @@ pub(crate) fn cookie(name: &str, value: &str, slug: &str, max_age: i64) -> Strin
     format!("{name}={value}; Path=/api/site/v1/{slug}; HttpOnly; SameSite=Strict; Max-Age={max_age}{secure}")
 }
 
-pub(crate) fn visitor_cookie(value: &str, slug: &str) -> String {
+pub fn visitor_cookie(value: &str, slug: &str) -> String {
     cookie(VISITOR_COOKIE, value, slug, VISITOR_MAX_AGE_SECS)
 }
 
-pub(crate) fn operator_cookie(value: &str, slug: &str) -> String {
+pub fn operator_cookie(value: &str, slug: &str) -> String {
     cookie(OPERATOR_COOKIE, value, slug, OPERATOR_ABSOLUTE_SECS)
 }
 
-pub(crate) fn clear_operator_cookie(slug: &str) -> String {
+pub fn clear_operator_cookie(slug: &str) -> String {
     cookie(OPERATOR_COOKIE, "", slug, 0)
 }
 
 /// The operator of a live session.
 #[derive(Debug, Clone)]
-pub(crate) struct Operator {
+pub struct Operator {
     pub(crate) user_id: Uuid,
     pub(crate) display_name: String,
     pub(crate) role: SiteRole,
@@ -86,7 +86,7 @@ pub(crate) struct Operator {
 
 /// Who calls a site route.
 #[derive(Debug, Clone)]
-pub(crate) struct Caller {
+pub struct Caller {
     pub(crate) site: SiteRow,
     pub(crate) visitor_id: Option<Uuid>,
     pub(crate) operator: Option<Operator>,
@@ -114,7 +114,7 @@ impl Caller {
     }
 
     /// A caller without credentials, for the session routes, which read no cookie but their own.
-    pub(crate) fn anonymous(site: SiteRow) -> Self {
+    pub(crate) const fn anonymous(site: SiteRow) -> Self {
         Self {
             site,
             visitor_id: None,
@@ -123,7 +123,7 @@ impl Caller {
     }
 
     /// The catalogue principal of the caller.
-    pub(crate) fn principal(&self) -> Principal {
+    pub(crate) const fn principal(&self) -> Principal {
         match &self.operator {
             Some(operator) => Principal::SiteOperator {
                 site_id: self.site.id,
@@ -164,7 +164,7 @@ impl Caller {
     }
 }
 
-pub(crate) fn operator_required() -> SiteError {
+pub fn operator_required() -> SiteError {
     SiteError::new(
         StatusCode::UNAUTHORIZED,
         "operator_required",
@@ -188,7 +188,7 @@ async fn live_operator(db: &impl ConnectionTrait, site: &SiteRow, hash: &[u8]) -
 }
 
 /// The operator hash of a request, for logout.
-pub(crate) fn operator_hash(headers: &HeaderMap) -> Option<Vec<u8>> {
+pub fn operator_hash(headers: &HeaderMap) -> Option<Vec<u8>> {
     cookie_hash(headers, OPERATOR_COOKIE)
 }
 

@@ -1,6 +1,8 @@
 //! Catalogue entries of the `forms` router area (`router/forms.rs`).
 
-use crate::catalogue::types::dsl::*;
+use crate::catalogue::types::dsl::{
+    Admin, Delete, Destructive, Entry, Find, Get, Global, Patch, Post, Project, Read, Secret, Write, bot,
+};
 
 #[rustfmt::skip]
 pub static ENTRIES: &[Entry] = &[

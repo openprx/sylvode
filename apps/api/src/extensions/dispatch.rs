@@ -7,6 +7,7 @@
 //! re-check the call on the way in.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -183,9 +184,8 @@ pub async fn call(
     // is small, and the axum stack, the database driver and the handlers must not run on it.
     // Dropping this future (timeout, client gone, shutdown) aborts the spawned call as well.
     let mut task = AbortOnDrop(tokio::spawn(router.clone().oneshot(http)));
-    let response = match tokio::time::timeout(timeout, &mut task.0).await {
-        Ok(Ok(Ok(response))) => response,
-        _ => return Err(CallError::Unavailable),
+    let Ok(Ok(Ok(response))) = tokio::time::timeout(timeout, &mut task.0).await else {
+        return Err(CallError::Unavailable);
     };
     let bytes = to_bytes(response.into_body(), CALL_BODY_MAX + 4096)
         .await
@@ -293,7 +293,7 @@ fn encode(value: &str, out: &mut String) {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
             out.push(char::from(byte));
         } else {
-            out.push_str(&format!("%{byte:02X}"));
+            let _ = write!(out, "%{byte:02X}");
         }
     }
 }

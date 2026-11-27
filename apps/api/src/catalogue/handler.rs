@@ -67,11 +67,13 @@ pub fn document(filter: Option<Exposure>) -> Result<Value, serde_json::Error> {
 ///
 /// # Errors
 /// `400` for an unknown exposure name.
+#[allow(clippy::unused_async)]
 pub async fn capabilities(Query(query): Query<CatalogueQuery>) -> Result<Json<ApiResponse<Value>>, ApiError> {
-    let filter = match query.exposure.as_deref() {
-        None => None,
-        Some(name) => Some(Exposure::parse(name).ok_or_else(|| ApiError::BadRequest("unknown exposure".to_string()))?),
-    };
+    let filter = query
+        .exposure
+        .as_deref()
+        .map(|name| Exposure::parse(name).ok_or_else(|| ApiError::BadRequest("unknown exposure".to_string())))
+        .transpose()?;
     let data = document(filter).map_err(|error| {
         tracing::error!(%error, "the catalogue document could not be serialised");
         ApiError::Internal

@@ -434,7 +434,7 @@ mod tests {
             test_field("name", "Name", "text"),
             test_field("salary", "Salary", "number"),
         ];
-        let denied: BTreeSet<String> = ["salary".to_string()].into_iter().collect();
+        let denied: BTreeSet<String> = std::iter::once("salary".to_string()).collect();
         let guard = open_guard(&denied);
         let expression = query_filter_expression(Some("salary"), Some("gt".to_string()), Some("100".to_string()));
         let mut where_parts = Vec::new();

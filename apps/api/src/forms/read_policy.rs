@@ -53,10 +53,8 @@ impl QueryReadGuard<'_> {
     /// Refuses ordering or matching on the stored title when the title template renders an excluded
     /// field: the order (or a match) of titles would reveal that field.
     pub fn ensure_title_queryable(&self) -> Result<(), ApiError> {
-        match first_excluded_template_field(self.title_template, self.title_excluded_fields) {
-            Some(field_key) => Err(field_read_denied(field_key)),
-            None => Ok(()),
-        }
+        first_excluded_template_field(self.title_template, self.title_excluded_fields)
+            .map_or(Ok(()), |field_key| Err(field_read_denied(field_key)))
     }
 }
 
@@ -72,9 +70,10 @@ pub fn first_excluded_template_field<'a>(template: &str, excluded_fields: &'a BT
 /// label rendered from the target's values.
 const RELATION_REFERENCE_KEYS: [&str; 2] = ["record_id", "form_key"];
 
-/// Everything a record response must hide from one reader of one form, decided from one
-/// exclusion set: the read-denied fields plus the relation fields whose target restricts the
-/// reader. Every outlet asks this policy for titles, values and query guards.
+/// Everything a record response must hide from one reader of one form, decided from one exclusion
+/// set: the read-denied fields plus the relation fields whose target restricts the reader.
+///
+/// Every outlet asks this policy for titles, values and query guards.
 #[derive(Debug, Clone)]
 pub struct RecordReadPolicy {
     title_template: String,
@@ -101,17 +100,17 @@ impl RecordReadPolicy {
     }
 
     #[must_use]
-    pub fn denied_read_fields(&self) -> &BTreeSet<String> {
+    pub const fn denied_read_fields(&self) -> &BTreeSet<String> {
         &self.denied_read_fields
     }
 
     #[must_use]
-    pub fn restricted_relation_fields(&self) -> &BTreeSet<String> {
+    pub const fn restricted_relation_fields(&self) -> &BTreeSet<String> {
         &self.restricted_relation_fields
     }
 
     #[must_use]
-    pub fn excluded_fields(&self) -> &BTreeSet<String> {
+    pub const fn excluded_fields(&self) -> &BTreeSet<String> {
         &self.excluded_fields
     }
 

@@ -1,6 +1,9 @@
 //! Catalogue entries of the `governance` router area (`router/governance.rs`).
 
-use crate::catalogue::types::dsl::*;
+use crate::catalogue::types::dsl::{
+    Admin, Delete, Destructive, Entry, Find, Get, Global, InstanceAdmin, Own, Patch, Post, Project, Put, Read,
+    Workspace, WorkspaceAdmin, Write, bot, console,
+};
 
 #[rustfmt::skip]
 pub static ENTRIES: &[Entry] = &[

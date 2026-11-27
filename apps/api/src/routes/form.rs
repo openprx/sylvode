@@ -4122,11 +4122,10 @@ async fn update_record_for_form_internal(
         &values,
     )
     .await?;
-    let title = req
-        .title
-        .filter(|value| !value.trim().is_empty())
-        .map(crate::forms::read_policy::cap_title)
-        .unwrap_or_else(|| render_title(&form.title_template, record_id, &values));
+    let title = req.title.filter(|value| !value.trim().is_empty()).map_or_else(
+        || render_title(&form.title_template, record_id, &values),
+        crate::forms::read_policy::cap_title,
+    );
 
     let written=tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -6523,12 +6522,10 @@ async fn preview_import_row(
     )
     .await?;
     let preview_id = Uuid::new_v4();
-    let title = row
-        .title
-        .clone()
-        .filter(|value| !value.trim().is_empty())
-        .map(crate::forms::read_policy::cap_title)
-        .unwrap_or_else(|| render_title(&form.title_template, preview_id, &calculated));
+    let title = row.title.clone().filter(|value| !value.trim().is_empty()).map_or_else(
+        || render_title(&form.title_template, preview_id, &calculated),
+        crate::forms::read_policy::cap_title,
+    );
     Ok((title, calculated))
 }
 

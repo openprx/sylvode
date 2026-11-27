@@ -6,7 +6,7 @@
 //! the whole workspace passes and the handler checks its workspace and `read` permission. Upload and
 //! the publisher-key routes are behind the JWT middleware, which no bot token passes.
 
-use crate::catalogue::types::dsl::*;
+use crate::catalogue::types::dsl::{Entry, Get, Post, Read, Workspace, WorkspaceAdmin, Write, bot, console};
 
 #[rustfmt::skip]
 pub static ENTRIES: &[Entry] = &[

@@ -1,6 +1,6 @@
 //! Catalogue entries of the `uploads` router area (`router/uploads.rs`).
 
-use crate::catalogue::types::dsl::*;
+use crate::catalogue::types::dsl::{Entry, Get, Post, Public, Read, Secret, Workspace, bot, console};
 
 #[rustfmt::skip]
 pub static ENTRIES: &[Entry] = &[

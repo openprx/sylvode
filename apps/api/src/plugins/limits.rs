@@ -22,7 +22,7 @@ pub const MAX_CONCURRENT_PER_PLUGIN: usize = 4;
 
 /// The manifest's limits, capped at the containment limits.
 #[must_use]
-pub fn clamp(policy: PluginRuntimePolicy) -> PluginRuntimePolicy {
+pub fn clamp(policy: &PluginRuntimePolicy) -> PluginRuntimePolicy {
     PluginRuntimePolicy {
         timeout_ms: policy.timeout_ms.min(MAX_TIMEOUT_MS),
         fuel: policy.fuel.min(MAX_FUEL),
@@ -41,8 +41,9 @@ pub enum Gate {
     Hook,
 }
 
-static GATES: LazyLock<parking_lot::Mutex<HashMap<(Uuid, Gate), Arc<Semaphore>>>> =
-    LazyLock::new(|| parking_lot::Mutex::new(HashMap::new()));
+type GateMap = HashMap<(Uuid, Gate), Arc<Semaphore>>;
+
+static GATES: LazyLock<parking_lot::Mutex<GateMap>> = LazyLock::new(|| parking_lot::Mutex::new(HashMap::new()));
 
 fn gate_of(plugin_id: Uuid, gate: Gate) -> Arc<Semaphore> {
     let mut gates = GATES.lock();
@@ -88,7 +89,7 @@ mod tests {
 
     #[test]
     fn limits_are_capped_and_smaller_ones_kept() {
-        let clamped = clamp(PluginRuntimePolicy {
+        let clamped = clamp(&PluginRuntimePolicy {
             timeout_ms: 30_000,
             fuel: 1_000_000_000,
             memory_bytes: 128 * 1024 * 1024,
@@ -97,7 +98,7 @@ mod tests {
             (clamped.timeout_ms, clamped.fuel, clamped.memory_bytes),
             (MAX_TIMEOUT_MS, MAX_FUEL, MAX_MEMORY_BYTES)
         );
-        let small = clamp(PluginRuntimePolicy {
+        let small = clamp(&PluginRuntimePolicy {
             timeout_ms: 500,
             fuel: 1_000,
             memory_bytes: 65_536,
@@ -121,6 +122,7 @@ mod tests {
 
     /// Direct invocations and hooks do not share a gate; a full hook gate refuses after the wait.
     #[tokio::test]
+    #[allow(clippy::significant_drop_tightening, clippy::needless_collect)]
     async fn invoke_and_hook_gates_are_separate() {
         let plugin = Uuid::new_v4();
         let held: Vec<_> = (0..MAX_CONCURRENT_PER_PLUGIN)

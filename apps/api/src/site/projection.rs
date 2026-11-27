@@ -17,14 +17,14 @@ use crate::forms::types::{Outlet, OutletRule};
 
 /// The record columns a projection may list besides the form fields: readable and sortable,
 /// never filterable or writable. A form field with the same key wins.
-pub(crate) const RECORD_COLUMNS: [&str; 2] = ["created_at", "updated_at"];
+pub const RECORD_COLUMNS: [&str; 2] = ["created_at", "updated_at"];
 
 const MAX_FIELDS: usize = 200;
 const DEFAULT_MAX_PER_HOUR: u32 = 20;
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Projection {
+pub struct Projection {
     #[serde(default)]
     pub(crate) visitor: VisitorProjection,
     #[serde(default)]
@@ -33,7 +33,7 @@ pub(crate) struct Projection {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct VisitorProjection {
+pub struct VisitorProjection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) read: Option<ReadProjection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -42,7 +42,7 @@ pub(crate) struct VisitorProjection {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct OperatorProjection {
+pub struct OperatorProjection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) read: Option<ReadProjection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -51,7 +51,7 @@ pub(crate) struct OperatorProjection {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ReadProjection {
+pub struct ReadProjection {
     pub(crate) fields: Vec<String>,
     pub(crate) scope: String,
     #[serde(default)]
@@ -62,7 +62,7 @@ pub(crate) struct ReadProjection {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct SubmitProjection {
+pub struct SubmitProjection {
     pub(crate) fields: Vec<String>,
     #[serde(default = "default_max_per_hour")]
     pub(crate) max_per_hour: u32,
@@ -72,7 +72,7 @@ pub(crate) struct SubmitProjection {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct UpdateProjection {
+pub struct UpdateProjection {
     pub(crate) fields: Vec<String>,
 }
 
@@ -82,14 +82,14 @@ const fn default_max_per_hour() -> u32 {
 
 /// The two audiences of a binding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Audience {
+pub enum Audience {
     Visitor,
     Operator,
 }
 
 /// One problem of a projection: a JSON pointer into the projection and a code.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct ProjectionIssue {
+pub struct ProjectionIssue {
     pub(crate) path: String,
     pub(crate) code: &'static str,
 }
@@ -103,7 +103,8 @@ fn issue(path: impl Into<String>, code: &'static str) -> ProjectionIssue {
 
 /// What the schema says about one field, as the projection checks need it.
 #[derive(Debug, Clone)]
-pub(crate) struct SiteField {
+#[allow(clippy::struct_excessive_bools)]
+pub struct SiteField {
     pub(crate) key: String,
     pub(crate) label: String,
     pub(crate) field_type: String,
@@ -125,7 +126,7 @@ pub(crate) struct SiteField {
 }
 
 /// The fields of a form schema in schema order, with their site facts.
-pub(crate) fn site_fields(schema: &Value) -> Result<Vec<SiteField>, ApiError> {
+pub fn site_fields(schema: &Value) -> Result<Vec<SiteField>, ApiError> {
     let plan = write_plan(schema).map_err(|_| ApiError::internal())?;
     let raw_fields: Vec<&Map<String, Value>> = schema
         .get("fields")
@@ -236,7 +237,7 @@ impl Projection {
     /// Every problem found, refused as `projection_invalid`.
     pub(crate) fn parse(raw: &Value, schema: &Value) -> Result<Self, ApiError> {
         let projection: Self =
-            serde_json::from_value(raw.clone()).map_err(|_| invalid(vec![issue("", "shape_invalid")]))?;
+            serde_json::from_value(raw.clone()).map_err(|_| invalid(&[issue("", "shape_invalid")]))?;
         let fields = site_fields(schema)?;
         let mut issues = Vec::new();
         if let Some(read) = &projection.visitor.read {
@@ -260,7 +261,7 @@ impl Projection {
         if issues.is_empty() {
             Ok(projection)
         } else {
-            Err(invalid(issues))
+            Err(invalid(&issues))
         }
     }
 
@@ -278,7 +279,7 @@ impl Projection {
     }
 }
 
-fn invalid(issues: Vec<ProjectionIssue>) -> ApiError {
+fn invalid(issues: &[ProjectionIssue]) -> ApiError {
     ApiError::Coded {
         status: 400,
         code: "projection_invalid",
@@ -376,7 +377,7 @@ fn inputs_listed(field: &SiteField, listed: &[String]) -> bool {
 
 /// The read side of one audience, as it applies to this request.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct EffectiveRead {
+pub struct EffectiveRead {
     /// Readable keys in projection order (form fields and record columns).
     pub(crate) fields: Vec<String>,
     pub(crate) filter: BTreeSet<String>,
@@ -397,7 +398,7 @@ impl EffectiveRead {
 
 /// The read-time check (M12) of one audience's read list. `excluded` holds keys the principal
 /// itself may not read (an operator's own field policy); they are dropped too.
-pub(crate) fn effective_read(
+pub fn effective_read(
     read: &ReadProjection,
     fields: &[SiteField],
     title_template: &str,
@@ -468,7 +469,7 @@ pub(crate) fn effective_read(
 
 /// The write side of one audience: listed keys that still exist with a `Value` `SiteSubmit`
 /// outlet, minus `excluded`.
-pub(crate) fn effective_write(list: &[String], fields: &[SiteField], excluded: &BTreeSet<String>) -> Vec<String> {
+pub fn effective_write(list: &[String], fields: &[SiteField], excluded: &BTreeSet<String>) -> Vec<String> {
     list.iter()
         .filter(|key| !excluded.contains(*key))
         .filter(|key| find(fields, key).is_some_and(|field| field.site_submit))
@@ -608,7 +609,7 @@ pub(crate) fn visitor_output(projection: &Projection, fields: &[SiteField], titl
 }
 
 /// The `{key}` placeholders of a title template.
-pub(crate) fn template_keys(template: &str) -> Vec<String> {
+pub fn template_keys(template: &str) -> Vec<String> {
     let mut keys = Vec::new();
     let mut rest = template;
     while let Some(open) = rest.find('{') {

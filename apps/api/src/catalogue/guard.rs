@@ -30,13 +30,15 @@ use crate::extensions::InternalCall;
 /// route (`plugin_reentry`). The authentication branch then re-checks the principal against the
 /// resolved target.
 pub async fn guard(request: Request, next: Next) -> Response {
-    let verdict = match request.extensions().get::<MatchedPath>() {
-        None => Verdict::Pass,
-        Some(matched) => match request.extensions().get::<InternalCall>() {
-            Some(call) => internal_verdict(request.method().as_str(), matched.as_str(), call.op),
-            None => verdict(request.method().as_str(), matched.as_str()),
-        },
-    };
+    let verdict = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map_or(Verdict::Pass, |matched| {
+            request.extensions().get::<InternalCall>().map_or_else(
+                || verdict(request.method().as_str(), matched.as_str()),
+                |call| internal_verdict(request.method().as_str(), matched.as_str(), call.op),
+            )
+        });
     match verdict {
         Verdict::Pass => next.run(request).await,
         Verdict::Refuse(code) => ApiError::from(Refusal::new(code, None)).into_response(),

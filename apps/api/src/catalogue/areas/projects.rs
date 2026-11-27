@@ -1,6 +1,9 @@
 //! Catalogue entries of the `projects` router area (`router/projects.rs`).
 
-use crate::catalogue::types::dsl::*;
+use crate::catalogue::types::dsl::{
+    Admin, Delete, Destructive, Entry, Filtered, Find, Get, Global, Own, Patch, Post, Project, Put, Read, Secret,
+    Workspace, WorkspaceAdmin, Write, bot, console,
+};
 
 #[rustfmt::skip]
 pub static ENTRIES: &[Entry] = &[

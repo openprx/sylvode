@@ -78,10 +78,9 @@ pub async fn manifest(
             Some(operator) => {
                 let access = records::read_access(&state, &caller, &binding).await.ok().flatten();
                 let read = access.map(|access| access.read).unwrap_or_default();
-                let update = match records::operator_excluded(&state, &binding, operator).await {
-                    Ok(excluded) => records::update_fields(&binding, &excluded),
-                    Err(_) => Vec::new(),
-                };
+                let update = records::operator_excluded(&state, &binding, operator)
+                    .await
+                    .map_or_else(|_| Vec::new(), |excluded| records::update_fields(&binding, &excluded));
                 json!({
                     "read_fields": read.fields,
                     "update_fields": update,
@@ -192,6 +191,7 @@ pub async fn fields(
 }
 
 /// `GET /bindings/{b}/records?page=&per_page=&filter[<field>]=&sort=<field>|-<field>`
+#[allow(clippy::implicit_hasher)]
 pub async fn list_records(
     State(state): State<AppState>,
     Extension(site): Extension<SiteRow>,
@@ -228,7 +228,7 @@ fn bad_query(message: &str) -> SiteError {
     SiteError::new(StatusCode::BAD_REQUEST, "query_invalid", message.to_string())
 }
 
-fn list_request(query: &HashMap<String, String>) -> Result<ListRequest, SiteError> {
+fn list_request<S: std::hash::BuildHasher>(query: &HashMap<String, String, S>) -> Result<ListRequest, SiteError> {
     let number = |name: &str, default: u64| -> Result<u64, SiteError> {
         query.get(name).map_or(Ok(default), |value| {
             value
@@ -345,60 +345,56 @@ pub async fn submit_record(
     let tx = state.db.begin().await?;
     let mut new_cookie = None;
     let (actor, source);
-    match &caller.operator {
-        Some(operator) => {
-            source = json!({
-                "kind": "site",
-                "site_id": caller.site.id,
-                "binding": binding.row.binding_key,
-                "operator_id": operator.user_id,
-            });
-            actor = CreateActor {
-                caller: RuleCaller {
-                    actor_id: Some(operator.user_id),
-                    role: operator.workspace_role.clone(),
-                    is_bot: false,
-                },
-                policy_role: Some(operator_role.as_str()),
-                hook_role: operator_role.as_str(),
-                created_by: Some(operator.user_id),
-                audit_kind: "site_operator",
-                audit_id: operator.user_id,
-            };
-        }
-        None => {
-            // Only the site submit may store a visitor origin (checked by the 0137 trigger).
-            tx.execute_unprepared("SET LOCAL sv.site_writer = 'on'").await?;
-            let visitor_id = match caller.visitor_id {
-                Some(visitor) => visitor,
-                None => {
-                    let token = session::new_token();
-                    let visitor = store::insert_visitor(&tx, caller.site.id, &token.hash).await?;
-                    new_cookie = Some(session::visitor_cookie(&token.value, &caller.site.slug));
-                    visitor
-                }
-            };
-            source = json!({
-                "kind": "site",
-                "site_id": caller.site.id,
-                "binding": binding.row.binding_key,
-                "site_visitor_id": visitor_id,
-            });
-            actor = CreateActor {
-                caller: RuleCaller {
-                    actor_id: None,
-                    role: "site_visitor".to_string(),
-                    is_bot: false,
-                },
-                policy_role: None,
-                // Legacy formula hooks check their patch against a role policy; a visitor gets the
-                // least privileged workspace role's.
-                hook_role: "member",
-                created_by: None,
-                audit_kind: "site_visitor",
-                audit_id: visitor_id,
-            };
-        }
+    if let Some(operator) = &caller.operator {
+        source = json!({
+            "kind": "site",
+            "site_id": caller.site.id,
+            "binding": binding.row.binding_key,
+            "operator_id": operator.user_id,
+        });
+        actor = CreateActor {
+            caller: RuleCaller {
+                actor_id: Some(operator.user_id),
+                role: operator.workspace_role.clone(),
+                is_bot: false,
+            },
+            policy_role: Some(operator_role.as_str()),
+            hook_role: operator_role.as_str(),
+            created_by: Some(operator.user_id),
+            audit_kind: "site_operator",
+            audit_id: operator.user_id,
+        };
+    } else {
+        // Only the site submit may store a visitor origin (checked by the 0137 trigger).
+        tx.execute_unprepared("SET LOCAL sv.site_writer = 'on'").await?;
+        let visitor_id = if let Some(visitor) = caller.visitor_id {
+            visitor
+        } else {
+            let token = session::new_token();
+            let visitor = store::insert_visitor(&tx, caller.site.id, &token.hash).await?;
+            new_cookie = Some(session::visitor_cookie(&token.value, &caller.site.slug));
+            visitor
+        };
+        source = json!({
+            "kind": "site",
+            "site_id": caller.site.id,
+            "binding": binding.row.binding_key,
+            "site_visitor_id": visitor_id,
+        });
+        actor = CreateActor {
+            caller: RuleCaller {
+                actor_id: None,
+                role: "site_visitor".to_string(),
+                is_bot: false,
+            },
+            policy_role: None,
+            // Legacy formula hooks check their patch against a role policy; a visitor gets the
+            // least privileged workspace role's.
+            hook_role: "member",
+            created_by: None,
+            audit_kind: "site_visitor",
+            audit_id: visitor_id,
+        };
     }
     let creation = rules
         .scope(create_record_as(

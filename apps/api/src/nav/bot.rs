@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use super::doc::{EntryDoc, NavDoc, Target};
 use crate::error::ApiError;
 
-fn external(entry: &EntryDoc) -> Option<(&str, Option<&super::doc::Labels>)> {
+const fn external(entry: &EntryDoc) -> Option<(&str, Option<&super::doc::Labels>)> {
     match &entry.target {
         Target::External { url } => Some((url.as_str(), entry.label.as_ref())),
         _ => None,
@@ -61,6 +61,7 @@ mod tests {
     use crate::nav::doc::{NavScope, parse};
     use serde_json::json;
 
+    #[allow(clippy::needless_pass_by_value)]
     fn doc(entries: serde_json::Value) -> NavDoc {
         parse(
             &json!({"schema": "sv.nav.v1", "scope": "project", "sections": [{"id": "main", "entries": entries}]}),
@@ -69,6 +70,7 @@ mod tests {
         .expect("valid")
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn code(result: Result<(), ApiError>) -> Option<&'static str> {
         match result {
             Err(ApiError::Coded { code, .. }) => Some(code),

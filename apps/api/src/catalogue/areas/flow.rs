@@ -1,6 +1,9 @@
 //! Catalogue entries of the `flow` router area (`router/flow.rs`).
 
-use crate::catalogue::types::dsl::*;
+use crate::catalogue::types::dsl::{
+    Admin, Delete, Destructive, Entry, Find, Get, Global, Own, Patch, Post, Project, Public, Put, Read, Secret,
+    Workspace, WorkspaceAdmin, Write, bot, console,
+};
 
 #[rustfmt::skip]
 pub static ENTRIES: &[Entry] = &[

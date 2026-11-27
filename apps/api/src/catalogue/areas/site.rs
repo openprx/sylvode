@@ -9,7 +9,10 @@
 //! handlers resolve the project and decide for a scoped bot themselves.
 
 use crate::catalogue::types::Scope;
-use crate::catalogue::types::dsl::*;
+use crate::catalogue::types::dsl::{
+    Admin, Delete, Destructive, Entry, Find, Get, Global, Patch, Post, Project, Put, Read, Secret, Write, bot, console,
+    site,
+};
 
 const SITE_BY_ID: Scope = Project(Find::Table("sites", "id"));
 

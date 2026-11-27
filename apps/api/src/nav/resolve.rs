@@ -39,7 +39,7 @@ pub struct Inputs<'a> {
     pub include_user_hidden: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ResolvedEntry {
     pub id: String,
     /// The section the entry is stored in, also when it is shown in `_pinned`.
@@ -57,7 +57,7 @@ pub struct ResolvedEntry {
     pub position: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ResolvedSection {
     pub id: String,
     pub label: Option<Labels>,
@@ -65,7 +65,7 @@ pub struct ResolvedSection {
     pub entries: Vec<ResolvedEntry>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Resolved {
     pub schema: &'static str,
     pub scope: &'static str,
@@ -79,7 +79,7 @@ struct Item {
     entry: ResolvedEntry,
 }
 
-fn needs_permission_check(target: &Target) -> bool {
+const fn needs_permission_check(target: &Target) -> bool {
     target.object_id().is_some()
 }
 
@@ -300,6 +300,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn entry(id: &str, page: &str, extra: serde_json::Value) -> serde_json::Value {
         let mut e = json!({"id": id, "target": {"kind": "builtin", "page": page}});
         e.as_object_mut()
@@ -308,6 +309,7 @@ mod tests {
         e
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn doc_of(entries: Vec<serde_json::Value>) -> NavDoc {
         parse(
             &json!({"schema": "sv.nav.v1", "scope": "project", "sections": [{"id": "main", "entries": entries}]}),
@@ -354,6 +356,7 @@ mod tests {
         is_admin: true,
     };
 
+    #[allow(clippy::needless_pass_by_value)]
     fn prefs(value: serde_json::Value) -> Prefs {
         crate::nav::prefs::parse(&value).expect("valid prefs")
     }

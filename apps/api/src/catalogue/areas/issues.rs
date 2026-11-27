@@ -1,6 +1,9 @@
 //! Catalogue entries of the `issues` router area (`router/issues.rs`).
 
-use crate::catalogue::types::dsl::*;
+use crate::catalogue::types::dsl::{
+    Admin, Delete, Destructive, Entry, Filtered, Find, Get, Post, Project, Put, Read, Workspace, WorkspaceAdmin, Write,
+    bot,
+};
 
 #[rustfmt::skip]
 pub static ENTRIES: &[Entry] = &[

@@ -967,7 +967,7 @@ mod tests {
                 {"object_key": "signatures/unattributed.png"}
             ]}
         });
-        let denied = ["secret_sig".to_string()].into_iter().collect();
+        let denied = std::iter::once("secret_sig".to_string()).collect();
 
         let filtered = record_source_for_reader(source, &denied);
 

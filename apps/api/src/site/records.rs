@@ -3,6 +3,7 @@
 //! pipeline (contract C3 sections 6.1, 6.2, 6.6).
 
 use std::collections::BTreeSet;
+use std::fmt::Write as _;
 
 use axum::http::StatusCode;
 use platform::app::AppState;
@@ -25,10 +26,10 @@ use crate::forms::rules::write_plan;
 use crate::routes::form::{FormResponse, find_form};
 
 /// Largest page of a record list.
-pub(crate) const MAX_PER_PAGE: u64 = 100;
+pub const MAX_PER_PAGE: u64 = 100;
 
 /// One binding as a request sees it: the row, its projection, the bound form and its fields.
-pub(crate) struct Binding {
+pub struct Binding {
     pub(crate) row: BindingRow,
     pub(crate) projection: Projection,
     pub(crate) form: FormResponse,
@@ -71,7 +72,7 @@ impl Binding {
 }
 
 /// How the caller may read a binding's records.
-pub(crate) struct ReadAccess {
+pub struct ReadAccess {
     pub(crate) read: EffectiveRead,
     scope: Scope,
 }
@@ -84,7 +85,7 @@ enum Scope {
 }
 
 /// The operator's own read limits on the form: `form.view`, then the fields their policy excludes.
-pub(crate) async fn operator_excluded(
+pub async fn operator_excluded(
     state: &AppState,
     binding: &Binding,
     operator: &Operator,
@@ -99,7 +100,7 @@ pub(crate) async fn operator_excluded(
 }
 
 /// The read access of the caller; `None` when the audience has no read projection.
-pub(crate) async fn read_access(
+pub async fn read_access(
     state: &AppState,
     caller: &Caller,
     binding: &Binding,
@@ -127,7 +128,7 @@ pub(crate) async fn read_access(
 
 /// A record as the site shows it.
 #[derive(Debug, Serialize)]
-pub(crate) struct SiteRecord {
+pub struct SiteRecord {
     id: Uuid,
     values: Value,
     title: Option<String>,
@@ -170,14 +171,15 @@ fn scoped_where(sql: &mut Sql, binding: &Binding, site_id: Uuid, scope: &Scope) 
         Scope::Visitor(Some(visitor)) => {
             let site = sql.bind(site_id.to_string());
             let visitor = sql.bind(visitor.to_string());
-            clause.push_str(&format!(
+            let _ = write!(
+                clause,
                 " AND source->>'kind' = 'site' AND source->>'site_id' = {site} AND source->>'site_visitor_id' = {visitor}"
-            ));
+            );
         }
         Scope::Operator { only_created_by } => {
             if let Some(user) = only_created_by {
                 let user = sql.bind(*user);
-                clause.push_str(&format!(" AND created_by = {user}"));
+                let _ = write!(clause, " AND created_by = {user}");
             }
         }
     }
@@ -185,7 +187,7 @@ fn scoped_where(sql: &mut Sql, binding: &Binding, site_id: Uuid, scope: &Scope) 
 }
 
 /// A list request: equality filters and one sort key, already parsed.
-pub(crate) struct ListRequest {
+pub struct ListRequest {
     pub(crate) page: u64,
     pub(crate) per_page: u64,
     pub(crate) filters: Vec<(String, String)>,
@@ -202,7 +204,7 @@ fn not_filterable(key: &str) -> SiteError {
 }
 
 /// One page of the caller's records.
-pub(crate) async fn list(
+pub async fn list(
     state: &AppState,
     caller: &Caller,
     binding: &Binding,
@@ -229,12 +231,13 @@ pub(crate) async fn list(
     for (key, value) in &request.filters {
         let key = sql.bind(key.clone());
         let value = sql.bind(value.clone());
-        clause.push_str(&format!(
+        let _ = write!(
+            clause,
             " AND (CASE jsonb_typeof(values->{key}) \
                WHEN 'array' THEN jsonb_exists(values->{key}, {value}) \
                WHEN 'object' THEN values->{key}->>'value' = {value} \
                ELSE values->>{key} = {value} END)"
-        ));
+        );
     }
     let count_sql = format!("SELECT count(*)::bigint AS n FROM form_records WHERE {clause}");
     let total = Count::find_by_statement(Statement::from_sql_and_values(
@@ -251,16 +254,16 @@ pub(crate) async fn list(
             let column = RECORD_COLUMNS
                 .iter()
                 .find(|column| **column == key.as_str() && !binding.fields.iter().any(|field| field.key == *key));
-            match column {
-                Some(column) => format!("{column} {direction}, id"),
-                None => {
+            column.map_or_else(
+                || {
                     let key = sql.bind(key.clone());
                     format!(
                         "(CASE jsonb_typeof(values->{key}) WHEN 'object' THEN values->{key}->'value' ELSE values->{key} END) \
                          {direction} NULLS LAST, id"
                     )
-                }
-            }
+                },
+                |column| format!("{column} {direction}, id"),
+            )
         }
         None => "created_at DESC, id".to_string(),
     };
@@ -279,13 +282,13 @@ pub(crate) async fn list(
     .await?;
     let shown = rows
         .into_iter()
-        .map(|row| present(binding, &access.read, row))
+        .map(|row| present(binding, &access.read, &row))
         .collect();
     Ok((shown, total))
 }
 
 /// One record of the caller's scope, or `404`.
-pub(crate) async fn get(
+pub async fn get(
     state: &AppState,
     caller: &Caller,
     binding: &Binding,
@@ -294,7 +297,7 @@ pub(crate) async fn get(
 ) -> Result<SiteRecord, SiteError> {
     load_scoped(state, caller, binding, &access.scope, id)
         .await?
-        .map(|row| present(binding, &access.read, row))
+        .map(|row| present(binding, &access.read, &row))
         .ok_or_else(SiteError::not_found)
 }
 
@@ -325,7 +328,7 @@ async fn load_scoped(
 
 /// The values the read projection lets through, masked where the schema says so; record columns
 /// come from the row; the title only when all its inputs are readable.
-fn present(binding: &Binding, read: &EffectiveRead, row: RecordRow) -> SiteRecord {
+fn present(binding: &Binding, read: &EffectiveRead, row: &RecordRow) -> SiteRecord {
     let values = project_values(binding, read, &row.values, row.created_at, row.updated_at);
     let title = read.title.then(|| {
         let excluded: BTreeSet<String> = binding
@@ -384,7 +387,7 @@ fn project_values(
 }
 
 /// Keys the audience may write, in projection terms; anything else is refused before the pipeline.
-pub(crate) fn ensure_writable(values: &Map<String, Value>, allowed: &[String]) -> Result<(), SiteError> {
+pub fn ensure_writable(values: &Map<String, Value>, allowed: &[String]) -> Result<(), SiteError> {
     let refused: Vec<&String> = values.keys().filter(|key| !allowed.contains(*key)).collect();
     if refused.is_empty() {
         Ok(())
@@ -399,7 +402,7 @@ pub(crate) fn ensure_writable(values: &Map<String, Value>, allowed: &[String]) -
 }
 
 /// The submit fields of the visitor projection that still qualify.
-pub(crate) fn submit_fields(binding: &Binding) -> Vec<String> {
+pub fn submit_fields(binding: &Binding) -> Vec<String> {
     binding
         .projection
         .visitor
@@ -411,7 +414,7 @@ pub(crate) fn submit_fields(binding: &Binding) -> Vec<String> {
 
 /// The update fields of the operator projection that still qualify, minus the fields the
 /// operator's own policy keeps from them (`excluded`).
-pub(crate) fn update_fields(binding: &Binding, excluded: &BTreeSet<String>) -> Vec<String> {
+pub fn update_fields(binding: &Binding, excluded: &BTreeSet<String>) -> Vec<String> {
     binding
         .projection
         .operator
@@ -422,7 +425,7 @@ pub(crate) fn update_fields(binding: &Binding, excluded: &BTreeSet<String>) -> V
 }
 
 /// Only the given keys of a value map.
-pub(crate) fn pick(values: &Value, keys: &[String]) -> Value {
+pub fn pick(values: &Value, keys: &[String]) -> Value {
     let mut out = Map::new();
     for key in keys {
         if let Some(value) = values.get(key) {
@@ -434,7 +437,7 @@ pub(crate) fn pick(values: &Value, keys: &[String]) -> Value {
 
 /// Field errors of a refused write, limited to the keys the audience may see: an error on any
 /// other field is reported as one `constraint_failed` entry without its key.
-pub(crate) fn redact_field_errors(error: SiteError, visible: &[String]) -> SiteError {
+pub fn redact_field_errors(error: SiteError, visible: &[String]) -> SiteError {
     if error.code() != crate::forms::rules::VALIDATION_FAILED {
         return error;
     }
@@ -465,7 +468,7 @@ pub(crate) fn redact_field_errors(error: SiteError, visible: &[String]) -> SiteE
 }
 
 /// Loads a record of the operator's scope for an update, with the full stored row.
-pub(crate) async fn load_for_update(
+pub async fn load_for_update(
     state: &AppState,
     caller: &Caller,
     binding: &Binding,

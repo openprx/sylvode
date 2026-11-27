@@ -15,7 +15,7 @@ use super::{
 use crate::error::ApiError;
 
 /// The slot a draft targets; it must take placements at the scope kind.
-pub(crate) fn draft_slot(slot_id: &str, kind: ScopeKind) -> Result<SlotDescriptor, ApiError> {
+pub fn draft_slot(slot_id: &str, kind: ScopeKind) -> Result<SlotDescriptor, ApiError> {
     let slot = known_slot(slot_id)?;
     if !slot.scope_kinds.contains(&kind.as_str()) {
         return Err(ApiError::bad_request_coded(
@@ -27,7 +27,7 @@ pub(crate) fn draft_slot(slot_id: &str, kind: ScopeKind) -> Result<SlotDescripto
 }
 
 /// Validates a spec for the slot it will sit in, as the console save path does.
-pub(crate) fn validate_for_slot(spec: &Value, slot: &SlotDescriptor) -> Result<Validated, Vec<LayoutError>> {
+pub fn validate_for_slot(spec: &Value, slot: &SlotDescriptor) -> Result<Validated, Vec<LayoutError>> {
     validate_value(
         spec,
         &Options {
@@ -40,7 +40,7 @@ pub(crate) fn validate_for_slot(spec: &Value, slot: &SlotDescriptor) -> Result<V
 /// Stores the layout (`source` `draft`) and places it in the slot at the scope. A taken layout key
 /// and a full slot refuse like the ordinary routes (`layout_key_taken`, `slot_occupied`,
 /// `slot_full`); the caller's transaction then rolls back. Returns `{layout_id, placement_id}`.
-pub(crate) async fn save_layout_draft(
+pub async fn save_layout_draft(
     tx: &DatabaseTransaction,
     scope: &Scope,
     slot: &SlotDescriptor,

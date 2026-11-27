@@ -1,6 +1,9 @@
 //! Catalogue entries of the `auth_workspace` router area (`router/auth_workspace.rs`).
 
-use crate::catalogue::types::dsl::*;
+use crate::catalogue::types::dsl::{
+    Admin, Delete, Destructive, Entry, Get, InstanceAdmin, Own, Patch, Post, Public, Put, Read, Secret, Workspace,
+    WorkspaceAdmin, Write, bot, console,
+};
 
 #[rustfmt::skip]
 pub static ENTRIES: &[Entry] = &[

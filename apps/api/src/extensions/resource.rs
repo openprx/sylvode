@@ -33,9 +33,10 @@ struct FormRow {
     form_id: Uuid,
 }
 
-/// Resolves the target of `entry` for the path parameters `params`. `None` when there is no such
-/// target, or the entry has no resolvable scope; callers answer both like a target outside the
-/// workspace, so an answer never says whether an id exists.
+/// Resolves the target of `entry` for the path parameters `params`.
+///
+/// `None` when there is no such target, or the entry has no resolvable scope; callers answer both
+/// like a target outside the workspace, so an answer never says whether an id exists.
 ///
 /// # Errors
 /// A database failure.

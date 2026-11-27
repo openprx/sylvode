@@ -37,8 +37,10 @@ fn without_tests(source: &str) -> &str {
 }
 
 /// The paths of every `.route(...)` registration of non-test code, with a path given as a constant
-/// resolved from the `const NAME: &str = "..."` items of the same sources. A path that cannot be
-/// resolved is returned as `unresolved:NAME`, so the caller's comparison fails on it.
+/// resolved from the `const NAME: &str = "..."` items of the same sources.
+///
+/// A path that cannot be resolved is returned as `unresolved:NAME`, so the caller's comparison
+/// fails on it.
 #[must_use]
 pub fn scan_paths(sources: &[(&str, &str)]) -> std::collections::BTreeSet<String> {
     const CALL: &str = ".route(";

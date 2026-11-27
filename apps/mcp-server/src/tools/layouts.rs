@@ -134,8 +134,9 @@ mod tests {
     use super::{create_layout_draft, validate_layout};
     use crate::client::test_api;
     use axum::{Json, Router, extract::Request, routing::post};
+    use parking_lot::Mutex;
     use serde_json::{Value, json};
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     type Seen = Arc<Mutex<Vec<(String, Value)>>>;
 
@@ -150,9 +151,7 @@ mod tests {
                         .await
                         .unwrap_or_default();
                     let body = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-                    if let Ok(mut seen) = seen.lock() {
-                        seen.push((path, body));
-                    }
+                    seen.lock().push((path, body));
                     Json(json!({ "code": 0, "message": "success", "data": { "valid": true } }))
                 }
             }
@@ -173,8 +172,7 @@ mod tests {
         )
         .await;
         assert_ne!(result.is_error, Some(true));
-        let seen = seen.lock().map_err(|_| "poisoned")?;
-        let (path, body) = seen.first().ok_or("no request")?;
+        let (path, body) = seen.lock().first().cloned().ok_or("no request")?;
         assert_eq!(path, "/api/v1/layouts/validate");
         assert!(body.get("project_id").is_none(), "{body}");
         assert_eq!(body["slot_id"], "form.record.detail");
@@ -193,8 +191,7 @@ mod tests {
         )
         .await;
         assert_ne!(result.is_error, Some(true));
-        let seen = seen.lock().map_err(|_| "poisoned")?;
-        let (path, body) = seen.first().ok_or("no request")?;
+        let (path, body) = seen.lock().first().cloned().ok_or("no request")?;
         assert_eq!(path, "/api/v1/drafts");
         assert_eq!(body["kind"], "layout");
         assert_eq!(body["project_id"], "p");

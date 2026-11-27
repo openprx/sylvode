@@ -532,6 +532,7 @@ fn cel_user(caller: &RuleCaller) -> Value {
 }
 
 /// Fills absent keys with their field's default on create. An explicit `null` stays empty.
+///
 /// A CEL default is evaluated with `now` and `user`; a failing one refuses the create with
 /// `default_invalid`. Returns the values and the keys that were filled.
 pub fn apply_defaults(
@@ -556,12 +557,11 @@ pub fn apply_defaults(
             None => continue,
             Some(DefaultSpec::Value(default)) => default_input(field.ty, default),
             Some(DefaultSpec::Cel(program)) => {
-                match program.eval_json(&vars).map(|value| cel_default_input(field.ty, value)) {
-                    Ok(Some(value)) => value,
-                    Ok(None) | Err(_) => {
-                        errors.push(error(field, Stage::Default, "default_invalid"));
-                        continue;
-                    }
+                if let Ok(Some(value)) = program.eval_json(&vars).map(|value| cel_default_input(field.ty, value)) {
+                    value
+                } else {
+                    errors.push(error(field, Stage::Default, "default_invalid"));
+                    continue;
                 }
             }
         };

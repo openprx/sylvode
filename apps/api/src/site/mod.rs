@@ -1,5 +1,6 @@
-//! The public site (contract C3 section 6): the site model and its console administration, binding
-//! projections, visitor and operator credentials, and the site API `/api/site/v1/{slug}` with its
+//! The public site (contract C3 section 6).
+//!
+//! The site model and its console administration, binding projections, visitor and operator credentials, and the site API `/api/site/v1/{slug}` with its
 //! own layer stack.
 
 mod access;

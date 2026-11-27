@@ -6,7 +6,9 @@
 //! scope's project through `scoped_bot::ensure_bot_level`, and a workspace-scoped row is reachable
 //! only by a bot that is not limited to projects. The preference route is for people only.
 
-use crate::catalogue::types::dsl::*;
+use crate::catalogue::types::dsl::{
+    Delete, Destructive, Entry, Filtered, Find, Get, Global, Patch, Post, Project, Put, Read, Workspace, Write, bot,
+};
 
 #[rustfmt::skip]
 pub static ENTRIES: &[Entry] = &[

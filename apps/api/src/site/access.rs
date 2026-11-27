@@ -19,7 +19,7 @@ use crate::middleware::bot_auth::{
 use crate::middleware::scoped_bot::{Level, Secondary, ensure_bot_level};
 
 /// The authenticated console caller: a person, or a bot token with its person-shaped claims.
-pub(crate) struct Who {
+pub struct Who {
     claims: JwtClaims,
     bot: Option<BotAuthContext>,
 }
@@ -97,7 +97,7 @@ async fn bot_level(state: &AppState, who: &Who, project_id: Uuid, level: Level) 
 }
 
 /// A project's workspace; an unknown project is `not_found`.
-pub(crate) async fn project_workspace(state: &AppState, project_id: Uuid) -> Result<Uuid, ApiError> {
+pub async fn project_workspace(state: &AppState, project_id: Uuid) -> Result<Uuid, ApiError> {
     #[derive(FromQueryResult)]
     struct Row {
         workspace_id: Uuid,
@@ -114,7 +114,7 @@ pub(crate) async fn project_workspace(state: &AppState, project_id: Uuid) -> Res
 }
 
 /// Read access to a project's sites.
-pub(crate) async fn require_project_read(state: &AppState, who: &Who, project_id: Uuid) -> Result<Uuid, ApiError> {
+pub async fn require_project_read(state: &AppState, who: &Who, project_id: Uuid) -> Result<Uuid, ApiError> {
     let workspace_id = project_workspace(state, project_id).await?;
     member(state, who, workspace_id).await?;
     bot_level(state, who, project_id, Level::Read).await?;
@@ -122,7 +122,7 @@ pub(crate) async fn require_project_read(state: &AppState, who: &Who, project_id
 }
 
 /// Creating a site in a project: members and bots with `write`.
-pub(crate) async fn require_project_write(state: &AppState, who: &Who, project_id: Uuid) -> Result<Uuid, ApiError> {
+pub async fn require_project_write(state: &AppState, who: &Who, project_id: Uuid) -> Result<Uuid, ApiError> {
     let workspace_id = project_workspace(state, project_id).await?;
     member(state, who, workspace_id).await?;
     bot_level(state, who, project_id, Level::Write).await?;
@@ -130,7 +130,7 @@ pub(crate) async fn require_project_write(state: &AppState, who: &Who, project_i
 }
 
 /// Loads a site the caller may read.
-pub(crate) async fn readable_site(state: &AppState, who: &Who, site_id: Uuid) -> Result<SiteRow, ApiError> {
+pub async fn readable_site(state: &AppState, who: &Who, site_id: Uuid) -> Result<SiteRow, ApiError> {
     let site = store::load_site(&state.db, site_id).await?.ok_or_else(site_not_found)?;
     member(state, who, site.workspace_id).await?;
     bot_level(state, who, site.project_id, Level::Read).await?;
@@ -139,7 +139,7 @@ pub(crate) async fn readable_site(state: &AppState, who: &Who, site_id: Uuid) ->
 
 /// Loads a site whose pages and title the caller may write: owners, admins and the site's
 /// `site_editor` users; bots with `write` in the project (the caller applies the draft rule).
-pub(crate) async fn page_writable_site(state: &AppState, who: &Who, site_id: Uuid) -> Result<SiteRow, ApiError> {
+pub async fn page_writable_site(state: &AppState, who: &Who, site_id: Uuid) -> Result<SiteRow, ApiError> {
     let site = readable_site(state, who, site_id).await?;
     if who.is_bot() {
         bot_level(state, who, site.project_id, Level::Write).await?;
@@ -165,7 +165,7 @@ pub(crate) async fn page_writable_site(state: &AppState, who: &Who, site_id: Uui
 }
 
 /// Loads a site for a human-only administration route: workspace owners and admins.
-pub(crate) async fn admin_site(state: &AppState, who: &Who, site_id: Uuid) -> Result<SiteRow, ApiError> {
+pub async fn admin_site(state: &AppState, who: &Who, site_id: Uuid) -> Result<SiteRow, ApiError> {
     if who.is_bot() {
         return Err(ApiError::forbidden("this route is for people only"));
     }

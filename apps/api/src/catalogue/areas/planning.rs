@@ -1,6 +1,8 @@
 //! Catalogue entries of the `planning` router area (`router/planning.rs`).
 
-use crate::catalogue::types::dsl::*;
+use crate::catalogue::types::dsl::{
+    Admin, Delete, Destructive, Entry, Find, Get, Post, Project, Put, Read, Workspace, WorkspaceAdmin, Write, bot,
+};
 
 #[rustfmt::skip]
 pub static ENTRIES: &[Entry] = &[

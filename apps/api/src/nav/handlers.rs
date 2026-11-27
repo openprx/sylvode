@@ -45,7 +45,7 @@ fn is_admin_role(role: &str) -> bool {
 }
 
 /// Where a request's scope sits, from the scope the layout access rules resolved.
-fn place_of(nav: NavScope, scope: &Scope) -> Where {
+const fn place_of(nav: NavScope, scope: &Scope) -> Where {
     Where {
         scope: nav,
         workspace_id: scope.workspace_id,
@@ -493,7 +493,7 @@ async fn prefs_scope(
     Ok((user_id, query.workspace_id, query.project_id))
 }
 
-fn prefs_body(prefs: Value, updated_at: Option<Timestamp>) -> Value {
+fn prefs_body(prefs: &Value, updated_at: Option<Timestamp>) -> Value {
     json!({ "prefs": prefs, "updated_at": updated_at })
 }
 
@@ -505,9 +505,9 @@ pub async fn get_prefs(
 ) -> Result<impl IntoResponse, ApiError> {
     let (user, workspace, project) = prefs_scope(&state, &claims, &query).await?;
     let body = match store::load_prefs(&state.db, user, workspace, project).await? {
-        Some(row) => prefs_body(row.prefs, Some(row.updated_at)),
+        Some(row) => prefs_body(&row.prefs, Some(row.updated_at)),
         None => prefs_body(
-            serde_json::to_value(Prefs::empty()).map_err(|_| ApiError::internal())?,
+            &serde_json::to_value(Prefs::empty()).map_err(|_| ApiError::internal())?,
             None,
         ),
     };
@@ -531,7 +531,7 @@ pub async fn put_prefs(
     let parsed = prefs::parse(&req.prefs)?;
     let value = serde_json::to_value(&parsed).map_err(|_| ApiError::internal())?;
     let row = store::save_prefs(&state.db, user, workspace, project, &value).await?;
-    Ok(ApiResponse::success(prefs_body(row.prefs, Some(row.updated_at))))
+    Ok(ApiResponse::success(prefs_body(&row.prefs, Some(row.updated_at))))
 }
 
 /// `DELETE /api/v1/me/nav-prefs?workspace_id=&project_id=`
@@ -543,7 +543,7 @@ pub async fn delete_prefs(
     let (user, workspace, project) = prefs_scope(&state, &claims, &query).await?;
     store::delete_prefs(&state.db, user, workspace, project).await?;
     Ok(ApiResponse::success(prefs_body(
-        serde_json::to_value(Prefs::empty()).map_err(|_| ApiError::internal())?,
+        &serde_json::to_value(Prefs::empty()).map_err(|_| ApiError::internal())?,
         None,
     )))
 }

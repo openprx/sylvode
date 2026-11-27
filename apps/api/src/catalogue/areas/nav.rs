@@ -6,7 +6,9 @@
 //! the project from the path; a bot writes a project navigation like the project's other content,
 //! except external links and lock flags (`nav::bot`). The preference routes are for people only.
 
-use crate::catalogue::types::dsl::*;
+use crate::catalogue::types::dsl::{
+    Delete, Destructive, Entry, Find, Get, Global, Project, Put, Read, Workspace, Write, bot, console,
+};
 
 #[rustfmt::skip]
 pub static ENTRIES: &[Entry] = &[

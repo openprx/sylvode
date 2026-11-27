@@ -15,6 +15,7 @@ allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-panic-in-tests = true
 allow-dbg-in-tests = true
+allow-indexing-slicing-in-tests = true
 
 disallowed-methods = [
     { path = "std::sync::Mutex::new", reason = "Use parking_lot::Mutex (sync) or tokio::sync::Mutex (async)" },

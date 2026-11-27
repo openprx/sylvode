@@ -5,7 +5,9 @@
 //! application never reaches them, and the handler asks for a workspace owner or administrator.
 //! Both share the `approve` capability.
 
-use crate::catalogue::types::dsl::*;
+use crate::catalogue::types::dsl::{
+    Admin, Entry, Filtered, Find, Get, Post, Project, Read, WorkspaceAdmin, Write, bot, console,
+};
 
 #[rustfmt::skip]
 pub static ENTRIES: &[Entry] = &[

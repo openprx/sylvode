@@ -1,6 +1,8 @@
 //! Catalogue entries of the `alerts` router area (`router/alerts.rs`).
 
-use crate::catalogue::types::dsl::*;
+use crate::catalogue::types::dsl::{
+    Admin, Delete, Entry, Find, Get, Patch, Post, Project, Put, Read, Secret, WorkspaceAdmin, bot,
+};
 
 #[rustfmt::skip]
 pub static ENTRIES: &[Entry] = &[

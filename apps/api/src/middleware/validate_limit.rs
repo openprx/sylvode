@@ -13,7 +13,7 @@ use crate::error::ApiError;
 
 /// Calls per principal in one window.
 pub const CALLS_PER_MINUTE: usize = 60;
-const WINDOW: Duration = Duration::from_secs(60);
+const WINDOW: Duration = Duration::from_mins(1);
 /// Principals kept before the table is swept of idle ones.
 const SWEEP_AT: usize = 10_000;
 

@@ -1,6 +1,7 @@
-//! The layer stack of the public site API (contract C3 section 6.4): its own error envelope with
-//! real HTTP status codes, the origin and CSRF checks, CORS for a separate-origin site, the 1 MiB
-//! body limit, per-address rate limits and the response headers.
+//! The layer stack of the public site API (contract C3 section 6.4).
+//!
+//! It has its own error envelope with real HTTP status codes, the origin and CSRF checks, CORS for
+//! a separate-origin site, the 1 MiB body limit, per-address rate limits and the response headers.
 //!
 //! The site router never runs under the console's `CorsLayer::permissive()` or its 200 MiB body
 //! limit: `router/mod.rs` merges it after those layers are applied.
@@ -209,13 +210,15 @@ pub(crate) enum Mode {
 }
 
 pub(crate) fn mode_of(site: &SiteRow) -> Option<Mode> {
-    match site.allowed_origin() {
-        Some(origin) => Some(Mode::Separate(origin.to_string())),
-        None => crate::config::runtime()
-            .site
-            .same_origin_trial
-            .then_some(Mode::SameOrigin),
-    }
+    site.allowed_origin().map_or_else(
+        || {
+            crate::config::runtime()
+                .site
+                .same_origin_trial
+                .then_some(Mode::SameOrigin)
+        },
+        |origin| Some(Mode::Separate(origin.to_string())),
+    )
 }
 
 /// Whether `origin` is the origin a write may come from in `mode`. In the same-origin mode it is
@@ -315,20 +318,22 @@ impl Windows {
             return Err(left.as_secs().max(1));
         }
         entry.hits += 1;
+        drop(table);
         Ok(())
     }
 }
 
 pub(crate) static WINDOWS: LazyLock<Windows> = LazyLock::new(|| Windows::new(MAX_WINDOWS));
 
-pub(crate) const MINUTE: Duration = Duration::from_secs(60);
-pub(crate) const HOUR: Duration = Duration::from_secs(3600);
+pub(crate) const MINUTE: Duration = Duration::from_mins(1);
+pub(crate) const HOUR: Duration = Duration::from_hours(1);
 
-/// The guard in front of every site API route, in order: any `Authorization` header is refused;
-/// an unknown, disabled or unreachable site is `404`; a preflight is answered for a
-/// separate-origin site; a write needs `X-SV-Site: 1` and the exact site origin; a declared body
-/// over 1 MiB is refused; the address is rate limited. The site row goes to the handler as a
-/// request extension. Every answer gets the site headers and, for its own origin, CORS.
+/// The guard in front of every site API route.
+///
+/// In order: any `Authorization` header is refused; an unknown, disabled or unreachable site is
+/// `404`; a preflight is answered for a separate-origin site; a write needs `X-SV-Site: 1` and the
+/// exact site origin; a declared body over 1 MiB is refused; the address is rate limited. The site row goes to the handler as a request extension. Every answer gets the site headers and,
+/// for its own origin, CORS.
 pub async fn guard(
     axum::extract::State(state): axum::extract::State<AppState>,
     mut request: Request,

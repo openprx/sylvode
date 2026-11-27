@@ -689,22 +689,20 @@ fn parse_mask(plan: &FieldPlan, base: &str, raw: Option<&Value>, issues: &mut Sc
         return None;
     }
     let keep = |key: &str| -> Result<usize, SchemaIssue> {
-        match object.get(key) {
-            None => Ok(0),
-            Some(value) => value
+        object.get(key).map_or(Ok(0), |value| {
+            value
                 .as_u64()
                 .filter(|keep| *keep <= MAX_MASK_KEEP)
                 .and_then(|keep| usize::try_from(keep).ok())
-                .ok_or_else(|| invalid(key)),
-        }
+                .ok_or_else(|| invalid(key))
+        })
     };
-    let mask_char = match object.get("char") {
-        None => Some('*'),
-        Some(value) => value.as_str().and_then(|text| {
+    let mask_char = object.get("char").map_or(Some('*'), |value| {
+        value.as_str().and_then(|text| {
             let mut chars = text.chars();
             chars.next().filter(|_| chars.next().is_none())
-        }),
-    };
+        })
+    });
     let outlets = object.get("outlets").and_then(Value::as_array).and_then(|items| {
         items
             .iter()

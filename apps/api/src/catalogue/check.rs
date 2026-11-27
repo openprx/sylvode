@@ -16,8 +16,9 @@ const fn channel(principal: &Principal) -> Exposure {
 }
 
 /// Answers the route-level question; role, bot level in a project, form policy, field policy and
-/// record scope stay with the handlers and `scoped_bot`, which see the same actor. The first
-/// failure returns:
+/// record scope stay with the handlers and `scoped_bot`, which see the same actor.
+///
+/// The first failure returns:
 ///
 /// 1. the entry's exposure must contain the principal's channel;
 /// 2. a user, a bot, a delegated caller or a site principal needs nothing more here (the site

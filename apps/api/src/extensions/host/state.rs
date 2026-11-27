@@ -81,7 +81,7 @@ pub struct HostState {
 
 impl HostState {
     #[must_use]
-    pub fn new(limits: &Limits, env: Option<Arc<CallEnv>>, info: InvocationInfo, deadline: Instant) -> Self {
+    pub const fn new(limits: &Limits, env: Option<Arc<CallEnv>>, info: InvocationInfo, deadline: Instant) -> Self {
         Self {
             limiter: Limiter {
                 max_memory: limits.memory,

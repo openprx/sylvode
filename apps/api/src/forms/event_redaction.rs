@@ -216,8 +216,9 @@ pub fn event_payload_policy(event_type: &str) -> Option<&'static EventPayloadPol
         .map(|(_, policy)| policy)
 }
 
-/// Strip everything the `reader` policy hides from an event payload: an unrestricted reader gets it unchanged;
-/// otherwise only declared keys survive (a payload `title` is never declared), denied keys are
+/// Strip everything the `reader` policy hides from an event payload.
+///
+/// An unrestricted reader gets it unchanged; otherwise only declared keys survive (a payload `title` is never declared), denied keys are
 /// removed at any depth and restricted relation values are reduced to their reference.
 pub fn redact_event_payload(event_type: &str, payload: Value, reader: &RecordReadPolicy) -> Value {
     if reader.is_unrestricted() {

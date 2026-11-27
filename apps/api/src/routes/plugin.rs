@@ -378,7 +378,7 @@ async fn invoke_plugin_detached(
         "payload": req.input,
     });
     let permit = limits::try_acquire(row.id)?;
-    let result = invoke_wasm_plugin(wasm_bytes, input.clone(), limits::clamp(manifest.capabilities.runtime)).await;
+    let result = invoke_wasm_plugin(wasm_bytes, input.clone(), limits::clamp(&manifest.capabilities.runtime)).await;
     drop(permit);
     let tx = state.db.begin().await?;
     let (invocation, live_output) = match result {
@@ -433,7 +433,7 @@ pub async fn list_plugin_invocations(
     .await?;
     let items = PluginInvocationResponse::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        &format!(
+        format!(
             "SELECT {INVOCATION_COLUMNS}
              FROM plugin_invocations
             WHERE plugin_id = $1

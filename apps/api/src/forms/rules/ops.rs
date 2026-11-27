@@ -187,22 +187,23 @@ mod tests {
 
     use super::*;
 
-    fn op(raw: Value, allowed: &[&str]) -> Result<BuiltinOp, &'static str> {
-        BuiltinOp::parse("/x", raw.as_object().unwrap_or(&Map::new()), allowed).map_err(|issue| issue.code)
+    fn op(raw: &Value, allowed: &[&str]) -> Result<BuiltinOp, &'static str> {
+        let empty = Map::new();
+        BuiltinOp::parse("/x", raw.as_object().unwrap_or(&empty), allowed).map_err(|issue| issue.code)
     }
 
     #[test]
     fn parses_ops_against_the_type() {
-        assert_eq!(op(json!({"op": "trim"}), &["trim"]), Ok(BuiltinOp::Trim));
-        assert_eq!(op(json!({"op": "trim"}), &["lower"]), Err("rule_not_allowed_for_type"));
-        assert_eq!(op(json!({"op": "nope"}), &["trim"]), Err("rule_unknown"));
+        assert_eq!(op(&json!({"op": "trim"}), &["trim"]), Ok(BuiltinOp::Trim));
+        assert_eq!(op(&json!({"op": "trim"}), &["lower"]), Err("rule_not_allowed_for_type"));
+        assert_eq!(op(&json!({"op": "nope"}), &["trim"]), Err("rule_unknown"));
         assert_eq!(
-            op(json!({"op": "truncate", "max": 0}), &["truncate"]),
+            op(&json!({"op": "truncate", "max": 0}), &["truncate"]),
             Err("rule_param_invalid")
         );
-        assert_eq!(op(json!({"op": "trim", "x": 1}), &["trim"]), Err("rule_param_invalid"));
+        assert_eq!(op(&json!({"op": "trim", "x": 1}), &["trim"]), Err("rule_param_invalid"));
         assert_eq!(
-            op(json!({"op": "round", "scale": 1, "mode": "half_up"}), &["round"]),
+            op(&json!({"op": "round", "scale": 1, "mode": "half_up"}), &["round"]),
             Ok(BuiltinOp::Round {
                 scale: 1,
                 half_even: false

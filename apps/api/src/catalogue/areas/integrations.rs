@@ -1,6 +1,9 @@
 //! Catalogue entries of the `integrations` router area (`router/integrations.rs`).
 
-use crate::catalogue::types::dsl::*;
+use crate::catalogue::types::dsl::{
+    Admin, Delete, Destructive, Entry, Filtered, Find, Get, Own, Patch, Post, Project, Put, Read, Secret,
+    WorkspaceAdmin, Write, bot,
+};
 
 #[rustfmt::skip]
 pub static ENTRIES: &[Entry] = &[

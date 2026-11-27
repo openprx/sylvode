@@ -242,10 +242,10 @@ impl ReaderContext {
     }
 }
 
-/// Whether a target form's policy row for the role restricts what a relation snapshot of it may
-/// show: a read-denied field, a denied `form.view` (the reader may not see the form at all), or a
-/// record scope limited to owned records (the reader may not see most of its records). No row
-/// means the permissive defaults, which restrict nothing.
+/// Whether a target form's policy row for the role restricts a relation snapshot of it.
+///
+/// A restriction is a read-denied field, a denied `form.view` (the reader may not see the form at
+/// all), or a record scope limited to owned records (the reader may not see most of its records). No row means the permissive defaults, which restrict nothing.
 #[must_use]
 pub fn node_restricts(policy: Option<&Value>) -> bool {
     policy.is_some_and(|policy| {
@@ -266,15 +266,13 @@ fn edge_is_restricted(
     explored: &BTreeMap<String, Option<FormNode>>,
     restricted_forms: &BTreeSet<String>,
 ) -> bool {
-    match edge {
-        None => true,
-        Some(form_key) => !explored.contains_key(form_key) || restricted_forms.contains(form_key),
-    }
+    edge.is_none_or(|form_key| !explored.contains_key(form_key) || restricted_forms.contains(form_key))
 }
 
-/// The explored forms that restrict the reader, as a fixed point: a form is restricted when it is
-/// missing, hides a field, has an unresolvable relation, or relates to a missing, unexplored or
-/// restricted form. Cycles settle because a form only ever turns restricted.
+/// The explored forms that restrict the reader, as a fixed point.
+///
+/// A form is restricted when it is missing, hides a field, has an unresolvable relation, or
+/// relates to a missing, unexplored or restricted form. Cycles settle because a form only ever turns restricted.
 pub fn restricted_form_keys(explored: &BTreeMap<String, Option<FormNode>>) -> BTreeSet<String> {
     let mut restricted = BTreeSet::new();
     loop {
@@ -283,16 +281,13 @@ pub fn restricted_form_keys(explored: &BTreeMap<String, Option<FormNode>>) -> BT
             if restricted.contains(form_key) {
                 continue;
             }
-            let is_restricted = match node {
-                None => true,
-                Some(node) => {
-                    node.restricts
-                        || node
-                            .edges
-                            .iter()
-                            .any(|edge| edge_is_restricted(edge.as_deref(), explored, &restricted))
-                }
-            };
+            let is_restricted = node.as_ref().is_none_or(|node| {
+                node.restricts
+                    || node
+                        .edges
+                        .iter()
+                        .any(|edge| edge_is_restricted(edge.as_deref(), explored, &restricted))
+            });
             if is_restricted {
                 restricted.insert(form_key.clone());
                 changed = true;
@@ -323,11 +318,11 @@ mod tests {
     }
     use std::collections::BTreeMap;
 
-    fn node(denied: bool, edges: &[Option<&str>]) -> Option<FormNode> {
-        Some(FormNode {
+    fn node(denied: bool, edges: &[Option<&str>]) -> FormNode {
+        FormNode {
             restricts: denied,
             edges: edges.iter().map(|edge| edge.map(str::to_string)).collect(),
-        })
+        }
     }
 
     fn graph(nodes: &[(&str, Option<FormNode>)]) -> BTreeMap<String, Option<FormNode>> {
@@ -340,7 +335,7 @@ mod tests {
     #[test]
     fn restriction_is_transitive_through_relation_chains() {
         // The start form A relates to B, B to C, and C denies a field.
-        let explored = graph(&[("b", node(false, &[Some("c")])), ("c", node(true, &[]))]);
+        let explored = graph(&[("b", Some(node(false, &[Some("c")]))), ("c", Some(node(true, &[])))]);
         let restricted = restricted_form_keys(&explored);
 
         assert!(restricted.contains("b"));
@@ -350,7 +345,10 @@ mod tests {
 
     #[test]
     fn a_cycle_with_nothing_denied_stays_unrestricted() {
-        let explored = graph(&[("a", node(false, &[Some("b")])), ("b", node(false, &[Some("a")]))]);
+        let explored = graph(&[
+            ("a", Some(node(false, &[Some("b")]))),
+            ("b", Some(node(false, &[Some("a")]))),
+        ]);
         let restricted = restricted_form_keys(&explored);
 
         assert!(restricted.is_empty());
@@ -360,10 +358,10 @@ mod tests {
     #[test]
     fn unresolvable_missing_and_unexplored_edges_are_restricted() {
         let explored = graph(&[
-            ("broken", node(false, &[None])),
+            ("broken", Some(node(false, &[None]))),
             ("gone", None),
-            ("far", node(false, &[Some("beyond_the_cap")])),
-            ("clean", node(false, &[])),
+            ("far", Some(node(false, &[Some("beyond_the_cap")]))),
+            ("clean", Some(node(false, &[]))),
         ]);
         let restricted = restricted_form_keys(&explored);
 

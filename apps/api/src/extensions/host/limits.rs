@@ -169,6 +169,7 @@ impl Gates {
             return Err(HostError::new(RefusalCode::PluginConcurrencyLimit));
         }
         hits.push_back(now);
+        drop(users);
         Ok(())
     }
 }
@@ -216,6 +217,7 @@ mod tests {
             .collect();
         assert_eq!(rules.len(), 4);
         assert!(gates.admit(World::FieldRule, Uuid::from_u128(20)).is_err());
+        drop(rules);
     }
 
     #[test]
@@ -228,6 +230,7 @@ mod tests {
         assert!(gates.admit(World::Action, installation).is_err());
         assert!(gates.admit(World::Action, Uuid::from_u128(8)).is_ok());
         assert_eq!(held.len(), 4);
+        drop(held);
     }
 
     #[test]
