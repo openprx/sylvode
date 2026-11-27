@@ -1,5 +1,5 @@
 [workspace]
-exclude = ["crates/vendor/sea-orm"]
+exclude = ["crates/vendor/sea-orm", "apps/mcp-server/interop"]
 resolver = "2"
 members = [
   "apps/api",
