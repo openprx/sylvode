@@ -7,8 +7,6 @@ publish = false
 description = "Sylvode form rule engine: CEL subset checker and evaluator"
 
 [dependencies]
-cel = "0.14"
-regex = "1"
 
 [lints]
 workspace = true
