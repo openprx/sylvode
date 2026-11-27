@@ -992,20 +992,33 @@ pub async fn update_form(
         values.push(expected.into());
     }
     let tx = state.db.begin().await?;
-    // LEAD BOT-SCHEMA: a bot's schema save that changes what visitors of a published site get
-    // is stored as a draft for a person to approve; when the comparison fails, it is drafted too.
-    if is_bot && let Some(schema) = &new_schema {
+    // LEAD BOT-SCHEMA: a bot's schema or title template save that changes what visitors of a
+    // published site get needs a person: a schema save is stored as a draft, a title template
+    // change (no draft kind holds it) is refused. An uncomparable result counts as a change.
+    if is_bot && (new_schema.is_some() || new_title.is_some()) {
         let old_title = form.title_template.as_str();
         let after_title = new_title.as_deref().unwrap_or(old_title);
-        let gated =
-            crate::site::public_site_text_changes(&tx, form_id, (&form.schema, old_title), (schema, after_title))
-                .await
-                .unwrap_or_else(|error| {
-                    tracing::warn!(%form_id, %error, "visitor output of a bot schema save not comparable; drafting it");
-                    true
-                });
+        let after_schema = new_schema.as_ref().unwrap_or(&form.schema);
+        let gated = crate::site::public_site_text_changes(
+            &tx,
+            form_id,
+            (&form.schema, old_title),
+            (after_schema, after_title),
+        )
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!(%form_id, %error, "visitor output of a bot form save not comparable; treating it as changed");
+            true
+        });
         if gated {
             drop(tx);
+            let Some(schema) = &new_schema else {
+                return Err(ApiError::conflict_coded(
+                    "public_site_text_requires_human",
+                    "a published site shows this form's title; a person changes the title template",
+                    None,
+                ));
+            };
             if changed_fields.iter().any(|field| *field != "schema") {
                 return Err(ApiError::conflict_coded(
                     "public_site_text_mixed_save",
