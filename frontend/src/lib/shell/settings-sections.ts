@@ -94,7 +94,12 @@ export function settingsGroups(viewer: SettingsViewer): SettingsGroupModel[] {
 				{ id: 'webhooks', labelKey: 'shell.sections.webhooks', href: `${base}/webhooks` },
 				{ id: 'connections', labelKey: 'nav.connections', href: `${base}/connections` },
 				{ id: 'workflows', labelKey: 'shell.sections.workflows', href: `${base}/workflows` },
-				{ id: 'flow', labelKey: 'shell.sections.flow', href: `${base}/settings/flow` }
+				{ id: 'flow', labelKey: 'shell.sections.flow', href: `${base}/settings/flow` },
+				{
+					id: 'navigation',
+					labelKey: 'shell.sections.navigation',
+					href: `${base}/settings/navigation`
+				}
 			]
 		});
 	}

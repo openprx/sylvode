@@ -80,7 +80,12 @@ export function resolveRoute(url: URL, routeId: string | null = null): RouteCont
 	if (inWorkspace && wsSection === 'projects' && segs[4] === 'settings')
 		return inSettings(settings('project', segs[5] ?? 'plugins'));
 	if (inWorkspace && wsSection === 'settings')
-		return inSettings(settings('workspace', segs[3] === 'flow' ? 'flow' : 'general'));
+		return inSettings(
+			settings(
+				'workspace',
+				segs[3] === 'flow' ? 'flow' : segs[3] === 'navigation' ? 'navigation' : 'general'
+			)
+		);
 	if (inWorkspace && wsSection && WORKSPACE_SETTINGS_PAGES.has(wsSection))
 		return inSettings(settings('workspace', wsSection));
 	if (segs[0] === 'settings') return inSettings(settings('account', 'profile'));
