@@ -338,8 +338,8 @@ The proxy (nginx, Caddy, anything else) terminates TLS. The API keeps speaking p
 ### Create the CA
 
 ```bash
-sylvode-tls.sh init-ca --ip 10.72.0.19                    # by IP address
-sylvode-tls.sh init-ca --ip 10.72.0.19 --dns sylvode.lan  # IP address and a private name
+sylvode-tls.sh init-ca --ip 100.64.0.10                    # by IP address
+sylvode-tls.sh init-ca --ip 100.64.0.10 --dns sylvode.lan  # IP address and a private name
 ```
 
 The CA certificate carries a critical name constraint: it can vouch for the listed names and
@@ -409,10 +409,10 @@ from the access log. The Caddy part is a site block with the same properties.
 
 ```toml
 [server]
-public_url = "https://10.72.0.19"
+public_url = "https://100.64.0.10"
 
 [flow]
-collab_allowed_origins = ["https://10.72.0.19"]
+collab_allowed_origins = ["https://100.64.0.10"]
 ```
 
 Remove `allow_insecure_cookies = true` from `[auth]`: over HTTPS the authentication cookies must
@@ -516,8 +516,8 @@ Other clients:
 ### Check the result
 
 ```bash
-curl --cacert /var/lib/sylvode-tls/ca.crt -I https://10.72.0.19/health
-curl -I https://10.72.0.19/health          # on a client that trusts the CA, without --cacert
+curl --cacert /var/lib/sylvode-tls/ca.crt -I https://100.64.0.10/health
+curl -I https://100.64.0.10/health          # on a client that trusts the CA, without --cacert
 sylvode-tls.sh status
 ```
 
@@ -530,7 +530,7 @@ The names are fixed in the CA, so adding or removing a name, a CA that nears its
 suspected leak of the CA key means a new CA:
 
 ```bash
-sylvode-tls.sh rotate-ca --ip 10.72.0.19 --dns sylvode.lan   # writes next.crt; current CA untouched
+sylvode-tls.sh rotate-ca --ip 100.64.0.10 --dns sylvode.lan   # writes next.crt; current CA untouched
 # install next.crt on every client (trust-client.sh install next.crt --fingerprint ...)
 sylvode-tls.sh rotate-ca --promote                           # next becomes current; old key deleted
 sylvode-tls.sh renew --exec "systemctl reload nginx"         # or wait for the timer: reissues the leaf

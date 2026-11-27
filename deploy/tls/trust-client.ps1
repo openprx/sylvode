@@ -44,7 +44,7 @@ Print what would be done as "would run: ..." and change nothing.
 .\trust-client.ps1 -Action Install -CertPath .\ca.crt -Fingerprint 4C:CD:E4:09 -Yes
 
 .EXAMPLE
-.\trust-client.ps1 -Action Check -CertPath .\ca.crt -Url https://10.72.0.19/health
+.\trust-client.ps1 -Action Check -CertPath .\ca.crt -Url https://100.64.0.10/health
 #>
 [CmdletBinding()]
 param(

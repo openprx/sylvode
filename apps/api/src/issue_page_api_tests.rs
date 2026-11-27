@@ -707,7 +707,7 @@ async fn a_project_scoped_bot_reads_with_read_and_links_with_write() {
     let listed = call(Method::GET, Api::pages_uri(item), None).await;
     assert_eq!(listed["code"], json!(0), "{listed}");
     assert_eq!(listed["data"][0]["title"], json!("Spec"));
-    let second = api.seed_page(api.ws, "Second").await;
+    let second = api.seed_page_in(api.ws, Some(api.project), "Second").await;
     let refused = call(Method::POST, Api::pages_uri(item), Some(json!({"object_id": second}))).await;
     assert_eq!(refused["code"], json!(403), "{refused}");
     let refused = call(Method::DELETE, format!("{}/{page}", Api::pages_uri(item)), None).await;
@@ -725,6 +725,12 @@ async fn a_project_scoped_bot_reads_with_read_and_links_with_write() {
     assert_eq!(linked["data"]["title"], json!("Second"));
     let removed = call(Method::DELETE, format!("{}/{second}", Api::pages_uri(item)), None).await;
     assert_eq!(removed["code"], json!(0), "{removed}");
+
+    // A page outside every project is outside a project-scoped bot's reach, even with write on the
+    // item's project: the link is refused as if the page did not exist.
+    let outside = api.seed_page(api.ws, "Outside").await;
+    let refused = call(Method::POST, Api::pages_uri(item), Some(json!({"object_id": outside}))).await;
+    assert_eq!(refused["code"], json!(404), "{refused}");
 
     // The page side: a bot reads only the items of projects where its level reaches read.
     let hidden_project = Uuid::new_v4();
