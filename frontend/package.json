@@ -106,14 +106,15 @@
 		"test:features": "bun test tests/features"
 	},
 	"dependencies": {
+		"@marcbachmann/cel-js": "8.0.0",
+		"lib0": "0.2.117",
 		"loro-crdt": "1.18.0",
 		"loro-prosemirror": "0.4.3",
 		"prosemirror-commands": "1.7.1",
 		"prosemirror-keymap": "1.2.3",
 		"prosemirror-model": "1.25.11",
 		"prosemirror-state": "1.4.4",
-		"prosemirror-view": "1.42.2",
-		"lib0": "0.2.117"
+		"prosemirror-view": "1.42.2"
 	},
 	"devDependencies": {
 		"@eslint/compat": "^2.0.2",
