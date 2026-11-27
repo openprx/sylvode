@@ -742,6 +742,10 @@ impl OpenPrClient {
         self.post("/api/v1/forms/schema/validate", &body).await
     }
 
+    pub async fn validate_field_rules(&self, body: Value) -> Result<Value, String> {
+        self.post("/api/v1/forms/rules/validate", &body).await
+    }
+
     pub async fn validate_layout(&self, body: Value) -> Result<Value, String> {
         self.post("/api/v1/layouts/validate", &body).await
     }

@@ -225,6 +225,11 @@
     "name": "forms.validate_schema"
   },
   {
+    "access": "read",
+    "category": "forms",
+    "name": "forms.validate_rules"
+  },
+  {
     "access": "write",
     "category": "forms",
     "name": "forms.create_schema_draft"

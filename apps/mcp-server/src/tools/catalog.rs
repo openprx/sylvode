@@ -174,6 +174,12 @@ pub static POST_READ_ENDPOINTS: &[(&str, &str)] = &[
         "forms.validate_schema",
         "POST /api/v1/forms/schema/validate (schema in the body, answers a report, stores nothing)",
     ),
+    // POST /api/v1/forms/rules/validate: the check of a field rule set against a field type. The handler
+    // stores nothing and runs no plugin; the POST carries the rules and the samples.
+    (
+        "forms.validate_rules",
+        "POST /api/v1/forms/rules/validate (rules and samples in the body, answers a report, stores nothing)",
+    ),
     // POST /api/v1/layouts/validate: the validator of sv.layout.v1. The handler stores nothing; the POST
     // carries the spec.
     (
@@ -523,6 +529,19 @@ pub static CATALOG: &[ToolMeta] = &[
         access: Access::Read,
         summary: "Check a form schema and get the typed error report",
         keywords: &["validate schema", "check fields", "schema errors", "lint form"],
+    },
+    ToolMeta {
+        name: "forms.validate_rules",
+        category: "forms",
+        access: Access::Read,
+        summary: "Check a field rule set against a field type and try sample values",
+        keywords: &[
+            "validate rules",
+            "check rules",
+            "rule errors",
+            "try samples",
+            "field rules",
+        ],
     },
     ToolMeta {
         name: "forms.create_schema_draft",

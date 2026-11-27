@@ -71,6 +71,7 @@
   "forms.list",
   "forms.schema_summary",
   "forms.update_schema",
+  "forms.validate_rules",
   "forms.validate_schema",
   "inspection.report",
   "labels.create",

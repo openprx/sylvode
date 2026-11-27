@@ -105,6 +105,7 @@ pub const WITHHELD_TOOLS: &[&str] = &[
     "form_records.aggregate",
     "events.tail",
     "forms.validate_schema",
+    "forms.validate_rules",
     "forms.create_schema_draft",
     "layouts.validate",
     "layouts.create_draft",
@@ -294,11 +295,11 @@ mod tests {
     #[test]
     fn the_first_release_exposes_exactly_these_totals() {
         assert_eq!(SCOPED_TOOLS.len(), 15);
-        assert_eq!(WITHHELD_TOOLS.len(), 153);
-        // The main registry (162 tools) and the four search mode entry tools are fully covered; the two
+        assert_eq!(WITHHELD_TOOLS.len(), 154);
+        // The main registry (163 tools) and the four search mode entry tools are fully covered; the two
         // extra names are Flow-only.
-        assert_eq!(crate::tools::get_all_tool_definitions().len(), 162);
-        assert_eq!(SCOPED_TOOLS.len() + WITHHELD_TOOLS.len(), 162 + 4 + 2);
+        assert_eq!(crate::tools::get_all_tool_definitions().len(), 163);
+        assert_eq!(SCOPED_TOOLS.len() + WITHHELD_TOOLS.len(), 163 + 4 + 2);
     }
 
     /// The five task tools are closed to every connected application, whatever its scopes, and

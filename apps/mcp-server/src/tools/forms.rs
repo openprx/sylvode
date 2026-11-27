@@ -1539,6 +1539,30 @@ a code. Use it before forms.create_schema_draft."
     }
 }
 
+pub fn validate_field_rules_tool() -> ToolDefinition {
+    ToolDefinition {
+        annotations: None,
+        name: "forms.validate_rules".to_string(),
+        description: "Check a field rule set against a field type without a form and without storing anything. \
+Returns {valid, errors, samples}: each error has a path inside the field and a code; each sample (at most 20) \
+reports whether it passes, its normalised value and the failing rules. Plugin rules are checked for installation \
+only, never run. Use it before putting rules in forms.create_schema_draft."
+            .to_string(),
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "project_id": { "type": "string", "description": "Project UUID the rules are meant for" },
+                "field_type": { "type": "string", "description": "Field type name, for example text or phone" },
+                "rules": { "type": "object", "description": "The field rules: {normalize, validate, transform}" },
+                "default": { "description": "The field default to check" },
+                "options": { "type": "array", "items": { "type": "string" }, "description": "Options of a choice type" },
+                "samples": { "type": "array", "maxItems": 20, "description": "Values to run through the rules" }
+            },
+            "required": ["project_id", "field_type"]
+        }),
+    }
+}
+
 pub fn create_schema_draft_tool() -> ToolDefinition {
     ToolDefinition {
         annotations: None,
@@ -1576,6 +1600,35 @@ pub async fn validate_form_schema(client: &OpenPrClient, args: Value) -> CallToo
     };
     let body = json!({ "project_id": input.project_id, "schema": input.schema });
     match client.validate_form_schema(body).await {
+        Ok(value) => CallToolResult::success(pretty(&value)),
+        Err(err) => CallToolResult::error(err),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ValidateFieldRulesInput {
+    project_id: String,
+    field_type: String,
+    rules: Option<Value>,
+    default: Option<Value>,
+    options: Option<Value>,
+    samples: Option<Vec<Value>>,
+}
+
+pub async fn validate_field_rules(client: &OpenPrClient, args: Value) -> CallToolResult {
+    let input: ValidateFieldRulesInput = match parse_input(args) {
+        Ok(value) => value,
+        Err(err) => return err,
+    };
+    let body = drop_nulls(json!({
+        "project_id": input.project_id,
+        "field_type": input.field_type,
+        "rules": input.rules,
+        "default": input.default,
+        "options": input.options,
+        "samples": input.samples,
+    }));
+    match client.validate_field_rules(body).await {
         Ok(value) => CallToolResult::success(pretty(&value)),
         Err(err) => CallToolResult::error(err),
     }
@@ -1630,7 +1683,7 @@ mod tests {
         update_child_form_record_tool, update_form_permissions_tool, update_form_record_tool, update_form_schema_tool,
         with_pagination_hint,
     };
-    use super::{create_schema_draft_tool, drop_nulls, validate_form_schema_tool};
+    use super::{create_schema_draft_tool, drop_nulls, validate_field_rules_tool, validate_form_schema_tool};
     use crate::client::{OpenPrClient, test_api};
     use axum::{
         Json, Router,
@@ -1781,6 +1834,18 @@ mod tests {
             assert!(schema_property(&draft.input_schema, property).is_some(), "{property}");
         }
         assert!(draft.description.contains("cannot approve"), "{}", draft.description);
+    }
+
+    #[test]
+    fn the_rules_tool_needs_a_project_and_a_field_type() {
+        let tool = validate_field_rules_tool();
+        assert_eq!(
+            tool.input_schema.get("required"),
+            Some(&json!(["project_id", "field_type"]))
+        );
+        for property in ["rules", "default", "options", "samples"] {
+            assert!(schema_property(&tool.input_schema, property).is_some(), "{property}");
+        }
     }
 
     #[test]

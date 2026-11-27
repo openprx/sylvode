@@ -104,7 +104,7 @@ async fn tools_list_offers_nine_tools_in_search_mode_and_the_registry_in_full_mo
         ]
     );
     let full = listed_names(&rpc(&server(&api, McpToolMode::Full)?, "tools/list", None).await);
-    assert_eq!(full.len(), 162);
+    assert_eq!(full.len(), 163);
     assert_eq!(
         full.iter().cloned().collect::<BTreeSet<_>>(),
         registry().into_iter().map(|tool| tool.name).collect::<BTreeSet<_>>()

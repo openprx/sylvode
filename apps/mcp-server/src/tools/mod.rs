@@ -87,6 +87,7 @@ pub fn get_all_tool_definitions() -> Vec<ToolDefinition> {
         forms::aggregate_form_records_tool(),
         forms::events_tail_tool(),
         forms::validate_form_schema_tool(),
+        forms::validate_field_rules_tool(),
         forms::create_schema_draft_tool(),
         layouts::validate_layout_tool(),
         layouts::create_layout_draft_tool(),

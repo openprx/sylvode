@@ -107,7 +107,7 @@ A form schema or a layout you write is a draft. A person who owns or administers
 
 ### Tool categories
 
-Sylvode has 162 tools in 21 categories. Find a tool with `sylvode_search`, call a `read` tool with `sylvode_read` and a `write` tool with `sylvode_write`. The five task tools are called directly.
+Sylvode has 163 tools in 21 categories. Find a tool with `sylvode_search`, call a `read` tool with `sylvode_read` and a `write` tool with `sylvode_write`. The five task tools are called directly.
 
 | Category | Tools | Read | Write | Covers |
 |---|---:|---:|---:|---|
@@ -115,7 +115,7 @@ Sylvode has 162 tools in 21 categories. Find a tool with `sylvode_search`, call 
 | `project_types`: Project types | 2 | 2 | 0 | Read the project scenario types and their capability schemas |
 | `scenario_templates`: Scenario templates | 3 | 2 | 1 | Browse and install ready-made multi-form setups |
 | `context`: Context | 3 | 3 | 0 | Read project context, governance and the agent policy |
-| `forms`: Universal forms | 36 | 17 | 19 | Forms, records, attachments, permissions, imports and business events |
+| `forms`: Universal forms | 37 | 18 | 19 | Forms, records, attachments, permissions, imports and business events |
 | `layouts`: Layouts | 2 | 1 | 1 | Check layouts and propose them as drafts for a person to approve |
 | `plugins`: Plugins | 5 | 3 | 2 | Install, inspect and invoke WASM plugins |
 | `work_items`: Work items | 14 | 6 | 8 | Issues of a project: list, read, create, update, label |

@@ -661,7 +661,7 @@ async fn a_legacy_caller_gets_search_mode_and_the_registry_on_request() -> TestR
         assert_eq!(listed(&reply)?, search_mode, "{token}");
         let full = server.post_full(Some(token), &list()).await?;
         assert_eq!(full.status, StatusCode::OK);
-        assert_eq!(listed(&full)?.len(), 162, "{token}");
+        assert_eq!(listed(&full)?.len(), 163, "{token}");
         assert!(
             !listed(&full)?.contains("sylvode_search"),
             "entry tools exist in search mode only"

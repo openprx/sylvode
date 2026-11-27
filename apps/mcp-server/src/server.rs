@@ -237,6 +237,7 @@ const TOOL_POLICY_SCOPES: &[(&str, PolicyScope)] = &[
     ("form_records.aggregate", PolicyScope::OwnedBy(OwnerLookup::FormData)),
     ("events.tail", PolicyScope::OwnedBy(OwnerLookup::FormData)),
     ("forms.validate_schema", PolicyScope::DeclaredProject { required: true }),
+    ("forms.validate_rules", PolicyScope::DeclaredProject { required: true }),
     (
         "forms.create_schema_draft",
         PolicyScope::DeclaredProject { required: true },
@@ -1135,6 +1136,7 @@ impl McpServer {
             "form_records.aggregate" => tools::forms::aggregate_form_records(&self.client, args).await,
             "events.tail" => tools::forms::events_tail(&self.client, args).await,
             "forms.validate_schema" => tools::forms::validate_form_schema(&self.client, args).await,
+            "forms.validate_rules" => tools::forms::validate_field_rules(&self.client, args).await,
             "forms.create_schema_draft" => tools::forms::create_schema_draft(&self.client, args).await,
             "layouts.validate" => tools::layouts::validate_layout(&self.client, args).await,
             "layouts.create_draft" => tools::layouts::create_layout_draft(&self.client, args).await,
