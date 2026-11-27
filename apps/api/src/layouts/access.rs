@@ -65,7 +65,7 @@ pub(crate) enum ScopeKind {
 }
 
 impl ScopeKind {
-    pub(super) fn parse(raw: &str) -> Result<Self, ApiError> {
+    pub(crate) fn parse(raw: &str) -> Result<Self, ApiError> {
         match raw {
             "workspace" => Ok(Self::Workspace),
             "project" => Ok(Self::Project),
@@ -81,7 +81,7 @@ impl ScopeKind {
         }
     }
 
-    pub(super) const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Workspace => "workspace",
             Self::Project => "project",

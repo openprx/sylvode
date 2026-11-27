@@ -154,6 +154,7 @@ pub async fn create_layout(
         scope.id,
         &validated.layout.key,
         &req.spec,
+        "user",
         who.user_id()?,
     )
     .await?;

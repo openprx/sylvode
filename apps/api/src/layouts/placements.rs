@@ -53,7 +53,7 @@ fn check_condition(condition: &str) -> Result<(), ApiError> {
 
 /// A slot's capacity at one scope: a `single` slot has one enabled occupant, a `list` slot up to
 /// `max_entries`. `other_enabled` is the number of other enabled placements there.
-fn check_capacity(slot: &SlotDescriptor, other_enabled: i64) -> Result<(), ApiError> {
+pub(super) fn check_capacity(slot: &SlotDescriptor, other_enabled: i64) -> Result<(), ApiError> {
     let limit = match slot.kind {
         SlotKind::Single => 1,
         SlotKind::List => i64::from(slot.max_entries),
@@ -72,7 +72,7 @@ fn check_capacity(slot: &SlotDescriptor, other_enabled: i64) -> Result<(), ApiEr
     })
 }
 
-fn known_slot(slot_id: &str) -> Result<SlotDescriptor, ApiError> {
+pub(super) fn known_slot(slot_id: &str) -> Result<SlotDescriptor, ApiError> {
     // A slot with no capacity (the `page` slot) is never placed into, so it reads as unknown here.
     sv_layout::slot(slot_id)
         .filter(|slot| slot.max_entries > 0)

@@ -4,6 +4,7 @@
 //! this module owns storage, access rules and the HTTP handlers.
 
 pub(crate) mod access;
+pub(crate) mod apply;
 pub mod handlers;
 pub mod placements;
 mod store;

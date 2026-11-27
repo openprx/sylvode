@@ -114,7 +114,9 @@ pub(super) async fn list_layouts(
     Ok((rows, total))
 }
 
-/// Inserts a user layout; a taken key maps to `layout_key_taken`.
+/// Inserts a layout written by a person (`source` `user`) or applied from an approved draft
+/// (`draft`); a taken key maps to `layout_key_taken`.
+#[allow(clippy::too_many_arguments, reason = "one column per argument of the INSERT")]
 pub(super) async fn insert_layout(
     db: &impl ConnectionTrait,
     workspace_id: Uuid,
@@ -122,13 +124,14 @@ pub(super) async fn insert_layout(
     scope_id: Uuid,
     key: &str,
     spec: &Value,
+    source: &str,
     created_by: Option<Uuid>,
 ) -> Result<LayoutRow, ApiError> {
     LayoutRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         format!(
             "INSERT INTO layouts (workspace_id, scope_kind, scope_id, layout_key, spec, source, created_by) \
-             VALUES ($1, $2, $3, $4, $5, 'user', $6) RETURNING {LAYOUT_COLUMNS}"
+             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING {LAYOUT_COLUMNS}"
         ),
         vec![
             workspace_id.into(),
@@ -136,6 +139,7 @@ pub(super) async fn insert_layout(
             scope_id.into(),
             key.to_owned().into(),
             spec.clone().into(),
+            source.to_owned().into(),
             created_by.into(),
         ],
     ))
