@@ -27,6 +27,8 @@ use uuid::Uuid;
 use crate::catalogue::{Principal, Refusal, RefusalCode, allowed_pre, allowed_target, by_route};
 use crate::error::ApiError;
 
+#[cfg(test)]
+mod body_ids_tests;
 pub mod dispatch;
 pub mod host;
 pub mod install;
