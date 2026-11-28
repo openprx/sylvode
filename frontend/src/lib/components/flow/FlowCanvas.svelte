@@ -145,6 +145,21 @@
 		'absolute right-0 top-full mt-1 max-w-full rounded-float border border-overlay-line bg-overlay text-fg shadow-overlay';
 	const menuClass =
 		'fixed z-50 w-48 max-w-[calc(100vw-1rem)] overflow-y-auto overscroll-contain rounded-float border border-overlay-line bg-overlay p-1 shadow-overlay';
+	/** i18n keys of the block-menu actions that are labelled by their own action name. */
+	const blockActionKeys: Record<string, string> = {
+		select: 'flow.block.select',
+		copy: 'flow.block.copy',
+		duplicate: 'flow.block.duplicate',
+		'move up': 'flow.block.moveUp',
+		'move down': 'flow.block.moveDown',
+		delete: 'flow.block.delete'
+	};
+	const markLabelKeys: Record<string, string> = {
+		bold: 'flow.format.bold',
+		italic: 'flow.format.italic',
+		strike: 'flow.format.strike',
+		code: 'flow.format.code'
+	};
 	const menuItemClass =
 		'block w-full rounded px-3 py-1.5 text-left text-sm hover:bg-surface focus:bg-surface';
 
@@ -427,6 +442,7 @@
 			},
 			ensureStructure: () => onEnsureStructure?.() ?? Promise.resolve(false),
 			lifecycleInfo: () => lifecycleInfo?.() ?? null,
+			editorLabel: () => $t('flow.editor.label'),
 			onInputError: (message) => (inputError = message),
 			onPasteModeChange: (plain) => (plainPasteArmed = plain),
 			onSlashMenu: (state) => {
@@ -1137,7 +1153,7 @@
 														? $t('flow.body.newChild')
 														: action === 'link page'
 															? $t('flow.body.linkPage')
-															: action}{/if}</button
+															: $t(blockActionKeys[action] ?? 'flow.block.select')}{/if}</button
 				>
 			{/each}
 		</div>
@@ -1155,7 +1171,7 @@
 				<button
 					type="button"
 					class="rounded px-2 py-1 text-sm hover:bg-surface"
-					aria-label={mark}
+					aria-label={$t(markLabelKeys[mark])}
 					aria-pressed={selection.marks.includes(mark)}
 					onmousedown={(event) => event.preventDefault()}
 					onclick={() => adapter?.toggleMark(mark as FlowMark)}

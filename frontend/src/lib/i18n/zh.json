@@ -2544,7 +2544,8 @@
 				"body": "该子记录将从此记录中移除。",
 				"confirm": "删除子记录「{title}」"
 			}
-		}
+		},
+		"fieldList": "表单字段"
 	},
 	"pageTitle": {
 		"appDefault": "Sylvode",
@@ -2803,7 +2804,13 @@
 			"handleLabel": "拖动手柄",
 			"menuLabel": "区块操作",
 			"nest": "缩进",
-			"outdent": "取消缩进"
+			"outdent": "取消缩进",
+			"select": "选择",
+			"copy": "复制",
+			"duplicate": "创建副本",
+			"moveUp": "上移",
+			"moveDown": "下移",
+			"delete": "删除"
 		},
 		"sync": {
 			"local": "本地",
@@ -4512,6 +4519,15 @@
 			"actionFailed": "操作未能完成，重试前请查询操作收据。",
 			"moveToPage": "移动到其他 Page…",
 			"copyToPage": "复制到其他 Page…"
+		},
+		"format": {
+			"bold": "加粗",
+			"italic": "斜体",
+			"strike": "删除线",
+			"code": "行内代码"
+		},
+		"editor": {
+			"label": "页面编辑器"
 		}
 	},
 	"workbench": {

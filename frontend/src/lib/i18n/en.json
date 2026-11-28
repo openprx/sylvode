@@ -2544,7 +2544,8 @@
 				"body": "The child record is removed from this record.",
 				"confirm": "Delete child record \"{title}\""
 			}
-		}
+		},
+		"fieldList": "Form fields"
 	},
 	"pageTitle": {
 		"appDefault": "Sylvode",
@@ -2803,7 +2804,13 @@
 			"handleLabel": "Drag handle",
 			"menuLabel": "Block actions",
 			"nest": "Nest",
-			"outdent": "Outdent"
+			"outdent": "Outdent",
+			"select": "Select",
+			"copy": "Copy",
+			"duplicate": "Duplicate",
+			"moveUp": "Move up",
+			"moveDown": "Move down",
+			"delete": "Delete"
 		},
 		"sync": {
 			"local": "Local",
@@ -4512,6 +4519,15 @@
 			"actionFailed": "The operation could not complete. Check its receipt before retrying.",
 			"moveToPage": "Move to Page…",
 			"copyToPage": "Copy to Page…"
+		},
+		"format": {
+			"bold": "Bold",
+			"italic": "Italic",
+			"strike": "Strikethrough",
+			"code": "Code"
+		},
+		"editor": {
+			"label": "Page editor"
 		}
 	},
 	"workbench": {

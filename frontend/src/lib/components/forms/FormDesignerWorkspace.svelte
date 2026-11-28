@@ -14,7 +14,9 @@
 		X
 	} from '@lucide/svelte';
 	import { locale, t } from 'svelte-i18n';
+	import { onMount } from 'svelte';
 	import Button from '#lib/ui/button/Button.svelte';
+	import { focusTrap } from '#lib/ui/foundations/focus-trap.js';
 	import type {
 		FormFieldDependency,
 		FormFieldErrorItem,
@@ -95,6 +97,40 @@
 		Boolean(selectedField?.key && lockedFieldKeySet.has(selectedField.key))
 	);
 	let mobilePanel = $state<'library' | 'inspector' | null>(null);
+	// Below `md` the library and inspector are drawers over the page: they behave as modal
+	// dialogs (role, focus trap, Escape, focus return). From `md` up they are plain columns.
+	let narrow = $state(false);
+	let drawerOpener: Element | null = null;
+	const drawer = $derived(narrow ? mobilePanel : null);
+
+	onMount(() => {
+		const query = window.matchMedia('(max-width: 767.98px)');
+		const sync = () => {
+			narrow = query.matches;
+			if (!narrow) mobilePanel = null;
+		};
+		sync();
+		query.addEventListener('change', sync);
+		return () => query.removeEventListener('change', sync);
+	});
+
+	function openPanel(panel: 'library' | 'inspector') {
+		drawerOpener = document.activeElement;
+		mobilePanel = panel;
+	}
+
+	function closePanel() {
+		mobilePanel = null;
+		const opener = drawerOpener;
+		drawerOpener = null;
+		if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+	}
+
+	function onDrawerKeydown(event: KeyboardEvent) {
+		if (event.key !== 'Escape' || !drawer || event.defaultPrevented) return;
+		event.preventDefault();
+		closePanel();
+	}
 	const lang = $derived($locale === 'en' ? 'en' : 'zh');
 	const defaultCelProblem = $derived(
 		selectedField?.defaultMode === 'cel' && selectedField.defaultCel.trim()
@@ -152,10 +188,9 @@
 		onUpdateField?.(selectedIndex, patch);
 	}
 
-	function handleFieldKeydown(event: KeyboardEvent, index: number) {
-		if (event.key !== 'Enter' && event.key !== ' ') return;
-		event.preventDefault();
-		onSelectField?.(index);
+	/** Saved fields keep their row across moves; unsaved ones have no id yet and key by position. */
+	function fieldRowKey(field: FieldDraft, index: number): string {
+		return field.field_id ? `id:${field.field_id}` : `new:${index}`;
 	}
 
 	function fieldHidden(field: FieldDraft): boolean {
@@ -171,10 +206,9 @@
 	<button
 		type="button"
 		class="fixed inset-0 z-30 bg-scrim md:hidden"
-		aria-label="关闭遮罩"
-		onclick={() => {
-			mobilePanel = null;
-		}}
+		aria-label={$t('common.close')}
+		tabindex="-1"
+		onclick={closePanel}
 	></button>
 {/if}
 
@@ -182,45 +216,38 @@
 	class="grid min-w-0 items-start gap-4 xl:grid-cols-[200px_minmax(0,1fr)_300px] 2xl:grid-cols-[240px_minmax(0,1fr)_340px]"
 >
 	<div class="grid grid-cols-2 gap-2 md:hidden" data-mobile-field-design-toolbar>
-		<Button
-			size="sm"
-			variant="secondary"
-			onclick={() => {
-				mobilePanel = 'library';
-			}}
-		>
+		<Button size="sm" variant="secondary" onclick={() => openPanel('library')}>
 			<PanelLeftOpen class="mr-2 h-4 w-4" aria-hidden="true" />
 			{$t('forms.fieldLibrary')}
 		</Button>
-		<Button
-			size="sm"
-			variant="secondary"
-			onclick={() => {
-				mobilePanel = 'inspector';
-			}}
-		>
+		<Button size="sm" variant="secondary" onclick={() => openPanel('inspector')}>
 			<SlidersHorizontal class="mr-2 h-4 w-4" aria-hidden="true" />
 			{$t('forms.properties')}
 		</Button>
 	</div>
 
+	<!-- svelte-ignore a11y_no_noninteractive_tabindex -- the drawer is a dialog (tabindex -1) below md -->
 	<aside
 		class="{mobilePanel === 'library'
 			? 'fixed inset-x-3 bottom-3 top-20 z-40 flex max-h-[calc(100vh-6rem)] flex-col overflow-hidden shadow-overlay'
 			: 'hidden'} rounded-float border border-overlay-line bg-overlay md:static md:z-auto md:flex md:max-h-none md:flex-col md:overflow-visible md:shadow-none xl:sticky xl:top-4 xl:max-h-[calc(100vh-7rem)] xl:overflow-hidden"
 		data-mobile-field-library-drawer={mobilePanel === 'library' ? 'open' : 'closed'}
+		role={drawer === 'library' ? 'dialog' : undefined}
+		aria-modal={drawer === 'library' ? 'true' : undefined}
+		aria-labelledby={drawer === 'library' ? 'designer-library-title' : undefined}
+		tabindex={drawer === 'library' ? -1 : undefined}
+		use:focusTrap={{ active: drawer === 'library' }}
+		onkeydown={onDrawerKeydown}
 	>
 		<div class="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
-			<h3 class="text-sm font-semibold text-fg">
+			<h3 id="designer-library-title" class="text-sm font-semibold text-fg">
 				{$t('forms.fieldLibrary')}
 			</h3>
 			<button
 				type="button"
 				class="rounded-control p-1.5 text-fg-muted hover:bg-surface md:hidden"
 				aria-label={$t('common.close')}
-				onclick={() => {
-					mobilePanel = null;
-				}}
+				onclick={closePanel}
 			>
 				<X class="h-4 w-4" aria-hidden="true" />
 			</button>
@@ -239,7 +266,7 @@
 								data-field-library-type={type}
 								onclick={() => {
 									onAppendField?.(type);
-									mobilePanel = null;
+									if (mobilePanel) closePanel();
 								}}
 							>
 								<span>{$t(`forms.fieldTypes.${type}`)}</span>
@@ -292,59 +319,59 @@
 					<p class="text-sm text-fg-muted">{$t('forms.emptyCanvas')}</p>
 				</div>
 			{:else}
-				<div class="mx-auto grid max-w-3xl gap-2">
-					{#each fieldDrafts as field, index (index)}
-						<div
-							role="button"
-							tabindex="0"
-							class="group grid min-h-16 grid-cols-[24px_minmax(0,1fr)_auto] items-center gap-3 rounded-card border bg-raised px-3 py-2 text-left transition-colors {index ===
+				<ul class="mx-auto grid max-w-3xl gap-2" aria-label={$t('forms.fieldList')}>
+					{#each fieldDrafts as field, index (fieldRowKey(field, index))}
+						<li
+							class="group grid min-h-16 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-card border bg-raised px-3 py-2 text-left transition-colors {index ===
 							selectedIndex
 								? 'border-fg ring-2 ring-line'
 								: 'border-line hover:border-line-strong'}"
 							data-designer-field-key={field.key}
 							data-designer-field-type={field.type}
-							onclick={() => onSelectField?.(index)}
-							onkeydown={(event) => handleFieldKeydown(event, index)}
 						>
-							<GripVertical class="h-4 w-4 text-fg-muted" aria-hidden="true" />
-							<span class="min-w-0">
-								<span
-									class="flex min-w-0 flex-wrap items-center gap-1.5 text-sm font-medium text-fg"
-								>
-									<span class="truncate">
-										{field.label || field.key || $t('forms.unnamedField')}
-										{#if field.required}<span class="text-danger">*</span>{/if}
+							<button
+								type="button"
+								class="grid min-w-0 grid-cols-[24px_minmax(0,1fr)] items-center gap-3 rounded-control text-left"
+								aria-current={index === selectedIndex ? 'true' : undefined}
+								onclick={() => onSelectField?.(index)}
+							>
+								<GripVertical class="h-4 w-4 text-fg-muted" aria-hidden="true" />
+								<span class="min-w-0">
+									<span
+										class="flex min-w-0 flex-wrap items-center gap-1.5 text-sm font-medium text-fg"
+									>
+										<span class="truncate">
+											{field.label || field.key || $t('forms.unnamedField')}
+											{#if field.required}<span class="text-danger">*</span>{/if}
+										</span>
+										{#if fieldHidden(field)}
+											<span
+												class="rounded-[var(--radius-sm)] bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning"
+												data-designer-field-permission-hidden={field.key}
+											>
+												{$t('forms.fieldHiddenBadge')}
+											</span>
+										{/if}
+										{#if fieldLocked(field)}
+											<span
+												class="rounded-[var(--radius-sm)] bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
+												data-designer-field-permission-locked={field.key}
+											>
+												{$t('forms.fieldLockedBadge')}
+											</span>
+										{/if}
 									</span>
-									{#if fieldHidden(field)}
-										<span
-											class="rounded-[var(--radius-sm)] bg-warning-soft px-1.5 py-0.5 text-[10px] font-medium uppercase text-warning"
-											data-designer-field-permission-hidden={field.key}
-										>
-											{$t('forms.fieldHiddenBadge')}
-										</span>
-									{/if}
-									{#if fieldLocked(field)}
-										<span
-											class="rounded-[var(--radius-sm)] bg-surface px-1.5 py-0.5 text-[10px] font-medium uppercase text-fg-muted"
-											data-designer-field-permission-locked={field.key}
-										>
-											{$t('forms.fieldLockedBadge')}
-										</span>
-									{/if}
+									<span class="mt-0.5 block truncate font-mono text-xs text-fg-muted">
+										{field.key || 'field_key'} · {$t(`forms.fieldTypes.${field.type}`)}
+									</span>
 								</span>
-								<span class="mt-0.5 block truncate font-mono text-xs text-fg-muted">
-									{field.key || 'field_key'} · {$t(`forms.fieldTypes.${field.type}`)}
-								</span>
-							</span>
+							</button>
 							<span class="flex items-center gap-1">
 								<button
 									type="button"
 									class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:text-fg-muted"
 									disabled={index === 0}
-									onclick={(event) => {
-										event.stopPropagation();
-										onMoveField?.(index, -1);
-									}}
+									onclick={() => onMoveField?.(index, -1)}
 									aria-label={$t('forms.moveFieldUp')}
 									data-designer-field-move-up={field.key || index}
 								>
@@ -354,32 +381,36 @@
 									type="button"
 									class="inline-flex h-8 w-8 items-center justify-center rounded-control border border-line text-fg-muted hover:bg-surface disabled:text-fg-muted"
 									disabled={index === fieldDrafts.length - 1}
-									onclick={(event) => {
-										event.stopPropagation();
-										onMoveField?.(index, 1);
-									}}
+									onclick={() => onMoveField?.(index, 1)}
 									aria-label={$t('forms.moveFieldDown')}
 									data-designer-field-move-down={field.key || index}
 								>
 									<ArrowDown class="h-3.5 w-3.5" aria-hidden="true" />
 								</button>
 							</span>
-						</div>
+						</li>
 					{/each}
-				</div>
+				</ul>
 			{/if}
 		</div>
 	</section>
 
+	<!-- svelte-ignore a11y_no_noninteractive_tabindex -- the drawer is a dialog (tabindex -1) below md -->
 	<aside
 		class="{mobilePanel === 'inspector'
 			? 'fixed inset-x-3 bottom-3 top-20 z-40 flex max-h-[calc(100vh-6rem)] flex-col overflow-hidden shadow-overlay'
 			: 'hidden'} rounded-float border border-overlay-line bg-overlay md:static md:z-auto md:flex md:max-h-none md:flex-col md:overflow-visible md:shadow-none xl:sticky xl:top-4 xl:max-h-[calc(100vh-7rem)] xl:overflow-hidden"
 		data-mobile-field-inspector-drawer={mobilePanel === 'inspector' ? 'open' : 'closed'}
+		role={drawer === 'inspector' ? 'dialog' : undefined}
+		aria-modal={drawer === 'inspector' ? 'true' : undefined}
+		aria-labelledby={drawer === 'inspector' ? 'designer-inspector-title' : undefined}
+		tabindex={drawer === 'inspector' ? -1 : undefined}
+		use:focusTrap={{ active: drawer === 'inspector' }}
+		onkeydown={onDrawerKeydown}
 	>
 		<div class="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
 			<div class="min-w-0">
-				<p class="text-sm font-semibold text-fg">
+				<p id="designer-inspector-title" class="text-sm font-semibold text-fg">
 					{$t('forms.properties')}
 				</p>
 				{#if selectedField}
@@ -392,9 +423,7 @@
 				type="button"
 				class="rounded-control p-1.5 text-fg-muted hover:bg-surface md:hidden"
 				aria-label={$t('common.close')}
-				onclick={() => {
-					mobilePanel = null;
-				}}
+				onclick={closePanel}
 			>
 				<X class="h-4 w-4" aria-hidden="true" />
 			</button>
