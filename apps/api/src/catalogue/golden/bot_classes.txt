@@ -192,6 +192,9 @@ GET /api/v1/workspaces/{workspace_id}/bots Admin - false
 GET /api/v1/workspaces/{workspace_id}/bots/{bot_id}/project-access Admin - false
 GET /api/v1/workspaces/{workspace_id}/features/flow Admin - false
 GET /api/v1/workspaces/{workspace_id}/labels Refused - false
+GET /api/v1/workspaces/{workspace_id}/market/index/plugins Refused - false
+GET /api/v1/workspaces/{workspace_id}/market/index/plugins/{source}/{publisher}/{name} Refused - false
+GET /api/v1/workspaces/{workspace_id}/market/index/sources Refused - false
 GET /api/v1/workspaces/{workspace_id}/members Admin - false
 GET /api/v1/workspaces/{workspace_id}/milestones Refused - false
 GET /api/v1/workspaces/{workspace_id}/nav NoProject - false

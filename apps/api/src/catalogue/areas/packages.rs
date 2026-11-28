@@ -7,7 +7,8 @@
 //! submission route (`package-uploads`) is for bots only and stores nothing as a package: it keeps
 //! a verified upload as a `package_upload` draft that a person approves (contract C3 section 4.4,
 //! LEAD-DECISIONS M11-UPLOAD); the handler also demands `write` and a bot of the whole workspace.
-//! Upload, delete and the publisher-key routes are behind the JWT middleware, which no bot token
+//! The index read routes (`market/index`, contract M15) follow the same rule as the package reads; their
+//! image route is for a console session. Upload, delete and the publisher-key routes are behind the JWT middleware, which no bot token
 //! passes.
 
 use crate::catalogue::types::dsl::{
@@ -21,6 +22,10 @@ pub static ENTRIES: &[Entry] = &[
     bot("packages.package_uploads.create", Post, "/api/v1/workspaces/{workspace_id}/package-uploads", Workspace, Write),
     console("packages.packages.create", Post, "/api/v1/workspaces/{workspace_id}/packages", WorkspaceAdmin, Write),
     console("packages.packages.delete", Delete, "/api/v1/workspaces/{workspace_id}/packages/{digest}", WorkspaceAdmin, Destructive),
+    bot("packages.index_sources.read/list", Get, "/api/v1/workspaces/{workspace_id}/market/index/sources", Workspace, Read),
+    bot("packages.index_plugins.read/list", Get, "/api/v1/workspaces/{workspace_id}/market/index/plugins", Workspace, Read),
+    bot("packages.index_plugins.read", Get, "/api/v1/workspaces/{workspace_id}/market/index/plugins/{source}/{publisher}/{name}", Workspace, Read),
+    console("packages.index_assets.read", Get, "/api/v1/workspaces/{workspace_id}/market/index/assets/{source}/{publisher}/{name}/{*asset_path}", Workspace, Read).no_plugin(),
     console("packages.publisher_keys.create", Post, "/api/v1/workspaces/{workspace_id}/publisher-keys", WorkspaceAdmin, Write),
     console("packages.publisher_keys.read", Get, "/api/v1/workspaces/{workspace_id}/publisher-keys", WorkspaceAdmin, Read),
     console("packages.publisher_keys.revoke", Post, "/api/v1/workspaces/{workspace_id}/publisher-keys/{key_id}/revoke", WorkspaceAdmin, Write),
@@ -37,7 +42,7 @@ mod tests {
     fn the_classes_of_the_area() {
         assert_eq!(
             bot_class_counts(ENTRIES),
-            BTreeMap::from([("refused", 3)]),
+            BTreeMap::from([("refused", 6)]),
             "the classes of the packages routes changed"
         );
     }

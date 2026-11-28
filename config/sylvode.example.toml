@@ -441,10 +441,24 @@ enabled = false
 # key pair with `sv-pack keygen` and keep the private key out of the repository.
 # builtin_dir is a directory of `*.svpkg` built-in packages verified and stored at start; a
 # package that does not verify stops the start.
+#
+# The public plugin index (contract M15) lists plugins that a workspace administrator may import.
+# index_sources are set here by the operator only; a workspace owner may hide a source but cannot
+# add one. Each entry is `{ id, url }`: id matches `^[a-z][a-z0-9-]{0,31}$`, url is https. Without
+# the key the official source (the `openprx/sylvode-plugins` repository) is used; `[]` turns the
+# public index off. At most 8 sources. One API process at a time fetches a source; the fetch goes
+# through the `[outbound]` address policy (an intranet source needs `[outbound]` to allow it), takes
+# at most 15 s, follows no redirect and reads at most 8 MiB. A failed refresh keeps the last good copy.
+# index_refresh_secs is the time between two refreshes of a source (300 to 86400, default 3600).
+# index_download_hosts restricts where package files may be downloaded from: exact DNS host names;
+# empty (the default) allows any public https host.
 # ---------------------------------------------------------------------------------------------
 [packages]
 # builtin_public_key = "replace_with_base64url_public_key"
 # builtin_dir = "/etc/sylvode/packages"
+# index_sources = [{ id = "official", url = "https://raw.githubusercontent.com/openprx/sylvode-plugins/main/index.json" }]
+# index_refresh_secs = 3600
+# index_download_hosts = []
 
 # ---------------------------------------------------------------------------------------------
 # [site] — the public site API (`/api/site/v1`). Optional; both switches are off by default.

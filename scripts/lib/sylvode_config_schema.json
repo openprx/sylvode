@@ -79,7 +79,13 @@
       "event_retention_days",
       "followup_interval_secs"
     ],
-    "packages": ["builtin_public_key", "builtin_dir"],
+    "packages": [
+      "builtin_public_key",
+      "builtin_dir",
+      "index_sources",
+      "index_refresh_secs",
+      "index_download_hosts"
+    ],
     "site": ["same_origin_trial", "cookie_insecure", "assets_dir", "mount_path"]
   },
   "retired": {}

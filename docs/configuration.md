@@ -41,6 +41,7 @@ The `api`, `worker` and `mcp-server` binaries, and the `sylvode` command line, r
 | `[oauth]` | `api`, `worker`; when both `[oauth]` and `[mcp]` are in one file, their shared values must agree |
 | `[inbound]` | `api`, `worker` |
 | `[email]` | `api` (whether e-mail is available, the links), `worker` (sends the e-mails) |
+| `[packages]` | `api` (the built-in packages; the public plugin index sources and their refresh) |
 
 ## `[server]`
 
@@ -225,6 +226,27 @@ be tightened but not removed.
 | `max_alerts_per_rule_per_hour` | integer | `60` | 1 to 10000. Work items one rule may open per hour. |
 | `event_retention_days` | integer | `30` | 1 to 365. Days stored inbound events are kept. |
 | `followup_interval_secs` | integer | `2` | 1 to 60. How often the `worker` checks alert tasks for outcomes and starts queued ones. |
+
+## `[packages]`
+
+The package store and the public plugin index. Every key is optional.
+
+| Key | Type | Default | Accepted values and notes |
+|---|---|---|---|
+| `builtin_public_key` | string | none | Ed25519 public key (32 bytes, base64url without padding) of the built-in publisher `sv`. At start the active `sv` keys are made equal to it and every other `sv` key is revoked. A build that pins a release key at compile time ignores it. |
+| `builtin_dir` | string | none | Directory of `*.svpkg` built-in packages, verified and stored at start. A package that does not verify stops the start. |
+| `index_sources` | array of tables | the official source (`id = "official"`, the raw `index.json` of the `openprx/sylvode-plugins` repository) | Public plugin index sources, each `{ id, url }`: `id` matches `^[a-z][a-z0-9-]{0,31}$` and is unique, `url` is an `https` URL of at most 512 characters without credentials or fragment. At most 8 entries. `[]` turns the public index off. Only the operator sets sources: a workspace owner can hide one for the workspace and cannot add one. |
+| `index_refresh_secs` | integer | `3600` | Seconds between two refreshes of a source, 300 to 86400. A source whose last refresh failed is retried after at most 600 s. |
+| `index_download_hosts` | array of strings | `[]` | Exact DNS host names a package file may be downloaded from. Empty allows any public `https` host. At most 32 entries. |
+
+How a source is fetched: one `api` process at a time (a PostgreSQL advisory lock per source), through
+the address policy of [`[outbound]`](#outbound) (a private or loopback source needs `[outbound]` to
+allow it), over `https` only, with 5 s to connect and 15 s in total, no redirect, and at most 8 MiB of
+body counted on the bytes read. The document is validated before it replaces the cached copy; a failed
+fetch or an invalid document keeps the last good copy and records the error on the source's status.
+A key or version the index lists as revoked revokes the keys, packages and installations that were
+taken from that source; a key or package that the index no longer lists causes no action and only a
+warning on the source.
 
 ## `[email]`
 

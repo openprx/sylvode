@@ -10,6 +10,18 @@ name.
 
 ## [Unreleased]
 
+### Added
+
+- **Public plugin index, API side (M15-3).** `[packages]` gains `index_sources` (default: the
+  official `openprx/sylvode-plugins` index), `index_refresh_secs` and `index_download_hosts`. A
+  background task in the `api` fetches each source through the outbound address policy (https only,
+  15 s, no redirect, at most 8 MiB), validates it with `sv-index` and caches the last good copy
+  (migration 0152); one process at a time fetches a source. A key or version the index marks
+  `revoked` revokes the workspace keys, packages and installations taken from it; installations
+  stopped for a version get the new disabled reason `index_revoked`. New read routes under
+  `/api/v1/workspaces/{id}/market/index`: `sources`, `plugins` (search and filters), plugin detail,
+  and an image route that serves cached icons and screenshots.
+
 ### Security
 
 - **Intranet HTTPS toolkit hardening.** `init-ca` and `rotate-ca` refuse an existing key directory
