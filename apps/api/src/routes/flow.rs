@@ -4023,9 +4023,9 @@ mod flow_database_tests {
                     (c.relname IN ('flow_conversion_previews','flow_conversion_jobs','flow_object_lineage') \
                        AND p.proname='flow_conversion_bind_source_scope') OR \
                     (c.relname IN ('flow_conversion_previews','flow_conversion_jobs') \
-                       AND p.proname='flow_conversion_bind_request_key') OR \
-                    (c.relname='form_records' AND t.tgname='trg_sv_site_record_guard' \
-                       AND p.proname='sv_site_record_guard')))",
+                       AND p.proname='flow_conversion_bind_request_key'))) \
+                 AND NOT (c.relname='form_records' AND t.tgname='trg_sv_site_record_guard' \
+                       AND p.proname='sv_site_record_guard')",
             ))
             .await
             .expect("pg_trigger probe")

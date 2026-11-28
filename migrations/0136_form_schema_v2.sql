@@ -18,14 +18,23 @@
 -- Patterns and defaults are not compiled here; after deploy every stored schema is checked with
 -- POST /api/v1/forms/schema/validate, and an entry that does not hold is skipped on write.
 
+-- The dropped-rule counter is its own table: the converter functions run inside the UPDATE
+-- statements below and bump it, and a statement that then updates the same row (the row count
+-- tables) fails with "tuple to be updated was already modified by an operation triggered by the
+-- current command".
 CREATE TEMP TABLE sv_0136_counts (
   forms INTEGER NOT NULL,
   versions INTEGER NOT NULL,
-  templates INTEGER NOT NULL,
+  templates INTEGER NOT NULL
+) ON COMMIT DROP;
+
+INSERT INTO sv_0136_counts VALUES (0, 0, 0);
+
+CREATE TEMP TABLE sv_0136_dropped (
   dropped INTEGER NOT NULL
 ) ON COMMIT DROP;
 
-INSERT INTO sv_0136_counts VALUES (0, 0, 0, 0);
+INSERT INTO sv_0136_dropped VALUES (0);
 
 CREATE OR REPLACE FUNCTION sv_form_field_v1_to_v2(field JSONB) RETURNS JSONB LANGUAGE plpgsql AS $$
 DECLARE
@@ -140,7 +149,7 @@ BEGIN
   END IF;
 
   IF dropped_count > 0 THEN
-    UPDATE sv_0136_counts SET dropped = sv_0136_counts.dropped + dropped_count;
+    UPDATE sv_0136_dropped SET dropped = sv_0136_dropped.dropped + dropped_count;
   END IF;
   RETURN result;
 END
@@ -226,10 +235,12 @@ UPDATE sv_0136_counts SET templates = templates + (SELECT count(*) FROM changed)
 DO $$
 DECLARE
   counts RECORD;
+  dropped_rules INTEGER;
 BEGIN
   SELECT * INTO counts FROM sv_0136_counts;
+  SELECT dropped INTO dropped_rules FROM sv_0136_dropped;
   RAISE NOTICE 'form schema v2: % forms, % schema versions, % scenario templates rewritten; % validation rules dropped',
-    counts.forms, counts.versions, counts.templates, counts.dropped;
+    counts.forms, counts.versions, counts.templates, dropped_rules;
 END
 $$;
 

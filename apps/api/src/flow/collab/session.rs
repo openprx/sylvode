@@ -3081,7 +3081,7 @@ mod tests {
 
         use crate::error::REPEATED_FAILURE_CLOSE_STREAK;
         use crate::flow::collab::frame::{Frame, PROTOCOL_VERSION, RejectedCode, WriteState};
-        use crate::flow::collab::limits::{UPDATE_BURST_MAX, WEBSOCKET_FRAME_BYTES_MAX};
+        use crate::flow::collab::limits::UPDATE_BURST_MAX;
         use crate::routes::flow::{get_flow_v2_ws, post_flow_v2_ticket};
 
         const TEST_DATABASE_URL_ENV: &str = "OPENPR_TEST_DATABASE_URL";
@@ -5772,10 +5772,11 @@ mod tests {
         /// The implementation answer is structural: every inbound text message now produces one
         /// [`StreakEffect`] and reaches `apply` through a single statement, with the *reset* as
         /// the default an early return inherits. So the phases below do not have to enumerate
-        /// every early return — they have to prove the shared default is the reset. Phases 1, 2
-        /// and 4 exercise it from three different layers (post-parse `invalid_update`, pre-parse
-        /// JSON failure, pre-parse length refusal); phase 5 exercises the accepted path; phase 3
-        /// exercises the write path's own non-permanent rejection.
+        /// every early return — they have to prove the shared default is the reset. Phases 1 and 2
+        /// exercise it from two layers (post-parse `invalid_update`, pre-parse JSON failure); the
+        /// last phase exercises the accepted path; phase 3 exercises the write path's own
+        /// non-permanent rejection. An over-length frame cannot be a phase: the transport ends the
+        /// connection first.
         ///
         /// Each phase drives the streak to two, breaks it one way, drives it to two again, and
         /// then requires the connection to answer a `ping`. With the shared default flipped, the
@@ -5883,20 +5884,13 @@ mod tests {
             refuse_twice(&state, &mut ws, document_id, "after unparseable JSON").await;
             require_still_open(&mut ws, "after unparseable JSON").await;
 
-            // Break 4: a frame past `websocket_frame_bytes_max`. Refused on length alone, before
-            // even the JSON parse above — the earliest layer that can answer at all.
-            send_raw_text(&mut ws, "x".repeat(WEBSOCKET_FRAME_BYTES_MAX + 1)).await;
-            let oversize = expect_rejection(recv_frame_or_close(&mut ws).await);
-            assert_eq!(oversize.code, RejectedCode::LimitExceeded);
-            assert_eq!(
-                oversize.details.expect("limit_exceeded carries details")["limit_kind"],
-                "websocket_frame_bytes"
-            );
+            // A frame past `websocket_frame_bytes_max` is not a phase here: the scope-native upgrade
+            // caps the WebSocket message size at the same ceiling, so the transport ends the
+            // connection before `handle_client_frame` can answer (see
+            // `websocket_frame_bytes_exact_boundary_accepted_plus_one_rejected_zero_side_effects`).
+            // The in-handler length refusal is never reached through this route.
 
-            refuse_twice(&state, &mut ws, document_id, "after an over-length frame").await;
-            require_still_open(&mut ws, "after an over-length frame").await;
-
-            // Break 5: a write that actually lands.
+            // Break 4: a write that actually lands.
             restore_user(&state, member_id).await;
             let good = next_update_frame(&state, document_id).await;
             send_frame(&mut ws, &good).await;
