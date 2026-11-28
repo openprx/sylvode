@@ -13,6 +13,8 @@
 //! - [`download_url_problem`] with a [`HostPolicy`]: the download URL rules.
 //! - [`lowest_admitted`]: the lowest Sylvode version a `sylvode` range admits (compare with `sv.min`).
 
+#[cfg(feature = "cli")]
+pub mod cli;
 pub mod compare;
 pub mod error;
 pub mod image;

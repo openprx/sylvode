@@ -6,8 +6,16 @@ license.workspace = true
 publish = false
 description = "Sylvode public plugin index: schemas, strict and lenient validation, limits, image header checks"
 
+[features]
+default = ["cli"]
+# The `sv-index` command (repository tooling: build, check, entry). The API depends on the library
+# only and turns this off, so it never links the command's HTTP client.
+cli = ["dep:clap", "dep:reqwest"]
+
 [dependencies]
 base64.workspace = true
+clap = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true, features = ["blocking"] }
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -18,3 +26,8 @@ url = "2.5"
 
 [lints]
 workspace = true
+
+[[bin]]
+name = "sv-index"
+path = "src/bin/sv-index.rs"
+required-features = ["cli"]
