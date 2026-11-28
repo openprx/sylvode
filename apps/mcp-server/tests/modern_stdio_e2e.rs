@@ -26,15 +26,13 @@ struct Pipe {
 }
 
 impl Pipe {
-    /// Starts the server with the test-only hold on, so a listen stream stays open.
+    /// Starts the server with the configured bot token, whose hint stream the stand-in holds open.
     async fn start(extra_keys: &str) -> Result<Self, Box<dyn Error>> {
-        Self::start_with(extra_keys, true).await
-    }
-
-    async fn start_with(extra_keys: &str, hold: bool) -> Result<Self, Box<dyn Error>> {
-        let router = Router::new().fallback(get(|| async {
-            Json(json!({"code": 0, "message": "ok", "data": {"items": [], "total": 0}}))
-        }));
+        let router = Router::new()
+            .route("/api/v1/bot/change-hints", get(support::held_change_hints))
+            .fallback(get(|| async {
+                Json(json!({"code": 0, "message": "ok", "data": {"items": [], "total": 0}}))
+            }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let api_url = format!("http://{}", listener.local_addr()?);
         tokio::spawn(async move {
@@ -53,7 +51,6 @@ impl Pipe {
         let mut child = Command::new(env!("CARGO_BIN_EXE_mcp-server"))
             .args(["serve", "--config"])
             .arg(config.path())
-            .env("SYLVODE_MCP_TEST_HOLD_LISTEN", if hold { "1" } else { "0" })
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -229,13 +226,14 @@ async fn sigterm_sends_the_final_result_of_every_open_listen_and_exits_zero() ->
     Ok(())
 }
 
-/// Without the hold a listen is the acknowledgment and then the final result, and its id is free
-/// again at once.
+/// A listen that asks for nothing is the acknowledgment and then the final result, and its id is
+/// free again at once.
 #[tokio::test]
-async fn without_the_hold_a_listen_ends_with_the_final_result() -> TestResult {
-    let mut pipe = Pipe::start_with("", false).await?;
+async fn a_listen_that_asks_for_nothing_ends_with_the_final_result() -> TestResult {
+    let mut pipe = Pipe::start("").await?;
     for round in 1..=3 {
-        pipe.send(&listen(round)).await?;
+        pipe.send(&modern(round, "subscriptions/listen", json!({"notifications": {}})))
+            .await?;
         assert!(is_ack_for(&pipe.next().await?.ok_or("closed")?, round));
         let end = pipe.next().await?.ok_or("closed")?;
         assert_eq!(end["id"], round, "{end}");

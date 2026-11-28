@@ -235,6 +235,12 @@ fn with_challenge(status: StatusCode, challenge: &str, body: Value) -> Response 
     response
 }
 
+/// `401` with the challenge of this server, for a credential the API refuses (a listen request
+/// whose bot token the API does not accept).
+pub fn credential_refused_response(auth: &InboundAuth) -> Response {
+    invalid_token_response(auth.settings().map(AsRef::as_ref))
+}
+
 fn invalid_token_response(settings: Option<&OAuthSettings>) -> Response {
     with_challenge(
         StatusCode::UNAUTHORIZED,
@@ -801,7 +807,8 @@ pub async fn handle_rpc(
                     workspace_id: context.workspace_id,
                     projects: context.project_ids.clone(),
                 },
-            );
+            )
+            .with_listen(surface.listen);
             if request.method == "tools/call"
                 && let Some(refusal) = server.delegated_refusal(request.params.as_ref())
             {

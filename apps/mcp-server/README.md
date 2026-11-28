@@ -191,19 +191,41 @@ The server speaks two protocol eras on the same endpoints (`POST /mcp/rpc` and s
 `subscriptions/listen` answers on `POST /mcp/rpc` with `text/event-stream` (`Cache-Control:
 no-cache`, `X-Accel-Buffering: no`), one `data:` event per JSON-RPC message. The first message is
 the acknowledgment (`notifications/subscriptions/acknowledged`, whose `_meta` subscription id is
-the request id). This release delivers nothing and the server declares no push capability, so
-the acknowledgment carries the empty subset and the final result (`resultType: complete`) follows
-at once; the response then ends and holds no stream slot. The request needs `jsonrpc` `"2.0"` and
-a string or number id (else `-32600`). A stream that is held open will come with push; its
-limits are already in place: 1,000 open streams per credential (the key is a digest of the
-bearer token), `[mcp] max_listen_streams` (default 10,000) per process, beyond either the request
-is answered `429`; every open stream ends with its final result on SIGTERM or SIGINT. A comment
-line every 15 seconds keeps an idle stream alive. `[mcp] listen = false` removes the method
-(`-32601`).
+the request id). The request needs `jsonrpc` `"2.0"` and a string or number id (else `-32600`).
+
+What the server pushes today is the tool list: it declares `tools.listChanged` (the value of
+`[mcp] listen`), and a bot token that asks for `toolsListChanged` is acknowledged with it and
+receives `notifications/tools/list_changed` when the tool surface may have changed (a project
+type or an agent policy changed, the bot's project access changed, or the connection to the API
+was lost and re-established, in which case the list may have changed unseen). Bursts coalesce to
+one pending notification per stream. Push only accelerates: `tools/list` always returns the
+current list, and its `ttlMs` is 300,000 for a plain caller when push is on, else 60,000.
+
+Who holds a stream open:
+
+* A **bot token** that asks for `toolsListChanged`. The server opens one change-hint stream to the
+  API per credential (`GET /api/v1/bot/change-hints`) and fans it out to all streams of that
+  credential; two credentials never share it. The API re-validates the credential every 3
+  seconds and at once when it changes: when it is revoked, deactivated, loses `read`, or expires,
+  every stream of that credential ends with its final result (`resultType: complete`) and new
+  listens with it are answered `401` (stdio: `-32603`, `data.reason: "unauthorized"`) for 10
+  seconds. A lost API connection is retried (1 s doubling to 30 s) and the streams are told the
+  list may have changed.
+* Nobody else. A user token, a delegated (OAuth) caller, a Flow-only server and a request that
+  asks for nothing the server honours get the acknowledgment with the empty subset and the final
+  result at once, and hold no slot. A credential the API does not accept never gets a stream:
+  it is answered `401` before any event. If the API cannot be asked, the answer is a plain JSON
+  `-32603` ("push unavailable, retry") so the client backs off.
+
+Limits: 1,000 open streams per credential (the key is a digest of the bearer token),
+`[mcp] max_listen_streams` (default 10,000) per process, beyond either the request is answered
+`429` with `Retry-After: 30`. A stream whose client stops reading for 30 seconds is closed. Every
+open stream ends with its final result on SIGTERM or SIGINT. A comment line every 15 seconds keeps
+an idle stream alive. `[mcp] listen = false` removes the method (`-32601`) and the capability.
 
 Over stdio the acknowledgment is written before anything else is answered; a listen request
-runs next to ordinary requests on the same pipe, a second listen
-with an id that is still open is answered `-32600`, and `notifications/cancelled` with the
+runs next to ordinary requests on the same pipe (its credential is the configured bot), a second
+listen with an id that is still open is answered `-32600`, and `notifications/cancelled` with the
 listen's `requestId` ends it without a final result.
 
 ## Authentication

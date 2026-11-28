@@ -1,28 +1,34 @@
 //! `subscriptions/listen` of the modern era: the registry of open listen streams.
 //!
-//! In this release a listen request is answered with the empty acknowledgment immediately
-//! followed by the final result: nothing is delivered yet, and a stream that was held open would
-//! only let a caller whose token nobody has checked occupy a cap slot. A slot is therefore free
-//! again as soon as the final result is sent. Streams are held open only by the test-only hold
-//! below, which a release build does not contain.
-//!
 //! This is the transport-neutral part. A stream belongs to the credential that opened it and is
 //! counted against two caps: streams per caller key (a SHA-256 of the bearer token, never the
-//! token) and streams per process. In this skeleton the acknowledgment always carries the empty
-//! subset and nothing is delivered afterwards; what exists is everything a transport needs to
-//! carry a long-lived request: cancellation, shutdown with a graceful final result, caps and
-//! the keep-alive interval.
+//! token) and streams per process.
+//!
+//! What a stream carries depends on who opened it. A bot token (`opr_`) that asks for
+//! `toolsListChanged` gets a stream on the hub of its credential ([`hub`]): the API has accepted
+//! the credential by opening its change-hint stream, every hint is fanned out to the streams of
+//! that credential, and the API's revocation ends them. A stream with nothing to deliver ends at
+//! once with its final result, so it holds no slot: that is every user token, every delegated
+//! caller (which has no push, D5, and whose token the API has already vouched for) and every
+//! request that asks for nothing the server honours. Nothing outlives the credential: a held
+//! stream exists only on a hub, and a hub ends when the API revokes or expires the credential.
 
+mod hub;
+
+use crate::client::OpenPrClient;
 use crate::era::META_SUBSCRIPTION_ID;
 use crate::protocol::{JsonRpcError, JsonRpcRequest};
+use hub::{Access, AcquireError, Hubs, Registration, Take};
 use parking_lot::Mutex;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, mpsc};
 use tokio_util::sync::CancellationToken;
+
+pub use hub::REFUSAL_CACHE;
 
 /// Open listen streams one credential may hold.
 pub const MAX_STREAMS_PER_KEY: usize = 1_000;
@@ -30,6 +36,8 @@ pub const MAX_STREAMS_PER_KEY: usize = 1_000;
 pub const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
 /// `Retry-After` of a refused listen request, in seconds.
 pub const RETRY_AFTER_SECS: u64 = 30;
+/// How long a stream's consumer may leave the transport's queue full before the stream is ended.
+pub const STALL_LIMIT: Duration = Duration::from_secs(30);
 
 /// Who a stream belongs to: the SHA-256 of the bearer token.
 pub type CallerKey = [u8; 32];
@@ -49,36 +57,23 @@ pub struct ListenConfig {
     /// Streams one credential holds.
     pub per_key_limit: usize,
     pub keepalive: Duration,
-    /// Keep a stream open after its acknowledgment instead of ending it with the final result.
-    /// Only the test-only hold (feature `test-hold-listen`) ever sets this outside unit tests.
-    pub hold: bool,
-}
-
-/// Whether the test-only hold is switched on. It needs the `test-hold-listen` feature, which only
-/// the crate's own tests enable, and the environment variable `SYLVODE_MCP_TEST_HOLD_LISTEN=1`.
-/// A release build contains neither the feature nor this check, and no configuration key exists.
-#[cfg(feature = "test-hold-listen")]
-fn hold_from_environment() -> bool {
-    std::env::var("SYLVODE_MCP_TEST_HOLD_LISTEN").is_ok_and(|value| value == "1")
-}
-
-#[cfg(not(feature = "test-hold-listen"))]
-const fn hold_from_environment() -> bool {
-    false
 }
 
 impl ListenConfig {
     /// The production configuration for a total of `max_streams`.
-    // Not const with the test feature, whose hold reads the environment.
-    #[allow(clippy::missing_const_for_fn)]
-    pub fn new(enabled: bool, max_streams: usize) -> Self {
+    pub const fn new(enabled: bool, max_streams: usize) -> Self {
         Self {
             enabled,
             max_streams,
             per_key_limit: MAX_STREAMS_PER_KEY,
             keepalive: KEEPALIVE_INTERVAL,
-            hold: hold_from_environment(),
         }
+    }
+}
+
+impl Default for ListenConfig {
+    fn default() -> Self {
+        Self::new(true, 10_000)
     }
 }
 
@@ -94,9 +89,19 @@ pub fn validate_envelope(req: &JsonRpcRequest) -> Result<(), JsonRpcError> {
     }
 }
 
-impl Default for ListenConfig {
-    fn default() -> Self {
-        Self::new(true, 10_000)
+/// Who opens a stream, as far as the registry needs to know.
+pub enum ListenAuth {
+    /// A bot or user token. `client` acts as that token; a hub opened for it keeps the client.
+    Token { key: CallerKey, client: OpenPrClient },
+    /// A delegated caller: counted under its key, never given a hub.
+    Delegated { key: CallerKey },
+}
+
+impl ListenAuth {
+    const fn key(&self) -> CallerKey {
+        match self {
+            Self::Token { key, .. } | Self::Delegated { key } => *key,
+        }
     }
 }
 
@@ -107,6 +112,10 @@ pub enum OpenError {
     TooMany(usize),
     /// The request parameters are malformed.
     InvalidParams(String),
+    /// The API refuses the credential (now, or in the last [`REFUSAL_CACHE`]).
+    Unauthorized,
+    /// The API could not be asked; the caller retries later.
+    Unavailable,
 }
 
 impl OpenError {
@@ -114,6 +123,12 @@ impl OpenError {
         match self {
             Self::TooMany(limit) => JsonRpcError::too_many_streams(u32::try_from(limit).unwrap_or(u32::MAX)),
             Self::InvalidParams(message) => JsonRpcError::invalid_params(message),
+            Self::Unauthorized => JsonRpcError {
+                code: -32603,
+                message: "Unauthorized".to_string(),
+                data: Some(json!({ "reason": "unauthorized" })),
+            },
+            Self::Unavailable => JsonRpcError::internal_error("push unavailable, retry"),
         }
     }
 }
@@ -127,6 +142,7 @@ struct Counts {
 struct Inner {
     config: ListenConfig,
     counts: Mutex<Counts>,
+    hubs: Arc<Hubs>,
     /// Fired by [`ListenRegistry::shutdown`]: every stream ends with its final result.
     shutdown: CancellationToken,
     /// Notified whenever a stream ends.
@@ -145,6 +161,7 @@ impl ListenRegistry {
             inner: Arc::new(Inner {
                 config,
                 counts: Mutex::new(Counts::default()),
+                hubs: Arc::new(Hubs::default()),
                 shutdown: CancellationToken::new(),
                 ended: Notify::new(),
             }),
@@ -165,33 +182,65 @@ impl ListenRegistry {
         self.inner.counts.lock().total
     }
 
-    /// Opens a stream for the credential `key`. `id` is the JSON-RPC id of the listen request and
-    /// `params` its parameters. The acknowledgment is the first message the handle yields.
-    pub fn open(&self, key: CallerKey, id: &Value, params: Option<&Value>) -> Result<ListenHandle, OpenError> {
-        let ack = acknowledgment(id, params)?;
-        {
-            let mut counts = self.inner.counts.lock();
-            if counts.total >= self.inner.config.max_streams {
-                return Err(OpenError::TooMany(self.inner.config.max_streams));
-            }
-            let held = counts.per_key.entry(key).or_insert(0);
-            if *held >= self.inner.config.per_key_limit {
-                return Err(OpenError::TooMany(self.inner.config.per_key_limit));
-            }
-            *held += 1;
-            counts.total += 1;
+    /// Hubs alive right now: credentials with at least one held stream.
+    pub fn hub_count(&self) -> usize {
+        self.inner.hubs.hub_count()
+    }
+
+    /// Takes a place under both caps.
+    fn reserve(&self, key: CallerKey) -> Result<StreamGuard, OpenError> {
+        let mut counts = self.inner.counts.lock();
+        if counts.total >= self.inner.config.max_streams {
+            return Err(OpenError::TooMany(self.inner.config.max_streams));
         }
+        let held = counts.per_key.entry(key).or_insert(0);
+        if *held >= self.inner.config.per_key_limit {
+            return Err(OpenError::TooMany(self.inner.config.per_key_limit));
+        }
+        *held += 1;
+        counts.total += 1;
+        Ok(StreamGuard {
+            inner: Arc::clone(&self.inner),
+            key,
+        })
+    }
+
+    /// Opens a stream for `auth`. `id` is the JSON-RPC id of the listen request and `params` its
+    /// parameters. The acknowledgment is the first message the handle yields; a stream is
+    /// registered for delivery before it is handed out, but nothing is yielded ahead of the
+    /// acknowledgment.
+    ///
+    /// Order: parameters, caps, then (only for a token that asks for something the server can push)
+    /// the hub, which asks the API. A credential the API refuses fails here, before any stream
+    /// exists.
+    pub async fn open(&self, auth: ListenAuth, id: &Value, params: Option<&Value>) -> Result<ListenHandle, OpenError> {
+        let request = ListenRequest::parse(params)?;
+        let guard = self.reserve(auth.key())?;
+        let mut honoured = Honoured::default();
+        let mut registration = None;
+        if request.tools_list_changed
+            && self.inner.config.enabled
+            && let ListenAuth::Token { key, client } = &auth
+        {
+            match self.inner.hubs.acquire(*key, client, &self.inner.shutdown).await {
+                Ok(Access::Push(held)) => {
+                    honoured.tools_list_changed = true;
+                    registration = Some(held);
+                }
+                Ok(Access::NoPush) => {}
+                Err(AcquireError::Unauthorized) => return Err(OpenError::Unauthorized),
+                Err(AcquireError::Unavailable) => return Err(OpenError::Unavailable),
+            }
+        }
+        let ack = acknowledgment(id, &request, honoured);
         Ok(ListenHandle {
             id: id.clone(),
             pending_ack: Some(ack),
-            hold: self.inner.config.hold,
             cancel: CancellationToken::new(),
             shutdown: self.inner.shutdown.clone(),
             finished: false,
-            _guard: StreamGuard {
-                inner: Arc::clone(&self.inner),
-                key,
-            },
+            registration,
+            _guard: guard,
         })
     }
 
@@ -235,14 +284,16 @@ impl Drop for StreamGuard {
     }
 }
 
-/// One open listen stream. Dropping it releases its place in the caps.
+/// One open listen stream. Dropping it releases its place in the caps and on its hub, so whoever
+/// owns the handle owns the slot: the task that forwards the stream, never the response body.
 pub struct ListenHandle {
     id: Value,
     pending_ack: Option<Value>,
-    hold: bool,
     cancel: CancellationToken,
     shutdown: CancellationToken,
     finished: bool,
+    /// Present only on a stream that receives pushes.
+    registration: Option<Registration>,
     _guard: StreamGuard,
 }
 
@@ -252,9 +303,10 @@ impl ListenHandle {
         self.cancel.clone()
     }
 
-    /// The next message for the client: the acknowledgment first, then the final result (at once,
-    /// or once the server stops when the stream is held); `None` when the stream is over (after the final result or a cancel).
-    /// Waits otherwise; callers also watch their connection.
+    /// The next message for the client: the acknowledgment first, then notifications as hints
+    /// arrive, then the final result (when the stream has nothing to deliver, at once; when the
+    /// credential is revoked or the server stops, then). `None` when the stream is over (after the
+    /// final result or a cancel). Waits otherwise; callers also watch their connection.
     pub async fn next_message(&mut self) -> Option<Value> {
         if let Some(ack) = self.pending_ack.take() {
             return Some(ack);
@@ -262,19 +314,56 @@ impl ListenHandle {
         if self.finished {
             return None;
         }
-        if !self.hold {
+        let Some(shared) = self
+            .registration
+            .as_ref()
+            .map(|registration| Arc::clone(&registration.shared))
+        else {
             self.finished = true;
             return Some(final_result(&self.id));
-        }
-        tokio::select! {
-            biased;
-            () = self.cancel.cancelled() => {
-                self.finished = true;
-                None
+        };
+        loop {
+            match shared.take() {
+                Take::Ended => {
+                    self.finished = true;
+                    return Some(final_result(&self.id));
+                }
+                Take::Tools => return Some(tools_list_changed(&self.id)),
+                Take::Nothing => {}
             }
-            () = self.shutdown.cancelled() => {
-                self.finished = true;
-                Some(final_result(&self.id))
+            tokio::select! {
+                biased;
+                () = self.cancel.cancelled() => {
+                    self.finished = true;
+                    return None;
+                }
+                () = self.shutdown.cancelled() => {
+                    self.finished = true;
+                    return Some(final_result(&self.id));
+                }
+                () = shared.changed() => {}
+            }
+        }
+    }
+
+    /// Moves every message of the stream into `tx` (wrapped by `wrap`) until the stream or the
+    /// receiver ends. This task owns the stream: a consumer that leaves `tx` full for
+    /// [`STALL_LIMIT`] has its stream ended (no final result; it is not reading), so a client
+    /// that stops reading cannot pin a slot, and no hint ever waits for it.
+    pub async fn forward<T>(mut self, tx: &mpsc::Sender<T>, stall: Duration, wrap: impl Fn(String) -> T) {
+        loop {
+            let message = tokio::select! {
+                message = self.next_message() => message,
+                () = tx.closed() => return,
+            };
+            let Some(message) = message else { return };
+            match tokio::time::timeout(stall, tx.send(wrap(message.to_string()))).await {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) => return,
+                Err(_) => {
+                    tracing::info!("A listen stream was ended: its consumer stopped reading");
+                    return;
+                }
             }
         }
     }
@@ -284,13 +373,25 @@ fn subscription_meta(id: &Value) -> Value {
     json!({ META_SUBSCRIPTION_ID: id })
 }
 
-/// The acknowledgment of a listen request: the honoured subset, which is empty here.
-fn acknowledgment(id: &Value, params: Option<&Value>) -> Result<Value, OpenError> {
-    let mut honoured = Map::new();
-    if let Some(notifications) = params.and_then(|params| params.get("notifications")) {
+/// What a listen request asks for, validated.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ListenRequest {
+    tools_list_changed: bool,
+    /// Whether the request carried `resourceSubscriptions` (the acknowledgment then carries it,
+    /// empty until resource subscriptions exist).
+    resource_subscriptions: bool,
+}
+
+impl ListenRequest {
+    fn parse(params: Option<&Value>) -> Result<Self, OpenError> {
+        let mut request = Self::default();
+        let Some(notifications) = params.and_then(|params| params.get("notifications")) else {
+            return Ok(request);
+        };
         let Some(notifications) = notifications.as_object() else {
             return Err(OpenError::InvalidParams("notifications must be an object".to_string()));
         };
+        request.tools_list_changed = notifications.get("toolsListChanged") == Some(&Value::Bool(true));
         if let Some(subscriptions) = notifications.get("resourceSubscriptions") {
             let valid = subscriptions
                 .as_array()
@@ -300,14 +401,41 @@ fn acknowledgment(id: &Value, params: Option<&Value>) -> Result<Value, OpenError
                     "resourceSubscriptions must be an array of strings".to_string(),
                 ));
             }
-            honoured.insert("resourceSubscriptions".to_string(), json!([]));
+            request.resource_subscriptions = true;
         }
+        Ok(request)
     }
-    Ok(json!({
+}
+
+/// What the server honours of a request.
+#[derive(Debug, Default, Clone, Copy)]
+struct Honoured {
+    tools_list_changed: bool,
+}
+
+/// The acknowledgment of a listen request. Boolean keys appear only when requested and honoured;
+/// `resourceSubscriptions` appears iff the request had it (no URI is honoured yet).
+fn acknowledgment(id: &Value, request: &ListenRequest, honoured: Honoured) -> Value {
+    let mut notifications = Map::new();
+    if honoured.tools_list_changed {
+        notifications.insert("toolsListChanged".to_string(), Value::Bool(true));
+    }
+    if request.resource_subscriptions {
+        notifications.insert("resourceSubscriptions".to_string(), json!([]));
+    }
+    json!({
         "jsonrpc": "2.0",
         "method": "notifications/subscriptions/acknowledged",
-        "params": { "_meta": subscription_meta(id), "notifications": honoured },
-    }))
+        "params": { "_meta": subscription_meta(id), "notifications": notifications },
+    })
+}
+
+fn tools_list_changed(id: &Value) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/tools/list_changed",
+        "params": { "_meta": subscription_meta(id) },
+    })
 }
 
 /// The result that ends a listen request when the server ends it.
@@ -323,6 +451,30 @@ fn final_result(id: &Value) -> Value {
 #[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
+    use crate::client::{ClientConfig, TRANSPORT_LABEL_HTTP};
+    use platform::config::Secret;
+
+    /// A client that never reaches an API: a stream that needs one fails as unavailable.
+    fn dead_client() -> OpenPrClient {
+        OpenPrClient::new(ClientConfig {
+            base_url: "http://127.0.0.1:1".to_string(),
+            credential: Some(Secret::new("opr_unit")),
+            workspace_id: None,
+            transport_label: TRANSPORT_LABEL_HTTP,
+        })
+        .expect("a client builds")
+    }
+
+    fn token(name: &str) -> ListenAuth {
+        ListenAuth::Token {
+            key: caller_key(name),
+            client: dead_client(),
+        }
+    }
+
+    fn delegated(name: &str) -> ListenAuth {
+        ListenAuth::Delegated { key: caller_key(name) }
+    }
 
     fn registry(max_streams: usize, per_key_limit: usize) -> ListenRegistry {
         ListenRegistry::new(ListenConfig {
@@ -330,20 +482,16 @@ mod tests {
             max_streams,
             per_key_limit,
             keepalive: Duration::from_millis(50),
-            hold: true,
         })
     }
 
     #[tokio::test]
-    async fn without_the_hold_the_final_result_follows_the_acknowledgment_and_frees_the_slot() {
-        let registry = ListenRegistry::new(ListenConfig {
-            hold: false,
-            ..ListenConfig::new(true, 1)
-        });
+    async fn a_stream_with_nothing_to_deliver_ends_after_the_acknowledgment_and_frees_its_slot() {
+        let registry = registry(1, 1);
         for round in 0..5 {
-            let handle = registry.open(caller_key("a"), &json!(round), None);
-            assert!(handle.is_ok(), "round {round}");
-            let Ok(mut handle) = handle else { return };
+            let Ok(mut handle) = registry.open(delegated("a"), &json!(round), None).await else {
+                panic!("round {round} must open");
+            };
             let ack = handle.next_message().await.unwrap_or(Value::Null);
             assert_eq!(ack["method"], "notifications/subscriptions/acknowledged");
             let end = handle.next_message().await.unwrap_or(Value::Null);
@@ -353,12 +501,6 @@ mod tests {
             drop(handle);
             assert_eq!(registry.open_streams(), 0);
         }
-    }
-
-    #[test]
-    fn the_production_configuration_never_holds_without_the_test_feature() {
-        #[cfg(not(feature = "test-hold-listen"))]
-        assert!(!ListenConfig::default().hold);
     }
 
     #[test]
@@ -384,14 +526,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_first_message_is_the_acknowledgment_with_the_empty_subset() {
+    async fn a_delegated_caller_gets_the_empty_subset_and_no_hub() {
         let registry = registry(10, 10);
-        let id = json!(7);
         let params =
             json!({"notifications": {"toolsListChanged": true, "resourceSubscriptions": ["sylvode://tasks/0F"]}});
-        let Ok(mut handle) = registry.open(caller_key("a"), &id, Some(&params)) else {
-            assert!(registry.enabled(), "open must succeed");
-            return;
+        let Ok(mut handle) = registry.open(delegated("a"), &json!(7), Some(&params)).await else {
+            panic!("must open");
         };
         let ack = handle.next_message().await;
         assert_eq!(
@@ -405,23 +545,25 @@ mod tests {
                 }
             }))
         );
+        assert_eq!(registry.hub_count(), 0);
+        assert_eq!(handle.next_message().await.map(|end| end["id"].clone()), Some(json!(7)));
     }
 
     #[tokio::test]
     async fn the_subscription_id_keeps_the_json_type_of_the_request_id() {
         let registry = registry(10, 10);
         for id in [json!(7), json!("7"), json!("abc")] {
-            let handle = registry.open(caller_key("a"), &id, None);
-            assert!(handle.is_ok());
-            let Ok(mut handle) = handle else { return };
+            let Ok(mut handle) = registry.open(delegated("a"), &id, None).await else {
+                panic!("must open");
+            };
             let ack = handle.next_message().await.unwrap_or(Value::Null);
             assert_eq!(ack["params"]["_meta"][META_SUBSCRIPTION_ID], id);
             assert_eq!(ack["params"]["notifications"], json!({}));
         }
     }
 
-    #[test]
-    fn malformed_notifications_are_refused() {
+    #[tokio::test]
+    async fn malformed_notifications_are_refused() {
         let registry = registry(10, 10);
         for params in [
             json!({"notifications": 1}),
@@ -429,46 +571,73 @@ mod tests {
             json!({"notifications": {"resourceSubscriptions": [1]}}),
         ] {
             assert!(matches!(
-                registry.open(caller_key("a"), &json!(1), Some(&params)),
+                registry.open(delegated("a"), &json!(1), Some(&params)).await,
                 Err(OpenError::InvalidParams(_))
             ));
         }
         assert_eq!(registry.open_streams(), 0);
     }
 
-    #[test]
-    fn the_per_key_cap_counts_one_credential_only() {
-        let registry = registry(10, 2);
-        let a1 = registry.open(caller_key("a"), &json!(1), None);
-        let a2 = registry.open(caller_key("a"), &json!(2), None);
-        assert!(a1.is_ok() && a2.is_ok());
-        assert!(matches!(
-            registry.open(caller_key("a"), &json!(3), None),
-            Err(OpenError::TooMany(2))
-        ));
-        assert!(registry.open(caller_key("b"), &json!(1), None).is_ok());
-        drop(a1);
-        assert!(registry.open(caller_key("a"), &json!(4), None).is_ok());
+    #[tokio::test]
+    async fn a_token_that_asks_for_tools_and_cannot_reach_the_api_is_unavailable_and_holds_nothing() {
+        let registry = registry(10, 10);
+        let params = json!({"notifications": {"toolsListChanged": true}});
+        let opened = registry.open(token("opr_a"), &json!(1), Some(&params)).await;
+        assert!(matches!(opened, Err(OpenError::Unavailable)));
+        assert_eq!(registry.open_streams(), 0);
+        assert_eq!(registry.hub_count(), 0);
     }
 
-    #[test]
-    fn the_process_cap_counts_every_credential() {
+    #[tokio::test]
+    async fn a_token_that_asks_for_nothing_never_asks_the_api() {
+        let registry = registry(10, 10);
+        let Ok(mut handle) = registry.open(token("opr_a"), &json!(1), None).await else {
+            panic!("must open");
+        };
+        let _ack = handle.next_message().await;
+        assert_eq!(handle.next_message().await.map(|end| end["id"].clone()), Some(json!(1)));
+        assert_eq!(registry.hub_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn the_per_key_cap_counts_one_credential_only() {
+        let registry = registry(10, 2);
+        let a1 = registry.open(delegated("a"), &json!(1), None).await;
+        let a2 = registry.open(delegated("a"), &json!(2), None).await;
+        assert!(a1.is_ok() && a2.is_ok());
+        assert!(matches!(
+            registry.open(delegated("a"), &json!(3), None).await,
+            Err(OpenError::TooMany(2))
+        ));
+        assert!(registry.open(delegated("b"), &json!(1), None).await.is_ok());
+        drop(a1);
+        assert!(registry.open(delegated("a"), &json!(4), None).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn the_process_cap_counts_every_credential() {
         let registry = registry(2, 10);
-        let first = registry.open(caller_key("a"), &json!(1), None);
-        let second = registry.open(caller_key("b"), &json!(1), None);
+        let first = registry.open(delegated("a"), &json!(1), None).await;
+        let second = registry.open(delegated("b"), &json!(1), None).await;
         assert!(first.is_ok() && second.is_ok());
         assert!(matches!(
-            registry.open(caller_key("c"), &json!(1), None),
+            registry.open(delegated("c"), &json!(1), None).await,
             Err(OpenError::TooMany(2))
         ));
         assert_eq!(registry.open_streams(), 2);
     }
 
     #[test]
-    fn too_many_maps_to_the_documented_error() {
+    fn the_errors_map_to_the_documented_json_rpc_errors() {
         let error = OpenError::TooMany(1_000).into_rpc_error();
         assert_eq!(error.code, -32000);
         assert_eq!(error.data, Some(json!({"limit": 1000})));
+        let error = OpenError::Unauthorized.into_rpc_error();
+        assert_eq!(error.code, -32603);
+        assert_eq!(error.data, Some(json!({"reason": "unauthorized"})));
+        let error = OpenError::Unavailable.into_rpc_error();
+        assert_eq!(error.code, -32603);
+        assert_eq!(error.data, None);
     }
 
     #[test]
@@ -479,41 +648,66 @@ mod tests {
         assert_ne!(key, caller_key("opr_other_token"));
     }
 
-    #[tokio::test]
-    async fn shutdown_ends_a_stream_with_the_final_result_once() {
-        let registry = registry(10, 10);
-        let Ok(mut handle) = registry.open(caller_key("a"), &json!(7), None) else {
-            return;
+    #[test]
+    fn the_acknowledgment_follows_the_rules_for_each_request_shape() {
+        let id = json!(3);
+        let ask = |tools: bool, uris: bool| ListenRequest {
+            tools_list_changed: tools,
+            resource_subscriptions: uris,
         };
-        let _ack = handle.next_message().await;
-        registry.shutdown();
-        let result = handle.next_message().await;
+        let notifications = |request: &ListenRequest, honoured: Honoured| {
+            acknowledgment(&id, request, honoured)["params"]["notifications"].clone()
+        };
+        let honoured = Honoured {
+            tools_list_changed: true,
+        };
         assert_eq!(
-            result,
-            Some(json!({
-                "jsonrpc": "2.0",
-                "id": 7,
-                "result": {"resultType": "complete", "_meta": {"io.modelcontextprotocol/subscriptionId": 7}}
-            }))
+            notifications(&ask(true, false), honoured),
+            json!({"toolsListChanged": true})
         );
-        assert_eq!(handle.next_message().await, None);
+        assert_eq!(notifications(&ask(true, false), Honoured::default()), json!({}));
+        assert_eq!(
+            notifications(&ask(true, true), honoured),
+            json!({"toolsListChanged": true, "resourceSubscriptions": []})
+        );
+        assert_eq!(notifications(&ask(false, false), Honoured::default()), json!({}));
+    }
+
+    #[test]
+    fn only_a_literal_true_requests_the_tool_list() {
+        for (params, expected) in [
+            (json!({"notifications": {"toolsListChanged": true}}), true),
+            (json!({"notifications": {"toolsListChanged": false}}), false),
+            (json!({"notifications": {"toolsListChanged": "true"}}), false),
+            (json!({"notifications": {"toolsListChanged": 1}}), false),
+            (json!({}), false),
+        ] {
+            let parsed = ListenRequest::parse(Some(&params));
+            assert_eq!(
+                parsed.map(|request| request.tools_list_changed),
+                Ok(expected),
+                "{params}"
+            );
+        }
     }
 
     #[tokio::test]
-    async fn a_client_cancel_ends_a_stream_without_a_final_result() {
+    async fn a_stalled_consumer_frees_the_slot() {
+        // The stall rule through `forward`, with a consumer whose queue is full.
         let registry = registry(10, 10);
-        let Ok(mut handle) = registry.open(caller_key("a"), &json!(7), None) else {
-            return;
+        let Ok(handle) = registry.open(delegated("a"), &json!(1), None).await else {
+            panic!("must open");
         };
-        let _ack = handle.next_message().await;
-        handle.cancel_token().cancel();
-        assert_eq!(handle.next_message().await, None);
+        let (tx, _rx) = mpsc::channel::<String>(1);
+        // The ack fills the queue; the final result then waits and the stall ends the stream.
+        handle.forward(&tx, Duration::from_millis(50), |message| message).await;
+        assert_eq!(registry.open_streams(), 0);
     }
 
     #[tokio::test]
     async fn wait_idle_resolves_when_the_last_stream_is_dropped() {
         let registry = registry(10, 10);
-        let handle = registry.open(caller_key("a"), &json!(7), None);
+        let handle = registry.open(delegated("a"), &json!(7), None).await;
         assert!(handle.is_ok());
         let waiter = {
             let registry = registry.clone();

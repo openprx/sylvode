@@ -17,7 +17,7 @@ use mcp_server::cli::{self, Cli, Commands};
 use mcp_server::client::OpenPrClient;
 use mcp_server::era::{self, Era};
 use mcp_server::http_modern;
-use mcp_server::listen::{ListenConfig, ListenHandle, ListenRegistry, caller_key};
+use mcp_server::listen::{ListenAuth, ListenConfig, ListenRegistry, STALL_LIMIT, caller_key};
 use mcp_server::oauth::{self, Caller, InboundAuth};
 use mcp_server::protocol::{self, JsonRpcRequest, JsonRpcResponse};
 use mcp_server::server::{McpServer, ToolSurface, requested_tool_mode};
@@ -55,11 +55,11 @@ impl NetOptions {
 }
 
 impl Default for NetOptions {
-    /// No allowed origins, listen on, the default process cap: what Flow-only serves with.
+    /// No allowed origins and no listen: what Flow-only serves with (it declares no push).
     fn default() -> Self {
         Self {
             allowed_origins: Arc::new(Vec::new()),
-            listen: ListenRegistry::new(ListenConfig::default()),
+            listen: ListenRegistry::new(ListenConfig::new(false, ListenConfig::default().max_streams)),
         }
     }
 }
@@ -147,7 +147,13 @@ async fn run() -> anyhow::Result<()> {
             let surface = ToolSurface::new(McpToolMode::default(), true);
             match settings.transport {
                 McpTransport::Stdio => {
-                    run_stdio(client, surface, ListenRegistry::new(ListenConfig::default()), shutdown).await
+                    run_stdio(
+                        client,
+                        surface,
+                        ListenRegistry::new(ListenConfig::new(false, ListenConfig::default().per_key_limit)),
+                        shutdown,
+                    )
+                    .await
                 }
                 // Flow is not delegated in this release: `sva_` tokens are refused with 401.
                 McpTransport::Http => {
@@ -213,7 +219,7 @@ fn print_report(report: &sylvode_prereq::Report, json: bool) -> anyhow::Result<(
 /// answered, or after [`SHUTDOWN_DRAIN_BOUND`] at the latest (see [`Shutdown`]).
 async fn serve(mcp: &McpRuntime) -> anyhow::Result<()> {
     let shutdown = Shutdown::install()?;
-    let surface = ToolSurface::new(mcp.tool_mode, mcp.allow_write_call);
+    let surface = ToolSurface::new(mcp.tool_mode, mcp.allow_write_call).with_listen(mcp.listen);
     match mcp.transport {
         McpTransport::Stdio => {
             run_stdio(
@@ -489,7 +495,7 @@ async fn handle_jsonrpc(
         return refusal_response(req.id, error);
     }
     if era.is_modern() && req.method == "subscriptions/listen" && req.id.is_some() {
-        return open_http_listen(&state, &caller, &era, &req);
+        return open_http_listen(&state, &caller, &era, &req).await;
     }
     oauth::handle_rpc(
         &state.client,
@@ -511,16 +517,25 @@ fn refusal_response(id: Option<serde_json::Value>, error: protocol::JsonRpcError
     )
 }
 
-/// The key under which a caller's listen streams are counted: a digest of its credential.
-fn credential_key(caller: &Caller) -> mcp_server::listen::CallerKey {
+/// What the registry needs to know about a caller: its credential's key, and for a token the
+/// client that acts as it (a hub keeps that client, and so the token, for the life of its streams).
+fn listen_auth(state: &SseState, caller: &Caller) -> ListenAuth {
     match caller {
-        Caller::Legacy(token) => caller_key(token.expose()),
-        Caller::Delegated(delegated) => caller_key(delegated.token.expose()),
+        Caller::Legacy(token) => ListenAuth::Token {
+            key: caller_key(token.expose()),
+            client: state.client.acting_as(token.clone()),
+        },
+        Caller::Delegated(delegated) => ListenAuth::Delegated {
+            key: caller_key(delegated.token.expose()),
+        },
     }
 }
 
 /// Opens a listen stream on the Server-Sent Events response of a modern `subscriptions/listen`.
-fn open_http_listen(state: &SseState, caller: &Caller, era: &Era, req: &JsonRpcRequest) -> Response {
+///
+/// A credential the API refuses is answered `401` with the challenge before any SSE byte; an API
+/// that cannot be asked is answered with a JSON-RPC error as plain JSON, so the client backs off.
+async fn open_http_listen(state: &SseState, caller: &Caller, era: &Era, req: &JsonRpcRequest) -> Response {
     let Some(id) = req.id.clone() else {
         return refusal_response(None, protocol::JsonRpcError::invalid_request("missing id"));
     };
@@ -535,8 +550,19 @@ fn open_http_listen(state: &SseState, caller: &Caller, era: &Era, req: &JsonRpcR
             protocol::JsonRpcError::method_not_found("Unknown method: subscriptions/listen"),
         );
     }
-    let handle = match registry.open(credential_key(caller), &id, req.params.as_ref()) {
+    let handle = match registry
+        .open(listen_auth(state, caller), &id, req.params.as_ref())
+        .await
+    {
         Ok(handle) => handle,
+        Err(mcp_server::listen::OpenError::Unauthorized) => {
+            tracing::info!(
+                method = "subscriptions/listen",
+                era = era.label(),
+                "Refused a listen stream: the API does not accept the credential"
+            );
+            return oauth::credential_refused_response(&state.inbound);
+        }
         Err(error) => {
             tracing::info!(
                 method = "subscriptions/listen",
@@ -553,24 +579,15 @@ fn open_http_listen(state: &SseState, caller: &Caller, era: &Era, req: &JsonRpcR
         open_streams = registry.open_streams(),
         "Opened a listen stream"
     );
-    let (tx, rx) = mpsc::channel::<String>(64);
-    tokio::spawn(pump_listen(handle, tx));
+    let (tx, rx) = mpsc::channel::<String>(LISTEN_QUEUE);
+    // The task owns the stream, so the slot is released when the task ends, whatever the
+    // connection does.
+    tokio::spawn(async move { handle.forward(&tx, STALL_LIMIT, |message| message).await });
     http_modern::listen_sse_response(ReceiverStream::new(rx), registry.keepalive())
 }
 
-/// Moves the messages of a listen stream onto its response until either side ends.
-async fn pump_listen(mut handle: ListenHandle, tx: mpsc::Sender<String>) {
-    loop {
-        let message = tokio::select! {
-            message = handle.next_message() => message,
-            () = tx.closed() => return,
-        };
-        let Some(message) = message else { return };
-        if tx.send(message.to_string()).await.is_err() {
-            return;
-        }
-    }
-}
+/// Frames queued between a listen stream and its response.
+const LISTEN_QUEUE: usize = 64;
 
 /// One open SSE stream: the sender that feeds it, and the tool mode its connection asked for.
 struct SseSession {
@@ -1207,6 +1224,8 @@ async fn run_stdio(
 ) -> anyhow::Result<()> {
     tracing::info!("MCP stdio transport started");
 
+    // A hub keeps a client that acts as the configured bot; the server below owns another.
+    let listen_client = client.clone();
     let server = McpServer::for_surface(client, surface);
     let stdin = tokio::io::stdin();
     let mut reader = BufReader::new(stdin);
@@ -1235,7 +1254,7 @@ async fn run_stdio(
                     continue;
                 }
                 tokio::select! {
-                    () = process_stdio_message(&server, &listen, &open, &out, &mut reader, trimmed) => {}
+                    () = process_stdio_message(&server, &listen_client, &listen, &open, &out, &mut reader, trimmed) => {}
                     () = shutdown.drain_deadline() => {
                         tracing::warn!(
                             drain_bound_ms = u64::try_from(SHUTDOWN_DRAIN_BOUND.as_millis()).unwrap_or(u64::MAX),
@@ -1284,6 +1303,7 @@ async fn send_stdio(out: &StdioSender, message: &(impl serde::Serialize + Sync),
 /// the framing the message arrived in.
 async fn process_stdio_message(
     server: &McpServer,
+    client: &OpenPrClient,
     listen: &ListenRegistry,
     open: &OpenListens,
     out: &StdioSender,
@@ -1328,7 +1348,7 @@ async fn process_stdio_message(
         && request.id.is_some()
         && matches!(era::classify(&request), Ok(Era::Modern { .. }))
     {
-        open_stdio_listen(listen, open, out, request, frame).await;
+        open_stdio_listen(client, listen, open, out, request, frame).await;
         return;
     }
 
@@ -1350,6 +1370,7 @@ async fn cancel_listen(open: &OpenListens, params: Option<&serde_json::Value>) {
 
 /// Starts a listen stream as its own task writing through the stdout writer.
 async fn open_stdio_listen(
+    client: &OpenPrClient,
     listen: &ListenRegistry,
     open: &OpenListens,
     out: &StdioSender,
@@ -1375,7 +1396,11 @@ async fn open_stdio_listen(
         return;
     }
     // One pipe is one credential: the configured bot.
-    let mut handle = match listen.open(caller_key("stdio"), &id, request.params.as_ref()) {
+    let auth = ListenAuth::Token {
+        key: caller_key("stdio"),
+        client: client.clone(),
+    };
+    let mut handle = match listen.open(auth, &id, request.params.as_ref()).await {
         Ok(handle) => handle,
         Err(error) => {
             send_stdio(out, &refuse(error.into_rpc_error()), frame).await;
@@ -1397,9 +1422,7 @@ async fn open_stdio_listen(
     let out = out.clone();
     let open = Arc::clone(open);
     tokio::spawn(async move {
-        while let Some(message) = handle.next_message().await {
-            send_stdio(&out, &message, frame).await;
-        }
+        handle.forward(&out, STALL_LIMIT, |message| (message, frame)).await;
         open.lock().await.remove(&key);
     });
 }

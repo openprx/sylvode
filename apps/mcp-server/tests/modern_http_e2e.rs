@@ -21,9 +21,11 @@ const OTHER_TOKEN: &str = "opr_modern_http_other_token";
 const META: &str = "io.modelcontextprotocol/protocolVersion";
 
 async fn spawn_api() -> Result<String, Box<dyn Error>> {
-    let router = Router::new().fallback(get(|| async {
-        Json(json!({"code": 0, "message": "ok", "data": {"items": [], "total": 0}}))
-    }));
+    let router = Router::new()
+        .route("/api/v1/bot/change-hints", get(support::held_change_hints))
+        .fallback(get(|| async {
+            Json(json!({"code": 0, "message": "ok", "data": {"items": [], "total": 0}}))
+        }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
     tokio::spawn(async move {
@@ -41,12 +43,6 @@ struct Server {
 
 impl Server {
     async fn start(extra_keys: &str) -> Result<Self, Box<dyn Error>> {
-        Self::start_with(extra_keys, false).await
-    }
-
-    /// As [`Self::start`]; `hold` keeps listen streams open (the test-only hold, which the test
-    /// build of the binary contains and a release build does not).
-    async fn start_with(extra_keys: &str, hold: bool) -> Result<Self, Box<dyn Error>> {
         let api_url = spawn_api().await?;
         let bind = {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
@@ -65,7 +61,6 @@ impl Server {
         let child = Command::new(env!("CARGO_BIN_EXE_mcp-server"))
             .args(["serve", "--config"])
             .arg(config.path())
-            .env("SYLVODE_MCP_TEST_HOLD_LISTEN", if hold { "1" } else { "0" })
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .kill_on_drop(true)
@@ -340,7 +335,7 @@ fn listen_body(id: i64) -> Value {
 
 #[tokio::test]
 async fn listen_answers_an_event_stream_with_the_acknowledgment_first_then_keepalives() -> TestResult {
-    let server = Server::start_with("", true).await?;
+    let server = Server::start("").await?;
     let mut response = server.modern(TOKEN, &listen_body(7), &[]).await?;
     assert_eq!(response.status(), StatusCode::OK);
     let content_type = response.headers().get("content-type").and_then(|v| v.to_str().ok());
@@ -357,7 +352,10 @@ async fn listen_answers_an_event_stream_with_the_acknowledgment_first_then_keepa
     let ack = next_event(&mut response, &mut buffer).await?.ok_or("stream ended")?;
     assert_eq!(ack["method"], "notifications/subscriptions/acknowledged", "{ack}");
     assert_eq!(ack["params"]["_meta"]["io.modelcontextprotocol/subscriptionId"], 7);
-    assert_eq!(ack["params"]["notifications"], json!({"resourceSubscriptions": []}));
+    assert_eq!(
+        ack["params"]["notifications"],
+        json!({"toolsListChanged": true, "resourceSubscriptions": []})
+    );
 
     // A keep-alive comment arrives within 16 s while nothing else happens.
     let started = std::time::Instant::now();
@@ -400,7 +398,7 @@ async fn a_legacy_listen_request_is_method_not_found() -> TestResult {
 
 #[tokio::test]
 async fn the_stream_cap_refuses_with_429_and_retry_after_and_frees_on_close() -> TestResult {
-    let server = Server::start_with("max_listen_streams = 2\n", true).await?;
+    let server = Server::start("max_listen_streams = 2\n").await?;
     let mut first = server.modern(TOKEN, &listen_body(1), &[]).await?;
     let mut second = server.modern(OTHER_TOKEN, &listen_body(1), &[]).await?;
     let (mut b1, mut b2) = (String::new(), String::new());
@@ -434,7 +432,7 @@ async fn the_stream_cap_refuses_with_429_and_retry_after_and_frees_on_close() ->
 
 #[tokio::test]
 async fn sigterm_ends_an_open_stream_with_the_final_result_and_exits_zero() -> TestResult {
-    let mut server = Server::start_with("", true).await?;
+    let mut server = Server::start("").await?;
     let mut stream = server.modern(TOKEN, &listen_body(9), &[]).await?;
     let mut buffer = String::new();
     assert!(next_event(&mut stream, &mut buffer).await?.is_some());
@@ -460,24 +458,44 @@ async fn sigterm_ends_an_open_stream_with_the_final_result_and_exits_zero() -> T
     Ok(())
 }
 
-/// Without the hold a listen request is the empty acknowledgment followed by the final result, and
-/// the connection ends: a caller whose token nobody checked holds no stream and no cap slot.
+/// A bearer the API does not accept never gets a stream: `401` with the challenge, before any
+/// event, and the refusal is remembered so the API is not asked again for ten seconds.
 #[tokio::test]
-async fn a_made_up_bearer_gets_the_acknowledgment_and_the_final_result_and_the_connection_ends() -> TestResult {
+async fn a_made_up_bearer_asking_for_push_is_refused_with_401_before_any_event() -> TestResult {
     let server = Server::start("").await?;
-    let mut response = server.modern("totally-not-a-token", &listen_body(7), &[]).await?;
-    assert_eq!(response.status(), StatusCode::OK);
-    let mut buffer = String::new();
-    let ack = next_event(&mut response, &mut buffer).await?.ok_or("stream ended")?;
-    assert_eq!(ack["method"], "notifications/subscriptions/acknowledged", "{ack}");
-    assert_eq!(ack["params"]["notifications"], json!({"resourceSubscriptions": []}));
-    let end = next_event(&mut response, &mut buffer).await?.ok_or("no final result")?;
-    assert_eq!(end["id"], 7, "{end}");
-    assert_eq!(end["result"]["resultType"], "complete");
-    assert!(
-        next_event(&mut response, &mut buffer).await?.is_none(),
-        "the stream must end"
-    );
+    for id in 1..=3 {
+        let response = server.modern("totally-not-a-token", &listen_body(id), &[]).await?;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "round {id}");
+        assert!(response.headers().get("www-authenticate").is_some());
+        assert_ne!(
+            response.headers().get("content-type").and_then(|v| v.to_str().ok()),
+            Some("text/event-stream")
+        );
+    }
+    Ok(())
+}
+
+/// A listen request that asks for nothing the server honours is the empty acknowledgment followed
+/// by the final result, and the connection ends: it holds no stream and no cap slot.
+#[tokio::test]
+async fn a_listen_that_asks_for_nothing_ends_with_the_final_result_and_holds_no_slot() -> TestResult {
+    let server = Server::start("max_listen_streams = 1\n").await?;
+    for id in 0..5 {
+        let body = modern_body(id, "subscriptions/listen", json!({"notifications": {}}));
+        let mut response = server.modern("totally-not-a-token", &body, &[]).await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut buffer = String::new();
+        let ack = next_event(&mut response, &mut buffer).await?.ok_or("stream ended")?;
+        assert_eq!(ack["method"], "notifications/subscriptions/acknowledged", "{ack}");
+        assert_eq!(ack["params"]["notifications"], json!({}));
+        let end = next_event(&mut response, &mut buffer).await?.ok_or("no final result")?;
+        assert_eq!(end["id"], id, "{end}");
+        assert_eq!(end["result"]["resultType"], "complete");
+        assert!(
+            next_event(&mut response, &mut buffer).await?.is_none(),
+            "the stream must end"
+        );
+    }
     Ok(())
 }
 
@@ -486,13 +504,14 @@ async fn made_up_tokens_never_fill_the_stream_caps() -> TestResult {
     let server = Server::start("max_listen_streams = 2\n").await?;
     for index in 0..25 {
         let token = format!("made-up-token-{index}");
-        let mut response = server.modern(&token, &listen_body(index), &[]).await?;
-        assert_eq!(response.status(), StatusCode::OK, "token {index}");
-        let mut buffer = String::new();
-        assert!(next_event(&mut response, &mut buffer).await?.is_some());
-        assert!(next_event(&mut response, &mut buffer).await?.is_some());
-        assert!(next_event(&mut response, &mut buffer).await?.is_none());
+        let response = server.modern(&token, &listen_body(index), &[]).await?;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "token {index}");
     }
+    // A real bot token still gets its stream: nothing above held a slot.
+    let mut stream = server.modern(TOKEN, &listen_body(99), &[]).await?;
+    assert_eq!(stream.status(), StatusCode::OK);
+    let mut buffer = String::new();
+    assert!(next_event(&mut stream, &mut buffer).await?.is_some());
     Ok(())
 }
 

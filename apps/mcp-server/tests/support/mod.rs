@@ -5,6 +5,14 @@
 //! therefore travels the path a deployment uses; a test that configured the process some
 //! other way would stop proving the shipped path works.
 
+use axum::{
+    Json,
+    body::Body,
+    http::{HeaderMap, header},
+    response::{IntoResponse, Response},
+};
+use serde_json::json;
+use std::convert::Infallible;
 use std::error::Error;
 use std::fmt::Write as _;
 use std::fs;
@@ -117,4 +125,29 @@ pub fn write_config_with_extra_mcp_keys(
     let path = dir.join("sylvode.toml");
     fs::write(&path, source)?;
     Ok(ConfigFile { dir, path })
+}
+
+/// Stand-in for `GET /api/v1/bot/change-hints`: a bot token (`opr_`) gets `hello` and a stream
+/// that stays open and silent; any other credential is refused the way the API does (`200` with a
+/// `401` envelope).
+#[allow(dead_code)]
+pub async fn held_change_hints(headers: HeaderMap) -> Response {
+    let bot = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .is_some_and(|token| token.starts_with("opr_"));
+    if !bot {
+        return Json(json!({"code": 401, "message": "unauthorized"})).into_response();
+    }
+    let hello = tokio_stream::iter([Ok::<_, Infallible>(
+        "event: hello\ndata: {\"bot_id\":\"b\",\"workspace_id\":\"w\"}\n\n",
+    )]);
+    let held = tokio_stream::StreamExt::chain(hello, tokio_stream::pending());
+    let mut response = Response::new(Body::from_stream(held));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_static("text/event-stream"),
+    );
+    response
 }

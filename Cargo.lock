@@ -2601,7 +2601,6 @@ dependencies = [
  "collab-core",
  "hex",
  "hyper-util",
- "mcp-server",
  "parking_lot",
  "platform",
  "reqwest",
