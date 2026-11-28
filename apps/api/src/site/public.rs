@@ -53,7 +53,7 @@ pub async fn manifest(
         if page.audience == "operator" && operator.is_none() {
             continue;
         }
-        let layout_key = store::load_layout(&state.db, page.layout_id)
+        let layout_key = store::load_page_layout(&state.db, &caller.site, &page)
             .await?
             .map(|layout| layout.layout_key)
             .unwrap_or_default();
@@ -140,9 +140,8 @@ pub async fn page(
     if page.audience == "operator" && caller.operator.is_none() {
         return Err(operator_required());
     }
-    let layout = store::load_layout(&state.db, page.layout_id)
+    let layout = store::load_page_layout(&state.db, &caller.site, page)
         .await?
-        .filter(|layout| layout.status == "active" && layout.installation_id.is_none())
         .ok_or_else(SiteError::not_found)?;
     let bindings = layouts::binding_keys(&state.db, caller.site.id).await?;
     layouts::validate_site_layout(&layout.spec, bindings).map_err(SiteError::from)?;

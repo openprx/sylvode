@@ -20,3 +20,4 @@ until the owning batch adds the real migration. 0128 and 0129 are reserved by an
 - 0144 drop_project_type_default_connectors (landed)
 - 0145 site_published_at (landed: `sites.published_at`)
 - 0146 drop_flow_capability_rollouts (landed; 0126 is an existing file)
+- 0147 installation_site (`installations.site_id`, the site holding an installation's pages)

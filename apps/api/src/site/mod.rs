@@ -9,6 +9,8 @@ pub(crate) mod drafts;
 pub mod http;
 pub mod layouts;
 mod link;
+#[cfg(test)]
+mod package_pages_tests;
 mod projection;
 pub mod public;
 mod records;

@@ -607,6 +607,18 @@ pub(super) fn page_spec(
     Value::Object(spec)
 }
 
+/// A page of a package installation is read-only: only an install, upgrade or revoke changes it.
+pub(super) fn refuse_package_page(page: &PageRow) -> Result<(), ApiError> {
+    if page.installation_id.is_some() {
+        return Err(ApiError::conflict_coded(
+            "package_page_readonly",
+            "the page belongs to a package installation; change the package instead",
+            None,
+        ));
+    }
+    Ok(())
+}
+
 /// The page and its site, for a page route (the page id carries no project of its own).
 async fn page_and_site(state: &AppState, who: &Who, page_id: Uuid) -> Result<(PageRow, SiteRow), ApiError> {
     let page = store::load_page(&state.db, page_id)
@@ -618,6 +630,7 @@ async fn page_and_site(state: &AppState, who: &Who, page_id: Uuid) -> Result<(Pa
             ApiError::Forbidden(message) => ApiError::Forbidden(message),
             _ => ApiError::not_found("page not found"),
         })?;
+    refuse_package_page(&page)?;
     Ok((page, site))
 }
 

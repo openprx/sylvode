@@ -1,12 +1,13 @@
 //! SQL access to `sites`, `site_pages`, `site_bindings`, `site_roles`, `site_visitors` and
 //! `site_sessions` (migration 0137).
 //!
-//! Rows that belong to a package installation (`installation_id` set) are not returned: resolving
-//! them needs the join with the installation's active generation, which arrives with migration
-//! 0138. Until then they stay hidden, like the package rows of the layout store, and they do not
-//! count as pages of a site anywhere here: the site API does not serve them, so they are neither
-//! published nor public (the published-site rule for bots and the exposure lists apply the same
-//! `installation_id IS NULL` predicate).
+//! Pages that belong to a package installation (`installation_id` set) are returned by the reads
+//! here only while [`VISIBLE_PAGE`] holds, the rule of the layout store: the installation is
+//! `active`, the page's `generation` is its active one, and the installation sits in the site's own
+//! workspace and project. A disabled or revoked installation, a superseded generation or a foreign
+//! installation shows nothing, so such a page is neither listed, nor served, nor counted by the
+//! published-site rule for bots and the exposure lists. Only the install flow changes these rows;
+//! the console and bots cannot edit them (`lock_page` never returns one).
 
 use platform::timestamp::Timestamp;
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
@@ -202,8 +203,8 @@ pub async fn update_slug(db: &impl ConnectionTrait, id: Uuid, slug: &str) -> Res
     })
 }
 
-/// The installation behind each of these sites: the one whose pages the site holds in the newest
-/// generation (a site holds pages of one installation, see `site_of_installation`).
+/// The installation behind each of these sites: the one whose `site_id` is the site (a site holds the
+/// pages of one installation). A revoked installation is no longer shown.
 pub async fn installations_of_sites(
     db: &impl ConnectionTrait,
     site_ids: &[Uuid],
@@ -215,10 +216,8 @@ pub async fn installations_of_sites(
         package_key: String,
     }
     let rows = Row::find_by_statement(statement(
-        "SELECT DISTINCT ON (p.site_id) p.site_id, i.id, i.package_key \
-         FROM site_pages p JOIN installations i ON i.id = p.installation_id \
-         WHERE p.site_id = ANY($1) \
-         ORDER BY p.site_id, p.generation DESC NULLS LAST, p.id",
+        "SELECT DISTINCT ON (site_id) site_id, id, package_key FROM installations \
+         WHERE site_id = ANY($1) AND status <> 'revoked' ORDER BY site_id, created_at DESC, id",
         vec![site_ids.to_vec().into()],
     ))
     .all(db)
@@ -237,14 +236,14 @@ pub async fn installations_of_sites(
         .collect())
 }
 
-/// The site that holds the pages of an installation's newest generation.
+/// The site that holds the pages of an installation (`installations.site_id`).
 pub async fn site_of_installation(db: &impl ConnectionTrait, installation_id: Uuid) -> Result<Option<Uuid>, ApiError> {
     #[derive(FromQueryResult)]
     struct Row {
         site_id: Uuid,
     }
     Ok(Row::find_by_statement(statement(
-        "SELECT site_id FROM site_pages WHERE installation_id = $1 ORDER BY generation DESC NULLS LAST, id LIMIT 1",
+        "SELECT site_id FROM installations WHERE id = $1 AND site_id IS NOT NULL",
         vec![installation_id.into()],
     ))
     .one(db)
@@ -300,7 +299,15 @@ pub async fn delete_site(db: &impl ConnectionTrait, id: Uuid) -> Result<(), ApiE
     Ok(())
 }
 
-const PAGE_COLUMNS: &str = "id, site_id, route, layout_id, audience, nav, position, installation_id";
+const PAGE_COLUMNS: &str =
+    "p.id, p.site_id, p.route, p.layout_id, p.audience, p.nav, p.position, p.installation_id, p.generation";
+
+/// A page row that is shown: the user's own, or a package's while its generation is the active one
+/// of an active installation of the site's own workspace and project. Needs `site_pages` aliased
+/// `p` and `sites` aliased `s`.
+const VISIBLE_PAGE: &str = "(p.installation_id IS NULL OR EXISTS (SELECT 1 FROM installations i \
+     WHERE i.id = p.installation_id AND i.status = 'active' AND i.active_generation = p.generation \
+     AND i.workspace_id = s.workspace_id AND i.project_id = s.project_id))";
 
 #[derive(Debug, Clone, FromQueryResult, Serialize)]
 pub struct PageRow {
@@ -312,13 +319,14 @@ pub struct PageRow {
     pub(crate) nav: Option<Value>,
     pub(crate) position: i32,
     pub(crate) installation_id: Option<Uuid>,
+    pub(crate) generation: Option<i32>,
 }
 
 pub async fn list_pages(db: &impl ConnectionTrait, site_id: Uuid) -> Result<Vec<PageRow>, ApiError> {
     Ok(PageRow::find_by_statement(statement(
         &format!(
-            "SELECT {PAGE_COLUMNS} FROM site_pages WHERE site_id = $1 AND installation_id IS NULL \
-             ORDER BY position, route"
+            "SELECT {PAGE_COLUMNS} FROM site_pages p JOIN sites s ON s.id = p.site_id \
+             WHERE p.site_id = $1 AND {VISIBLE_PAGE} ORDER BY p.position, p.route"
         ),
         vec![site_id.into()],
     ))
@@ -326,9 +334,14 @@ pub async fn list_pages(db: &impl ConnectionTrait, site_id: Uuid) -> Result<Vec<
     .await?)
 }
 
+/// A shown page (see [`VISIBLE_PAGE`]), including a package's: callers that write must refuse a row
+/// with `installation_id` set.
 pub async fn load_page(db: &impl ConnectionTrait, id: Uuid) -> Result<Option<PageRow>, ApiError> {
     Ok(PageRow::find_by_statement(statement(
-        &format!("SELECT {PAGE_COLUMNS} FROM site_pages WHERE id = $1 AND installation_id IS NULL"),
+        &format!(
+            "SELECT {PAGE_COLUMNS} FROM site_pages p JOIN sites s ON s.id = p.site_id \
+             WHERE p.id = $1 AND {VISIBLE_PAGE}"
+        ),
         vec![id.into()],
     ))
     .one(db)
@@ -351,8 +364,11 @@ pub async fn insert_page(
 ) -> Result<Option<PageRow>, ApiError> {
     Ok(PageRow::find_by_statement(statement(
         &format!(
-            "INSERT INTO site_pages (site_id, route, layout_id, audience, nav, position) \
-             VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING RETURNING {PAGE_COLUMNS}"
+            "INSERT INTO site_pages AS p (site_id, route, layout_id, audience, nav, position) \
+             SELECT $1, $2, $3, $4, $5, $6 \
+             WHERE NOT EXISTS (SELECT 1 FROM site_pages p JOIN sites s ON s.id = p.site_id \
+                               WHERE p.site_id = $1 AND p.route = $2 AND {VISIBLE_PAGE}) \
+             ON CONFLICT DO NOTHING RETURNING {PAGE_COLUMNS}"
         ),
         vec![
             site_id.into(),
@@ -375,8 +391,11 @@ pub async fn update_page(
 ) -> Result<Option<PageRow>, ApiError> {
     let taken = db
         .query_one(statement(
-            "SELECT 1 AS one FROM site_pages p JOIN site_pages me ON me.id = $1 \
-             WHERE p.site_id = me.site_id AND p.route = $2 AND p.id <> $1 AND p.generation IS NULL",
+            &format!(
+                "SELECT 1 AS one FROM site_pages p JOIN site_pages me ON me.id = $1 \
+                 JOIN sites s ON s.id = p.site_id \
+                 WHERE p.site_id = me.site_id AND p.route = $2 AND p.id <> $1 AND {VISIBLE_PAGE}"
+            ),
             vec![id.into(), page.route.into()],
         ))
         .await?
@@ -386,8 +405,8 @@ pub async fn update_page(
     }
     Ok(PageRow::find_by_statement(statement(
         &format!(
-            "UPDATE site_pages SET route = $2, layout_id = $3, audience = $4, nav = $5, position = $6 \
-             WHERE id = $1 RETURNING {PAGE_COLUMNS}"
+            "UPDATE site_pages p SET route = $2, layout_id = $3, audience = $4, nav = $5, position = $6 \
+             WHERE p.id = $1 AND p.installation_id IS NULL RETURNING {PAGE_COLUMNS}"
         ),
         vec![
             id.into(),
@@ -412,8 +431,10 @@ pub async fn delete_page(db: &impl ConnectionTrait, id: Uuid) -> Result<(), ApiE
 pub async fn layout_on_published_site(db: &impl ConnectionTrait, layout_id: Uuid) -> Result<bool, ApiError> {
     Ok(db
         .query_one(statement(
-            "SELECT 1 AS one FROM site_pages p JOIN sites s ON s.id = p.site_id \
-             WHERE p.layout_id = $1 AND s.status = 'published' AND p.installation_id IS NULL LIMIT 1",
+            &format!(
+                "SELECT 1 AS one FROM site_pages p JOIN sites s ON s.id = p.site_id \
+                 WHERE p.layout_id = $1 AND s.status = 'published' AND {VISIBLE_PAGE} LIMIT 1"
+            ),
             vec![layout_id.into()],
         ))
         .await?
@@ -430,9 +451,8 @@ pub async fn published_pages_with_layout(
     let suffix = if lock { " FOR SHARE OF s" } else { "" };
     Ok(PageRow::find_by_statement(statement(
         &format!(
-            "SELECT p.id, p.site_id, p.route, p.layout_id, p.audience, p.nav, p.position, p.installation_id \
-             FROM site_pages p JOIN sites s ON s.id = p.site_id \
-             WHERE p.layout_id = $1 AND s.status = 'published' AND p.installation_id IS NULL \
+            "SELECT {PAGE_COLUMNS} FROM site_pages p JOIN sites s ON s.id = p.site_id \
+             WHERE p.layout_id = $1 AND s.status = 'published' AND {VISIBLE_PAGE} \
              ORDER BY p.site_id, p.position, p.route{suffix}"
         ),
         vec![layout_id.into()],
@@ -458,10 +478,10 @@ pub async fn site_status_for_share(db: &impl ConnectionTrait, site_id: Uuid) -> 
     .ok_or_else(|| ApiError::not_found("site not found"))
 }
 
-/// A page row locked for the rest of the transaction.
+/// A user page row locked for the rest of the transaction; a package's page is never returned.
 pub async fn lock_page(db: &impl ConnectionTrait, id: Uuid) -> Result<Option<PageRow>, ApiError> {
     Ok(PageRow::find_by_statement(statement(
-        &format!("SELECT {PAGE_COLUMNS} FROM site_pages WHERE id = $1 AND installation_id IS NULL FOR UPDATE"),
+        &format!("SELECT {PAGE_COLUMNS} FROM site_pages p WHERE p.id = $1 AND p.installation_id IS NULL FOR UPDATE"),
         vec![id.into()],
     ))
     .one(db)
@@ -490,7 +510,10 @@ pub async fn sites_showing_layout(db: &impl ConnectionTrait, layout_id: Uuid) ->
         site_id: Uuid,
     }
     Ok(Id::find_by_statement(statement(
-        "SELECT DISTINCT site_id FROM site_pages WHERE layout_id = $1 AND installation_id IS NULL ORDER BY site_id",
+        &format!(
+            "SELECT DISTINCT p.site_id FROM site_pages p JOIN sites s ON s.id = p.site_id \
+             WHERE p.layout_id = $1 AND {VISIBLE_PAGE} ORDER BY p.site_id"
+        ),
         vec![layout_id.into()],
     ))
     .all(db)
@@ -509,8 +532,11 @@ pub async fn route_taken(
 ) -> Result<bool, ApiError> {
     Ok(db
         .query_one(statement(
-            "SELECT 1 AS one FROM site_pages \
-             WHERE site_id = $1 AND route = $2 AND generation IS NULL AND ($3::uuid IS NULL OR id <> $3)",
+            &format!(
+                "SELECT 1 AS one FROM site_pages p JOIN sites s ON s.id = p.site_id \
+                 WHERE p.site_id = $1 AND p.route = $2 AND {VISIBLE_PAGE} \
+                 AND ($3::uuid IS NULL OR p.id <> $3)"
+            ),
             vec![site_id.into(), route.into(), except.into()],
         ))
         .await?
@@ -620,16 +646,33 @@ pub struct LayoutRow {
     pub(crate) spec: Value,
     pub(crate) status: String,
     pub(crate) installation_id: Option<Uuid>,
+    pub(crate) generation: Option<i32>,
 }
 
 pub async fn load_layout(db: &impl ConnectionTrait, id: Uuid) -> Result<Option<LayoutRow>, ApiError> {
     Ok(LayoutRow::find_by_statement(statement(
-        "SELECT id, workspace_id, scope_kind, scope_id, layout_key, version, spec, status, installation_id \
-         FROM layouts WHERE id = $1",
+        "SELECT id, workspace_id, scope_kind, scope_id, layout_key, version, spec, status, installation_id, \
+         generation FROM layouts WHERE id = $1",
         vec![id.into()],
     ))
     .one(db)
     .await?)
+}
+
+/// The layout a page is served with: active, in the site's workspace, and of the page's own origin.
+/// A user page shows a user layout; a package page shows a layout of the same installation and
+/// generation, so a page never serves another installation's (or a superseded) layout.
+pub async fn load_page_layout(
+    db: &impl ConnectionTrait,
+    site: &SiteRow,
+    page: &PageRow,
+) -> Result<Option<LayoutRow>, ApiError> {
+    Ok(load_layout(db, page.layout_id).await?.filter(|layout| {
+        layout.status == "active"
+            && layout.workspace_id == site.workspace_id
+            && layout.installation_id == page.installation_id
+            && layout.generation == page.generation
+    }))
 }
 
 /// Inserts a site-scope layout; `None` when the key is taken at that site.
