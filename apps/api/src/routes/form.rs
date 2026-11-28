@@ -864,7 +864,7 @@ pub async fn update_form(
     // LEAD BOT-SCHEMA: a bot's schema or title template save that changes what visitors of a
     // published site get needs a person: a schema save is stored as a draft, a title template
     // change (no draft kind holds it) is refused. An uncomparable result counts as a change.
-    if is_bot && (new_schema.is_some() || new_title.is_some()) {
+    if crate::extensions::automated(is_bot) && (new_schema.is_some() || new_title.is_some()) {
         let old_title = form.title_template.as_str();
         let after_title = new_title.as_deref().unwrap_or(old_title);
         let after_schema = new_schema.as_ref().unwrap_or(&form.schema);
@@ -994,7 +994,7 @@ pub async fn delete_form(
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "form.design").await?;
     let tx = state.db.begin().await?;
     // LEAD BOT-SCHEMA: a bot does not archive a form a published site serves.
-    if is_bot && crate::site::form_on_published_site(&tx, form_id).await? {
+    if crate::extensions::automated(is_bot) && crate::site::form_on_published_site(&tx, form_id).await? {
         return Err(ApiError::conflict_coded(
             "form_on_published_site",
             "a published site serves this form; a person archives it",
@@ -1032,7 +1032,7 @@ pub async fn restore_form(
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "form.design").await?;
     let tx = state.db.begin().await?;
     // LEAD BOT-SCHEMA: restoring puts the form back on its published sites; a person does that.
-    if is_bot && crate::site::form_on_published_site(&tx, form_id).await? {
+    if crate::extensions::automated(is_bot) && crate::site::form_on_published_site(&tx, form_id).await? {
         return Err(ApiError::conflict_coded(
             "form_on_published_site",
             "a published site would serve this form again; a person restores it",

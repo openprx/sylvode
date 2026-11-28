@@ -191,7 +191,7 @@ pub async fn refuse_bot_layout_archive_on_published_site(
     is_bot: bool,
     layout_id: Uuid,
 ) -> Result<(), ApiError> {
-    if is_bot && store::layout_on_published_site(db, layout_id).await? {
+    if crate::extensions::automated(is_bot) && store::layout_on_published_site(db, layout_id).await? {
         return Err(ApiError::conflict_coded(
             "layout_on_published_site",
             "a page of a published site shows this layout; a person archives it",

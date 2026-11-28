@@ -463,12 +463,12 @@ pub async fn list_projects(
             crate::oauth::scopes::ProjectScope::Selected(ids) => Some(ids.to_vec()),
         });
     // A scoped bot sees the projects it can read (a runner bot: where it has an enabled connection).
-    let bot_projects = match extensions.get::<BotAuthContext>() {
-        Some(bot_ctx) => crate::middleware::scoped_bot::readable_projects(&state.db, bot_ctx.bot_id)
-            .await?
-            .ids(),
-        None => None,
-    };
+    let bot_projects = crate::middleware::scoped_bot::caller_projects(
+        &state.db,
+        extensions.get::<BotAuthContext>().map(|bot_ctx| bot_ctx.bot_id),
+    )
+    .await?
+    .ids();
     let granted_projects: Option<Vec<Uuid>> = match (oauth_projects, bot_projects) {
         (Some(oauth), Some(bot)) => Some(oauth.into_iter().filter(|id| bot.contains(id)).collect()),
         (Some(ids), None) | (None, Some(ids)) => Some(ids),

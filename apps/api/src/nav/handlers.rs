@@ -35,7 +35,7 @@ use crate::{
     },
     middleware::{
         bot_auth::{BotAuthContext, require_workspace_access_from_auth},
-        scoped_bot::{ProjectFilter, readable_projects},
+        scoped_bot::caller_projects,
     },
     response::ApiResponse,
 };
@@ -77,10 +77,7 @@ async fn visible_ids(
     doc: &NavDoc,
     refs: &Refs,
 ) -> Result<HashSet<Uuid>, ApiError> {
-    let filter = match who.bot_id() {
-        Some(bot_id) => readable_projects(&state.db, bot_id).await?,
-        None => ProjectFilter::All,
-    };
+    let filter = caller_projects(&state.db, who.bot_id()).await?;
     let mut visible = HashSet::new();
     let mut flows = Vec::new();
     for (_, entry) in doc.entries() {

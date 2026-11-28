@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use crate::{
     error::ApiError,
-    middleware::{bot_auth::BotAuthContext, scoped_bot::readable_projects},
+    middleware::{bot_auth::BotAuthContext, scoped_bot::caller_projects},
     response::{ApiResponse, PaginatedData},
     services::{
         issue_view::identifier,
@@ -95,10 +95,9 @@ pub async fn get_my_issues(
     let offset = (page - 1) * per_page;
     // A scoped bot sees the rows of the projects it can read only; the count and the page use the
     // same filter.
-    let readable = match &bot {
-        Some(Extension(bot_ctx)) => readable_projects(&state.db, bot_ctx.bot_id).await?.ids(),
-        None => None,
-    };
+    let readable = caller_projects(&state.db, bot.as_ref().map(|Extension(bot_ctx)| bot_ctx.bot_id))
+        .await?
+        .ids();
 
     #[derive(Debug, FromQueryResult)]
     struct MyIssueRow {
@@ -263,10 +262,9 @@ pub async fn get_my_activities(
     let offset = (page - 1) * per_page;
     // A scoped bot sees the rows of the projects it can read only; the count and the page use the
     // same filter.
-    let readable = match &bot {
-        Some(Extension(bot_ctx)) => readable_projects(&state.db, bot_ctx.bot_id).await?.ids(),
-        None => None,
-    };
+    let readable = caller_projects(&state.db, bot.as_ref().map(|Extension(bot_ctx)| bot_ctx.bot_id))
+        .await?
+        .ids();
 
     #[derive(Debug, FromQueryResult)]
     struct MyActivityRow {

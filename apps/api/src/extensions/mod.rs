@@ -24,8 +24,9 @@ use platform::{
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use uuid::Uuid;
 
-use crate::catalogue::{Principal, Refusal, RefusalCode, allowed_pre, allowed_target, by_route};
+use crate::catalogue::{InstallationView, Principal, Refusal, RefusalCode, allowed_pre, allowed_target, by_route};
 use crate::error::ApiError;
+use crate::middleware::scoped_bot::ProjectFilter;
 
 #[cfg(test)]
 mod body_ids_tests;
@@ -55,6 +56,85 @@ tokio::task_local! {
 #[must_use]
 pub fn current() -> Option<PluginCall> {
     CURRENT.try_with(|call| *call).ok()
+}
+
+/// The projects and forms a plugin call may reach beyond the one target the host resolved: the
+/// grants of the capability being called, narrowed to the installation's project.
+///
+/// It is what a scoped bot's access row is for a bot (see `middleware::scoped_bot`): secondary ids
+/// in a body or query and filtered lists are held to it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PluginCover {
+    workspace_id: Uuid,
+    /// The project of a project installation; `None` for a workspace installation.
+    pinned: Option<Uuid>,
+    /// `(project, form)` selectors of the grants of the capability; `None` = any.
+    grants: Vec<(Option<Uuid>, Option<Uuid>)>,
+}
+
+impl PluginCover {
+    /// The cover of `capability` for `installation`.
+    #[must_use]
+    pub fn new(installation: &InstallationView, capability: &str) -> Self {
+        Self {
+            workspace_id: installation.workspace_id,
+            pinned: installation.project_id,
+            grants: installation
+                .grants
+                .iter()
+                .filter(|grant| grant.capability == capability)
+                .map(|grant| (grant.project, grant.form))
+                .collect(),
+        }
+    }
+
+    /// Whether an object of `workspace_id`, in `project_id`, in `form_id` when it is a form or a
+    /// form's child, is covered. Same rule as the host's check of the primary target.
+    #[must_use]
+    pub fn allows(&self, workspace_id: Uuid, project_id: Uuid, form_id: Option<Uuid>) -> bool {
+        workspace_id == self.workspace_id
+            && self.pinned.is_none_or(|pinned| pinned == project_id)
+            && self.grants.iter().any(|(project, form)| {
+                project.is_none_or(|project| project == project_id) && form.is_none_or(|form| form_id == Some(form))
+            })
+    }
+
+    /// The projects a list may show: a form-selector grant adds none (fails closed).
+    #[must_use]
+    pub fn projects(&self) -> ProjectFilter {
+        let mut ids = Vec::new();
+        for (project, form) in &self.grants {
+            if form.is_some() {
+                continue;
+            }
+            match (*project, self.pinned) {
+                (None, None) => return ProjectFilter::All,
+                (None, Some(only)) | (Some(only), None) => ids.push(only),
+                (Some(project), Some(pinned)) if project == pinned => ids.push(project),
+                (Some(_), Some(_)) => {}
+            }
+        }
+        ids.sort_unstable();
+        ids.dedup();
+        ProjectFilter::Only(ids)
+    }
+}
+
+tokio::task_local! {
+    static COVER: PluginCover;
+}
+
+/// The cover of the plugin call the current request belongs to, if any.
+#[must_use]
+pub fn current_cover() -> Option<PluginCover> {
+    COVER.try_with(Clone::clone).ok()
+}
+
+/// Whether a caller counts as automated for the human-only gates (the bot-schema rule, the
+/// published-site draft rules): a bot, or any plugin call, which acts for a person but is code.
+#[must_use]
+pub fn automated(is_bot: bool) -> bool {
+    is_bot || current().is_some()
 }
 
 /// The `source` a handler stores for a write by `actor`.
@@ -198,7 +278,12 @@ pub async fn handle_internal(
     let claims = internal_claims(state, &call).await?;
     let mut request = Request::from_parts(parts, body);
     request.extensions_mut().insert(claims);
-    Ok(scope(call.marker(), next.run(request)).await)
+    let installation = match call.principal.as_ref() {
+        Principal::Plugin { installation, .. } | Principal::Installation { installation, .. } => installation,
+        _ => return Err(not_exposed()),
+    };
+    let cover = PluginCover::new(installation, entry.capability());
+    Ok(COVER.scope(cover, scope(call.marker(), next.run(request))).await)
 }
 
 #[cfg(test)]

@@ -307,14 +307,20 @@ pub async fn viewable_pages(
             }
         }
     }
-    if caller.is_bot {
-        // A scoped bot also needs `read` in the page's project, as `work_items_of_page` requires for
-        // the other direction: the Flow role above treats it as an ordinary member.
+    if caller.is_bot || crate::extensions::current().is_some() {
+        // A scoped bot, or a plugin call, also needs `read` in the page's project, as
+        // `work_items_of_page` requires for the other direction: the Flow role above treats it as
+        // an ordinary member. Personal pages are not shown to either.
         let mut readable = HashSet::new();
         for id in &visible {
-            if ensure_bot_level(db, Some(caller.actor_id), Secondary::FlowObject(*id), Level::Read)
-                .await
-                .is_ok()
+            if ensure_bot_level(
+                db,
+                caller.is_bot.then_some(caller.actor_id),
+                Secondary::FlowObject(*id),
+                Level::Read,
+            )
+            .await
+            .is_ok()
             {
                 readable.insert(*id);
             }
