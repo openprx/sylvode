@@ -282,11 +282,12 @@ fn ai_task_cap_below_the_timeout_names_both_keys() {
 }
 
 #[test]
-fn ai_task_delivery_keys_default_to_the_behaviour_without_them() {
+fn ai_task_delivery_keys_have_their_documented_defaults() {
     let config = parse("").expect("an empty file is valid").ai_tasks;
-    assert_eq!(config.delivery_concurrency, 1);
-    assert_eq!(config.per_runner_concurrency, 1);
+    assert_eq!(config.delivery_concurrency, 8);
+    assert_eq!(config.per_runner_concurrency, 4);
     assert_eq!(config.lane_batch, 10);
+    assert_eq!(config.poll_interval_ms, 1_000);
     assert_eq!(config.pool_idle_timeout_secs, 30);
     assert_eq!(config.pool_max_idle_per_host, 4);
     assert_eq!(config.tcp_keepalive_secs, 30);
@@ -297,7 +298,7 @@ fn ai_task_delivery_keys_default_to_the_behaviour_without_them() {
 fn ai_task_delivery_keys_are_read_and_bounded() {
     let config = parse(
         "[ai_tasks]\ndelivery_concurrency = 8\nper_runner_concurrency = 4\n\
-         lane_batch = 20\npool_idle_timeout_secs = 60\npool_max_idle_per_host = 8\ntcp_keepalive_secs = 0\n",
+         lane_batch = 20\npoll_interval_ms = 500\npool_idle_timeout_secs = 60\npool_max_idle_per_host = 8\ntcp_keepalive_secs = 0\n",
     )
     .expect("valid delivery keys")
     .ai_tasks;
@@ -306,11 +307,12 @@ fn ai_task_delivery_keys_are_read_and_bounded() {
             config.delivery_concurrency,
             config.per_runner_concurrency,
             config.lane_batch,
+            config.poll_interval_ms,
             config.pool_idle_timeout_secs,
             config.pool_max_idle_per_host,
             config.tcp_keepalive_secs
         ),
-        (8, 4, 20, 60, 8, 0)
+        (8, 4, 20, 500, 60, 8, 0)
     );
     for (key, bad) in [
         ("delivery_concurrency", 0_u64),
@@ -319,6 +321,8 @@ fn ai_task_delivery_keys_are_read_and_bounded() {
         ("per_runner_concurrency", 65),
         ("lane_batch", 0),
         ("lane_batch", 1_001),
+        ("poll_interval_ms", 99),
+        ("poll_interval_ms", 60_001),
         ("pool_idle_timeout_secs", 0),
         ("pool_idle_timeout_secs", 3_601),
         ("pool_max_idle_per_host", 0),

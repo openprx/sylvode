@@ -107,8 +107,20 @@ async fn main() -> anyhow::Result<()> {
     // Built once: a worker that cannot build its delivery pool must not run and deliver nothing.
     let deliverer = std::sync::Arc::new(ai_tasks::Deliverer::new(&config.ai_tasks)?);
 
-    let shutdown = shutdown_signal();
-    tokio::pin!(shutdown);
+    // One stop signal for the main loop and the delivery loop.
+    let (stop_tx, mut stop) = tokio::sync::watch::channel(false);
+    tokio::spawn(async move {
+        shutdown_signal().await;
+        let _ = stop_tx.send(true);
+    });
+    // Deliveries run on a loop of their own, so no other job of this loop delays them.
+    let delivery = tokio::spawn(ai_tasks::run_delivery_loop(
+        state.clone(),
+        args.concurrency,
+        config.ai_tasks,
+        deliverer,
+        stop.clone(),
+    ));
     let mut next_operation_log_cleanup = tokio::time::Instant::now();
 
     loop {
@@ -133,16 +145,9 @@ async fn main() -> anyhow::Result<()> {
             Err(err) => tracing::warn!(error = %err, "stalled AI task sweep failed"),
         }
 
-        tokio::select! {
-            () = &mut shutdown => {
-                tracing::info!("worker shutting down");
-                break;
-            }
-            result = ai_tasks::process_pending_tasks(&state, args.concurrency, &config.ai_tasks, &deliverer) => {
-                if let Err(err) = result {
-                    tracing::warn!(error = %err, "task polling failed");
-                }
-            }
+        if *stop.borrow() {
+            tracing::info!("worker shutting down");
+            break;
         }
 
         if let Err(err) =
@@ -160,9 +165,8 @@ async fn main() -> anyhow::Result<()> {
 
         // ADR-0011 dispatcher: expands pending `event_dispatch` work (Flow's `flow.object.*` /
         // `flow.content.accepted` / `flow.feature.*` events, and any future non-Flow producer)
-        // into `event_deliveries`, then sends what is ready. `--concurrency` is the same batch
-        // multiplier every other job on this loop already treats it as, not parallelism — see
-        // `process_pending_tasks` above. `FOR UPDATE SKIP LOCKED` throughout makes this safe to
+        // into `event_deliveries`, then sends what is ready. `--concurrency` is the batch
+        // multiplier every job on this loop treats it as, not parallelism. `FOR UPDATE SKIP LOCKED` throughout makes this safe to
         // run from several worker replicas at once, matching every other job here.
         let dispatch_report = api::events::dispatcher::run_tick(&state, &client, args.concurrency).await;
         tracing::debug!(?dispatch_report, "flow event dispatcher tick");
@@ -219,7 +223,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         tokio::select! {
-            () = &mut shutdown => {
+            _ = stop.wait_for(|stopped| *stopped) => {
                 tracing::info!("worker shutting down");
                 break;
             }
@@ -227,6 +231,10 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // The delivery loop stops picking up and waits for the deliveries in flight.
+    if let Err(err) = delivery.await {
+        tracing::warn!(error = %err, "the delivery loop ended abnormally");
+    }
     Ok(())
 }
 

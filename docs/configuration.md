@@ -125,9 +125,10 @@ How long work handed to a bot may run. The task lifecycle is described in
 | `lease_extension_secs` | integer | `1800` | 60 to 86400. Each acknowledge, progress report or runner heartbeat moves an active task's deadline to this many seconds from now. |
 | `max_processing_secs` | integer | the larger of `86400` and `processing_timeout_secs` | From `processing_timeout_secs` to 604800. No extension moves a deadline past this many seconds after the task started. |
 | `max_chain_depth` | integer | `3` | 1 to 10. Deepest hop of a bot-to-bot chain. A task started by a person or an inbound alert has depth 0; a task a bot causes while it runs a task is one deeper. A hop beyond this depth creates no task. |
-| `delivery_concurrency` | integer | `1` | 1 to 64. Deliveries that run at once. Each bot's tasks are delivered in order, one at a time. 1 delivers a batch serially. |
-| `per_runner_concurrency` | integer | `1` | 1 to 64. Requests in flight to one runner address at once. |
-| `lane_batch` | integer | `10` | 1 to 1000. The `worker` picks up at most its `--concurrency` times this many tasks per tick. |
+| `delivery_concurrency` | integer | `8` | 1 to 64. Bots whose lanes run at once. The `worker` delivers on a loop of its own; each bot has at most one lane in flight and its tasks are delivered in pick-up order, one at a time. 1 delivers one bot after the other. |
+| `per_runner_concurrency` | integer | `4` | 1 to 64. Requests in flight to one runner address at once. |
+| `lane_batch` | integer | `10` | 1 to 1000. The most tasks one bot's lane picks up in one poll. |
+| `poll_interval_ms` | integer | `1000` | 100 to 60000. Milliseconds between the polls of the delivery loop. |
 | `pool_idle_timeout_secs` | integer | `30` | 1 to 3600. An idle pooled connection is closed after this many seconds. |
 | `pool_max_idle_per_host` | integer | `4` | 1 to 64. Idle pooled connections kept per runner address. |
 | `tcp_keepalive_secs` | integer | `30` | 0 to 3600. TCP keepalive interval of pooled connections; 0 turns it off. |

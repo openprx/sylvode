@@ -31,6 +31,7 @@
       "delivery_concurrency",
       "per_runner_concurrency",
       "lane_batch",
+      "poll_interval_ms",
       "pool_idle_timeout_secs",
       "pool_max_idle_per_host",
       "tcp_keepalive_secs"
