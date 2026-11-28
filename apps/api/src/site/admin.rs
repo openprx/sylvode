@@ -822,9 +822,10 @@ async fn checked_binding(
     Ok((form.id, stored))
 }
 
-/// `POST /api/v1/sites/{id}/bindings/{key}`: creates a binding; `409 binding_exists` when the key is
-/// taken (a change of an existing binding is the `PUT`). The form must belong to the site's project;
-/// the projection is checked against its schema.
+/// `POST /api/v1/sites/{id}/bindings/{key}`: creates a binding.
+///
+/// `409 binding_exists` when the key is taken (a change of an existing binding is the `PUT`). The form
+/// must belong to the site's project; the projection is checked against its schema.
 pub async fn create_binding(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
@@ -840,9 +841,10 @@ pub async fn create_binding(
     Ok(ApiResponse::success(binding_body(&row)))
 }
 
-/// `PUT /api/v1/sites/{id}/bindings/{key}`: replaces an existing binding (`404` when there is none; a
-/// new one is the `POST`). The form must belong to the site's project; the projection is checked
-/// against its schema.
+/// `PUT /api/v1/sites/{id}/bindings/{key}`: replaces an existing binding.
+///
+/// `404` when there is none (a new one is the `POST`). The form must belong to the site's project; the
+/// projection is checked against its schema.
 pub async fn put_binding(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
