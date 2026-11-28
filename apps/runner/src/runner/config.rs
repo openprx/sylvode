@@ -25,9 +25,9 @@ pub struct RunnerConfig {
     /// Overrides the report interval the API advertises (seconds).
     pub report_interval_secs: Option<u64>,
     /// How long an enqueue waits for the session's queue position before it answers without one,
-    /// in milliseconds. 0 (the default) waits for the session's worker, as always.
+    /// in milliseconds. 0 waits for the session's worker without a bound.
     pub enqueue_answer_ms: u64,
-    /// The most tasks one session may hold queued. 0 (the default) means no limit.
+    /// The most tasks one session may hold queued; above it the answer is 503. 0 means no limit.
     pub max_queued_per_session: u32,
     /// Install the skill or the managed `AGENTS.md` section into the project directory.
     pub install_agent_guide: bool,
@@ -47,8 +47,8 @@ impl Default for RunnerConfig {
             delivery_check_timeout_secs: 5,
             heartbeat_secs: 600,
             report_interval_secs: None,
-            enqueue_answer_ms: 0,
-            max_queued_per_session: 0,
+            enqueue_answer_ms: 250,
+            max_queued_per_session: 100,
             install_agent_guide: true,
             git_exclude_managed: true,
             tmux: RunnerTmuxConfig::default(),
@@ -60,27 +60,27 @@ impl Default for RunnerConfig {
 }
 
 /// `[runner.http]`: the connection pool of the one HTTP client the runner uses towards Sylvode.
-/// The defaults are the HTTP library's own, so an absent section changes nothing.
+/// The defaults are tuned for a runner that talks to one Sylvode API all day.
 #[derive(Deserialize, Clone, Debug)]
 #[serde(default, deny_unknown_fields)]
 pub struct RunnerHttpConfig {
-    /// How long an idle pooled connection is kept (library default 90).
+    /// How long an idle pooled connection is kept.
     pub pool_idle_timeout_secs: u64,
-    /// The most idle pooled connections per host; 0 means no limit (library default).
+    /// The most idle pooled connections per host; 0 means no limit.
     pub pool_max_idle_per_host: u32,
-    /// TCP keep-alive interval; 0 means off (library default).
+    /// TCP keep-alive interval; 0 means off.
     pub tcp_keepalive_secs: u64,
-    /// Time allowed to open a connection; 0 means none (library default).
+    /// Time allowed to open a connection; 0 means none.
     pub connect_timeout_secs: u64,
 }
 
 impl Default for RunnerHttpConfig {
     fn default() -> Self {
         Self {
-            pool_idle_timeout_secs: 90,
-            pool_max_idle_per_host: 0,
-            tcp_keepalive_secs: 0,
-            connect_timeout_secs: 0,
+            pool_idle_timeout_secs: 60,
+            pool_max_idle_per_host: 8,
+            tcp_keepalive_secs: 30,
+            connect_timeout_secs: 5,
         }
     }
 }

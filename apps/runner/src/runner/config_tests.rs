@@ -10,10 +10,10 @@ fn parse(toml: &str) -> Result<RunnerConfig, String> {
 }
 
 #[test]
-fn an_empty_runner_block_keeps_today_s_behaviour() {
+fn an_empty_runner_block_takes_the_tuned_defaults() {
     let config = parse("").expect("empty block");
-    assert_eq!(config.enqueue_answer_ms, 0);
-    assert_eq!(config.max_queued_per_session, 0);
+    assert_eq!(config.enqueue_answer_ms, 250);
+    assert_eq!(config.max_queued_per_session, 100);
     let http = &config.http;
     assert_eq!(
         (
@@ -22,7 +22,7 @@ fn an_empty_runner_block_keeps_today_s_behaviour() {
             http.tcp_keepalive_secs,
             http.connect_timeout_secs
         ),
-        (90, 0, 0, 0)
+        (60, 8, 30, 5)
     );
 }
 
@@ -49,26 +49,26 @@ tool_mode = "search"
     .expect("a block written for the runner before the pool");
     assert_eq!(config.tmux.sessions.len(), 1);
     assert_eq!(config.tmux.sessions[0].name, "sv");
-    assert_eq!(config.enqueue_answer_ms, 0);
-    assert_eq!(config.http.pool_idle_timeout_secs, 90);
+    assert_eq!(config.enqueue_answer_ms, 250);
+    assert_eq!(config.http.pool_idle_timeout_secs, 60);
 }
 
 #[test]
 fn the_new_keys_parse() {
     let config = parse(
         r#"
-enqueue_answer_ms = 250
-max_queued_per_session = 100
+enqueue_answer_ms = 300
+max_queued_per_session = 50
 
 [http]
-pool_idle_timeout_secs = 60
-pool_max_idle_per_host = 8
-tcp_keepalive_secs = 30
-connect_timeout_secs = 5
+pool_idle_timeout_secs = 45
+pool_max_idle_per_host = 4
+tcp_keepalive_secs = 15
+connect_timeout_secs = 3
 "#,
     )
     .expect("the enabled values");
-    assert_eq!((config.enqueue_answer_ms, config.max_queued_per_session), (250, 100));
+    assert_eq!((config.enqueue_answer_ms, config.max_queued_per_session), (300, 50));
     assert_eq!(
         (
             config.http.pool_idle_timeout_secs,
@@ -76,7 +76,7 @@ connect_timeout_secs = 5
             config.http.tcp_keepalive_secs,
             config.http.connect_timeout_secs
         ),
-        (60, 8, 30, 5)
+        (45, 4, 15, 3)
     );
 }
 
@@ -107,9 +107,17 @@ fn the_client_builds_with_the_defaults_and_with_every_option_set() {
     };
     assert!(tuned.validate().is_ok());
     assert!(build_http_client(&tuned).is_ok());
-    // The default idle timeout is the library's own, 90 seconds.
     assert_eq!(
         Duration::from_secs(RunnerHttpConfig::default().pool_idle_timeout_secs),
-        Duration::from_secs(90)
+        Duration::from_secs(60)
     );
+    // The values that switch an option off are still valid.
+    let off = RunnerHttpConfig {
+        pool_idle_timeout_secs: 90,
+        pool_max_idle_per_host: 0,
+        tcp_keepalive_secs: 0,
+        connect_timeout_secs: 0,
+    };
+    assert!(off.validate().is_ok());
+    assert!(build_http_client(&off).is_ok());
 }
