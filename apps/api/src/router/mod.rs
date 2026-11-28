@@ -60,6 +60,16 @@ pub fn build_router(state: AppState) -> Router {
 /// [`build_router`] with an explicit `[oauth]` configuration (tests; the server passes the
 /// installed one).
 pub fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::config::OAuthConfig>>) -> Router {
+    build_router_with_inbound(state, oauth, api::config::runtime().inbound)
+}
+
+/// [`build_router_with`] with an explicit `[inbound]` configuration (tests; the server passes the
+/// installed one).
+pub fn build_router_with_inbound(
+    state: AppState,
+    oauth: Option<&std::sync::Arc<platform::config::OAuthConfig>>,
+    inbound: platform::config::InboundConfig,
+) -> Router {
     let auth_state = state.clone();
 
     let router = Router::new()
@@ -76,7 +86,7 @@ pub fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform
         .merge(routes::flow_surface::seal(flow::routes(&auth_state)))
         // OAuth authorization server: metadata documents and, with later packages, the endpoints.
         .merge(api::oauth::router::routes_with(&auth_state, oauth))
-        .merge(alerts::routes(&auth_state))
+        .merge(alerts::routes(&auth_state, inbound))
         .merge(planning::routes(&auth_state))
         .merge(integrations::routes(&auth_state))
         .merge(catalogue::routes(&auth_state))

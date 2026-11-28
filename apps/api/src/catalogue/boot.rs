@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement, TransactionTrait};
 use sha2::{Digest, Sha256};
 
-use super::coverage::{AuthKind, RouteFact, scan};
+use super::coverage::{AuthKind, RouteFact, non_literal_routes, scan};
 use super::types::{Entry, Exposure, Method, Risk, Scope};
 use super::uncatalogued::{OAUTH_SOURCES, findings as oauth_findings, is_uncatalogued};
 
@@ -99,6 +99,7 @@ pub async fn check(router_sources: &[(&str, &str)], db: &DatabaseConnection) -> 
         .map(|route| (route.method, route.pattern))
         .collect();
     let mut problems = findings(&entries, &facts, &delegated);
+    problems.extend(non_literal_routes(router_sources));
     let catalogued: BTreeSet<&str> = entries.iter().map(|entry| entry.path).collect();
     problems.extend(oauth_findings(OAUTH_SOURCES, &catalogued));
     if !problems.is_empty() {

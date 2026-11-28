@@ -5,9 +5,9 @@ use axum::{
     Router, middleware as axum_middleware,
     routing::{get, post},
 };
-use platform::app::AppState;
+use platform::{app::AppState, config::InboundConfig};
 
-pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
+pub(super) fn routes(auth_state: &AppState, inbound: InboundConfig) -> Router<AppState> {
     Router::new()
         // Alert chain: the inbound event endpoint. It carries its own layer, which accepts a source
         // credential only (never a session, a bot token or a delegated token) and applies the
@@ -18,7 +18,7 @@ pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
         .route(
             "/api/v1/inbound/events",
             post(routes::inbound_events::post_event).route_layer(axum_middleware::from_fn_with_state(
-                api::inbound::auth_state(auth_state, api::config::runtime().inbound),
+                api::inbound::auth_state(auth_state, inbound),
                 api::inbound::auth::inbound_source_auth,
             )),
         )
