@@ -3172,12 +3172,58 @@ mod tests {
         })
     }
 
+    /// Whether the parent module declares the file as `#[cfg(test)] mod <stem>;`, which excludes the
+    /// whole file from a production build (the declaration, not the file name, decides).
+    fn declared_cfg_test_module(path: &std::path::Path) -> bool {
+        let (Some(stem), Some(dir)) = (path.file_stem().and_then(|s| s.to_str()), path.parent()) else {
+            return false;
+        };
+        let mut parents = Vec::new();
+        if stem == "mod" || stem == "lib" || stem == "main" {
+            return false;
+        }
+        parents.push(dir.join("mod.rs"));
+        parents.push(dir.join("lib.rs"));
+        parents.push(dir.join("main.rs"));
+        if let (Some(name), Some(grand)) = (dir.file_name(), dir.parent()) {
+            parents.push(grand.join(format!("{}.rs", name.to_string_lossy())));
+        }
+        let declaration = format!("mod {stem};");
+        parents
+            .iter()
+            .filter_map(|parent| std::fs::read_to_string(parent).ok())
+            .any(|text| {
+                // `#[cfg(test)]` followed by further attributes (possibly over several lines) and the
+                // declaration; any other item ends the run of attributes.
+                let mut cfg_test = false;
+                for line in text.lines().map(str::trim) {
+                    if line.starts_with("//") {
+                        continue;
+                    }
+                    if line == "#[cfg(test)]" {
+                        cfg_test = true;
+                    } else if line.ends_with(&declaration) {
+                        if cfg_test {
+                            return true;
+                        }
+                    } else if line.ends_with(';') || line.ends_with('}') || line.ends_with('{') {
+                        cfg_test = false;
+                    }
+                }
+                false
+            })
+    }
+
     #[test]
     fn flow_collection_forms_tables_untouched_scans_executable_sql_paths() {
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let workspace = manifest.join("../..");
         let forbidden_forms = ["project_forms", "form_records", "form_views", "form_record_field_index"];
         let allowed_forms_writers = [
+            // An approved draft writes a form schema: `form.design` is checked, and the schema
+            // version and the `form.updated` event are written in the same transaction through the
+            // helpers of `routes/form.rs`.
+            "apps/api/src/drafts/apply.rs",
             "apps/api/src/forms/native_create.rs",
             "apps/api/src/forms/projections.rs",
             "apps/api/src/routes/form.rs",
@@ -3206,6 +3252,7 @@ mod tests {
                 .map(str::trim)
                 .find(|line| !line.is_empty() && !line.starts_with("//"))
                 == Some("#![cfg(test)]")
+                || declared_cfg_test_module(&path)
             {
                 continue;
             }

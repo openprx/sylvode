@@ -676,6 +676,10 @@ enum Class {
     HandlerDenied,
     /// Needs no bearer credential at all: a delegated token adds nothing to what anyone can do.
     Public,
+    /// The public site API: it takes no `Authorization` header at all, so a delegated token is
+    /// refused `site_credentials_refused` by the site guard, while an anonymous caller is
+    /// answered by the site (the standard 404 for an unknown site).
+    SiteApi,
 }
 
 /// Routes that need no bearer credential. Every other route must be allowed or refused, so a new
@@ -888,6 +892,25 @@ async fn every_route_is_on_the_allow_list_with_a_scope_or_denied() {
                     "{label}: a route refusal names no scope: {challenge}"
                 );
                 Class::RouteDenied
+            } else if route.path.starts_with("/api/site/v1/") {
+                assert_eq!(
+                    delegated.status,
+                    StatusCode::UNAUTHORIZED,
+                    "{label}: {}",
+                    delegated.text()
+                );
+                assert_eq!(
+                    delegated.json()["error_code"],
+                    "site_credentials_refused",
+                    "{label}: a site route must refuse any Authorization header: {}",
+                    delegated.text()
+                );
+                assert!(
+                    !delegated.refused_by_delegation(),
+                    "{label}: the site guard, not the delegated branch, refuses: {}",
+                    delegated.text()
+                );
+                Class::SiteApi
             } else if matches!(delegated.code(), Some(401 | 403)) || matches!(delegated.status.as_u16(), 401 | 403) {
                 // Anything that is not the delegated branch must also have refused the anonymous call.
                 assert!(
@@ -918,6 +941,7 @@ async fn every_route_is_on_the_allow_list_with_a_scope_or_denied() {
                     Class::OtherAuthDenied => "denied by other authentication",
                     Class::HandlerDenied => "denied by the management handler",
                     Class::Public => "public",
+                    Class::SiteApi => "site API (refuses any Authorization header)",
                 })
                 .or_default() += 1;
         }

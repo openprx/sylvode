@@ -1990,7 +1990,7 @@ async fn the_legacy_objects_migration_keeps_only_package_imports() {
     scratch.drop_self().await;
 }
 
-/// The low-code migrations (0133-0142; 0141 is unused) apply on a fresh database, each re-runs as a no-op, and
+/// The low-code migrations (0133-0143) apply on a fresh database, each re-runs as a no-op, and
 /// the runner's replay start succeeds after them. 0136 also rewrites a v1 form schema it finds.
 #[tokio::test]
 async fn low_code_migrations_apply_and_rerun() {
@@ -2002,15 +2002,29 @@ async fn low_code_migrations_apply_and_rerun() {
     let low_code: Vec<(&str, &str)> = MIGRATIONS
         .iter()
         .copied()
-        .filter(|(name, _)| ("0133".."0143").contains(&name.get(..4).unwrap_or_default()))
+        .filter(|(name, _)| ("0133".."0144").contains(&name.get(..4).unwrap_or_default()))
         .collect();
-    assert_eq!(low_code.len(), 9, "0133 through 0142 (no 0141) are registered");
+    assert_eq!(low_code.len(), 11, "0133 through 0143 are registered");
+    // 0141 drops `scenario_templates`, which 0136 still rewrites when it runs on its own, so the
+    // table (an idempotent file, 0029) is back before each stand-alone re-run that needs it.
+    let restore_scenario_templates = || async {
+        let sql = MIGRATIONS
+            .iter()
+            .find(|(name, _)| name.starts_with("0029"))
+            .map(|(_, sql)| *sql)
+            .expect("0029 is registered");
+        db.execute_unprepared(sql)
+            .await
+            .expect("0029 recreates scenario_templates");
+    };
+    restore_scenario_templates().await;
     for (name, sql) in &low_code {
         db.execute_unprepared(&format!("BEGIN; {sql}\nCOMMIT;"))
             .await
             .unwrap_or_else(|err| panic!("{name} does not re-run: {err}"));
     }
 
+    restore_scenario_templates().await;
     db.execute_unprepared(
         r#"INSERT INTO scenario_templates (key, name, project_type_key, field_schema)
            SELECT 'mig_v1_check', 'v1 check', key,

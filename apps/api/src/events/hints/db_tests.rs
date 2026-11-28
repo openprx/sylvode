@@ -721,6 +721,21 @@ async fn the_migration_can_run_again_on_a_migrated_database() {
         "/../../migrations/0132_change_hints.sql"
     ))
     .expect("the migration is readable");
+    // Later migrations add hint triggers of their own (0137 sites, 0139 drafts) and 0143 recreates
+    // the work item one, so the count is read from the migrated database before the file runs again.
+    let count_triggers = || {
+        count(
+            &scratch.db,
+            "SELECT count(*) AS count FROM pg_trigger WHERE tgname LIKE 'trg_sv_hint_%' AND NOT tgisinternal",
+            vec![],
+        )
+    };
+    let before = count_triggers().await;
+    let declared = sql.matches("CREATE TRIGGER trg_sv_hint_").count();
+    assert!(
+        declared > 0 && before >= i64::try_from(declared).expect("a small count"),
+        "the migrated database has the triggers 0132 declares ({declared}): {before}"
+    );
     for run in 1..=2 {
         scratch
             .db
@@ -728,13 +743,7 @@ async fn the_migration_can_run_again_on_a_migrated_database() {
             .await
             .unwrap_or_else(|error| panic!("run {run} of 0132: {error}"));
     }
-    let triggers = count(
-        &scratch.db,
-        "SELECT count(*) AS count FROM pg_trigger WHERE tgname LIKE 'trg_sv_hint_%' AND NOT tgisinternal",
-        vec![],
-    )
-    .await;
-    assert_eq!(triggers, 13, "no trigger is created twice");
+    assert_eq!(count_triggers().await, before, "no trigger is created twice");
     scratch.drop_self().await;
 }
 

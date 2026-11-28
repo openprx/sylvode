@@ -596,7 +596,11 @@ fn flow_wiring_findings(files: &[(String, String)]) -> Vec<String> {
                 if LOCAL_HANDLERS.contains(&(route.path.as_str(), handler.as_str())) && !route.flow_path() {
                     continue;
                 }
-                if NON_FLOW_HANDLER_PREFIXES.iter().any(|prefix| handler.starts_with(prefix)) && !route.flow_path() {
+                if NON_FLOW_HANDLER_PREFIXES
+                    .iter()
+                    .any(|prefix| handler.starts_with(prefix))
+                    && !route.flow_path()
+                {
                     continue;
                 }
                 findings.push(format!(

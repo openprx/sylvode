@@ -261,6 +261,17 @@ async fn the_active_version_index_exists_and_old_duplicates_are_repaired() {
         "/../../migrations/0119_plugin_single_active_version.sql"
     ))
     .expect("the migration file");
+    // 0119 also edits a scenario template row; 0141 has dropped that table since, so the
+    // (idempotent) 0029 file brings it back for this stand-alone run.
+    let scenario_templates = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../migrations/0029_scenario_templates.sql"
+    ))
+    .expect("the 0029 file");
+    api.db
+        .execute_unprepared(&scenario_templates)
+        .await
+        .expect("0029 recreates scenario_templates");
     api.db.execute_unprepared(&sql).await.expect("0119 runs");
     assert_eq!(
         (api.plugin_status(older).await, api.plugin_status(newer).await),
