@@ -10,6 +10,12 @@ name.
 
 ## [Unreleased]
 
+### Removed
+
+- **Worker: `[ai_tasks] delivery_pool` is gone.** The worker always delivers through the checked
+  connection pool; a configuration that still sets `delivery_pool` is refused at start, so remove the
+  key before upgrading.
+
 ### Added
 
 - **Project templates are built-in packages.** The six scenario templates are signed packages
