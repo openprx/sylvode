@@ -12,6 +12,17 @@ name.
 
 ### Security
 
+- **A plugin call no longer reaches more than a bot of the same scope.** A call is held to its
+  installation's workspace: a `workspace_id` in the path, query or body that is not the installation's
+  is refused, workspace-wide lists, search, `my/*` and proposal creation see that workspace only, and
+  the workspace access check refuses any other workspace. Flow handlers that refuse bots (personal
+  scopes, mounts, block shares, transfers, operations, body assets) now refuse plugin calls too, and
+  those 29 operations plus the workspace navigation write and delete are closed to plugins (the
+  plugin operation list goes from 266 to 235). The work items linked to a page are limited to the
+  projects the grants cover, an issue identifier is looked up in the installation's workspace only,
+  and a plugin's edit of a layout that a published site shows becomes a draft, as a bot's does. The
+  approval of a destructive capability needs an explicit `confirm` entry on the server, and a
+  `Filtered` operation must be a read to be open to plugins.
 - **Site operator login follows the console login model.** `POST /api/site/v1/{slug}/auth/operator/login`
   no longer has its own in-memory 5 per minute per e-mail limit. It uses the database-backed limiter
   with the console's figures on separate site buckets, so the console and a site never share a

@@ -1358,7 +1358,7 @@ pub struct ByIdentifierQuery {
 /// GET /api/v1/issues/by-identifier/:identifier
 /// Get a work item by its short identifier, e.g. "PRX-42".
 ///
-/// A bot or a connected application looks in its own workspace. A user looks in the workspaces
+/// A bot, a plugin call or a connected application looks in its own workspace. A user looks in the workspaces
 /// they are a member of: one match answers, none is 404, and several answer 409 so the caller
 /// passes `workspace_id`.
 pub async fn get_issue_by_identifier(
@@ -1388,7 +1388,8 @@ pub async fn get_issue_by_identifier(
     let fixed_workspace = match (crate::oauth::delegated::current(), bot.as_ref()) {
         (Some(delegated), _) => Some(delegated.workspace_id),
         (None, Some(Extension(bot_ctx))) => Some(bot_ctx.workspace_id),
-        (None, None) => None,
+        // A plugin call looks in its installation's workspace, where the host resolved the key.
+        (None, None) => crate::extensions::current_cover().map(|cover| cover.workspace_id()),
     };
     let located = if let Some(workspace_id) = fixed_workspace {
         if query.workspace_id.is_some_and(|requested| requested != workspace_id) {

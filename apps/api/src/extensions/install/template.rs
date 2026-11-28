@@ -168,6 +168,7 @@ pub async fn install_prepared_in(
         &ApproveRequest {
             generation: 1,
             grants: Vec::new(),
+            confirm: Vec::new(),
         },
     )
     .await?;

@@ -75,6 +75,8 @@ pub enum RefusalCode {
     GrantNotPluginExposed,
     /// a grant selector is not valid for this installation.
     GrantSelectorInvalid,
+    /// a destructive grant was approved without an explicit confirm.
+    GrantConfirmRequired,
     /// The invoking user's session ended (logout, password reset, deactivation) while the plugin ran.
     PluginSessionEnded,
     /// The old plugin system accepts installs and updates from workspace owners and admins only.
@@ -125,6 +127,7 @@ impl RefusalCode {
             Self::GrantNotRequested => "grant_not_requested",
             Self::GrantNotPluginExposed => "grant_not_plugin_exposed",
             Self::GrantSelectorInvalid => "grant_selector_invalid",
+            Self::GrantConfirmRequired => "grant_confirm_required",
             Self::PluginSessionEnded => "plugin_session_ended",
             Self::LegacyPluginAdminOnly => "legacy_plugin_admin_only",
             Self::LegacyPluginPatchDenied => "legacy_plugin_patch_denied",
@@ -142,6 +145,7 @@ impl RefusalCode {
             | Self::GrantNotRequested
             | Self::GrantNotPluginExposed
             | Self::GrantSelectorInvalid
+            | Self::GrantConfirmRequired
             | Self::PluginWitVersion
             | Self::PluginWorldMismatch
             | Self::PluginUnknownImport
@@ -207,6 +211,7 @@ impl RefusalCode {
             Self::GrantNotRequested => "a grant names a capability the package did not request",
             Self::GrantNotPluginExposed => "a grant names a capability plugins cannot use",
             Self::GrantSelectorInvalid => "a grant selector is not valid for this installation",
+            Self::GrantConfirmRequired => "a destructive capability needs an explicit confirm in the approval",
             Self::PluginSessionEnded => "the session of the invoking user ended",
             Self::LegacyPluginAdminOnly => "only a workspace owner or admin may install or update a plugin",
             Self::LegacyPluginPatchDenied => "the plugin may not change this field",

@@ -464,7 +464,7 @@ pub(crate) async fn create_form_schema_draft(
 /// its report.
 pub(crate) async fn create_site_page_draft(
     state: &AppState,
-    bot_id: Uuid,
+    (author_kind, author_id): (&'static str, Uuid),
     workspace_id: Uuid,
     project_id: Uuid,
     target: &PageTarget,
@@ -476,7 +476,7 @@ pub(crate) async fn create_site_page_draft(
             "the spec is larger than a draft may be",
         ));
     }
-    if store::count_last_minute(&state.db, "bot", bot_id).await? >= CREATIONS_PER_MINUTE {
+    if store::count_last_minute(&state.db, author_kind, author_id).await? >= CREATIONS_PER_MINUTE {
         return Err(rate_limited("too many drafts in the last minute"));
     }
     let project = Scope {
@@ -491,7 +491,15 @@ pub(crate) async fn create_site_page_draft(
         target: serde_json::to_value(target).map_err(|_| ApiError::internal())?,
         prepared,
     };
-    let row = store_draft(state, &project, KIND_SITE_PAGE, ("bot", bot_id), candidate, None).await?;
+    let row = store_draft(
+        state,
+        &project,
+        KIND_SITE_PAGE,
+        (author_kind, author_id),
+        candidate,
+        None,
+    )
+    .await?;
     Ok(row.id)
 }
 

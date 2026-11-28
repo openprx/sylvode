@@ -86,6 +86,12 @@ impl PluginCover {
         }
     }
 
+    /// The workspace of the installation: the only workspace a plugin call may work in.
+    #[must_use]
+    pub const fn workspace_id(&self) -> Uuid {
+        self.workspace_id
+    }
+
     /// Whether an object of `workspace_id`, in `project_id`, in `form_id` when it is a form or a
     /// form's child, is covered. Same rule as the host's check of the primary target.
     #[must_use]
@@ -290,6 +296,13 @@ pub async fn handle_internal(
     let Some(resource) = resource else {
         return Err(Refusal::new(RefusalCode::CapabilityScopeMismatch, Some(entry.capability())).into());
     };
+    // A route that names no project works in the workspace the request names, which must be the
+    // installation's: the user's other workspaces are out of reach.
+    if resource::workspace_wide(entry)
+        && !resource::workspace_pinned(resource.workspace_id, &params, parts.uri.query(), json.as_ref())
+    {
+        return Err(Refusal::new(RefusalCode::CapabilityScopeMismatch, Some(entry.capability())).into());
+    }
     allowed_target(&call.principal, entry, &resource)?;
     let claims = internal_claims(state, &call).await?;
     let mut request = Request::from_parts(parts, body);

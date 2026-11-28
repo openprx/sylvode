@@ -460,8 +460,37 @@ pub async fn readable_projects(db: &DatabaseConnection, bot_id: Uuid) -> Result<
 pub async fn caller_projects(db: &DatabaseConnection, bot_id: Option<Uuid>) -> Result<ProjectFilter, ApiError> {
     match bot_id {
         Some(bot_id) => readable_projects(db, bot_id).await,
-        None => Ok(crate::extensions::current_cover().map_or(ProjectFilter::All, |cover| cover.projects())),
+        None => match crate::extensions::current_cover() {
+            None => Ok(ProjectFilter::All),
+            Some(cover) => plugin_projects(db, &cover).await,
+        },
     }
+}
+
+/// The projects a plugin call's cover reaches, always inside the installation's workspace: "all
+/// projects" means all projects of that workspace, never the other workspaces of the user.
+async fn plugin_projects(
+    db: &DatabaseConnection,
+    cover: &crate::extensions::PluginCover,
+) -> Result<ProjectFilter, ApiError> {
+    #[derive(FromQueryResult)]
+    struct Id {
+        id: Uuid,
+    }
+    let in_workspace = Id::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id FROM projects WHERE workspace_id = $1",
+        vec![cover.workspace_id().into()],
+    ))
+    .all(db)
+    .await
+    .map_err(ApiError::internal_database_failure)?
+    .into_iter()
+    .map(|row| row.id);
+    Ok(ProjectFilter::Only(match cover.projects() {
+        ProjectFilter::All => in_workspace.collect(),
+        ProjectFilter::Only(ids) => in_workspace.filter(|id| ids.contains(id)).collect(),
+    }))
 }
 
 /// The largest body read to find the project of a request that names it there.

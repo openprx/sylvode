@@ -185,7 +185,7 @@ impl PageSpec {
     }
 }
 
-/// Stores a bot's write to a published site as a `site_page` draft and answers `{draft_id}`.
+/// Stores a bot's or plugin call's write to a published site as a `site_page` draft and answers `{draft_id}`.
 pub async fn submit(
     state: &AppState,
     who: &Who,
@@ -193,10 +193,10 @@ pub async fn submit(
     target: &PageTarget,
     spec: Value,
 ) -> Result<Response, ApiError> {
-    let bot_id = who.bot_id().ok_or_else(ApiError::internal)?;
+    let author = who.draft_author()?.ok_or_else(ApiError::internal)?;
     let draft_id = crate::drafts::handlers::create_site_page_draft(
         state,
-        bot_id,
+        author,
         site.workspace_id,
         site.project_id,
         target,

@@ -45,6 +45,18 @@ impl Principal {
         self.bot.as_ref().map(|bot| bot.bot_id)
     }
 
+    /// The author of a draft the request stores: the bot, or the person behind a plugin call;
+    /// `None` for a person acting directly.
+    pub(crate) fn draft_author(&self) -> Result<Option<(&'static str, Uuid)>, ApiError> {
+        if let Some(bot_id) = self.bot_id() {
+            return Ok(Some(("bot", bot_id)));
+        }
+        if crate::extensions::current().is_some() {
+            return Ok(self.user_id()?.map(|user| ("user", user)));
+        }
+        Ok(None)
+    }
+
     /// The request extensions the shared authorisation helpers read (claims and bot context).
     pub(crate) fn extensions(&self) -> axum::http::Extensions {
         let mut extensions = axum::http::Extensions::new();
@@ -191,9 +203,18 @@ pub async fn require_read(state: &AppState, who: &Principal, scope: &Scope) -> R
         Some(project_id) => ensure_bot_level(&state.db, who.bot_id(), Secondary::Project(project_id), Level::Read)
             .await
             .map_err(reads_as_not_found)?,
-        None => match caller_projects(&state.db, who.bot_id()).await? {
-            ProjectFilter::All => {}
-            ProjectFilter::Only(_) => return Err(scope_not_found()),
+        // `member` has held a plugin call to its installation's workspace; "all projects" of the
+        // cover is what lets it read a workspace-level layout there.
+        None => match crate::extensions::current_cover() {
+            Some(cover) => {
+                if !matches!(cover.projects(), ProjectFilter::All) {
+                    return Err(scope_not_found());
+                }
+            }
+            None => match caller_projects(&state.db, who.bot_id()).await? {
+                ProjectFilter::All => {}
+                ProjectFilter::Only(_) => return Err(scope_not_found()),
+            },
         },
     }
     if scope.kind == ScopeKind::Form {
