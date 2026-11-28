@@ -119,6 +119,7 @@ GET /api/v1/my/activities Filtered - false
 GET /api/v1/my/issues Filtered - false
 GET /api/v1/notifications Own - false
 GET /api/v1/notifications/unread-count Own - false
+GET /api/v1/openapi.json NoProject - false
 GET /api/v1/plugins/{plugin_id} Project Table("plugins","plugin_id") false
 GET /api/v1/plugins/{plugin_id}/invocations Project Table("plugins","plugin_id") false
 GET /api/v1/project-types NoProject - false

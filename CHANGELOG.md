@@ -66,6 +66,10 @@ name.
 
 ### Added
 
+- **OpenAPI description of the API.** `GET /api/v1/openapi.json` returns an OpenAPI 3.1 document
+  generated from the operation catalogue: one operation per catalogued route with its tag, path
+  parameters, accepted authentication channels and the exposure, risk, scope and stability as
+  `x-sylvode-*` extensions. Bodies are generic objects. See docs/integrations/api.md.
 - **MCP resource subscriptions.** `subscriptions/listen` honours `resourceSubscriptions` for
   `sylvode://tasks/{task_id}`, `sylvode://issues/{identifier}` and `sylvode://agents/{agent_id}/inbox`
   and pushes `notifications/resources/updated` (the URI echoed byte for byte) after each change

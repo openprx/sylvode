@@ -5,6 +5,7 @@ use crate::catalogue::types::dsl::{Entry, Get, Global, Read, bot};
 #[rustfmt::skip]
 pub static ENTRIES: &[Entry] = &[
     bot("catalogue.capabilities.read", Get, "/api/v1/catalogue", Global, Read),
+    bot("catalogue.openapi.read", Get, "/api/v1/openapi.json", Global, Read),
 ];
 
 #[cfg(test)]
@@ -18,7 +19,7 @@ mod tests {
     fn the_classes_of_the_area() {
         assert_eq!(
             bot_class_counts(ENTRIES),
-            BTreeMap::from([("no project", 1)]),
+            BTreeMap::from([("no project", 2)]),
             "the classes of the catalogue routes changed"
         );
     }

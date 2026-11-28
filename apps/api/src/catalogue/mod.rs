@@ -8,6 +8,7 @@
 //!   exits; the capability ids are synchronised into `capability_ids`.
 //! * [`guard::guard`]: the request-time guard layer.
 //! * `GET /api/v1/catalogue`: [`handler::capabilities`].
+//! * `GET /api/v1/openapi.json`: [`openapi::serve`], an `OpenAPI` 3.1 view of the entries.
 
 pub mod areas;
 pub mod boot;
@@ -15,6 +16,7 @@ mod check;
 pub mod coverage;
 pub mod guard;
 pub mod handler;
+pub mod openapi;
 pub mod principal;
 pub mod refusal;
 pub mod types;
