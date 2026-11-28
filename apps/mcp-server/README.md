@@ -177,7 +177,8 @@ The server speaks two protocol eras on the same endpoints (`POST /mcp/rpc` and s
   answered `-32020` with `data.header`, status `400`. The headers are checked after
   authentication; legacy requests are never checked.
 * Statuses of a modern request: `-32020`, `-32022`, `-32700`, `-32600` answer `400`; `-32601`
-  answers `404`; `-32000` (too many listen streams) answers `429` with `Retry-After: 30`;
+  answers `404`; `-32000` (too many listen streams, or the server asks the caller to retry later)
+  answers `429` with `Retry-After: 30`;
   everything else `200`; a notification `202`. Legacy requests keep answering `200`.
 * No response carries `Mcp-Session-Id`; `GET /mcp/rpc` answers `405`.
 * `Origin`: a request without an `Origin` header is served. A request whose `Origin` is present
@@ -193,17 +194,37 @@ no-cache`, `X-Accel-Buffering: no`), one `data:` event per JSON-RPC message. The
 the acknowledgment (`notifications/subscriptions/acknowledged`, whose `_meta` subscription id is
 the request id). The request needs `jsonrpc` `"2.0"` and a string or number id (else `-32600`).
 
-What the server pushes today is the tool list: it declares `tools.listChanged` (the value of
-`[mcp] listen`), and a bot token that asks for `toolsListChanged` is acknowledged with it and
+What the server pushes is the tool list and resource updates. It declares `tools.listChanged` and
+`resources.subscribe` (both the value of `[mcp] listen`; legacy `initialize` declares neither), and a bot token that asks for `toolsListChanged` is acknowledged with it and
 receives `notifications/tools/list_changed` when the tool surface may have changed (a project
 type or an agent policy changed, the bot's project access changed, or the connection to the API
 was lost and re-established, in which case the list may have changed unseen). Bursts coalesce to
 one pending notification per stream. Push only accelerates: `tools/list` always returns the
 current list, and its `ttlMs` is 300,000 for a plain caller when push is on, else 60,000.
 
+Resource subscriptions: `notifications.resourceSubscriptions` lists URIs, and the acknowledgment
+carries the subset the server honours, in request order, each string copied byte for byte (the
+key is always present when the request had it, empty when nothing is honoured). Three shapes are
+subscribable: `sylvode://tasks/{task_id}` (the bot's own task), `sylvode://issues/{identifier}`
+(an issue the bot may read) and `sylvode://agents/{agent_id}/inbox` (only the bot's own id). Each
+URI is decided as the caller at listen time, within 4 seconds for the whole request; a URI that is
+not subscribable, is refused, does not exist, belongs to another bot, is longer than 2,048 bytes,
+is a repeat, is beyond the first 100 of the request, is over a subscription cap or is not decided
+in time is left out, and the acknowledgment never says which. After a change commits, the stream
+gets `notifications/resources/updated` with `uri` (the original string), at most one pending per
+URI; `resources/read` then returns the new state (tasks and inboxes are readable at
+`sylvode://tasks/{task_id}` and `sylvode://agents/{agent_id}/inbox`). When the API reports a change of
+project access or of the tool surface, every acknowledged URI is decided again as the caller, and
+a stream that holds one the bot may no longer read ends with its final result (listen again to
+get the smaller acknowledgment). After a lost API connection every URI is announced once. A client
+reads the state after the acknowledgment: a change that commits between the server's check and the
+acknowledgment is not announced. `resources/subscribe` and `resources/unsubscribe` do not exist
+(`-32601`); `subscriptions/listen` is the only way to subscribe. Caps: 100 URIs per request, 2,000
+subscriptions per credential and 20,000 per process; beyond them URIs are left out.
+
 Who holds a stream open:
 
-* A **bot token** that asks for `toolsListChanged`. The server opens one change-hint stream to the
+* A **bot token** that asks for `toolsListChanged` or for resource subscriptions. The server opens one change-hint stream to the
   API per credential (`GET /api/v1/bot/change-hints`) and fans it out to all streams of that
   credential; two credentials never share it. The API re-validates the credential every 3
   seconds and at once when it changes: when it is revoked, deactivated, loses `read`, or expires,
@@ -219,7 +240,13 @@ Who holds a stream open:
 
 Limits: 1,000 open streams per credential (the key is a digest of the bearer token),
 `[mcp] max_listen_streams` (default 10,000) per process, beyond either the request is answered
-`429` with `Retry-After: 30`. A stream whose client stops reading for 30 seconds is closed. Every
+`429` with `Retry-After: 30`. Two more refusals are `429` with `Retry-After: 30` (`-32000`,
+`data.reason`): `busy`, when the API itself is at its stream limits for the credential or the
+process, and `throttled`, when the client address (the socket's peer, IPv6 as /64) has had 20
+credentials refused by the API within 60 seconds; until the window ends such an address gets no
+API request for a credential the server does not already serve (credentials with a live stream
+are unaffected). The table of addresses holds 4,096 entries, oldest dropped first. Behind a proxy
+the address is the proxy's. A stream whose client stops reading for 30 seconds is closed. Every
 open stream ends with its final result on SIGTERM or SIGINT. A comment line every 15 seconds keeps
 an idle stream alive. `[mcp] listen = false` removes the method (`-32601`) and the capability.
 

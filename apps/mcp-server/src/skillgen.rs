@@ -242,6 +242,8 @@ pub fn server_instructions(catalogue: &Catalogue<'_>) -> String {
          If sylvode_write answers that writes are disabled, do not retry. A refusal that names the project agent \
          policy, or says this bot may not do this in this project, is final for that project.\n\
          \n\
+         Push. Subscribe with subscriptions/listen to sylvode://tasks/{{id}}, sylvode://issues/{{identifier}} or \
+         sylvode://agents/{{your bot id}}/inbox; every pushed state is also readable with resources/read.\n\
          Limits: 1,000 open listen streams per credential; streams end when the credential is revoked or expires.\n\
          \n\
          Categories: {categories}.\n\

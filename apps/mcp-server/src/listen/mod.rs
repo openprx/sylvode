@@ -13,25 +13,36 @@
 //! request that asks for nothing the server honours. Nothing outlives the credential: a held
 //! stream exists only on a hub, and a hub ends when the API revokes or expires the credential.
 
+mod decide;
 mod hub;
+mod limiter;
+mod uris;
 
 use crate::client::OpenPrClient;
 use crate::era::META_SUBSCRIPTION_ID;
 use crate::protocol::{JsonRpcError, JsonRpcRequest};
+use crate::server::McpServer;
 use hub::{Access, AcquireError, Hubs, Registration, Take};
 use parking_lot::Mutex;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Notify, mpsc};
 use tokio_util::sync::CancellationToken;
 
 pub use hub::REFUSAL_CACHE;
+pub use uris::{MAX_URI_BYTES, MAX_URIS_PER_REQUEST, SubKey, Subscribable, Verdict};
 
 /// Open listen streams one credential may hold.
 pub const MAX_STREAMS_PER_KEY: usize = 1_000;
+/// Acknowledged resource subscriptions, over all its streams, one credential may hold. A URI over
+/// the cap is left out of the acknowledgment like any other URI that is not honoured.
+pub const MAX_SUBSCRIPTIONS_PER_KEY: usize = 2_000;
+/// Acknowledged resource subscriptions the process holds in total.
+pub const MAX_SUBSCRIPTIONS: usize = 20_000;
 /// Comment line interval on an idle listen response.
 pub const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
 /// `Retry-After` of a refused listen request, in seconds.
@@ -56,6 +67,10 @@ pub struct ListenConfig {
     pub max_streams: usize,
     /// Streams one credential holds.
     pub per_key_limit: usize,
+    /// Resource subscriptions the process holds in total.
+    pub max_subscriptions: usize,
+    /// Resource subscriptions one credential holds.
+    pub per_key_subscriptions: usize,
     pub keepalive: Duration,
 }
 
@@ -66,6 +81,8 @@ impl ListenConfig {
             enabled,
             max_streams,
             per_key_limit: MAX_STREAMS_PER_KEY,
+            max_subscriptions: MAX_SUBSCRIPTIONS,
+            per_key_subscriptions: MAX_SUBSCRIPTIONS_PER_KEY,
             keepalive: KEEPALIVE_INTERVAL,
         }
     }
@@ -92,7 +109,12 @@ pub fn validate_envelope(req: &JsonRpcRequest) -> Result<(), JsonRpcError> {
 /// Who opens a stream, as far as the registry needs to know.
 pub enum ListenAuth {
     /// A bot or user token. `client` acts as that token; a hub opened for it keeps the client.
-    Token { key: CallerKey, client: OpenPrClient },
+    /// `server` is built on the same client and decides the subscriptions the token asks for.
+    Token {
+        key: CallerKey,
+        client: OpenPrClient,
+        server: Arc<McpServer>,
+    },
     /// A delegated caller: counted under its key, never given a hub.
     Delegated { key: CallerKey },
 }
@@ -116,6 +138,10 @@ pub enum OpenError {
     Unauthorized,
     /// The API could not be asked; the caller retries later.
     Unavailable,
+    /// The API holds too many streams for the credential or the process; the caller retries later.
+    Busy,
+    /// The client address has had too many credentials refused lately.
+    Throttled,
 }
 
 impl OpenError {
@@ -129,6 +155,8 @@ impl OpenError {
                 data: Some(json!({ "reason": "unauthorized" })),
             },
             Self::Unavailable => JsonRpcError::internal_error("push unavailable, retry"),
+            Self::Busy => JsonRpcError::too_many_requests("busy"),
+            Self::Throttled => JsonRpcError::too_many_requests("throttled"),
         }
     }
 }
@@ -137,6 +165,8 @@ impl OpenError {
 struct Counts {
     total: usize,
     per_key: HashMap<CallerKey, usize>,
+    subscriptions: usize,
+    subscriptions_per_key: HashMap<CallerKey, usize>,
 }
 
 struct Inner {
@@ -187,7 +217,7 @@ impl ListenRegistry {
         self.inner.hubs.hub_count()
     }
 
-    /// Takes a place under both caps.
+    /// Takes a place under both stream caps.
     fn reserve(&self, key: CallerKey) -> Result<StreamGuard, OpenError> {
         {
             let mut counts = self.inner.counts.lock();
@@ -204,7 +234,26 @@ impl ListenRegistry {
         Ok(StreamGuard {
             inner: Arc::clone(&self.inner),
             key,
+            subscriptions: 0,
         })
+    }
+
+    /// Takes up to `wanted` places under both subscription caps for the stream of `guard`; the
+    /// number granted is returned and released with the guard.
+    // The two counts are read and raised under one guard, so concurrent opens cannot pass the cap.
+    #[allow(clippy::significant_drop_tightening)]
+    fn reserve_subscriptions(&self, guard: &mut StreamGuard, wanted: usize) -> usize {
+        let mut counts = self.inner.counts.lock();
+        let held = counts.subscriptions_per_key.get(&guard.key).copied().unwrap_or(0);
+        let granted = wanted
+            .min(self.inner.config.per_key_subscriptions.saturating_sub(held))
+            .min(self.inner.config.max_subscriptions.saturating_sub(counts.subscriptions));
+        if granted > 0 {
+            counts.subscriptions += granted;
+            *counts.subscriptions_per_key.entry(guard.key).or_insert(0) += granted;
+            guard.subscriptions += granted;
+        }
+        granted
     }
 
     /// Opens a stream for `auth`. `id` is the JSON-RPC id of the listen request and `params` its
@@ -213,28 +262,54 @@ impl ListenRegistry {
     /// acknowledgment.
     ///
     /// Order: parameters, caps, then (only for a token that asks for something the server can push)
-    /// the hub, which asks the API. A credential the API refuses fails here, before any stream
-    /// exists.
+    /// the hub, which asks the API, then the requested URIs, each decided as the caller. A
+    /// credential the API refuses fails here, before any stream exists.
     pub async fn open(&self, auth: ListenAuth, id: &Value, params: Option<&Value>) -> Result<ListenHandle, OpenError> {
+        self.open_from(None, auth, id, params).await
+    }
+
+    /// [`Self::open`] for a request that came from `peer`: a credential the server does not know
+    /// is not offered to the API once `peer` has had too many refused (see [`limiter`]).
+    pub async fn open_from(
+        &self,
+        peer: Option<IpAddr>,
+        auth: ListenAuth,
+        id: &Value,
+        params: Option<&Value>,
+    ) -> Result<ListenHandle, OpenError> {
         let request = ListenRequest::parse(params)?;
-        let guard = self.reserve(auth.key())?;
+        let mut guard = self.reserve(auth.key())?;
+        let candidates = uris::candidates(&request.uris);
         let mut honoured = Honoured::default();
         let mut registration = None;
-        if request.tools_list_changed
+        if (request.tools_list_changed || !candidates.is_empty())
             && self.inner.config.enabled
-            && let ListenAuth::Token { key, client } = &auth
+            && let ListenAuth::Token { key, client, server } = &auth
         {
-            match self.inner.hubs.acquire(*key, client, &self.inner.shutdown).await {
+            match self
+                .inner
+                .hubs
+                .acquire(*key, client, server, peer, &self.inner.shutdown)
+                .await
+            {
                 Ok(Access::Push(held)) => {
-                    honoured.tools_list_changed = true;
-                    registration = Some(held);
+                    honoured.tools_list_changed = request.tools_list_changed;
+                    let subscriptions = self.decide_subscriptions(&mut guard, server, candidates).await;
+                    held.shared.configure(request.tools_list_changed, &subscriptions);
+                    honoured.uris = subscriptions.into_iter().map(|(uri, _)| uri).collect();
+                    // A stream with nothing to deliver holds no place on the hub.
+                    if honoured.tools_list_changed || !honoured.uris.is_empty() {
+                        registration = Some(held);
+                    }
                 }
                 Ok(Access::NoPush) => {}
                 Err(AcquireError::Unauthorized) => return Err(OpenError::Unauthorized),
                 Err(AcquireError::Unavailable) => return Err(OpenError::Unavailable),
+                Err(AcquireError::Busy) => return Err(OpenError::Busy),
+                Err(AcquireError::Throttled) => return Err(OpenError::Throttled),
             }
         }
-        let ack = acknowledgment(id, &request, honoured);
+        let ack = acknowledgment(id, &request, &honoured);
         Ok(ListenHandle {
             id: id.clone(),
             pending_ack: Some(ack),
@@ -244,6 +319,36 @@ impl ListenRegistry {
             registration,
             _guard: guard,
         })
+    }
+
+    /// The requested URIs the caller may follow, in request order, each with its key: decided as
+    /// the caller within [`decide::ACK_BUDGET`], then cut to the subscription caps. Whatever is
+    /// refused, unknown, undecided or over a cap is simply left out.
+    async fn decide_subscriptions(
+        &self,
+        guard: &mut StreamGuard,
+        server: &Arc<McpServer>,
+        candidates: Vec<(String, Subscribable)>,
+    ) -> Vec<(Arc<str>, SubKey)> {
+        if candidates.is_empty() {
+            return Vec::new();
+        }
+        let items: Vec<(Arc<str>, Subscribable)> = candidates
+            .into_iter()
+            .map(|(uri, parsed)| (Arc::from(uri), parsed))
+            .collect();
+        let verdicts = decide::decide(server, &items, decide::ACK_BUDGET).await;
+        let mut granted: Vec<(Arc<str>, SubKey)> = items
+            .into_iter()
+            .zip(verdicts)
+            .filter_map(|((uri, _), verdict)| match verdict {
+                Some(Verdict::Granted(key)) => Some((uri, key)),
+                _ => None,
+            })
+            .collect();
+        let allowed = self.reserve_subscriptions(guard, granted.len());
+        granted.truncate(allowed);
+        granted
     }
 
     /// Ends every stream with its final result.
@@ -268,6 +373,8 @@ impl ListenRegistry {
 struct StreamGuard {
     inner: Arc<Inner>,
     key: CallerKey,
+    /// Subscription places this stream holds under the caps.
+    subscriptions: usize,
 }
 
 impl Drop for StreamGuard {
@@ -279,6 +386,15 @@ impl Drop for StreamGuard {
                 *held = held.saturating_sub(1);
                 if *held == 0 {
                     counts.per_key.remove(&self.key);
+                }
+            }
+            if self.subscriptions > 0 {
+                counts.subscriptions = counts.subscriptions.saturating_sub(self.subscriptions);
+                if let Some(held) = counts.subscriptions_per_key.get_mut(&self.key) {
+                    *held = held.saturating_sub(self.subscriptions);
+                    if *held == 0 {
+                        counts.subscriptions_per_key.remove(&self.key);
+                    }
                 }
             }
         }
@@ -331,6 +447,7 @@ impl ListenHandle {
                     return Some(final_result(&self.id));
                 }
                 Take::Tools => return Some(tools_list_changed(&self.id)),
+                Take::Uri(uri) => return Some(resource_updated(&self.id, &uri)),
                 Take::Nothing => {}
             }
             tokio::select! {
@@ -379,9 +496,10 @@ fn subscription_meta(id: &Value) -> Value {
 #[derive(Debug, Default, PartialEq, Eq)]
 struct ListenRequest {
     tools_list_changed: bool,
-    /// Whether the request carried `resourceSubscriptions` (the acknowledgment then carries it,
-    /// empty until resource subscriptions exist).
+    /// Whether the request carried `resourceSubscriptions` (the acknowledgment then carries it).
     resource_subscriptions: bool,
+    /// The strings of `resourceSubscriptions`, in request order.
+    uris: Vec<String>,
 }
 
 impl ListenRequest {
@@ -404,31 +522,48 @@ impl ListenRequest {
                 ));
             }
             request.resource_subscriptions = true;
+            request.uris = subscriptions
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|uri| uri.as_str().map(str::to_string))
+                .collect();
         }
         Ok(request)
     }
 }
 
 /// What the server honours of a request.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone)]
 struct Honoured {
     tools_list_changed: bool,
+    /// The honoured URIs, in request order, as the client wrote them.
+    uris: Vec<Arc<str>>,
 }
 
 /// The acknowledgment of a listen request. Boolean keys appear only when requested and honoured;
-/// `resourceSubscriptions` appears iff the request had it (no URI is honoured yet).
-fn acknowledgment(id: &Value, request: &ListenRequest, honoured: Honoured) -> Value {
+/// `resourceSubscriptions` appears iff the request had it, holding the honoured subset.
+fn acknowledgment(id: &Value, request: &ListenRequest, honoured: &Honoured) -> Value {
     let mut notifications = Map::new();
     if honoured.tools_list_changed {
         notifications.insert("toolsListChanged".to_string(), Value::Bool(true));
     }
     if request.resource_subscriptions {
-        notifications.insert("resourceSubscriptions".to_string(), json!([]));
+        notifications.insert("resourceSubscriptions".to_string(), json!(honoured.uris));
     }
     json!({
         "jsonrpc": "2.0",
         "method": "notifications/subscriptions/acknowledged",
         "params": { "_meta": subscription_meta(id), "notifications": notifications },
+    })
+}
+
+/// `notifications/resources/updated` for one subscribed URI, echoed as the client wrote it.
+fn resource_updated(id: &Value, uri: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/resources/updated",
+        "params": { "_meta": subscription_meta(id), "uri": uri },
     })
 }
 
@@ -468,9 +603,11 @@ mod tests {
     }
 
     fn token(name: &str) -> ListenAuth {
+        let client = dead_client();
         ListenAuth::Token {
             key: caller_key(name),
-            client: dead_client(),
+            server: Arc::new(McpServer::new(client.clone(), platform::config::McpToolMode::Full)),
+            client,
         }
     }
 
@@ -483,6 +620,8 @@ mod tests {
             enabled: true,
             max_streams,
             per_key_limit,
+            max_subscriptions: 100,
+            per_key_subscriptions: 100,
             keepalive: Duration::from_millis(50),
         })
     }
@@ -656,23 +795,25 @@ mod tests {
         let ask = |tools: bool, uris: bool| ListenRequest {
             tools_list_changed: tools,
             resource_subscriptions: uris,
+            uris: Vec::new(),
         };
-        let notifications = |request: &ListenRequest, honoured: Honoured| {
+        let notifications = |request: &ListenRequest, honoured: &Honoured| {
             acknowledgment(&id, request, honoured)["params"]["notifications"].clone()
         };
         let honoured = Honoured {
             tools_list_changed: true,
+            uris: Vec::new(),
         };
         assert_eq!(
-            notifications(&ask(true, false), honoured),
+            notifications(&ask(true, false), &honoured),
             json!({"toolsListChanged": true})
         );
-        assert_eq!(notifications(&ask(true, false), Honoured::default()), json!({}));
+        assert_eq!(notifications(&ask(true, false), &Honoured::default()), json!({}));
         assert_eq!(
-            notifications(&ask(true, true), honoured),
+            notifications(&ask(true, true), &honoured),
             json!({"toolsListChanged": true, "resourceSubscriptions": []})
         );
-        assert_eq!(notifications(&ask(false, false), Honoured::default()), json!({}));
+        assert_eq!(notifications(&ask(false, false), &Honoured::default()), json!({}));
     }
 
     #[test]

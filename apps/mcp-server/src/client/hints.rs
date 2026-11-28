@@ -10,6 +10,7 @@ use serde_json::Value;
 use std::collections::VecDeque;
 use std::sync::OnceLock;
 use std::time::Duration;
+use uuid::Uuid;
 
 /// Path of the stream on the API.
 pub const HINTS_PATH: &str = "/api/v1/bot/change-hints";
@@ -38,12 +39,13 @@ pub enum HintOpenError {
 /// One event of the stream, reduced to what the listen hub acts on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HintEvent {
-    /// A task of this bot changed.
-    Task,
+    /// A task of this bot changed; `None` when the hint named no valid id (anything may have
+    /// changed).
+    Task(Option<Uuid>),
     /// The bot's inbox changed.
     Inbox,
-    /// A work item or its comments changed.
-    Issue,
+    /// A work item or its comments changed; `None` when the hint named no valid id.
+    Issue(Option<Uuid>),
     /// An artefact draft changed.
     Draft,
     /// The tool surface may differ now (agent policy, project type).
@@ -191,14 +193,16 @@ impl OpenPrClient {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Frame {
     name: String,
+    /// The `id` of a `task` or `issue` payload, when it is a UUID. No other field is kept.
+    id: Option<Uuid>,
 }
 
 impl Frame {
     fn event(&self) -> HintEvent {
         match self.name.as_str() {
-            "task" => HintEvent::Task,
+            "task" => HintEvent::Task(self.id),
             "inbox" => HintEvent::Inbox,
-            "issue" => HintEvent::Issue,
+            "issue" => HintEvent::Issue(self.id),
             "draft" => HintEvent::Draft,
             "tools" => HintEvent::Tools,
             "access_changed" => HintEvent::AccessChanged,
@@ -210,12 +214,14 @@ impl Frame {
     }
 }
 
-/// An incremental SSE line parser. Only `event:` is read; payloads are never kept, because the
-/// hub acts on event names alone.
+/// An incremental SSE line parser. Only `event:` and `data:` are read; of a payload only the
+/// `id` of a `task` or `issue` event survives, because the hub acts on event names and those ids.
 #[derive(Default)]
 struct SseParser {
     line: Vec<u8>,
     name: Option<String>,
+    /// The `data:` lines of the current event, joined by a newline, bounded by [`MAX_EVENT_BYTES`].
+    data: Vec<u8>,
     /// Whether a line of the current event has been seen (so an empty line dispatches).
     open: bool,
 }
@@ -240,12 +246,17 @@ impl SseParser {
         let line = raw.strip_suffix(b"\r").unwrap_or(&raw);
         if line.is_empty() {
             if self.open {
-                out.push_back(Frame {
-                    name: self.name.take().unwrap_or_else(|| "message".to_string()),
-                });
+                let name = self.name.take().unwrap_or_else(|| "message".to_string());
+                let id = if matches!(name.as_str(), "task" | "issue") {
+                    payload_id(&self.data)
+                } else {
+                    None
+                };
+                out.push_back(Frame { name, id });
             }
             self.open = false;
             self.name = None;
+            self.data.clear();
             return;
         }
         if line.first() == Some(&b':') {
@@ -255,8 +266,27 @@ impl SseParser {
         if let Some(value) = line.strip_prefix(b"event:") {
             let value = value.strip_prefix(b" ").unwrap_or(value);
             self.name = std::str::from_utf8(value).ok().map(str::to_string);
+        } else if let Some(value) = line.strip_prefix(b"data:") {
+            let value = value.strip_prefix(b" ").unwrap_or(value);
+            // Past the bound the payload is dropped: the id is then unknown, which the hub treats
+            // as "anything may have changed".
+            if self.data.len() + value.len() < MAX_EVENT_BYTES {
+                if !self.data.is_empty() {
+                    self.data.push(b'\n');
+                }
+                self.data.extend_from_slice(value);
+            }
         }
     }
+}
+
+/// The UUID in the `id` field of an event payload, if there is one.
+fn payload_id(data: &[u8]) -> Option<Uuid> {
+    serde_json::from_slice::<Value>(data)
+        .ok()?
+        .get("id")?
+        .as_str()
+        .and_then(|raw| Uuid::parse_str(raw).ok())
 }
 
 #[cfg(test)]
@@ -292,6 +322,7 @@ mod tests {
         assert_eq!(events, Ok(vec!["message".to_string()]));
         let frame = Frame {
             name: "message".to_string(),
+            id: None,
         };
         assert_eq!(frame.event(), HintEvent::Unknown);
     }
@@ -307,9 +338,9 @@ mod tests {
     #[test]
     fn every_documented_event_maps() {
         let cases = [
-            ("task", HintEvent::Task),
+            ("task", HintEvent::Task(None)),
             ("inbox", HintEvent::Inbox),
-            ("issue", HintEvent::Issue),
+            ("issue", HintEvent::Issue(None)),
             ("draft", HintEvent::Draft),
             ("tools", HintEvent::Tools),
             ("access_changed", HintEvent::AccessChanged),
@@ -319,7 +350,10 @@ mod tests {
             ("surprise", HintEvent::Unknown),
         ];
         for (name, event) in cases {
-            let frame = Frame { name: name.to_string() };
+            let frame = Frame {
+                name: name.to_string(),
+                id: None,
+            };
             assert_eq!(frame.event(), event, "{name}");
         }
     }

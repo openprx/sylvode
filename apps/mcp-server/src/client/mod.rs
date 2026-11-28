@@ -11,6 +11,7 @@ pub use hints::{
 };
 mod error_class;
 pub use error_class::{ApiErrorClass, classify_api_error, is_backend_failure};
+mod tasks_state;
 mod workspace;
 use workspace::{WORKSPACE_CACHE_CAPACITY, WORKSPACE_CACHE_TTL, WorkspaceCache, workspace_of_me};
 
