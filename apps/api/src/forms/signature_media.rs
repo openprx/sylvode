@@ -1137,11 +1137,11 @@ mod tests {
         let root = test_upload_root();
         let storage = ObjectStorage::local(&root);
         storage
-            .put("signatures/signature-guest-expired.png", b"expired")
+            .put("signatures/signature-guest_signature-expired.png", b"expired")
             .await
             .expect("expired signature should be stored");
         storage
-            .put("signatures/signature-guest-fresh.png", b"fresh")
+            .put("signatures/signature-fresh_signature-fresh.png", b"fresh")
             .await
             .expect("fresh signature should be stored");
         let schema = json!({
@@ -1157,8 +1157,8 @@ mod tests {
         let cleanup = cleanup_expired_signature_values_with_storage(
             &schema,
             json!({
-                "guest_signature": "/api/v1/uploads/signatures/signature-guest-expired.png",
-                "fresh_signature": "/api/v1/uploads/signatures/signature-guest-fresh.png",
+                "guest_signature": "/api/v1/uploads/signatures/signature-guest_signature-expired.png",
+                "fresh_signature": "/api/v1/uploads/signatures/signature-fresh_signature-fresh.png",
                 "note": "keep me"
             }),
             retained_since,
@@ -1172,13 +1172,18 @@ mod tests {
         assert!(cleanup.values["guest_signature"].is_null());
         assert_eq!(
             cleanup.values["fresh_signature"],
-            "/api/v1/uploads/signatures/signature-guest-fresh.png"
+            "/api/v1/uploads/signatures/signature-fresh_signature-fresh.png"
         );
         assert_eq!(cleanup.values["note"], "keep me");
-        assert!(storage.get("signatures/signature-guest-expired.png").await.is_err());
+        assert!(
+            storage
+                .get("signatures/signature-guest_signature-expired.png")
+                .await
+                .is_err()
+        );
         assert_eq!(
             storage
-                .get("signatures/signature-guest-fresh.png")
+                .get("signatures/signature-fresh_signature-fresh.png")
                 .await
                 .expect("fresh signature should remain"),
             b"fresh"
@@ -1187,7 +1192,7 @@ mod tests {
         let entry = &cleanup.audit_entries[0];
         assert_eq!(entry["action"], "retention_delete");
         assert_eq!(entry["field_key"], "guest_signature");
-        assert_eq!(entry["object_key"], "signatures/signature-guest-expired.png");
+        assert_eq!(entry["object_key"], "signatures/signature-guest_signature-expired.png");
         assert_eq!(entry["storage_backend"], "local");
         assert_eq!(entry["retention_days"], 7);
         assert_eq!(entry["retained_since"].as_str(), Some("2026-06-01T00:00:00Z"));
@@ -1200,11 +1205,11 @@ mod tests {
         let root = test_upload_root();
         let storage = ObjectStorage::local(&root);
         storage
-            .put("signatures/signature-guest-old.png", b"old-signature")
+            .put("signatures/signature-guest_signature-old.png", b"old-signature")
             .await
             .expect("old signature should be stored");
         storage
-            .put("signatures/signature-guest-current.png", b"current-signature")
+            .put("signatures/signature-guest_signature-current.png", b"current-signature")
             .await
             .expect("current signature should be stored");
         let schema = json!({
@@ -1222,9 +1227,9 @@ mod tests {
                     {
                         "action": "materialize",
                         "field_key": "guest_signature",
-                        "object_key": "signatures/signature-guest-current.png",
-                        "previous_url": "/api/v1/uploads/signatures/signature-guest-old.png",
-                        "previous_object_key": "signatures/signature-guest-old.png",
+                        "object_key": "signatures/signature-guest_signature-current.png",
+                        "previous_url": "/api/v1/uploads/signatures/signature-guest_signature-old.png",
+                        "previous_object_key": "signatures/signature-guest_signature-old.png",
                         "materialized_at": retained_since
                     }
                 ]
@@ -1234,7 +1239,7 @@ mod tests {
         let cleanup = cleanup_expired_replaced_signature_audit_entries_with_storage(
             &schema,
             &json!({
-                "guest_signature": "/api/v1/uploads/signatures/signature-guest-current.png"
+                "guest_signature": "/api/v1/uploads/signatures/signature-guest_signature-current.png"
             }),
             source,
             now,
@@ -1244,10 +1249,15 @@ mod tests {
         .expect("replaced signature should clean up");
 
         assert_eq!(cleanup.deleted_count, 1);
-        assert!(storage.get("signatures/signature-guest-old.png").await.is_err());
+        assert!(
+            storage
+                .get("signatures/signature-guest_signature-old.png")
+                .await
+                .is_err()
+        );
         assert_eq!(
             storage
-                .get("signatures/signature-guest-current.png")
+                .get("signatures/signature-guest_signature-current.png")
                 .await
                 .expect("current signature should remain"),
             b"current-signature"
@@ -1256,7 +1266,7 @@ mod tests {
         assert_eq!(cleanup.audit_entries[0]["action"], "replacement_retention_delete");
         assert_eq!(
             cleanup.audit_entries[0]["object_key"],
-            "signatures/signature-guest-old.png"
+            "signatures/signature-guest_signature-old.png"
         );
         assert_eq!(
             cleanup.source["signature_media"]["entries"][0]["previous_deleted_at"].as_str(),
