@@ -73,11 +73,6 @@ impl Scratch {
         }
         // A scratch database models a running installation: leases a running api, worker and
         // maintenance process would hold, registered through the production `renew_for`.
-        for component in ["api", "worker", "maintenance"] {
-            api::flow::scope_runtime::renew_for(&db, Uuid::new_v4(), component, 86_400.0)
-                .await
-                .expect("fixture reader lease");
-        }
         Self { db, name, admin_url }
     }
 

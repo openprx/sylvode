@@ -1,4 +1,3 @@
-import { FLOW_PROCESS_READER_COMPATIBILITY } from '#lib/flow/product-mode.js';
 import { routeFailure } from '#lib/flow/route-failure.js';
 import { isConversionJobId } from '#lib/flow/conversion-job.js';
 import { flowApi } from '#lib/api/flow.js';
@@ -6,19 +5,11 @@ import type { LayoutLoad } from './$types';
 
 export const load: LayoutLoad = async ({ params }) => {
 	const capabilities = await flowApi.getCapabilities();
-	if (
-		capabilities.code !== 0 ||
-		capabilities.data?.api_version !== 2 ||
-		capabilities.data.minimum_reader_version > FLOW_PROCESS_READER_COMPATIBILITY
-	)
+	if (capabilities.code !== 0 || !capabilities.data)
 		return {
 			flowEnabled: false,
 			...routeFailure(capabilities),
-			error:
-				capabilities.data?.minimum_reader_version &&
-				capabilities.data.minimum_reader_version > FLOW_PROCESS_READER_COMPATIBILITY
-					? 'upgrade'
-					: capabilities.message
+			error: capabilities.message
 		};
 	let objectId = params.objectId;
 	if (!objectId && params.jobId) {

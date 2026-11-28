@@ -22,9 +22,7 @@ pub(crate) async fn prepare(
     if !anchored && !reply {
         return Ok(None);
     }
-    if super::scope::capabilities(db).await?.minimum_reader_version < 5
-        || super::scope::identity(db, object).await?.object_type != "page"
-    {
+    if super::scope::identity(db, object).await?.object_type != "page" {
         return Ok(None);
     }
     let document = db
@@ -235,9 +233,7 @@ async fn registration_step(
 /// native structure or history. Returns a retryable `server_draining{contention}` if the Page
 /// keeps changing or needs more than `COMPLETION_STEPS_MAX` steps.
 pub(crate) async fn complete_registration(db: &DatabaseConnection, page: Uuid) -> Result<(), ApiError> {
-    if super::scope::capabilities(db).await?.minimum_reader_version < 5
-        || super::scope::identity(db, page).await?.object_type != "page"
-    {
+    if super::scope::identity(db, page).await?.object_type != "page" {
         return Ok(());
     }
     if db
@@ -279,9 +275,7 @@ pub(crate) async fn bind_new<C: ConnectionTrait>(
     block: Option<&str>,
     parent: Option<Uuid>,
 ) -> Result<(), ApiError> {
-    if super::scope::capabilities(db).await?.minimum_reader_version < 5
-        || super::scope::identity(db, page).await?.object_type != "page"
-    {
+    if super::scope::identity(db, page).await?.object_type != "page" {
         return Ok(());
     }
     let Some(block) = block else {
@@ -320,7 +314,7 @@ pub(crate) async fn decorate<C: ConnectionTrait>(
     db: &C,
     views: &mut [super::comments::FlowCommentView],
 ) -> Result<(), ApiError> {
-    if views.is_empty() || super::scope::capabilities(db).await?.minimum_reader_version < 5 {
+    if views.is_empty() {
         return Ok(());
     }
     let Some(first) = views.first() else {
@@ -367,14 +361,6 @@ mod tests {
     async fn private_anchors_never_follow_reused_cids_or_cascade_moved_identity() {
         let scratch = scratch_or_skip!(&format!("block_anchor_{}", Uuid::new_v4().simple()));
         let db = &scratch.db;
-        for component in ["api", "worker", "maintenance"] {
-            super::super::scope_runtime::renew(db, Uuid::new_v4(), component)
-                .await
-                .unwrap();
-        }
-        db.execute_unprepared("UPDATE flow_runtime_capabilities SET minimum_reader_version=4 WHERE singleton")
-            .await
-            .unwrap();
         let owners = [Uuid::new_v4(), Uuid::new_v4()];
         let scopes = [Uuid::new_v4(), Uuid::new_v4()];
         let pages = [Uuid::new_v4(), Uuid::new_v4()];
@@ -453,9 +439,6 @@ mod tests {
         assert_ne!(original_frontier, replayed_wire.as_bytes());
         assert!(replayed.matches_frontier(&original_frontier));
         exec(db,"UPDATE collab_documents SET snapshot=$2,snapshot_checksum=encode(digest($2,'sha256'),'hex'),byte_count=octet_length($2),snapshot_frontier=$3,head_frontier=$3 WHERE id=$1",vec![documents[0].into(),original_snapshot.clone().into(),original_frontier.clone().into()]).await;
-        db.execute_unprepared("UPDATE flow_runtime_capabilities SET minimum_reader_version=5 WHERE singleton")
-            .await
-            .unwrap();
         complete_registration(db, pages[0]).await.unwrap();
         let unchanged = db
             .query_one(Statement::from_sql_and_values(
@@ -698,7 +681,6 @@ mod tests {
         use super::super::block_registry::fixtures::{blocks, page};
         let scratch = scratch_or_skip!(&format!("block_anchor_loop_{}", Uuid::new_v4().simple()));
         let db = &scratch.db;
-        super::super::scope_runtime::fixture::register_running_readers(db).await;
         let (_, _, page_id) = page(db).await;
         let mut snapshot = load_snapshot(db, page_id).await.unwrap();
         snapshot.blocks = blocks(1_200, 1);
@@ -780,7 +762,6 @@ mod tests {
         use super::super::block_registry::fixtures::page;
         let scratch = scratch_or_skip!(&format!("block_anchor_complete_{}", Uuid::new_v4().simple()));
         let db = &scratch.db;
-        super::super::scope_runtime::fixture::register_running_readers(db).await;
         let (_, _, page_id) = page(db).await;
         assert_eq!(pending_registrations(db, page_id).await, 0);
         complete_registration(db, page_id).await.unwrap();

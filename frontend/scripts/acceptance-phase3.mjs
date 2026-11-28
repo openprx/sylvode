@@ -1041,7 +1041,7 @@ async function sectionFlow(api) {
 		const flags = await api.must('GET', `/api/v1/workspaces/${ws}/features/flow`);
 		expect(flags.flow_enabled === true, `flow_enabled=${flags.flow_enabled}`);
 		const capabilities = await api.must('GET', '/api/v2/flow/capabilities');
-		return `flow_enabled=true block_transfers_supported=${capabilities.block_transfers_supported} block_shares_supported=${capabilities.block_shares_supported}`;
+		return `flow_enabled=true block_transfers_enabled=${capabilities.block_transfers_enabled}`;
 	});
 
 	// --- create a page in the UI and type into it ------------------------------------------

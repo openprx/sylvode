@@ -43,12 +43,6 @@ impl Scratch {
                 .await
                 .unwrap_or_else(|e| panic!("{}: {e}", file.display()));
         }
-        // These are labeled unit-fixture reader leases, not deployment readiness evidence.
-        for component in ["api", "worker", "maintenance"] {
-            api::flow::scope_runtime::renew(&db, Uuid::new_v4(), component)
-                .await
-                .unwrap();
-        }
         db.execute_unprepared(
             "UPDATE flow_runtime_capabilities SET personal_provisioning=true,personal_writes=true WHERE singleton",
         )

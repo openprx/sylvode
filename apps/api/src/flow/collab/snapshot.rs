@@ -846,8 +846,6 @@ mod database_tests {
 
         migrate(&db).await;
 
-        // A scratch database models a running api and worker.
-        crate::flow::scope_runtime::fixture::register_running_readers(&db).await;
         Some(Scratch { db, name, admin_url })
     }
 

@@ -18,7 +18,7 @@ while (($#)); do
 done
 [[ $LOCKED_MODE -eq 1 ]] || { echo 'FAIL: --locked-corpus is required' >&2; exit 2; }
 [[ $JSON_MODE -eq 1 ]] || { echo 'FAIL: --json is required' >&2; exit 2; }
-[[ -n $CORPUS ]] || CORPUS=testing/fixtures/flow-wire-v08/corpus.json
+[[ -n $CORPUS ]] || CORPUS=testing/fixtures/flow-wire/corpus.json
 [[ $CORPUS = /* ]] || CORPUS="$REPO_ROOT/$CORPUS"
 [[ -n $EVIDENCE_ROOT ]] || EVIDENCE_ROOT="$REPO_ROOT/.flow-gate/evidence/v0.8"
 [[ -s $CORPUS ]] || { echo "FAIL: locked corpus missing or empty: $CORPUS" >&2; exit 2; }
@@ -47,7 +47,7 @@ run_test() {
 env -u RUST_TEST_THREADS CARGO_BUILD_JOBS=4 \
   cargo build --manifest-path "$REPO_ROOT/Cargo.toml" -p collab-core \
     --bin collab-isolated-apply-worker >"$EVIDENCE_ROOT/logs/fuzz-worker-build.log" 2>&1
-run_test update_bytes test:flow_v08_locked_corpus unused
+run_test update_bytes test:flow_locked_corpus unused
 run_test response_roundtrip lib isolation::host::tests::response_frame_round_trips
 run_test response_corrupt lib isolation::host::tests::response_frame_rejects_a_corrupted_crc
 run_test response_truncated lib isolation::host::tests::response_frame_rejects_a_truncated_frame

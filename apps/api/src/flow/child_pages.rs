@@ -35,9 +35,6 @@ fn reason(code: &str) -> ApiError {
         json!({"reason":code,"write_state":"not_applied"}),
     )
 }
-async fn ready<C: ConnectionTrait>(db: &C) -> Result<(), ApiError> {
-    scope::require_editor_model_readers(db, 5).await
-}
 async fn editable(
     db: &DatabaseConnection,
     source: Uuid,
@@ -50,7 +47,6 @@ async fn editable(
             "child Page preparation requires an active editable Page",
         ));
     }
-    ready(db).await?;
     Ok((identity, proof))
 }
 pub async fn reserve(
@@ -71,7 +67,6 @@ pub async fn reserve(
         scope::require_personal_write(&tx).await?;
     }
     scope::fence(&tx, &proof).await?;
-    ready(&tx).await?;
     if let Some(prior) = super::scope_commands::lock_and_replay(&tx, identity.scope_id, actor, key, &body).await? {
         let mut result: Reservation = serde_json::from_value(prior).map_err(|_| ApiError::internal())?;
         let row = reservation_row(&tx, result.child_page_id, false)
@@ -143,7 +138,6 @@ pub async fn cancel(
         scope::require_personal_write(&tx).await?;
     }
     scope::fence(&tx, &proof).await?;
-    ready(&tx).await?;
     let body = json!({"operation":"child_page_cancel","reservation_id":reservation,"source_object_id":source});
     if let Some(prior) = super::scope_commands::lock_and_replay(&tx, identity.scope_id, actor, key, &body).await? {
         tx.commit().await?;
@@ -209,13 +203,6 @@ pub async fn reconcile_accepted(
     if identity.object_type != "page" {
         return Ok(());
     }
-    if scope::capabilities(tx).await?.minimum_reader_version < 4 {
-        if references.is_empty() {
-            return Ok(());
-        }
-        return Err(reason("child_page_model_not_ready"));
-    }
-    ready(tx).await?;
     for reference in references {
         let prior=tx.query_one(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT child_page_id FROM flow_page_child_refs WHERE scope_id=$1 AND source_object_id=$2 AND block_cid=$3",vec![identity.scope_id.into(),source.into(),reference.block_cid.clone().into()])).await?;
         let unchanged =
@@ -282,7 +269,6 @@ pub async fn reconcile_accepted(
 
 pub async fn status(db: &DatabaseConnection, source: Uuid, id: Uuid, actor: Uuid) -> Result<Reservation, ApiError> {
     let proof = scope::authorize(db, source, actor, PermissionLevel::View).await?;
-    ready(db).await?;
     let row=Row::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT id,scope_id,source_object_id,actor_id,child_page_id,title,expires_at,state,expires_at<=now() AS expired FROM flow_child_page_reservations WHERE id=$1 AND source_object_id=$2 AND scope_id=$3 AND actor_id=$4",vec![id.into(),source.into(),proof.scope_id.into(),actor.into()])).one(db).await?.ok_or_else(||reason("child_reservation_unavailable"))?;
     if !scope::proof_current(db, &proof).await? {
         return Err(super::policy::authorization_read_unstable());
@@ -350,12 +336,11 @@ mod tests {
         let scratch = scratch_or_skip!(&format!("child_atomic_{}", Uuid::new_v4().simple()));
         let db = &scratch.db;
         // Compatibility rows are confined to this synthetic unit-test DB, not live readiness.
-        for component in ["api", "worker", "maintenance"] {
-            super::super::scope_runtime::renew(db, Uuid::new_v4(), component)
-                .await
-                .unwrap();
-        }
-        db.execute_unprepared("UPDATE flow_runtime_capabilities SET minimum_reader_version=4,personal_provisioning=true,personal_writes=true WHERE singleton").await.unwrap();
+        db.execute_unprepared(
+            "UPDATE flow_runtime_capabilities SET personal_provisioning=true,personal_writes=true WHERE singleton",
+        )
+        .await
+        .unwrap();
         let owner = Uuid::new_v4();
         exec(db,"INSERT INTO users(id,email,password_hash,name,role,is_active) VALUES($1,$2,'!','Synthetic child owner','user',true)",vec![owner.into(),format!("{owner}@child-atomic.test").into()]).await;
         let home = scope::personal_home(db, owner).await.unwrap();

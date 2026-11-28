@@ -1324,8 +1324,6 @@ mod database_tests {
             .await
             .unwrap_or_else(|err| panic!("could not connect to scratch database {name}: {err}"));
         migrate(&db).await;
-        // A scratch database models a running api and worker.
-        crate::flow::scope_runtime::fixture::register_running_readers(&db).await;
         Some(Scratch { db, name, admin_url })
     }
 

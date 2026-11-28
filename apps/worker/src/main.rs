@@ -66,8 +66,6 @@ async fn main() -> anyhow::Result<()> {
     // operator fixes both in one pass instead of being walked through them one at a time.
     let cfg = AppConfig::from_config(&config, "worker", "0.0.0.0:8081")?;
     let db = connect_db(&config.database_runtime()?).await?;
-    api::flow::scope_runtime::spawn(db.clone(), "worker").await?;
-    api::flow::scope_runtime::spawn(db.clone(), "maintenance").await?;
     tokio::spawn(oauth_feed::run(db.clone(), runtime.oauth.clone()));
     tokio::spawn(alert_followup::run(db.clone(), runtime.inbound));
     if let Some(email_config) = config.email.clone() {

@@ -536,11 +536,6 @@ mod tests {
             .await
             .expect("explicit disposable OPENPR_TEST_DATABASE_URL required");
         let db = &scratch.db;
-        for component in ["api", "worker", "maintenance"] {
-            super::super::scope_runtime::renew(db, Uuid::new_v4(), component)
-                .await
-                .unwrap();
-        }
         db.execute_unprepared(
             "UPDATE flow_runtime_capabilities SET personal_provisioning=true,personal_writes=true WHERE singleton",
         )

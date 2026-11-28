@@ -19,13 +19,10 @@
     "project_id": "uuid|null"
   },
   "capabilities": {
-    "api_version": 2,
-    "schema_version": 1,
     "scope_native_legacy": "boolean",
     "personal_provisioning": "boolean",
     "personal_writes": "boolean",
-    "external_mounts": "boolean",
-    "minimum_reader_version": 2
+    "external_mounts": "boolean"
   },
   "home": {
     "scope": "scope",
@@ -92,7 +89,7 @@
   },
   "rollout_errors": {
     "error_code": "feature_disabled",
-    "reason": "scope_runtime_not_ready|personal_creation_disabled|external_mounts_disabled"
+    "reason": "personal_creation_disabled|external_mounts_disabled"
   },
   "transport_notes": [
     "WS frames remain protocol_version=1; authorization/ticket/limits negotiation v2",

@@ -6,7 +6,7 @@
   "matrix": "external engineering report: sv-flow-decoupling-2026-11-14/BACKEND-SOURCE-CLOSEOUT.json",
   "evidence": {
     "strict_api_worker": "Final2 strict alltargets locked/offline -Dwarnings exit0,0compilerdiagnostics",
-    "scope_pg": "35/0/0 final2,12.67s,threads2,disposable realPG with explicitly mocked reader leases",
+    "scope_pg": "35/0/0 final2,12.67s,threads2,disposable realPG",
     "private_promotion": "1/0 .68s,only isolated verification verdict mocked; actual codec/PG/gates/rollback/receipts; no production bypass",
     "semantic_model": "1/0 .01s versioned v1/v2/v3 selection; no checksum relaxation",
     "core_library": "48/0/0 .01s",

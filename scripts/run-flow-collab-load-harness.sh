@@ -117,7 +117,7 @@ fi
 FIXTURE_SHA256="$({
   sha256sum \
     "$REPO_ROOT/apps/api/tests/flow_collab_load_harness.rs" \
-    "$REPO_ROOT/apps/api/tests/flow_collab_v05_session_round_trip.rs" \
+    "$REPO_ROOT/apps/api/tests/flow_collab_session_round_trip.rs" \
     "$REPO_ROOT/apps/api/tests/flow_collab_cache_evidence.rs" \
     "$REPO_ROOT/apps/api/src/flow/collab/egress.rs" \
     "$REPO_ROOT/apps/api/src/flow/collab/session.rs" \
@@ -158,7 +158,7 @@ if [[ $BASELINE_EXIT -eq 0 ]]; then
     OPENPR_FLOW_DEDICATED_PG_CONTAINER="$PG_CONTAINER" \
     OPENPR_FLOW_QUIET_PG_QUALIFIED=1 \
     OPENPR_FLOW_V05_SESSION_ROUND_TRIP_OUT="$SESSION_OUT" \
-    cargo test --release -p api --test flow_collab_v05_session_round_trip \
+    cargo test --release -p api --test flow_collab_session_round_trip \
       v05_multi_user_session_workload_round_trip_p95 -- --exact --ignored --nocapture) \
     >"$EVIDENCE_ROOT/logs/v0.5-session-load.log" 2>&1
   SESSION_EXIT=$?

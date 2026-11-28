@@ -682,11 +682,6 @@ mod tests {
 
         let user = Uuid::new_v4();
         exec(db,"INSERT INTO users(id,email,password_hash,name,role,is_active) VALUES($1,$2,'','Scope import unit','user',true)",vec![user.into(),format!("{user}@example.test").into()]).await;
-        for component in ["api", "worker", "maintenance"] {
-            super::super::scope_runtime::renew(db, Uuid::new_v4(), component)
-                .await
-                .unwrap();
-        }
         exec(
             db,
             "UPDATE flow_runtime_capabilities SET personal_provisioning=true,personal_writes=true WHERE singleton",

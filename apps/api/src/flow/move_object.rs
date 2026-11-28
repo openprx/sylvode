@@ -373,7 +373,7 @@ fn entry_object_of(id: &str) -> Option<Uuid> {
 /// This exists because the per-node shape it replaces was `O(N^2)`: the previous
 /// `build_navigator_update` took one `semantic_snapshot()` *and* one
 /// `collab_core::limits::check_operation` per node, and both are `O(nodes)`. Measured on the
-/// contract's own ladder (`apps/api/tests/flow_v05_subtree_budget.rs`): N = 100 → 8.11 ms,
+/// contract's own ladder (`apps/api/tests/flow_subtree_budget.rs`): N = 100 → 8.11 ms,
 /// N = 400 → 135.87 ms, N = 1000 → 863.10 ms per document, against 1.12 / 4.33 / 10.97 ms batched.
 /// `limits-v1.md` froze `move_subtree_nodes_max` against the **batched** curve, so this shape is
 /// part of what makes the frozen value true rather than an optimisation on top of it.
@@ -2421,8 +2421,6 @@ mod database_tests {
             .await
             .unwrap_or_else(|err| panic!("could not connect to scratch database {name}: {err}"));
         migrate(&db).await;
-        // A scratch database models a running api and worker.
-        crate::flow::scope_runtime::fixture::register_running_readers(&db).await;
         Some(Scratch { db, name, admin_url })
     }
 

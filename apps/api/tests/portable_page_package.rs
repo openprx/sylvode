@@ -1,8 +1,6 @@
 //! Portable Page promotion with real `PostgreSQL` and the production isolated Loro apply worker.
 use api::flow::collab::bootstrap;
-use api::flow::{
-    document, portable_graph_package as graph, portable_page_package as package, scope, scope_runtime, scope_write,
-};
+use api::flow::{document, portable_graph_package as graph, portable_page_package as package, scope, scope_write};
 use collab_core::{CollabEngine, NodeKind, Operation};
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use uuid::Uuid;
@@ -22,10 +20,7 @@ async fn portable_page_copies_assets_and_links_atomically() {
         .await
         .unwrap();
     let db = &scratch.db;
-    for component in ["api", "worker", "maintenance"] {
-        scope_runtime::renew(db, Uuid::new_v4(), component).await.unwrap();
-    }
-    db.execute_unprepared("UPDATE flow_runtime_capabilities SET minimum_reader_version=5,personal_provisioning=true,personal_writes=true,portable_page_packages_enabled=true WHERE singleton").await.unwrap();
+    db.execute_unprepared("UPDATE flow_runtime_capabilities SET personal_provisioning=true,personal_writes=true,portable_page_packages_enabled=true WHERE singleton").await.unwrap();
     let owner = Uuid::new_v4();
     fixture::exec(
         db,

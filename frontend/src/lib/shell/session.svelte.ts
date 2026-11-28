@@ -10,7 +10,6 @@ import { flowApi } from '#lib/api/flow.js';
 import { formsApi } from '#lib/api/forms.js';
 import { notificationsApi } from '#lib/api/notifications.js';
 import { workspacesApi } from '#lib/api/workspaces.js';
-import { FLOW_PROCESS_READER_COMPATIBILITY } from '#lib/flow/product-mode.js';
 import { authStore, verifySession } from '#lib/stores/auth.js';
 import { flowFeatureStore } from '#lib/stores/flow-feature.js';
 import { projectOptionsStore, type ProjectOption } from '#lib/stores/project-options.js';
@@ -176,10 +175,7 @@ export function createShellSession(): ShellSession {
 			projectOptionsStore.ensureLoaded(),
 			flowApi.getCapabilities().then((result) => {
 				if (mine !== run || !apiClient.isAuthSessionEpoch(verifiedEpoch)) return;
-				session.personalFlow =
-					result.code === 0 &&
-					result.data?.api_version === 2 &&
-					result.data.minimum_reader_version <= FLOW_PROCESS_READER_COMPATIBILITY;
+				session.personalFlow = result.code === 0 && !!result.data;
 			})
 		]);
 

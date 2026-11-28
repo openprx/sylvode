@@ -90,14 +90,14 @@ fn map(error: collab_core::CollabError) -> ApiError {
 }
 
 async fn require_enabled<C: ConnectionTrait>(db: &C) -> Result<(), ApiError> {
-    if !scope::capabilities(db).await?.portable_page_packages_supported {
+    if !scope::capabilities(db).await?.portable_page_packages_enabled {
         return Err(ApiError::typed_with_details(
             ApiErrorKind::FeatureDisabled,
             "Portable Page packages are disabled",
             json!({"reason":"portable_page_packages_disabled"}),
         ));
     }
-    scope::require_reader_ready(db).await
+    Ok(())
 }
 
 pub(super) async fn page<C: ConnectionTrait>(

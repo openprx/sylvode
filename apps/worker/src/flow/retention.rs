@@ -121,8 +121,6 @@ mod tests {
                 .await
                 .unwrap_or_else(|error| panic!("{} failed: {error}", path.display()));
         }
-        // A scratch database models a running api and worker.
-        crate::flow::test_readers::register_running_readers(&db).await;
         Some(Scratch { db, name, admin_url })
     }
 

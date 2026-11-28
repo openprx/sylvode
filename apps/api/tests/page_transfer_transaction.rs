@@ -1,5 +1,5 @@
 //! Independent Linux production-service transaction exercise; no mocked permissions/apply.
-use api::flow::{document, page_transfer_contract as wire, page_transfers, scope, scope_runtime, scope_write};
+use api::flow::{document, page_transfer_contract as wire, page_transfers, scope, scope_write};
 use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use collab_core::{CollabEngine, NodeKind, Operation};
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
@@ -20,10 +20,11 @@ async fn actual_same_scope_move_commits_both_heads_or_neither_and_replays() {
         .await
         .unwrap();
     let db = &scratch.db;
-    for component in ["api", "worker", "maintenance"] {
-        scope_runtime::renew(db, Uuid::new_v4(), component).await.unwrap();
-    }
-    db.execute_unprepared("UPDATE flow_runtime_capabilities SET minimum_reader_version=5,personal_provisioning=true,personal_writes=true WHERE singleton").await.unwrap();
+    db.execute_unprepared(
+        "UPDATE flow_runtime_capabilities SET personal_provisioning=true,personal_writes=true WHERE singleton",
+    )
+    .await
+    .unwrap();
     let owner = Uuid::new_v4();
     fixture::exec(
         db,
@@ -976,10 +977,6 @@ async fn workspace_transfer_keeps_admission_and_write_guards() {
         .await
         .unwrap();
     let db = &scratch.db;
-    // Reader 5 is the default since 0106; start below it so the transfer reader gate is exercised.
-    db.execute_unprepared("UPDATE flow_runtime_capabilities SET minimum_reader_version=4 WHERE singleton")
-        .await
-        .unwrap();
     let workspace = Uuid::new_v4();
     let owner = Uuid::new_v4();
     let reader = Uuid::new_v4();
@@ -1104,20 +1101,9 @@ async fn workspace_transfer_keeps_admission_and_write_guards() {
         };
         async move { page_transfers::prepare(db, actor, source.0, &Uuid::new_v4().to_string(), input).await }
     };
-    let err = prepare(owner, target).await.unwrap_err();
-    assert!(format!("{err:?}").contains("transfer_readers_not_ready"));
-    db.execute_unprepared(
-        "UPDATE flow_runtime_capabilities SET minimum_reader_version=5,scope_native_legacy=false WHERE singleton",
-    )
-    .await
-    .unwrap();
-    assert!(
-        prepare(owner, target).await.is_err(),
-        "reader leases are independently required"
-    );
-    for component in ["api", "worker", "maintenance"] {
-        scope_runtime::renew(db, Uuid::new_v4(), component).await.unwrap();
-    }
+    db.execute_unprepared("UPDATE flow_runtime_capabilities SET scope_native_legacy=false WHERE singleton")
+        .await
+        .unwrap();
     assert_eq!(
         scope::authorize(db, target.0, reader, PermissionLevel::View)
             .await

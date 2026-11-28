@@ -12,6 +12,20 @@ name.
 
 ### Removed
 
+- **Flow reader floor and reader leases.** Migration `0128` drops `flow_runtime_readers` and
+  `flow_runtime_capabilities.minimum_reader_version`. The api and the worker no longer register
+  reader leases, so Page editing, personal writes, block transfers and packages no longer wait for a
+  live lease and `feature_disabled` with `scope_runtime_not_ready` is gone; the code behind every
+  floor check runs unconditionally. `GET /api/v2/flow/capabilities` drops `api_version`,
+  `schema_version`, `minimum_reader_version`, the derived `*_supported` flags and the constant
+  package fields, and reports the operator switches directly (`block_transfers_enabled`,
+  `portable_page_packages_enabled`, `portable_graph_packages_enabled`, `external_mounts`, the
+  personal and conversion switches). The web UI no longer compares a reader version.
+- **Versioned Flow command and MCP registries.** One `command_cardinality_registry()` lists every Flow
+  write command once, and the MCP tool groups, the surface snapshot (`mcp-surface.snapshot.md`) and the
+  tool-registry baseline lose their `v0_N` names and rebase history; the baseline schema id is
+  `sylvode.mcp-tool-registry-baseline.v1`.
+
 - **Migration runner: adoption, replay and the `[migrations]` section are gone.** The API applies
   every migration file the ledger does not record, in file name order, each in its own transaction,
   and refuses to start when one fails, when a recorded file changed, or when the ledger records a

@@ -65,12 +65,12 @@ const DOCUMENT_FORMAT_VERSION: &str = "loro-1";
 /// - `Zero`: no existing document's head is advanced — pure `PostgreSQL` governance/metadata
 ///   (`ADR-0013` §1's first table row: archive/restore, feature flag, authz change,
 ///   relation link/unlink).
-/// - `One`: exactly one existing document's head is advanced — v0.4's content commands, and
-///   (from v0.5) a parented create that only touches its navigator's ordering.
+/// - `One`: exactly one existing document's head is advanced — the content commands, and a
+///   parented create that only touches its navigator's ordering.
 /// - `BoundedMany(n)`: `n` existing documents contend a head advance in one command — `ADR-0013`
-///   §2's multi-document lock-order path, first introduced by v0.5's cross-project `move_object`.
-///   **No v0.4-registered command may declare this** (`ADR-0013` §1: "v0.4 的竞争文档集合恒 ≤ 1");
-///   `v0_4_command_cardinality_registry`'s own test below is the machine gate for that bound.
+///   §2's multi-document lock-order path, used only by the cross-project `move_object`.
+///   **No other command may declare this**; `command_cardinality_registry`'s own test below is the
+///   machine gate for that bound.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExistingDocumentCardinality {
     Zero,
@@ -102,15 +102,18 @@ pub const CREATE_OBJECT_CARDINALITY: ExistingDocumentCardinality = ExistingDocum
 /// `flow_workspace_settings` row transition, no `collab_documents` row involved at all.
 pub const SET_FLOW_FEATURE_CARDINALITY: ExistingDocumentCardinality = ExistingDocumentCardinality::Zero;
 
-/// Every v0.4-registered write command, by its wire `command.type`/endpoint name, alongside its
-/// declared [`ExistingDocumentCardinality`] — the machine-checkable registry
-/// `command_contended_document_cardinality` asserts over (this module's own test below, and any
-/// future `verify-flow-cardinality-v0.4.sh` gate script that wants the same facts from Rust rather
-/// than re-deriving them from prose).
-pub fn v0_4_command_cardinality_registry() -> Vec<(&'static str, ExistingDocumentCardinality)> {
+/// Every write command, by its wire `command.type`/endpoint name, alongside its declared
+/// [`ExistingDocumentCardinality`] — the one machine-checkable registry
+/// `command_contended_document_cardinality` asserts over (this module's own test below).
+/// Page body commands advance the owning Page's existing document; creating a linked child starts
+/// a new document and does not add to the contended existing set.
+#[must_use]
+pub fn command_cardinality_registry() -> Vec<(&'static str, ExistingDocumentCardinality)> {
     let mut registry = vec![
         ("create_object", CREATE_OBJECT_CARDINALITY),
         ("set_flow_feature", SET_FLOW_FEATURE_CARDINALITY),
+        ("grants_set", ExistingDocumentCardinality::Zero),
+        ("inheritance_set", ExistingDocumentCardinality::Zero),
     ];
     for content in [
         ContentCommandType::SetTitle,
@@ -119,28 +122,15 @@ pub fn v0_4_command_cardinality_registry() -> Vec<(&'static str, ExistingDocumen
         ContentCommandType::DeleteBlock,
         ContentCommandType::MoveBlock,
         ContentCommandType::SemanticPatch,
+        ContentCommandType::InsertBodyAsset,
+        ContentCommandType::ReplaceBodyAsset,
+        ContentCommandType::LinkChildPage,
     ] {
         registry.push((content.wire_name(), content.existing_document_cardinality()));
     }
     for lifecycle in [LifecycleCommandType::Archive, LifecycleCommandType::Restore] {
         registry.push((lifecycle.wire_name(), lifecycle.existing_document_cardinality()));
     }
-    registry
-}
-
-/// Every command registered at **v0.5**, by wire name, with its declared
-/// [`ExistingDocumentCardinality`].
-///
-/// `ADR-0013` §1 R16: "不得把 v0.5 的清单外推到 v0.8 …… 改为由机器字段持续证明：command registry
-/// 每个命令必须声明 `existing_document_cardinality`，逐版 gate 扫描所有新增 command variant" —
-/// so this is a superset of [`v0_4_command_cardinality_registry`], not a replacement, and the v0.4
-/// bound keeps being asserted against the v0.4 list alone.
-pub fn v0_5_command_cardinality_registry() -> Vec<(&'static str, ExistingDocumentCardinality)> {
-    let mut registry = v0_4_command_cardinality_registry();
-    registry.extend([
-        ("grants_set", ExistingDocumentCardinality::Zero),
-        ("inheritance_set", ExistingDocumentCardinality::Zero),
-    ]);
     for governance in [
         GovernanceCommandType::MoveObject,
         GovernanceCommandType::Link,
@@ -148,30 +138,21 @@ pub fn v0_5_command_cardinality_registry() -> Vec<(&'static str, ExistingDocumen
     ] {
         registry.push((governance.wire_name(), governance.existing_document_cardinality()));
     }
-    registry
-}
-
-/// Every command registered through v0.6. The Collection package owns the new-variant list, while
-/// this cumulative registry keeps the release-by-release machine scan from silently extrapolating
-/// v0.5's set.
-#[must_use]
-pub fn v0_6_command_cardinality_registry() -> Vec<(&'static str, ExistingDocumentCardinality)> {
-    let mut registry = v0_5_command_cardinality_registry();
-    registry.extend(super::collections::v0_6_command_cardinality_registry());
-    registry
-}
-
-/// Current command ledger, including later Page body commands that advance the owning
-/// Page's existing document. Creating a linked child starts a new document and does not
-/// add to the contended existing set.
-pub fn current_command_cardinality_registry() -> Vec<(&'static str, ExistingDocumentCardinality)> {
-    let mut registry = v0_6_command_cardinality_registry();
-    for content in [
-        ContentCommandType::InsertBodyAsset,
-        ContentCommandType::ReplaceBodyAsset,
-        ContentCommandType::LinkChildPage,
+    for collection in [
+        super::collections::CollectionCommandType::FieldCreate,
+        super::collections::CollectionCommandType::FieldUpdate,
+        super::collections::CollectionCommandType::FieldArchive,
+        super::collections::CollectionCommandType::FieldReorder,
+        super::collections::CollectionCommandType::ViewCreate,
+        super::collections::CollectionCommandType::ViewUpdate,
+        super::collections::CollectionCommandType::ViewReorder,
+        super::collections::CollectionCommandType::RecordCreate,
+        super::collections::CollectionCommandType::RecordPatch,
+        super::collections::CollectionCommandType::RecordArchive,
+        super::collections::CollectionCommandType::RecordQuery,
+        super::collections::CollectionCommandType::CreateCollectionEmbed,
     ] {
-        registry.push((content.wire_name(), content.existing_document_cardinality()));
+        registry.push((collection.wire_name(), collection.existing_document_cardinality()));
     }
     registry
 }
@@ -622,9 +603,6 @@ async fn create_object_inner(
     // commit; a revoke cannot commit between this check and creation.
     let _creation_epoch = authz::lock_epoch_for_share(&tx, input.workspace_id).await?;
     super::policy::require_flow_enabled_on(&tx, input.workspace_id).await?;
-    if editor_model >= 4 {
-        super::scope::require_editor_model_readers(&tx, editor_model).await?;
-    }
     let role = if input.actor_is_bot {
         #[derive(FromQueryResult)]
         struct BotPermissions {
@@ -2715,99 +2693,86 @@ async fn execute_lifecycle_command(
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod cardinality_gate_tests {
-    use super::{
-        CommandKind, ExistingDocumentCardinality, authz::PermissionLevel, current_command_cardinality_registry,
-        v0_4_command_cardinality_registry, v0_5_command_cardinality_registry, v0_6_command_cardinality_registry,
-    };
+    use super::{CommandKind, ExistingDocumentCardinality, authz::PermissionLevel, command_cardinality_registry};
 
-    /// `command_contended_document_cardinality` (`ADR-0013` §1, v0.4): "v0.4 的竞争文档集合恒
-    /// ≤ 1". Every command this package registers — content, lifecycle, and the two
-    /// non-`CommandKind` write paths (`create_object`, `set_flow_feature`) — must declare a
-    /// cardinality of at most 1. This is the v0.4-only invariant; later releases validate
-    /// `BoundedMany` declarations against their production lock-order mechanism separately.
+    /// `command_contended_document_cardinality` (`ADR-0013` §1): every write command declares how
+    /// many existing documents it contends. Only the named multi-document command may be
+    /// `BoundedMany`; every other command is at most one.
     #[test]
-    fn v0_4_command_set_existing_document_cardinality_is_always_at_most_one() {
-        let registry = v0_4_command_cardinality_registry();
-        assert!(!registry.is_empty(), "the v0.4 command registry must not be empty");
+    fn only_the_named_multi_document_commands_exceed_one_existing_document() {
+        let registry = command_cardinality_registry();
+        assert!(!registry.is_empty(), "the command registry must not be empty");
         for (name, cardinality) in registry {
-            assert!(
-                cardinality.count() <= 1,
-                "command '{name}' declares existing_document_cardinality={cardinality:?} \
-                 (count={}), violating ADR-0013's v0.4 bound of <= 1",
-                cardinality.count()
-            );
+            if name == "move_object" {
+                assert_eq!(cardinality, ExistingDocumentCardinality::BoundedMany(2));
+            } else {
+                assert!(
+                    cardinality.count() <= 1,
+                    "command '{name}' declares existing_document_cardinality={cardinality:?} \
+                     (count={}); only move_object may contend more than one document",
+                    cardinality.count()
+                );
+            }
         }
     }
 
     #[test]
-    fn v0_4_registry_covers_every_registered_command_name() {
-        let registry = v0_4_command_cardinality_registry();
-        let names: Vec<&str> = registry.iter().map(|(name, _)| *name).collect();
-        for expected in [
-            "create_object",
-            "set_flow_feature",
-            "set_title",
-            "insert_block",
-            "update_block",
-            "delete_block",
-            "move_block",
-            "semantic_patch",
-            "archive",
-            "restore",
-        ] {
-            assert!(
-                names.contains(&expected),
-                "command '{expected}' is missing from the cardinality registry"
-            );
-        }
-        assert_eq!(names.len(), 10, "registry must not silently gain or lose commands");
-    }
-
-    #[test]
-    fn v0_5_registry_covers_every_registered_command_name_and_cardinality() {
-        let registry = v0_5_command_cardinality_registry();
-        assert_eq!(
-            registry.len(),
-            15,
-            "the v0.5 registry must not silently gain or lose commands"
-        );
-        for (expected_name, expected_cardinality) in [
+    fn the_registry_lists_every_command_once_with_its_cardinality() {
+        let registry = command_cardinality_registry();
+        let expected = [
             ("create_object", ExistingDocumentCardinality::Zero),
             ("set_flow_feature", ExistingDocumentCardinality::Zero),
+            ("grants_set", ExistingDocumentCardinality::Zero),
+            ("inheritance_set", ExistingDocumentCardinality::Zero),
             ("set_title", ExistingDocumentCardinality::One),
             ("insert_block", ExistingDocumentCardinality::One),
             ("update_block", ExistingDocumentCardinality::One),
             ("delete_block", ExistingDocumentCardinality::One),
             ("move_block", ExistingDocumentCardinality::One),
             ("semantic_patch", ExistingDocumentCardinality::One),
+            ("insert_body_asset", ExistingDocumentCardinality::One),
+            ("replace_body_asset", ExistingDocumentCardinality::One),
+            ("link_child_page", ExistingDocumentCardinality::One),
             ("archive", ExistingDocumentCardinality::Zero),
             ("restore", ExistingDocumentCardinality::Zero),
-            ("grants_set", ExistingDocumentCardinality::Zero),
-            ("inheritance_set", ExistingDocumentCardinality::Zero),
             ("move_object", ExistingDocumentCardinality::BoundedMany(2)),
             ("link", ExistingDocumentCardinality::Zero),
             ("unlink", ExistingDocumentCardinality::Zero),
-        ] {
+            ("field_create", ExistingDocumentCardinality::One),
+            ("field_update", ExistingDocumentCardinality::One),
+            ("field_archive", ExistingDocumentCardinality::One),
+            ("field_reorder", ExistingDocumentCardinality::One),
+            ("view_create", ExistingDocumentCardinality::One),
+            ("view_update", ExistingDocumentCardinality::One),
+            ("view_reorder", ExistingDocumentCardinality::One),
+            ("record_create", ExistingDocumentCardinality::Zero),
+            ("record_patch", ExistingDocumentCardinality::One),
+            ("record_archive", ExistingDocumentCardinality::Zero),
+            ("record_query", ExistingDocumentCardinality::Zero),
+            ("create_collection_embed", ExistingDocumentCardinality::One),
+        ];
+        assert_eq!(
+            registry.len(),
+            expected.len(),
+            "registry must not silently gain or lose commands"
+        );
+        for (expected_name, expected_cardinality) in expected {
             assert_eq!(
                 registry
                     .iter()
-                    .find(|(name, _)| *name == expected_name)
-                    .map(|(_, cardinality)| *cardinality),
-                Some(expected_cardinality),
-                "command '{expected_name}' is missing or has the wrong v0.5 cardinality"
+                    .filter(|(name, _)| *name == expected_name)
+                    .map(|(_, cardinality)| *cardinality)
+                    .collect::<Vec<_>>(),
+                [expected_cardinality],
+                "command '{expected_name}' is missing, duplicated or has the wrong cardinality"
             );
         }
     }
 
     #[test]
-    fn current_page_body_commands_are_counted_once_and_require_an_editing_user() {
-        let registry = current_command_cardinality_registry();
-        let expected = ["insert_body_asset", "replace_body_asset", "link_child_page"];
-        assert_eq!(
-            registry.len(),
-            v0_6_command_cardinality_registry().len() + expected.len()
-        );
-        for name in expected {
+    fn page_body_commands_are_counted_once_and_require_an_editing_user() {
+        let registry = command_cardinality_registry();
+        for name in ["insert_body_asset", "replace_body_asset", "link_child_page"] {
             assert_eq!(
                 registry
                     .iter()
@@ -2816,7 +2781,7 @@ mod cardinality_gate_tests {
                     .collect::<Vec<_>>(),
                 [ExistingDocumentCardinality::One],
             );
-            let kind = CommandKind::parse(name).expect("current Page body command parses");
+            let kind = CommandKind::parse(name).expect("Page body command parses");
             let CommandKind::Content(content) = kind else {
                 panic!("{name} must be a Page content command");
             };
@@ -3278,8 +3243,6 @@ mod database_tests {
 
         migrate(&db).await;
 
-        // A scratch database models a running api and worker.
-        crate::flow::scope_runtime::fixture::register_running_readers(&db).await;
         Some(Scratch { db, name, admin_url })
     }
 
@@ -3461,7 +3424,7 @@ mod database_tests {
                 // them: neither value is allowed to control the derived impact set.
                 payload: serde_json::json!({
                     "cascade": legacy_cascade_hint,
-                    "v0_4_extension": "still accepted"
+                    "unknown_extension": "still accepted"
                 }),
                 expected_frontier: None,
                 idempotency_key,
@@ -3625,133 +3588,6 @@ mod database_tests {
             Some(&serde_json::json!("tree_depth")),
             "{what}: limit_kind must be the frozen `tree_depth`"
         );
-    }
-
-    async fn page_count(db: &DatabaseConnection, workspace_id: Uuid) -> i64 {
-        use sea_orm::{ConnectionTrait, DbBackend, Statement};
-        db.query_one(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "SELECT count(*) AS pages FROM flow_objects WHERE workspace_id=$1 AND object_type='page'",
-            vec![workspace_id.into()],
-        ))
-        .await
-        .expect("page count query runs")
-        .expect("page count row exists")
-        .try_get::<i64>("", "pages")
-        .expect("page count is a bigint")
-    }
-
-    /// A plain workspace Page (editor model 1) needs the api, worker and maintenance leases at the
-    /// default floor; the hooks on the Page write path gate every Page write.
-    #[tokio::test]
-    async fn a_page_write_waits_for_every_reader_lease_at_the_default_floor() {
-        use crate::flow::scope_runtime::fixture::{clear_readers, register_reader};
-        let scratch = scratch_or_skip!("page_write_reader_leases");
-        let db = &scratch.db;
-        let state = state_for(db.clone());
-        let fx = seed_workspace(db).await;
-        let before = page_count(db, fx.workspace_id).await;
-
-        // Only the api process has registered.
-        clear_readers(db).await;
-        register_reader(db, "api", true).await;
-        let err = create_page(&state, &fx, None)
-            .await
-            .expect_err("a Page write needs every component");
-        assert!(
-            format!("{err:?}").contains("scope_runtime_not_ready"),
-            "unexpected refusal: {err:?}"
-        );
-        assert_eq!(
-            page_count(db, fx.workspace_id).await,
-            before,
-            "a refused write leaves no Page behind"
-        );
-
-        // An expired worker lease counts as absent.
-        register_reader(db, "worker", false).await;
-        register_reader(db, "maintenance", true).await;
-        let err = create_page(&state, &fx, None)
-            .await
-            .expect_err("an expired worker lease does not count");
-        assert!(
-            format!("{err:?}").contains("scope_runtime_not_ready"),
-            "unexpected refusal: {err:?}"
-        );
-        assert_eq!(
-            page_count(db, fx.workspace_id).await,
-            before,
-            "a refused write leaves no Page behind"
-        );
-
-        // A live worker lease completes the set.
-        register_reader(db, "worker", true).await;
-        create_page(&state, &fx, None)
-            .await
-            .expect("all three leases live accept the Page write");
-        assert_eq!(page_count(db, fx.workspace_id).await, before + 1);
-
-        scratch.drop_self().await;
-    }
-
-    /// A REST content command on an existing Page while a reader lease is missing is refused as
-    /// `feature_disabled{scope_runtime_not_ready}` (not `server_draining`/`contention`), leaves the
-    /// head where it was, and is accepted once every lease is live.
-    #[tokio::test]
-    async fn a_content_command_is_refused_as_feature_disabled_until_every_reader_lease_is_live() {
-        use crate::flow::scope_runtime::fixture::{clear_readers, register_reader};
-        let scratch = scratch_or_skip!("content_command_reader_leases");
-        let db = &scratch.db;
-        let state = state_for(db.clone());
-        let fx = seed_workspace(db).await;
-        let object_id = create_page(&state, &fx, None)
-            .await
-            .expect("the Page is created while the scratch database models every component");
-
-        let set_title = |title: &str| ExecuteCommandInput {
-            origin: CommandOrigin::first_request_from(EventSurface::Rest),
-            object_id,
-            actor_id: fx.owner_id,
-            principal_kind: "user".to_string(),
-            role: "owner".to_string(),
-            command_type: "set_title".to_string(),
-            payload: serde_json::json!({ "title": title }),
-            expected_frontier: None,
-            idempotency_key: Uuid::new_v4().to_string(),
-            message: None,
-            origin_client_id: "reader-lease-test".to_string(),
-        };
-
-        let baseline = execute_command(&state, set_title("Before the outage"))
-            .await
-            .expect("a content command is accepted while every lease is live");
-
-        // Only the api process has registered.
-        clear_readers(db).await;
-        register_reader(db, "api", true).await;
-        let err = execute_command(&state, set_title("During the outage"))
-            .await
-            .expect_err("a content command needs every component");
-        assert_eq!(err.kind(), ApiErrorKind::FeatureDisabled, "unexpected refusal: {err:?}");
-        assert!(
-            format!("{err:?}").contains("scope_runtime_not_ready"),
-            "unexpected refusal: {err:?}"
-        );
-
-        // The worker and maintenance components register: the same command is accepted, and its
-        // sequence follows the baseline directly, so the refused attempt wrote nothing.
-        register_reader(db, "worker", true).await;
-        register_reader(db, "maintenance", true).await;
-        let accepted = execute_command(&state, set_title("After the outage"))
-            .await
-            .expect("all three leases live accept the content command");
-        assert_eq!(
-            accepted.accepted_seq,
-            baseline.accepted_seq + 1,
-            "the refused command must not have advanced the head"
-        );
-
-        scratch.drop_self().await;
     }
 
     /// `archive_tier_by_object_scope` plus the v0.4 baseline fixture named by the gate. The member
@@ -5350,8 +5186,6 @@ mod idempotency_race_database_tests {
 
         migrate(&db).await;
 
-        // A scratch database models a running api and worker.
-        crate::flow::scope_runtime::fixture::register_running_readers(&db).await;
         Some(Scratch { db, name, admin_url })
     }
 

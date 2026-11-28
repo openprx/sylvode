@@ -152,16 +152,17 @@ pub fn get_all_tool_definitions() -> Vec<ToolDefinition> {
         objects::query_flow_objects_tool(),
         objects::get_flow_object_history_tool(),
     ];
-    tools.extend(flow_v05_tool_definitions());
-    tools.extend(flow_v06_tool_definitions());
-    tools.extend(flow_v07_tool_definitions());
-    tools.extend(flow_v08_tool_definitions());
+    tools.extend(flow_core_tool_definitions());
+    tools.extend(flow_collection_tool_definitions());
+    tools.extend(flow_bridge_tool_definitions());
+    tools.extend(flow_hardening_tool_definitions());
+    tools.push(objects::repair_quarantine_tool());
     tools.extend(flow_social::tool_definitions());
     tools.extend(tasks::tool_definitions());
     tools
 }
 
-fn flow_v08_hardening_tool_definitions() -> Vec<ToolDefinition> {
+fn flow_hardening_tool_definitions() -> Vec<ToolDefinition> {
     vec![
         objects::export_flow_object_tool(),
         objects::export_flow_workspace_tool(),
@@ -177,17 +178,11 @@ fn flow_v08_hardening_tool_definitions() -> Vec<ToolDefinition> {
     ]
 }
 
-fn flow_v08_tool_definitions() -> Vec<ToolDefinition> {
-    let mut tools = flow_v08_hardening_tool_definitions();
-    tools.extend([objects::repair_quarantine_tool()]);
-    tools
-}
-
-/// Test-only cardinality declarations joined to the live v0.8 production tool registry by name.
+/// Test-only cardinality declarations joined to the live hardening tool registry by name.
 /// The invariant test rejects a newly registered hardening tool without a declaration and a stale
 /// declaration after its tool is removed; runtime registration does not depend on this validator.
 #[cfg(test)]
-fn flow_v08_command_cardinality_registry(
+fn flow_hardening_cardinality_registry(
     tools: &[ToolDefinition],
 ) -> Result<Vec<(String, api::flow::command::ExistingDocumentCardinality)>, String> {
     use api::flow::command::ExistingDocumentCardinality::{One, Zero};
@@ -207,14 +202,19 @@ fn flow_v08_command_cardinality_registry(
                 | "collab.rebuild_projection"
                 | "deliveries.replay" => Zero,
                 "collab.compact" => One,
-                unknown => return Err(format!("live v0.8 command '{unknown}' has no cardinality declaration")),
+                unknown => {
+                    return Err(format!(
+                        "live hardening command '{unknown}' has no cardinality declaration"
+                    ));
+                }
             };
             Ok((tool.name.clone(), cardinality))
         })
         .collect()
 }
 
-fn flow_v07_tool_definitions() -> Vec<ToolDefinition> {
+/// The Page/Forms bridge tools: references and conversion.
+fn flow_bridge_tool_definitions() -> Vec<ToolDefinition> {
     vec![
         objects::reference_flow_object_tool(),
         objects::unreference_flow_object_tool(),
@@ -225,7 +225,8 @@ fn flow_v07_tool_definitions() -> Vec<ToolDefinition> {
     ]
 }
 
-fn flow_v06_tool_definitions() -> Vec<ToolDefinition> {
+/// The Collection read and record-create tools.
+fn flow_collection_tool_definitions() -> Vec<ToolDefinition> {
     vec![
         objects::describe_collection_tool(),
         objects::query_collection_tool(),
@@ -233,10 +234,9 @@ fn flow_v06_tool_definitions() -> Vec<ToolDefinition> {
     ]
 }
 
-/// The live v0.5 registration set. Keeping the version boundary explicit lets the contract test
-/// compare both directions without inferring a version from tool ordering or from the snapshot it
-/// is meant to verify.
-fn flow_v05_tool_definitions() -> Vec<ToolDefinition> {
+/// The core Flow object tools. Keeping the group explicit lets the contract test compare both
+/// directions without inferring it from tool ordering or from the snapshot it is meant to verify.
+fn flow_core_tool_definitions() -> Vec<ToolDefinition> {
     vec![
         objects::create_flow_object_tool(),
         objects::patch_flow_object_tool(),
@@ -256,26 +256,23 @@ fn flow_v05_tool_definitions() -> Vec<ToolDefinition> {
 #[cfg(test)]
 mod tests {
     use super::{
-        flow_v05_tool_definitions, flow_v06_tool_definitions, flow_v07_tool_definitions,
-        flow_v08_command_cardinality_registry, flow_v08_hardening_tool_definitions, flow_v08_tool_definitions,
-        get_all_tool_definitions,
+        flow_bridge_tool_definitions, flow_collection_tool_definitions, flow_core_tool_definitions,
+        flow_hardening_cardinality_registry, flow_hardening_tool_definitions, get_all_tool_definitions,
     };
     use api::flow::command::ExistingDocumentCardinality;
-    use sha2::{Digest, Sha256};
     use std::collections::HashSet;
 
-    const FLOW_V05_SURFACE_SNAPSHOT: &str = include_str!("mcp-surface-v05.snapshot.md");
-    const TOOL_REGISTRY_BASELINE: &str = include_str!("../../tool-registry-baseline.json");
+    const SURFACE_SNAPSHOT: &str = include_str!("mcp-surface.snapshot.md");
 
     #[test]
-    fn live_v08_dispatch_has_exact_cardinality_coverage_and_lock_order_support() {
-        let live_names = flow_v08_hardening_tool_definitions()
+    fn live_hardening_dispatch_has_exact_cardinality_coverage_and_lock_order_support() {
+        let live_names = flow_hardening_tool_definitions()
             .into_iter()
             .map(|tool| tool.name)
             .collect::<HashSet<_>>();
-        let live_tools = flow_v08_hardening_tool_definitions();
-        let registry = flow_v08_command_cardinality_registry(&live_tools)
-            .expect("every live v0.8 hardening command must declare cardinality");
+        let live_tools = flow_hardening_tool_definitions();
+        let registry = flow_hardening_cardinality_registry(&live_tools)
+            .expect("every live hardening command must declare cardinality");
         let declared_names = registry.iter().map(|(name, _)| name.clone()).collect::<HashSet<_>>();
 
         assert_eq!(
@@ -290,60 +287,33 @@ mod tests {
         for (name, cardinality) in registry {
             assert!(
                 !matches!(cardinality, ExistingDocumentCardinality::BoundedMany(_)),
-                "v0.8 command '{name}' declares BoundedMany without an ADR-0013 section 2 lock-order mechanism"
+                "hardening command '{name}' declares BoundedMany without an ADR-0013 section 2 lock-order mechanism"
             );
         }
     }
 
     #[test]
-    fn flow_v08_tools_match_the_repository_registry_baseline() {
+    fn flow_tool_groups_are_registered_exactly() {
         let tools = get_all_tool_definitions();
-        let names = tools.iter().map(|tool| tool.name.as_str()).collect::<Vec<_>>();
-        let unique = names.iter().copied().collect::<HashSet<_>>();
-        let baseline: serde_json::Value =
-            serde_json::from_str(TOOL_REGISTRY_BASELINE).expect("tool registry baseline is valid JSON");
-        let expected_count = baseline
-            .get("count")
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|count| usize::try_from(count).ok())
-            .expect("tool registry baseline count fits usize");
-        let expected_hash = baseline
-            .get("names_sha256")
-            .and_then(serde_json::Value::as_str)
-            .expect("tool registry baseline names_sha256 is a string");
-        let mut sorted_names = names.clone();
-        sorted_names.sort_unstable();
-        let names_hash = format!("{:x}", Sha256::digest(sorted_names.join("\n").as_bytes()));
-        assert_eq!(
-            tools.len(),
-            expected_count,
-            "live registry count must match the repository-owned baseline"
-        );
-        assert_eq!(
-            names_hash, expected_hash,
-            "live registry names must match the baseline hash"
-        );
-        assert_eq!(names.len(), unique.len(), "MCP tool names must remain unique");
-
-        let live_v06 = flow_v06_tool_definitions()
+        let live_collection = flow_collection_tool_definitions()
             .into_iter()
             .map(|tool| tool.name)
             .collect::<HashSet<_>>();
         assert_eq!(
-            live_v06,
+            live_collection,
             HashSet::from([
                 "collections.describe".to_string(),
                 "collections.query".to_string(),
                 "records.create".to_string(),
             ]),
-            "the live v0.6 delta must be the frozen three-tool surface"
+            "the Collection group must be the frozen three-tool surface"
         );
-        let live_v07 = flow_v07_tool_definitions()
+        let live_bridge = flow_bridge_tool_definitions()
             .into_iter()
             .map(|tool| tool.name)
             .collect::<HashSet<_>>();
         assert_eq!(
-            live_v07,
+            live_bridge,
             HashSet::from([
                 "objects.reference".to_string(),
                 "objects.unreference".to_string(),
@@ -352,14 +322,15 @@ mod tests {
                 "objects.convert_status".to_string(),
                 "objects.convert_retry".to_string(),
             ]),
-            "the live v0.7 delta must be exactly the frozen six-tool bridge surface"
+            "the bridge group must be exactly the frozen six-tool surface"
         );
-        let live_v08 = flow_v08_tool_definitions()
+        let live_hardening = flow_hardening_tool_definitions()
             .into_iter()
+            .chain(std::iter::once(super::objects::repair_quarantine_tool()))
             .map(|tool| tool.name)
             .collect::<HashSet<_>>();
         assert_eq!(
-            live_v08,
+            live_hardening,
             HashSet::from(
                 [
                     "objects.export",
@@ -377,13 +348,13 @@ mod tests {
                 ]
                 .map(str::to_string)
             ),
-            "the live v0.8 delta must be exactly the twelve-tool hardening surface"
+            "the hardening group must be exactly the twelve-tool surface"
         );
         for name in ["objects.import_artifact", "objects.integrity"] {
             let schema = tools
                 .iter()
                 .find(|tool| tool.name == name)
-                .expect("v0.8 tool is registered")
+                .expect("hardening tool is registered")
                 .input_schema
                 .clone();
             assert_eq!(
@@ -394,23 +365,10 @@ mod tests {
         }
     }
 
-    #[derive(Debug, PartialEq, Eq)]
-    struct FlowV05Surface {
-        baseline_total: usize,
-        expected_total: usize,
-        tool_names: HashSet<String>,
-    }
-
-    fn registry_total(surface: &str, version: &str) -> Option<usize> {
-        surface.lines().find_map(|line| {
-            let marker = format!("v{version} `");
-            let tail = line.split_once(&marker)?.1;
-            tail.split_once('`')?.0.parse::<usize>().ok()
-        })
-    }
-
-    fn parse_flow_v05_surface(surface: &str) -> FlowV05Surface {
-        let tool_names = surface
+    /// The tool names a surface table lists as core Flow tools (version column `0.5`, the
+    /// contract's own marker).
+    fn parse_surface_snapshot(surface: &str) -> HashSet<String> {
+        surface
             .lines()
             .skip_while(|line| *line != "## Tools")
             .skip(1)
@@ -422,13 +380,7 @@ mod tests {
                     _ => None,
                 }
             })
-            .collect::<HashSet<_>>();
-        FlowV05Surface {
-            baseline_total: registry_total(surface, "0.4")
-                .expect("the surface must declare the v0.4 registry baseline"),
-            expected_total: registry_total(surface, "0.5").expect("the surface must declare the v0.5 registry total"),
-            tool_names,
-        }
+            .collect()
     }
 
     /// The registry names and the catalogue classification are pinned in the baseline: adding,
@@ -561,64 +513,44 @@ mod tests {
     }
 
     #[test]
-    fn flow_v05_registry_matches_the_embedded_contract_snapshot() {
+    fn flow_core_registry_matches_the_embedded_contract_snapshot() {
         let tools = get_all_tool_definitions();
-        let snapshot = parse_flow_v05_surface(FLOW_V05_SURFACE_SNAPSHOT);
-        let expected_v05_count = snapshot
-            .expected_total
-            .checked_sub(snapshot.baseline_total)
-            .expect("the v0.5 total must not be below the v0.4 baseline");
-        assert_ne!(expected_v05_count, 0, "the v0.5 delta must not be empty");
-        assert_eq!(
-            snapshot.tool_names.len(),
-            expected_v05_count,
-            "the snapshot must contain exactly total(v0.5)-total(v0.4) tool rows"
-        );
-        // The snapshot freezes the v0.5 delta, not the all-releases live total. Later releases
-        // deliberately append tools; their exact current total has its own release test.
-
+        let snapshot = parse_surface_snapshot(SURFACE_SNAPSHOT);
+        assert!(!snapshot.is_empty(), "the parsed snapshot must not be empty");
         // The live side is independently enumerable from the registration function used by the
         // server. Comparing only `snapshot.iter().all(live.contains)` would make an empty or
         // incomplete parsed table vacuously pass.
-        let live_v05 = flow_v05_tool_definitions()
+        let live_core = flow_core_tool_definitions()
             .iter()
             .map(|tool| tool.name.clone())
             .collect::<HashSet<_>>();
         let registered = tools.iter().map(|tool| tool.name.as_str()).collect::<HashSet<_>>();
+        assert!(
+            snapshot.iter().all(|name| registered.contains(name.as_str())),
+            "every embedded contract tool must exist in the live registry"
+        );
         assert_eq!(
-            live_v05.len(),
-            expected_v05_count,
-            "the live v0.5 registry suffix must contain the declared delta"
-        );
-        assert!(
-            snapshot
-                .tool_names
-                .iter()
-                .all(|name| registered.contains(name.as_str())),
-            "every embedded v0.5 contract tool must exist in the live registry"
-        );
-        assert!(
-            live_v05.iter().all(|name| snapshot.tool_names.contains(name)),
-            "every live v0.5 tool must exist in the embedded contract snapshot"
+            live_core, snapshot,
+            "the live core tools must match the embedded contract snapshot"
         );
     }
 
     #[test]
     #[ignore = "manual contract-drift check; set SYLVODE_FLOW_CONTRACTS_ROOT explicitly"]
-    fn flow_v05_embedded_snapshot_matches_the_authoritative_contract() {
+    fn embedded_snapshot_matches_the_authoritative_contract() {
         let contract_root = std::env::var("SYLVODE_FLOW_CONTRACTS_ROOT")
             .expect("set SYLVODE_FLOW_CONTRACTS_ROOT to an explicit Sylvode Flow checkout");
         let surface = std::fs::read_to_string(format!("{contract_root}/contracts/mcp-surface-v1.md"))
             .expect("the explicitly selected authoritative MCP surface contract must be readable");
         assert_eq!(
-            parse_flow_v05_surface(FLOW_V05_SURFACE_SNAPSHOT),
-            parse_flow_v05_surface(&surface),
+            parse_surface_snapshot(SURFACE_SNAPSHOT),
+            parse_surface_snapshot(&surface),
             "refresh the embedded snapshot after an approved contract change"
         );
     }
 
     #[test]
-    fn flow_v05_write_and_visibility_schemas_preserve_contract_boundaries() {
+    fn flow_write_and_visibility_schemas_preserve_contract_boundaries() {
         let tools = get_all_tool_definitions();
         let by_name = tools
             .iter()

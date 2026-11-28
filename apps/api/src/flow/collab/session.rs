@@ -3146,8 +3146,6 @@ mod tests {
                     .unwrap_or_else(|err| panic!("applying {} failed: {err}", path.display()));
             }
 
-            // A scratch database models a running api and worker.
-            crate::flow::scope_runtime::fixture::register_running_readers(&db).await;
             Some(Scratch { db, name, admin_url })
         }
 
@@ -7233,8 +7231,6 @@ mod database_tests {
                 .unwrap_or_else(|err| panic!("applying {} failed: {err}", path.display()));
         }
 
-        // A scratch database models a running api and worker.
-        crate::flow::scope_runtime::fixture::register_running_readers(&db).await;
         Some(Scratch { db, name, admin_url })
     }
 

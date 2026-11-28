@@ -11,7 +11,7 @@ use collab_core::{CollabEngine, LoroCollabEngine, NodeKind, Operation};
 use serde_json::json;
 
 fn usage() -> ! {
-    eprintln!("usage: flow_v05_convergence_rust generate CLIENTS OUT_DIR | verify SNAPSHOT EXPECTED_HASH OUT_JSON");
+    eprintln!("usage: flow_convergence_rust generate CLIENTS OUT_DIR | verify SNAPSHOT EXPECTED_HASH OUT_JSON");
     std::process::exit(2);
 }
 

@@ -24,8 +24,7 @@ configuration key in [configuration.md](configuration.md).
   reason `isolated_apply_unsupported_platform`) and logs a warning at startup. The macOS archives
   are therefore suitable for development and evaluation without Flow editing only. There is no
   Windows server: Windows is supported for the client tools (`sylvode` and `mcp-server`) only.
-- The `worker` running next to the API. Without it, Page creation and editing in Flow are refused
-  (see [operations.md](operations.md#flow-reader-leases)) and no background job runs.
+- The `worker` running next to the API. Without it no background job runs.
 
 ## Choosing a method
 
@@ -628,5 +627,3 @@ variable. It is a local onboarding helper, not a way to seed production data.
 With Compose, update the checkout and run `bash scripts/start.sh` again. It keeps the existing
 `.env` and configuration files, rebuilds the binaries and images, and recreates the services.
 
-A stopped API or worker keeps its Flow reader lease for up to 30 seconds, so an ordinary restart
-does not interrupt Page editing; see [operations.md](operations.md#flow-reader-leases).

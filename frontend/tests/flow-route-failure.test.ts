@@ -14,12 +14,7 @@ suite.check('only explicit workspace disabled uses workspace toggle copy', () =>
 		routeFailure({ code: 500 }),
 		routeFailure({ code: 403 }),
 		routeFailure({ code: 404 }),
-		{},
-		routeFailure({
-			code: 403,
-			error_code: 'feature_disabled',
-			details: { reason: 'scope_runtime_not_ready' }
-		})
+		{}
 	])
 		assertEqual(
 			routeFailureCopy({ workspaceId: 'workspace', ...failure }).body === 'flow.route.disabledBody',
@@ -27,7 +22,7 @@ suite.check('only explicit workspace disabled uses workspace toggle copy', () =>
 			'other failures never claim flag disabled'
 		);
 });
-suite.check('personal flags and runtime readiness are distinct from workspace state', () => {
+suite.check('personal flags are distinct from workspace state', () => {
 	assertEqual(
 		routeFailureCopy(
 			routeFailure({
@@ -39,33 +34,14 @@ suite.check('personal flags and runtime readiness are distinct from workspace st
 		'flow.route.personalBody',
 		'personal capability'
 	);
-	assertEqual(
-		routeFailureCopy(
-			routeFailure({
-				code: 403,
-				error_code: 'feature_disabled',
-				details: { reason: 'scope_runtime_not_ready' }
-			})
-		).body,
-		'flow.route.runtimeBody',
-		'runtime readiness'
-	);
 });
-suite.check(
-	'auth notfound network and upgrade remain actionable without server-message branching',
-	() => {
-		for (const [code, key] of [
-			[401, 'flow.errors.unauthenticated'],
-			[403, 'flow.errors.forbidden'],
-			[404, 'flow.route.notFoundBody'],
-			[500, 'flow.route.networkBody']
-		] as const)
-			assertEqual(routeFailureCopy(routeFailure({ code })).body, key, 'typed/status failure');
-		assertEqual(
-			routeFailureCopy({ error: 'upgrade' }).body,
-			'flow.personal.upgrade',
-			'reader upgrade'
-		);
-	}
-);
+suite.check('auth notfound and network remain actionable without server-message branching', () => {
+	for (const [code, key] of [
+		[401, 'flow.errors.unauthenticated'],
+		[403, 'flow.errors.forbidden'],
+		[404, 'flow.route.notFoundBody'],
+		[500, 'flow.route.networkBody']
+	] as const)
+		assertEqual(routeFailureCopy(routeFailure({ code })).body, key, 'typed/status failure');
+});
 finish(suite.result());

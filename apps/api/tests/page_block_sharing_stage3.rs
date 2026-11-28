@@ -23,12 +23,11 @@ mod sql_tests {
             return;
         };
         let db = &scratch.db;
-        for component in ["api", "worker", "maintenance"] {
-            api::flow::scope_runtime::renew(db, Uuid::new_v4(), component)
-                .await
-                .unwrap();
-        }
-        db.execute_unprepared("UPDATE flow_runtime_capabilities SET minimum_reader_version=5,personal_provisioning=true,personal_writes=true WHERE singleton").await.unwrap();
+        db.execute_unprepared(
+            "UPDATE flow_runtime_capabilities SET personal_provisioning=true,personal_writes=true WHERE singleton",
+        )
+        .await
+        .unwrap();
         let owner = Uuid::new_v4();
         let recipient = Uuid::new_v4();
         for actor in [owner, recipient] {

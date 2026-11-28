@@ -10,7 +10,6 @@
 	import { FLOW_TASK_SESSIONS, type FlowTaskSessions } from '#lib/workbench/flow-sessions.js';
 	import { TaskWorkbench, WORKBENCH_CONTEXT } from '#lib/workbench/tabs.js';
 	import { conversionAvailability } from '#lib/flow/convert-availability.js';
-	import { FLOW_PROCESS_READER_COMPATIBILITY } from '#lib/flow/product-mode.js';
 	import { getContext, onDestroy, onMount, untrack } from 'svelte';
 	import { t } from 'svelte-i18n';
 	import { page } from '$app/state';
@@ -139,21 +138,12 @@
 		void flowApi.getCapabilities().then((result) => {
 			if (!disposed) {
 				sharedBlocksReady = sharedBlocksSupported(result);
-				sourceShareRevokeReady =
-					sharedBlocksReady && result.data?.block_share_source_revoke_supported === true;
+				sourceShareRevokeReady = sharedBlocksReady;
 				transfersReady = blockTransfersSupported(result);
 				portablePackagesReady =
-					result.code === 0 &&
-					result.data?.api_version === 2 &&
-					result.data.portable_page_packages_supported === true &&
-					result.data.minimum_reader_version >= 5 &&
-					result.data.minimum_reader_version <= FLOW_PROCESS_READER_COMPATIBILITY;
+					result.code === 0 && result.data?.portable_page_packages_enabled === true;
 				portableGraphReady =
-					result.code === 0 &&
-					result.data?.api_version === 2 &&
-					result.data.portable_graph_packages_supported === true &&
-					result.data.minimum_reader_version >= 5 &&
-					result.data.minimum_reader_version <= FLOW_PROCESS_READER_COMPATIBILITY;
+					result.code === 0 && result.data?.portable_graph_packages_enabled === true;
 			}
 		});
 	});

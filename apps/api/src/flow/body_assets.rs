@@ -287,23 +287,6 @@ pub struct AssetBytes {
     pub bytes: Vec<u8>,
     pub disposition: String,
 }
-fn disabled() -> ApiError {
-    ApiError::typed_with_details(
-        crate::error::ApiErrorKind::FeatureDisabled,
-        "Page body assets require the model5/reader4 rollout",
-        json!({"reason":"page_body_assets_not_ready"}),
-    )
-}
-async fn require_enabled<C: ConnectionTrait>(db: &C) -> Result<(), ApiError> {
-    if scope::capabilities(db).await?.minimum_reader_version < 4 {
-        return Err(disabled());
-    }
-    Ok(())
-}
-async fn require_ready<C: ConnectionTrait>(db: &C) -> Result<(), ApiError> {
-    require_enabled(db).await?;
-    scope::require_reader_ready(db).await
-}
 async fn page<C: ConnectionTrait>(
     db: &C,
     object: Uuid,
@@ -352,13 +335,11 @@ pub async fn upload(
         ));
     }
     let (identity, proof) = page(db, object, user, PermissionLevel::Edit).await?;
-    require_ready(db).await?;
     let body = json!({"operation":"page_asset_upload","object_id":object,"kind":upload.kind,"filename":upload.filename,"content_type":upload.content_type,"byte_size":upload.bytes.len(),"sha256":upload.sha256});
     let tx = db.begin().await?;
     if identity.workspace_id.is_none() {
         scope::require_personal_write(&tx).await?;
     }
-    require_ready(&tx).await?;
     scope::fence(&tx, &proof).await?;
     if let Some(prior) = super::scope_commands::lock_and_replay(&tx, identity.scope_id, user, key, &body).await? {
         tx.commit().await?;
@@ -408,7 +389,6 @@ async fn authorized_row(
     user: Uuid,
 ) -> Result<(AssetRow, scope::AuthorizationProof), ApiError> {
     let (_, proof) = page(db, object, user, PermissionLevel::View).await?;
-    require_enabled(db).await?;
     let row=AssetRow::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT a.id,a.object_id,a.kind,a.filename,a.content_type,a.byte_size,a.content_sha256,a.state,a.created_by,EXISTS(SELECT 1 FROM flow_page_asset_refs r WHERE r.scope_id=a.scope_id AND r.object_id=a.object_id AND r.asset_id=a.id AND r.active AND r.last_seen_seq=d.head_seq) AS referenced,d.head_seq FROM flow_page_assets a JOIN collab_documents d ON d.object_id=a.object_id WHERE a.id=$1 AND a.object_id=$2 AND a.scope_id=$3",vec![asset.into(),object.into(),proof.scope_id.into()])).one(db).await?.ok_or_else(||ApiError::not_found("Page body asset not found"))?;
     if row.state == "discarded"
         || (!row.referenced && proof.level < PermissionLevel::Edit && row.created_by != Some(user))
@@ -480,14 +460,12 @@ pub async fn discard(
     key: &str,
 ) -> Result<serde_json::Value, ApiError> {
     let (identity, proof) = page(db, object, user, PermissionLevel::Edit).await?;
-    require_ready(db).await?;
     let body = json!({"operation":"page_asset_discard","object_id":object,"asset_id":asset});
     let tx = db.begin().await?;
     if identity.workspace_id.is_none() {
         scope::require_personal_write(&tx).await?;
     }
     scope::fence(&tx, &proof).await?;
-    require_ready(&tx).await?;
     if let Some(prior) = super::scope_commands::lock_and_replay(&tx, identity.scope_id, user, key, &body).await? {
         tx.commit().await?;
         return Ok(prior);
@@ -519,7 +497,6 @@ pub async fn reap_unused(
     older_than: platform::timestamp::Timestamp,
     batch: u32,
 ) -> Result<u64, ApiError> {
-    require_ready(db).await?;
     reap_rows(db, older_than, batch).await
 }
 async fn reap_rows(
@@ -598,7 +575,6 @@ pub async fn lock_and_sync_references(
     seq: i64,
     references: &[AssetReference],
 ) -> Result<(), ApiError> {
-    require_ready(tx).await?;
     sync_reference_rows(tx, scope_id, object, seq, references).await
 }
 async fn sync_reference_rows(
@@ -665,7 +641,6 @@ pub async fn copy_into(
         ));
     }
     let (target_identity, target_proof) = page(db, target, user, PermissionLevel::Edit).await?;
-    require_ready(db).await?;
     let body =
         json!({"operation":"page_asset_copy","target_object_id":target,"source_object_id":source,"asset_id":asset});
     if let Some(prior) = super::scope_commands::replay(db, target_identity.scope_id, user, key, &body).await? {
@@ -684,7 +659,6 @@ pub async fn copy_into(
     if target_identity.workspace_id.is_none() {
         scope::require_personal_write(&tx).await?;
     }
-    require_ready(&tx).await?;
     scope::fence_many(&tx, &[source_proof.clone(), target_proof]).await?;
     if let Some(prior) = super::scope_commands::lock_and_replay(&tx, target_identity.scope_id, user, key, &body).await?
     {
@@ -757,14 +731,6 @@ mod sql_tests {
     async fn body_asset_sql_ownership_reference_rollback_and_history_retention() {
         let scratch = scratch_or_skip!(&format!("page_asset_{}", Uuid::new_v4().simple()));
         let db = &scratch.db;
-        // This test drives the SQL below the process barrier directly. It runs at the pre-0106 floor
-        // with no reader leases, so nothing in it depends on fabricated leases.
-        exec(
-            db,
-            "UPDATE flow_runtime_capabilities SET minimum_reader_version=2 WHERE singleton",
-            vec![],
-        )
-        .await;
         let owner = Uuid::new_v4();
         let scope_id = Uuid::new_v4();
         let a = Uuid::new_v4();
@@ -901,25 +867,12 @@ mod sql_tests {
             .unwrap()
             .unwrap();
         assert_eq!(remaining.try_get::<i64>("", "retained").unwrap(), 1);
-        let readers = db
-            .query_one(Statement::from_string(
-                DbBackend::Postgres,
-                "SELECT count(*) AS readers FROM flow_runtime_readers",
-            ))
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            readers.try_get::<i64>("", "readers").unwrap(),
-            0,
-            "SQL test did not fabricate compatibility leases"
-        );
         scratch.drop_self().await;
     }
 }
 
-/// Shared hook for accepted Page writes. A rollout-inactive plain document is a no-op;
-/// typed refs never bypass the reader4 barrier or ownership checks.
+/// Shared hook for accepted Page writes. A non-Page object is a no-op;
+/// typed refs never bypass ownership checks.
 pub async fn reconcile_accepted(
     tx: &sea_orm::DatabaseTransaction,
     object: Uuid,
@@ -933,18 +886,11 @@ pub async fn reconcile_accepted(
         }
         return Ok(());
     }
-    if scope::capabilities(tx).await?.minimum_reader_version < 4 {
-        if references.is_empty() {
-            return Ok(());
-        }
-        return Err(disabled());
-    }
     lock_and_sync_references(tx, identity.scope_id, object, seq, references).await
 }
 
 pub async fn admit_upload(db: &DatabaseConnection, object: Uuid, user: Uuid) -> Result<AssetLimits, ApiError> {
     let (identity, _) = page(db, object, user, PermissionLevel::Edit).await?;
-    require_ready(db).await?;
     if identity.workspace_id.is_none() {
         scope::require_personal_write(db).await?;
     }
@@ -952,7 +898,6 @@ pub async fn admit_upload(db: &DatabaseConnection, object: Uuid, user: Uuid) -> 
 }
 pub async fn limits_for(db: &DatabaseConnection, object: Uuid, user: Uuid) -> Result<AssetLimits, ApiError> {
     page(db, object, user, PermissionLevel::View).await?;
-    require_enabled(db).await?;
     Ok(AssetLimits::configured())
 }
 /// Only the public-link service calls this after authenticating a grant bound to this Page.
@@ -963,7 +908,6 @@ pub(super) async fn read_public_current(
     object: Uuid,
     asset: Uuid,
 ) -> Result<(AssetBytes, i64), ApiError> {
-    require_enabled(db).await?;
     let row = public_current_row(db, scope_id, object, asset).await?;
     let blob = db
         .query_one(Statement::from_sql_and_values(
@@ -1060,12 +1004,11 @@ mod api_tests {
         }
         let scratch = scratch_or_skip!(&format!("asset_api_{}", Uuid::new_v4().simple()));
         let db = &scratch.db;
-        for component in ["api", "worker", "maintenance"] {
-            super::super::scope_runtime::renew(db, Uuid::new_v4(), component)
-                .await
-                .unwrap();
-        }
-        db.execute_unprepared("UPDATE flow_runtime_capabilities SET minimum_reader_version=4,personal_provisioning=true,personal_writes=true WHERE singleton").await.unwrap();
+        db.execute_unprepared(
+            "UPDATE flow_runtime_capabilities SET personal_provisioning=true,personal_writes=true WHERE singleton",
+        )
+        .await
+        .unwrap();
         let owner = Uuid::new_v4();
         exec(db,"INSERT INTO users(id,email,password_hash,name,role,is_active) VALUES($1,$2,'!','Synthetic asset API owner','user',true)",vec![owner.into(),format!("{owner}@asset-api.test").into()]).await;
         let home = scope::personal_home(db, owner).await.unwrap();

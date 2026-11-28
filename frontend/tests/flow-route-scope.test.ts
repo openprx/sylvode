@@ -1,4 +1,3 @@
-import { FLOW_PROCESS_READER_COMPATIBILITY } from '../src/lib/flow/product-mode';
 import { flowApi } from '../src/lib/api/flow';
 import { load } from '../src/routes/(app)/flow/+layout';
 import { Suite, assertEqual, finish } from './support/harness';
@@ -10,13 +9,17 @@ const original = {
 	getWorkspaceScope: flowApi.getWorkspaceScope
 };
 const capabilities = {
-	api_version: 2,
-	schema_version: 1,
-	minimum_reader_version: 2,
+	block_transfers_enabled: false,
+	portable_page_packages_enabled: false,
+	portable_graph_packages_enabled: false,
 	scope_native_legacy: false,
 	personal_provisioning: false,
 	personal_writes: false,
-	external_mounts: false
+	external_mounts: false,
+	personal_package_imports: false,
+	personal_scope_package_exports: false,
+	personal_forms_conversion: false,
+	cross_workspace_forms_conversion: false
 };
 const ok = <T>(data: T) => ({ code: 0, message: 'ok', data });
 const denied = () => ({
@@ -92,27 +95,6 @@ await suite.checkAsync(
 		const result = await route({ objectId: 'object' });
 		assertEqual(result.scopeId, 'caller-scope', 'source ancestry is not navigation');
 		assertEqual(legacyReads, 0, 'no legacy authority inferred');
-	}
-);
-await suite.checkAsync(
-	'reader4 capability envelope remains compatible with editor model5 client',
-	async () => {
-		defaults();
-		flowApi.getCapabilities = async () => ok({ ...capabilities, minimum_reader_version: 4 });
-		const result = await route({ objectId: 'object' });
-		assertEqual(result.flowEnabled, true, 'known server reader admitted');
-	}
-);
-await suite.checkAsync(
-	'client upgrade is handled before home provisioning or object reads',
-	async () => {
-		defaults();
-		flowApi.getCapabilities = async () =>
-			ok({ ...capabilities, minimum_reader_version: FLOW_PROCESS_READER_COMPATIBILITY + 1 });
-		const result = await route({ objectId: 'object' });
-		assertEqual(result.flowEnabled, false, 'unsupported reader safe');
-		assertEqual(result.error, 'upgrade', 'actionable state');
-		assertEqual(homeReads, 0, 'no provisioning');
 	}
 );
 Object.assign(flowApi, original);

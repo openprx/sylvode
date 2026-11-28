@@ -274,12 +274,6 @@ pub async fn get_status(db: &DatabaseConnection, actor: Uuid, id: Uuid) -> Resul
     status(&row, details)
 }
 
-async fn ready<C: ConnectionTrait>(db: &C) -> Result<(), ApiError> {
-    if scope::capabilities(db).await?.minimum_reader_version < 5 {
-        return Err(error("transfer_readers_not_ready"));
-    }
-    scope::require_reader_ready(db).await
-}
 /// Transfers mutate already admitted editor documents under their ordinary write policy.
 pub(super) async fn require_transfer_write<C: ConnectionTrait>(
     db: &C,
@@ -287,8 +281,7 @@ pub(super) async fn require_transfer_write<C: ConnectionTrait>(
 ) -> Result<(), ApiError> {
     if let Some(workspace) = identity.workspace_id {
         super::collab::runtime::runtime().ensure_workspace_accepting(workspace)?;
-        super::policy::require_flow_enabled_on(db, workspace).await?;
-        scope::require_reader_ready(db).await
+        super::policy::require_flow_enabled_on(db, workspace).await
     } else {
         scope::require_personal_write(db).await
     }
@@ -411,7 +404,6 @@ pub async fn prepare(
     input: wire::PrepareInput,
 ) -> Result<Value, ApiError> {
     check_key(key)?;
-    ready(db).await?;
     let body = serde_json::to_value(&input).map_err(|_| ApiError::internal())?;
     if let Some(prior)=db.query_one(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT id,prepare_body FROM flow_page_block_transfers WHERE actor_id=$1 AND source_object_id=$2 AND prepare_key=$3",vec![actor.into(),source.into(),key.to_string().into()])).await? {
   if prior.try_get::<Value>("","prepare_body")?!=body{return Err(ApiError::idempotency_key_body_drift("transfer prepare identity changed"));}
@@ -899,7 +891,6 @@ async fn commit_once(
         write::{self, HydrateOutcome},
     };
     check_key(key)?;
-    ready(db).await?;
     let row = load(db, id, actor).await?;
     let body = serde_json::to_value(input).map_err(|_| ApiError::internal())?;
     if matches!(row.state.as_str(), "expired" | "cancelled") {
@@ -1326,7 +1317,6 @@ async fn undo_once(
         write::{self, HydrateOutcome},
     };
     check_key(key)?;
-    ready(db).await?;
     let row = load(db, id, actor).await?;
     let body = serde_json::to_value(input).map_err(|_| ApiError::internal())?;
     if row.state == "undone" {

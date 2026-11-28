@@ -149,19 +149,11 @@ mod tests {
     async fn persisted_legacy_order_frontiers_match_canonical_ones_at_database_sites() {
         use crate::{routes::context::tenant_fixture::exec, scratch_or_skip};
         use collab_core::CollabEngine;
-        use sea_orm::{ConnectionTrait, TransactionTrait};
+        use sea_orm::TransactionTrait;
         use uuid::Uuid;
 
         let scratch = scratch_or_skip!(&format!("frontier_order_{}", Uuid::new_v4().simple()));
         let db = &scratch.db;
-        for component in ["api", "worker", "maintenance"] {
-            super::super::scope_runtime::renew(db, Uuid::new_v4(), component)
-                .await
-                .unwrap();
-        }
-        db.execute_unprepared("UPDATE flow_runtime_capabilities SET minimum_reader_version=4 WHERE singleton")
-            .await
-            .unwrap();
         let (owner, scope, page, document) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         exec(db,"INSERT INTO users(id,email,password_hash,name,role,is_active) VALUES($1,$2,'!','Frontier fixture','user',true)",vec![owner.into(),format!("{owner}@frontier.test").into()]).await;
         exec(
