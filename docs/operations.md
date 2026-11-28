@@ -73,6 +73,14 @@ Whatever proxy you use:
 - For the OAuth event stream `GET /api/v1/oauth/events/stream`, turn off response buffering,
   caching and compression. The stream sends a keep-alive comment every 20 seconds; `nginx.conf`
   closes it after 120 seconds of silence.
+- For the bot change-hint stream `GET /api/v1/bot/change-hints`, turn off response buffering,
+  caching and compression, and set a send timeout (`proxy_send_timeout 120s` in nginx; any value
+  above the 15-second keep-alive comment works). Without one, a client that stops reading holds
+  its socket, and with it a stream place, until the API's own lag timeout; a bot could then keep
+  its 64 sockets open for good. Places are also capped per workspace
+  (`[api] max_change_hint_streams_per_workspace`, default 1024) and per process
+  (`max_change_hint_streams`, default 4096); size the proxy's file-descriptor limit for the process
+  cap times two, since an ended stream's socket counts until the client lets go of it.
 - Forward `/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource/api`
   to the API when the OAuth server is enabled. `/.well-known/oauth-protected-resource/mcp` belongs
   to the MCP server, not the API; see [integrations/oauth.md](integrations/oauth.md).

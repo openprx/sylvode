@@ -1183,6 +1183,7 @@ async fn the_sixty_fifth_stream_of_a_bot_is_refused_and_a_closed_stream_frees_it
 async fn the_process_cap_refuses_streams_of_any_bot() {
     let limits = HintLimits {
         per_bot: 64,
+        per_workspace: usize::MAX,
         per_process: 2,
     };
     let Some(rig) = Rig::start("hints_process_cap", limits, HintTuning::default()).await else {

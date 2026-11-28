@@ -256,6 +256,17 @@ impl ListenRegistry {
         granted
     }
 
+    /// How many more subscription places the stream of `guard` could take now under both caps.
+    fn subscription_room(&self, guard: &StreamGuard) -> usize {
+        let counts = self.inner.counts.lock();
+        let held = counts.subscriptions_per_key.get(&guard.key).copied().unwrap_or(0);
+        self.inner
+            .config
+            .per_key_subscriptions
+            .saturating_sub(held)
+            .min(self.inner.config.max_subscriptions.saturating_sub(counts.subscriptions))
+    }
+
     /// Opens a stream for `auth`. `id` is the JSON-RPC id of the listen request and `params` its
     /// parameters. The acknowledgment is the first message the handle yields; a stream is
     /// registered for delivery before it is handed out, but nothing is yielded ahead of the
@@ -296,7 +307,7 @@ impl ListenRegistry {
                 Ok(Access::Push(held)) => {
                     honoured.tools_list_changed = request.tools_list_changed;
                     let subscriptions = self.decide_subscriptions(&mut guard, server, candidates).await;
-                    held.shared.configure(request.tools_list_changed, &subscriptions);
+                    held.configure(request.tools_list_changed, &subscriptions);
                     honoured.uris = subscriptions.into_iter().map(|(uri, _)| uri).collect();
                     // A stream with nothing to deliver holds no place on the hub.
                     if honoured.tools_list_changed || !honoured.uris.is_empty() {
@@ -329,8 +340,11 @@ impl ListenRegistry {
         &self,
         guard: &mut StreamGuard,
         server: &Arc<McpServer>,
-        candidates: Vec<(String, Subscribable)>,
+        mut candidates: Vec<(String, Subscribable)>,
     ) -> Vec<(Arc<str>, SubKey)> {
+        // Cut to the room under the caps first: a URI that could not be granted anyway costs no
+        // permission check. The places are still taken after the decision, under the same caps.
+        candidates.truncate(self.subscription_room(guard));
         if candidates.is_empty() {
             return Vec::new();
         }

@@ -35,11 +35,12 @@ use super::{
     DEFAULT_AI_TASK_POOL_MAX_IDLE_PER_HOST, DEFAULT_AI_TASK_PROCESSING_TIMEOUT_SECS,
     DEFAULT_AI_TASK_TCP_KEEPALIVE_SECS, DEFAULT_FLOW_BODY_ASSET_MAX_BYTES, DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS,
     DEFAULT_FLOW_DISPATCH_MAX_ATTEMPTS, DEFAULT_FLOW_SETUP_CPU_BUDGET_MS, DEFAULT_MAX_CHANGE_HINT_STREAMS,
-    DEFAULT_OPERATION_LOG_RETENTION_DAYS, DEFAULT_S3_REGION, DEFAULT_STORAGE_DIR, DatabaseConfig, FlowConfig, IpCidr,
-    LogFormat, LogOutput, LoggingConfig, MAX_CHANGE_HINT_STREAMS_CEILING, MAX_FLOW_BODY_ASSET_BYTES,
-    MAX_FLOW_CONVERSION_REAP_INTERVAL_SECS, MAX_FLOW_SETUP_CPU_BUDGET_MS, MIN_FLOW_SETUP_CPU_BUDGET_MS,
-    MIN_JWT_SECRET_LEN, McpConfig, McpToolMode, McpTransport, OAuthConfig, OpenPrConfig, OutboundConfig, S3Config,
-    ServerConfig, StorageBackend, StorageConfig, TrustedProxy,
+    DEFAULT_MAX_CHANGE_HINT_STREAMS_PER_WORKSPACE, DEFAULT_OPERATION_LOG_RETENTION_DAYS, DEFAULT_S3_REGION,
+    DEFAULT_STORAGE_DIR, DatabaseConfig, FlowConfig, IpCidr, LogFormat, LogOutput, LoggingConfig,
+    MAX_CHANGE_HINT_STREAMS_CEILING, MAX_FLOW_BODY_ASSET_BYTES, MAX_FLOW_CONVERSION_REAP_INTERVAL_SECS,
+    MAX_FLOW_SETUP_CPU_BUDGET_MS, MIN_FLOW_SETUP_CPU_BUDGET_MS, MIN_JWT_SECRET_LEN, McpConfig, McpToolMode,
+    McpTransport, OAuthConfig, OpenPrConfig, OutboundConfig, S3Config, ServerConfig, StorageBackend, StorageConfig,
+    TrustedProxy,
 };
 
 const DEFAULT_MAX_CONNECTIONS: u32 = 20;
@@ -167,6 +168,7 @@ struct RawAudit {
 #[serde(deny_unknown_fields)]
 struct RawApi {
     max_change_hint_streams: Option<u32>,
+    max_change_hint_streams_per_workspace: Option<u32>,
 }
 
 #[derive(Deserialize, Default)]
@@ -584,8 +586,19 @@ impl RawApi {
                     DEFAULT_MAX_CHANGE_HINT_STREAMS
                 }
             });
+        let max_change_hint_streams_per_workspace =
+            self.max_change_hint_streams_per_workspace
+                .map_or(DEFAULT_MAX_CHANGE_HINT_STREAMS_PER_WORKSPACE, |limit| {
+                    if (1..=MAX_CHANGE_HINT_STREAMS_CEILING).contains(&limit) {
+                        limit
+                    } else {
+                        issues.push("api.max_change_hint_streams_per_workspace must be between 1 and 100000");
+                        DEFAULT_MAX_CHANGE_HINT_STREAMS_PER_WORKSPACE
+                    }
+                });
         ApiConfig {
             max_change_hint_streams,
+            max_change_hint_streams_per_workspace,
         }
     }
 }

@@ -17,6 +17,9 @@ use super::{
     Readable, Scope, Signal, frames_for, hello_frame, normalized, parse_bot, parse_hint, project_to_check,
 };
 
+/// The workspace of the bots in the limit tests.
+const WS: Uuid = Uuid::nil();
+
 fn id() -> Uuid {
     Uuid::new_v4()
 }
@@ -276,20 +279,21 @@ fn a_bot_holds_at_most_its_own_streams_and_the_process_its_cap() {
     let hub = HintHub::new(
         HintLimits {
             per_bot: 2,
+            per_workspace: usize::MAX,
             per_process: 3,
         },
         HintTuning::default(),
     );
     let (a, b) = (id(), id());
-    let first = hub.try_acquire(a).expect("first");
-    let _second = hub.try_acquire(a).expect("second");
-    assert_eq!(hub.try_acquire(a).err(), Some(LimitExceeded::Bot));
-    let _third = hub.try_acquire(b).expect("another bot");
+    let first = hub.try_acquire(a, WS).expect("first");
+    let _second = hub.try_acquire(a, WS).expect("second");
+    assert_eq!(hub.try_acquire(a, WS).err(), Some(LimitExceeded::Bot));
+    let _third = hub.try_acquire(b, WS).expect("another bot");
     assert_eq!(hub.open_streams(), 3);
-    assert_eq!(hub.try_acquire(b).err(), Some(LimitExceeded::Process));
+    assert_eq!(hub.try_acquire(b, WS).err(), Some(LimitExceeded::Process));
     drop(first);
     assert_eq!(hub.open_streams(), 2);
-    assert!(hub.try_acquire(a).is_ok(), "a released place can be taken again");
+    assert!(hub.try_acquire(a, WS).is_ok(), "a released place can be taken again");
 }
 
 #[test]
@@ -711,12 +715,13 @@ fn a_place_is_released_with_its_permit_and_takes_the_bots_shared_lookups_with_it
     let hub = HintHub::new(
         HintLimits {
             per_bot: 2,
+            per_workspace: usize::MAX,
             per_process: 4,
         },
         quiet_tuning(),
     );
     let bot = id();
-    let permit = hub.try_acquire(bot).expect("a place");
+    let permit = hub.try_acquire(bot, WS).expect("a place");
     let _ = hub.shared_for(bot);
     assert_eq!(hub.shared.lock().len(), 1);
     drop(permit);
@@ -733,6 +738,7 @@ fn an_open_body_keeps_its_place_after_the_stream_place_is_released_and_frees_it_
     let hub = HintHub::new(
         HintLimits {
             per_bot: 1,
+            per_workspace: usize::MAX,
             per_process: 2,
         },
         quiet_tuning(),
@@ -741,32 +747,32 @@ fn an_open_body_keeps_its_place_after_the_stream_place_is_released_and_frees_it_
     // Per bot: BODY_CAP_FACTOR times the stream cap.
     let mut bodies = Vec::new();
     for _ in 0..super::BODY_CAP_FACTOR {
-        let stream = hub.try_acquire(a).expect("a stream place");
-        bodies.push(hub.try_acquire_body(a).expect("a body place"));
+        let stream = hub.try_acquire(a, WS).expect("a stream place");
+        bodies.push(hub.try_acquire_body(a, WS).expect("a body place"));
         // The stream ended: its place is gone, the body (socket) is still open.
         drop(stream);
     }
     assert_eq!(hub.open_streams(), 0);
     assert_eq!(hub.open_bodies(), 2);
-    assert_eq!(hub.try_acquire_body(a).err(), Some(LimitExceeded::Bot));
+    assert_eq!(hub.try_acquire_body(a, WS).err(), Some(LimitExceeded::Bot));
     // Per process: BODY_CAP_FACTOR times the process cap (4); the bot above holds 2.
-    let _b1 = hub.try_acquire_body(b).expect("another bot");
-    let _b2 = hub.try_acquire_body(b).expect("another bot again");
+    let _b1 = hub.try_acquire_body(b, WS).expect("another bot");
+    let _b2 = hub.try_acquire_body(b, WS).expect("another bot again");
     assert_eq!(hub.open_bodies(), 4);
-    assert_eq!(hub.try_acquire_body(id()).err(), Some(LimitExceeded::Process));
+    assert_eq!(hub.try_acquire_body(id(), WS).err(), Some(LimitExceeded::Process));
     // Dropping a body (the connection let go of it) frees exactly one place.
     let released = bodies.pop();
     assert!(released.is_some());
     drop(released);
     assert_eq!(hub.open_bodies(), 3);
-    assert!(hub.try_acquire_body(a).is_ok());
+    assert!(hub.try_acquire_body(a, WS).is_ok());
 }
 
 #[tokio::test]
 async fn dropping_the_response_body_releases_its_place() {
     let hub = HintHub::new(HintLimits::from_runtime(), quiet_tuning());
     let bot = id();
-    let permit = hub.try_acquire_body(bot).expect("a body place");
+    let permit = hub.try_acquire_body(bot, WS).expect("a body place");
     let (_tx, rx) = mpsc::channel(1);
     let (_close_tx, close_rx) = tokio::sync::watch::channel(None);
     let body = super::body(rx, close_rx, permit);

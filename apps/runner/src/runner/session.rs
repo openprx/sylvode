@@ -323,6 +323,15 @@ impl MemberStatus {
     }
 }
 
+/// Whether a choice may fall back to a member at its queue cap when every healthy member is full.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Room {
+    /// A new task goes somewhere even when every member is full (the enqueue then refuses it).
+    Preferred,
+    /// A task that is already queued never moves onto a full member (a rebalance).
+    Required,
+}
+
 /// How long a task's member is remembered after the task left it.
 pub const TASK_AFFINITY_KEEP_SECS: u64 = 24 * 3600;
 /// The most task and item entries the affinity store keeps (the oldest go first).
@@ -397,29 +406,10 @@ impl AffinityStore {
     }
 
     /// Keeps at most [`AFFINITY_CAP`] entries of each kind, dropping the least recently touched.
+    /// The entries are ordered once, so loading a large file stays O(n log n).
     pub fn prune(&mut self) {
-        while self.tasks.len() > AFFINITY_CAP {
-            let Some(oldest) = self
-                .tasks
-                .iter()
-                .min_by(|a, b| a.1.touched.cmp(&b.1.touched).then_with(|| a.0.cmp(b.0)))
-                .map(|(id, _)| id.clone())
-            else {
-                break;
-            };
-            self.tasks.remove(&oldest);
-        }
-        while self.items.len() > AFFINITY_CAP {
-            let Some(oldest) = self
-                .items
-                .iter()
-                .min_by(|a, b| a.1.served_at.cmp(&b.1.served_at).then_with(|| a.0.cmp(b.0)))
-                .map(|(id, _)| id.clone())
-            else {
-                break;
-            };
-            self.items.remove(&oldest);
-        }
+        trim_oldest(&mut self.tasks, |entry| entry.touched);
+        trim_oldest(&mut self.items, |entry| entry.served_at);
     }
 
     /// The number of task entries.
@@ -539,6 +529,19 @@ pub(super) struct Chosen {
     mark: InFlightMark,
 }
 
+/// Removes the entries of `map` beyond [`AFFINITY_CAP`], oldest `stamp` first (ties by key).
+fn trim_oldest<V>(map: &mut HashMap<String, V>, stamp: impl Fn(&V) -> u64) {
+    let excess = map.len().saturating_sub(AFFINITY_CAP);
+    if excess == 0 {
+        return;
+    }
+    let mut order: Vec<(u64, String)> = map.iter().map(|(id, value)| (stamp(value), id.clone())).collect();
+    order.sort_unstable();
+    for (_, id) in order.into_iter().take(excess) {
+        map.remove(&id);
+    }
+}
+
 /// The sessions of one bot and CLI, ordered by member number, and what they served. The pool of a
 /// bot has exactly one member until the operator lists more.
 #[derive(Default)]
@@ -585,16 +588,23 @@ impl BotPool {
     /// that is [`Self::record`], once the member has accepted the task. A member at its queue cap
     /// (`max_queued` of 0 means no cap), counting the enqueues on their way to it, is passed over
     /// while another member has room. A task already in flight keeps its member.
-    fn choose(&self, input: &SelectInput<'_>, now: u64, item_ttl_secs: u64, max_queued: usize) -> Option<Chosen> {
+    fn choose(
+        &self,
+        input: &SelectInput<'_>,
+        now: u64,
+        item_ttl_secs: u64,
+        max_queued: usize,
+        room: Room,
+    ) -> Option<Chosen> {
         let mut marks = self.inflight.lock();
         let marked = input
             .task_id
             .and_then(|id| marks.get(id))
             .and_then(|(member, _)| self.members.iter().position(|m| m.slot.member() == *member));
-        let (index, reason) = marked.map_or_else(
-            || self.pick(input, now, item_ttl_secs, max_queued),
-            |index| (index, SelectReason::AffinityTask),
-        );
+        let (index, reason) = match marked {
+            Some(index) => (index, SelectReason::AffinityTask),
+            None => self.pick(input, now, item_ttl_secs, max_queued, room)?,
+        };
         let member = self.members.get(index)?;
         let pending = Pending::acquire(&member.pending);
         let task_id = input.task_id.map(str::to_string);
@@ -617,8 +627,16 @@ impl BotPool {
     }
 
     /// The member [`select_member`] picks, counting the enqueues on their way to each member and
-    /// passing over the members at the queue cap while another has room.
-    fn pick(&self, input: &SelectInput<'_>, now: u64, item_ttl_secs: u64, max_queued: usize) -> (usize, SelectReason) {
+    /// passing over the members at the queue cap while another has room. With [`Room::Required`] no
+    /// member at the cap is ever picked: `None` when none has room.
+    fn pick(
+        &self,
+        input: &SelectInput<'_>,
+        now: u64,
+        item_ttl_secs: u64,
+        max_queued: usize,
+        room: Room,
+    ) -> Option<(usize, SelectReason)> {
         let mut statuses: Vec<MemberStatus> = self
             .members
             .iter()
@@ -640,9 +658,11 @@ impl BotPool {
                 .collect();
             if open.iter().any(|status| status.healthy) {
                 statuses = open;
+            } else if room == Room::Required {
+                return None;
             }
         }
-        select_member(input, &self.affinity, &statuses, now, item_ttl_secs)
+        Some(select_member(input, &self.affinity, &statuses, now, item_ttl_secs))
     }
 
     /// Remembers that `slot` took the task (and the work item) of `input`.
@@ -1113,7 +1133,7 @@ impl SessionManager {
             .pools
             .lock()
             .get(primary.as_str())
-            .and_then(|pool| pool.choose(&input, unix_now(), ttl, max_queued));
+            .and_then(|pool| pool.choose(&input, unix_now(), ttl, max_queued, Room::Preferred));
         let Some(Chosen {
             slot,
             reason,
@@ -1174,7 +1194,7 @@ impl SessionManager {
             .pools
             .lock()
             .get(primary.as_str())
-            .and_then(|pool| pool.choose(&input, unix_now(), ttl, 0));
+            .and_then(|pool| pool.choose(&input, unix_now(), ttl, 0, Room::Preferred));
         chosen.map_or_else(|| primary.clone(), |chosen| chosen.slot)
     }
 
@@ -1627,7 +1647,7 @@ impl Worker {
                 .pools
                 .lock()
                 .get(primary.as_str())
-                .and_then(|pool| pool.choose(&input, unix_now(), ttl, max_queued))
+                .and_then(|pool| pool.choose(&input, unix_now(), ttl, max_queued, Room::Required))
                 .filter(|chosen| chosen.slot != self.name);
             let target = chosen.as_ref().and_then(|chosen| {
                 self.shared

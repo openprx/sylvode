@@ -8,9 +8,11 @@
 //! bounded by one shared, much higher ceiling instead; a client with an address is bound only by its
 //! own limit, so one noisy client cannot throttle the others.
 //!
-//! An attempt is counted when it is admitted, before the API is asked, and given back unless the API
-//! refuses the credential, so the limit holds however many requests arrive at once. Memory is
-//! bounded: a fixed number of addresses, the oldest dropped first.
+//! An attempt is counted when it is admitted, before the API is asked, and stays counted unless it is
+//! explicitly given back after a definite answer that is not a refusal of the credential. A request
+//! that is dropped half way (a client that hung up after the request reached the API) therefore keeps
+//! its attempt, so the limit holds however many requests arrive at once. Memory is bounded: a fixed
+//! number of addresses, the oldest dropped first.
 
 use super::RETRY_AFTER_SECS;
 use parking_lot::Mutex;
@@ -77,7 +79,7 @@ impl RefusalLimiter {
     }
 
     /// Counts one attempt for `client` and admits it, or `None` when its window is full. The attempt
-    /// stays counted only if [`Attempt::refused`] is called; dropping it gives the place back.
+    /// stays counted unless [`Attempt::give_back`] is called; dropping it keeps the place taken.
     // The lookup, the eviction and the increment are one check-then-mutate under one guard.
     #[allow(clippy::significant_drop_tightening)]
     pub fn admit(&self, client: Client) -> Option<Attempt<'_>> {
@@ -125,7 +127,6 @@ impl RefusalLimiter {
             limiter,
             client,
             window: entry.0,
-            refused: false,
         })
     }
 
@@ -152,25 +153,16 @@ const fn max_for(client: Client) -> u32 {
     }
 }
 
-/// One counted attempt. It is given back when dropped, unless the API refused the credential.
+/// One counted attempt. It stays counted when dropped; only [`Attempt::give_back`] releases it.
 pub struct Attempt<'a> {
     limiter: &'a RefusalLimiter,
     client: Client,
     window: Instant,
-    refused: bool,
 }
 
 impl Attempt<'_> {
-    /// The API refused the credential: the attempt stays counted.
-    pub fn refused(mut self) {
-        self.refused = true;
-    }
-}
-
-impl Drop for Attempt<'_> {
-    fn drop(&mut self) {
-        if !self.refused {
-            self.limiter.release(self.client, self.window);
-        }
+    /// The API answered, and the answer does not refuse the credential: the place is given back.
+    pub fn give_back(self) {
+        self.limiter.release(self.client, self.window);
     }
 }

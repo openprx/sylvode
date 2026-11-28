@@ -18,13 +18,14 @@
 
 use super::CallerKey;
 use super::decide::{RECHECK_BUDGET, RECHECK_PERMITS, decide};
-use super::limiter::{Client, RefusalLimiter};
+use super::limiter::{Attempt, Client, RefusalLimiter};
 use super::uris::{KeyKind, SubKey, Subscribable, Verdict, parse_subscribable};
 use crate::client::{FIRST_OPEN_TIMEOUT, HintEvent, HintOpenError, HintStream, OpenPrClient, RECONNECT_OPEN_TIMEOUT};
 use crate::server::McpServer;
 use parking_lot::Mutex;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
@@ -216,6 +217,9 @@ pub(super) struct Hub {
     /// Decides subscriptions as the hub's credential.
     authority: Arc<McpServer>,
     recheck: Mutex<Recheck>,
+    /// How many re-checks were asked for since the hub began; a stream compares it with the value at
+    /// its registration to learn whether one ran while it was still deciding its acknowledgment.
+    rechecks_requested: AtomicU64,
 }
 
 impl Hub {
@@ -224,6 +228,7 @@ impl Hub {
             key,
             authority,
             recheck: Mutex::new(Recheck::default()),
+            rechecks_requested: AtomicU64::new(0),
             inner: Mutex::new(HubInner {
                 streams: HashMap::new(),
                 next_id: 0,
@@ -251,6 +256,7 @@ impl Hub {
             hubs: Arc::clone(hubs),
             id,
             shared,
+            rechecks_at_register: self.rechecks_requested.load(Ordering::Acquire),
         })
     }
 
@@ -291,6 +297,7 @@ impl Hub {
     /// Decides every acknowledged URI of the hub again; see [`recheck_once`]. One re-check runs at a
     /// time; a request that comes while one runs makes it run once more.
     fn request_recheck(self: &Arc<Self>) {
+        self.rechecks_requested.fetch_add(1, Ordering::AcqRel);
         {
             let mut state = self.recheck.lock();
             if state.running {
@@ -341,6 +348,21 @@ pub(super) struct Registration {
     hubs: Arc<Hubs>,
     id: u64,
     pub(super) shared: Arc<StreamShared>,
+    /// The hub's re-check count when this stream registered.
+    rechecks_at_register: u64,
+}
+
+impl Registration {
+    /// Declares what the stream receives (see [`StreamShared::configure`]) and, when a re-check was
+    /// asked for while the stream was still deciding its acknowledgment (so its URIs were not yet
+    /// visible to that re-check), asks for one more, which sees them.
+    pub(super) fn configure(&self, wants_tools: bool, subscriptions: &[(Arc<str>, SubKey)]) {
+        self.shared.configure(wants_tools, subscriptions);
+        if !subscriptions.is_empty() && self.hub.rechecks_requested.load(Ordering::Acquire) != self.rechecks_at_register
+        {
+            self.hub.request_recheck();
+        }
+    }
 }
 
 impl Drop for Registration {
@@ -479,14 +501,21 @@ impl Hubs {
         if let Some(access) = self.known(&key)? {
             return Ok(access);
         }
-        // The attempt is counted before the API is asked, so the limit holds under concurrency; it
-        // is given back at the end of this function unless the API refuses the credential.
+        // The attempt is counted before the API is asked, so the limit holds under concurrency. It
+        // stays counted by default (also when this request is dropped half way) and is given back
+        // only on a definite answer that does not refuse the credential.
         let attempt = match peer {
             Some(client) => Some(self.limiter.admit(client).ok_or(AcquireError::Throttled)?),
             None => None,
         };
+        let give_back = |attempt: Option<Attempt<'_>>| {
+            if let Some(attempt) = attempt {
+                attempt.give_back();
+            }
+        };
         match client.open_change_hints(FIRST_OPEN_TIMEOUT).await {
             Ok(stream) => {
+                give_back(attempt);
                 let hub = Hub::new(key, Arc::clone(server));
                 let Some(registration) = hub.register(self) else {
                     return Err(AcquireError::Unavailable);
@@ -497,18 +526,22 @@ impl Hubs {
             }
             Err(HintOpenError::Unauthorized) => {
                 self.refuse(key, Refusal::Unauthorized);
-                if let Some(attempt) = attempt {
-                    attempt.refused();
-                }
                 Err(AcquireError::Unauthorized)
             }
             Err(HintOpenError::NotABot) => {
+                give_back(attempt);
                 self.refuse(key, Refusal::NotABot);
                 Ok(Access::NoPush)
             }
             // A full API is not a verdict on the credential; the caller backs off and retries.
-            Err(HintOpenError::TooMany) => Err(AcquireError::Busy),
-            Err(HintOpenError::Unavailable) => Err(AcquireError::Unavailable),
+            Err(HintOpenError::TooMany) => {
+                give_back(attempt);
+                Err(AcquireError::Busy)
+            }
+            Err(HintOpenError::Unavailable) => {
+                give_back(attempt);
+                Err(AcquireError::Unavailable)
+            }
         }
     }
 }

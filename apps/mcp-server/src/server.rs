@@ -638,7 +638,7 @@ pub struct McpServer {
     listen: bool,
     /// The id of the bot this server's credential belongs to, asked of the API once and kept: a
     /// server serves one credential for its whole life.
-    bot_id: tokio::sync::OnceCell<Uuid>,
+    bot_id: tokio::sync::OnceCell<Option<Uuid>>,
 }
 
 impl McpServer {
@@ -1770,15 +1770,16 @@ impl McpServer {
         }
     }
 
-    /// Whether `agent_id` (a canonical UUID) is the bot of this server's credential. The bot id
-    /// is asked of the API once; a failed ask is not remembered.
+    /// Whether `agent_id` (a canonical UUID) is the bot of this server's credential. The identity
+    /// is asked of the API once per session; a credential that belongs to no bot (a user token) is
+    /// remembered too and owns no inbox. A failed ask is not remembered.
     async fn is_own_bot(&self, agent_id: &str) -> Result<bool, ResourceError> {
         let own = self
             .bot_id
             .get_or_try_init(|| self.client.bot_identity())
             .await
             .map_err(|error| ResourceError::from_backend("Failed to identify the calling bot", &error))?;
-        Ok(own.to_string() == agent_id)
+        Ok(own.is_some_and(|own| own.to_string() == agent_id))
     }
 
     /// Decides one subscription of a listen request as the caller: the read policy of the URI must
@@ -1786,7 +1787,8 @@ impl McpServer {
     /// another bot's object all come out as [`Verdict::Denied`], so a caller learns nothing it
     /// could not learn by reading. Only a failure of the API itself is [`Verdict::Unavailable`].
     pub async fn subscription_verdict(&self, uri: &str, subscribable: &Subscribable) -> Verdict {
-        if self.delegated.is_some() {
+        // Defence in depth: a Flow-only server offers no resources, so it decides no subscription.
+        if self.delegated.is_some() || self.client.is_flow_only() {
             return Verdict::Denied;
         }
         if let Err(error) = self.enforce_resource_read_policy(uri).await {

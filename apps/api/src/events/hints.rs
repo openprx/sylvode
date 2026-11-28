@@ -33,8 +33,9 @@
 //!   revocation and the lag deadline are polled before the signals. A client that lost a frame
 //!   (a dropped hint, a lagging broadcast) is therefore told it must re-read: it learns this
 //!   within [`HintTuning::lag_timeout`] (30 s), when the stream sends `lagged` and ends. Per process: one
-//!   broadcast of [`BROADCAST_CAPACITY`] hints. Per bot: [`STREAMS_PER_BOT`] streams; per process:
-//!   `[api] max_change_hint_streams`. A stream's place is released when its task ends. A second,
+//!   broadcast of [`BROADCAST_CAPACITY`] hints. Per bot: [`STREAMS_PER_BOT`] streams; per
+//!   workspace: `[api] max_change_hint_streams_per_workspace`, so the bots of one workspace cannot
+//!   take every place of the process; per process: `[api] max_change_hint_streams`. A stream's place is released when its task ends. A second,
 //!   larger cap ([`BODY_CAP_FACTOR`] times both) counts response bodies until they are dropped, so
 //!   a client that keeps the socket of an ended stream open cannot exceed it; both refuse with
 //!   `429` and `Retry-After`.
@@ -120,14 +121,18 @@ const KEEPALIVE_FRAME: &str = ": keep-alive\n\n";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HintLimits {
     pub per_bot: usize,
+    pub per_workspace: usize,
     pub per_process: usize,
 }
 
 impl HintLimits {
-    /// The contract defaults, with the per-process cap taken from `[api] max_change_hint_streams`.
+    /// The contract defaults, with the per-workspace and per-process caps taken from `[api]`
+    /// (`max_change_hint_streams_per_workspace`, `max_change_hint_streams`).
     pub fn from_runtime() -> Self {
         Self {
             per_bot: STREAMS_PER_BOT,
+            per_workspace: usize::try_from(crate::config::runtime().api.max_change_hint_streams_per_workspace)
+                .unwrap_or(usize::MAX),
             per_process: usize::try_from(crate::config::runtime().api.max_change_hint_streams).unwrap_or(usize::MAX),
         }
     }
@@ -316,33 +321,51 @@ fn frames_for(hint: Hint, bot_id: Uuid, workspace_id: Uuid, project_readable: im
 struct Registry {
     total: usize,
     bots: HashMap<Uuid, usize>,
+    workspaces: HashMap<Uuid, usize>,
 }
 
 impl Registry {
-    fn acquire(&mut self, bot_id: Uuid, per_bot: usize, per_process: usize) -> Result<(), LimitExceeded> {
-        if self.total >= per_process {
+    fn acquire(&mut self, who: Holder, caps: HintLimits) -> Result<(), LimitExceeded> {
+        if self.total >= caps.per_process {
             return Err(LimitExceeded::Process);
         }
-        if self.bots.get(&bot_id).copied().unwrap_or(0) >= per_bot {
+        if self.workspaces.get(&who.workspace_id).copied().unwrap_or(0) >= caps.per_workspace {
+            return Err(LimitExceeded::Workspace);
+        }
+        if self.bots.get(&who.bot_id).copied().unwrap_or(0) >= caps.per_bot {
             return Err(LimitExceeded::Bot);
         }
         self.total += 1;
-        *self.bots.entry(bot_id).or_insert(0) += 1;
+        *self.bots.entry(who.bot_id).or_insert(0) += 1;
+        *self.workspaces.entry(who.workspace_id).or_insert(0) += 1;
         Ok(())
     }
 
     /// Gives a place back. `true` when it was the bot's last one.
-    fn release(&mut self, bot_id: Uuid) -> bool {
+    fn release(&mut self, who: Holder) -> bool {
         self.total = self.total.saturating_sub(1);
-        let last = self.bots.get_mut(&bot_id).is_some_and(|count| {
+        if self.workspaces.get_mut(&who.workspace_id).is_some_and(|count| {
+            *count = count.saturating_sub(1);
+            *count == 0
+        }) {
+            self.workspaces.remove(&who.workspace_id);
+        }
+        let last = self.bots.get_mut(&who.bot_id).is_some_and(|count| {
             *count = count.saturating_sub(1);
             *count == 0
         });
         if last {
-            self.bots.remove(&bot_id);
+            self.bots.remove(&who.bot_id);
         }
         last
     }
+}
+
+/// Whose place a stream or an open body holds in the limits.
+#[derive(Clone, Copy, Debug)]
+struct Holder {
+    bot_id: Uuid,
+    workspace_id: Uuid,
 }
 
 /// The coalescing windows of the workspaces and scopes that sent counted hints recently, and the
@@ -414,6 +437,7 @@ struct Window {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LimitExceeded {
     Bot,
+    Workspace,
     Process,
 }
 
@@ -421,14 +445,14 @@ pub enum LimitExceeded {
 /// it is released when the stream ends, not when (or whether) a client reads the end.
 pub struct Permit {
     hub: Arc<HintHub>,
-    bot_id: Uuid,
+    who: Holder,
 }
 
 impl Drop for Permit {
     fn drop(&mut self) {
-        let last = self.hub.registry.lock().release(self.bot_id);
+        let last = self.hub.registry.lock().release(self.who);
         if last {
-            self.hub.shared.lock().remove(&self.bot_id);
+            self.hub.shared.lock().remove(&self.who.bot_id);
         }
     }
 }
@@ -438,12 +462,12 @@ impl Drop for Permit {
 /// ended but whose client keeps the socket open still counts.
 pub struct BodyPermit {
     hub: Arc<HintHub>,
-    bot_id: Uuid,
+    who: Holder,
 }
 
 impl Drop for BodyPermit {
     fn drop(&mut self) {
-        self.hub.bodies.lock().release(self.bot_id);
+        self.hub.bodies.lock().release(self.who);
     }
 }
 
@@ -502,29 +526,31 @@ impl HintHub {
         Self::new(HintLimits::from_runtime(), HintTuning::default())
     }
 
-    /// Takes a place for a stream of `bot_id`, or names the limit that is reached.
-    pub fn try_acquire(self: &Arc<Self>, bot_id: Uuid) -> Result<Permit, LimitExceeded> {
-        self.registry
-            .lock()
-            .acquire(bot_id, self.limits.per_bot, self.limits.per_process)?;
+    /// Takes a place for a stream of `bot_id` in `workspace_id`, or names the limit that is reached.
+    pub fn try_acquire(self: &Arc<Self>, bot_id: Uuid, workspace_id: Uuid) -> Result<Permit, LimitExceeded> {
+        let who = Holder { bot_id, workspace_id };
+        self.registry.lock().acquire(who, self.limits)?;
         Ok(Permit {
             hub: Arc::clone(self),
-            bot_id,
+            who,
         })
     }
 
-    /// Takes a place for an open response body of `bot_id`, or names the limit that is reached.
-    /// The caps are [`BODY_CAP_FACTOR`] times the stream caps, so a refusal here means the bot (or
-    /// the process) holds many more sockets open than it has live streams.
-    pub fn try_acquire_body(self: &Arc<Self>, bot_id: Uuid) -> Result<BodyPermit, LimitExceeded> {
-        self.bodies.lock().acquire(
-            bot_id,
-            self.limits.per_bot.saturating_mul(BODY_CAP_FACTOR),
-            self.limits.per_process.saturating_mul(BODY_CAP_FACTOR),
-        )?;
+    /// Takes a place for an open response body of `bot_id` in `workspace_id`, or names the limit
+    /// that is reached. The caps are [`BODY_CAP_FACTOR`] times the stream caps, so a refusal here
+    /// means the bot (or the workspace, or the process) holds many more sockets open than it has
+    /// live streams.
+    pub fn try_acquire_body(self: &Arc<Self>, bot_id: Uuid, workspace_id: Uuid) -> Result<BodyPermit, LimitExceeded> {
+        let who = Holder { bot_id, workspace_id };
+        let caps = HintLimits {
+            per_bot: self.limits.per_bot.saturating_mul(BODY_CAP_FACTOR),
+            per_workspace: self.limits.per_workspace.saturating_mul(BODY_CAP_FACTOR),
+            per_process: self.limits.per_process.saturating_mul(BODY_CAP_FACTOR),
+        };
+        self.bodies.lock().acquire(who, caps)?;
         Ok(BodyPermit {
             hub: Arc::clone(self),
-            bot_id,
+            who,
         })
     }
 
@@ -1251,7 +1277,7 @@ pub async fn change_hints(
         ));
     }
     // The body cap is checked first: it is the larger of the two, and a refusal here costs nothing.
-    let body_permit = match hub.try_acquire_body(bot.bot_id) {
+    let body_permit = match hub.try_acquire_body(bot.bot_id, bot.workspace_id) {
         Ok(permit) => permit,
         Err(limit) => {
             tracing::info!(bot_id = %bot.bot_id, limit = ?limit, "change hint stream refused: open bodies limit reached");
@@ -1261,7 +1287,7 @@ pub async fn change_hints(
             ));
         }
     };
-    let permit = match hub.try_acquire(bot.bot_id) {
+    let permit = match hub.try_acquire(bot.bot_id, bot.workspace_id) {
         Ok(permit) => permit,
         Err(limit) => {
             tracing::info!(bot_id = %bot.bot_id, limit = ?limit, "change hint stream refused: limit reached");

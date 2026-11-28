@@ -549,22 +549,30 @@ impl Default for AuditConfig {
 /// Applies unless `[api] max_change_hint_streams` overrides it.
 pub const DEFAULT_MAX_CHANGE_HINT_STREAMS: u32 = 4_096;
 
-/// Accepted range of `api.max_change_hint_streams`.
+/// Applies unless `[api] max_change_hint_streams_per_workspace` overrides it: a quarter of the
+/// process default, so at least four workspaces are needed to fill every place of a process.
+pub const DEFAULT_MAX_CHANGE_HINT_STREAMS_PER_WORKSPACE: u32 = 1_024;
+
+/// Accepted range of `api.max_change_hint_streams` and `api.max_change_hint_streams_per_workspace`.
 pub const MAX_CHANGE_HINT_STREAMS_CEILING: u32 = 100_000;
 
 /// `[api]` — limits of the API process itself.
 ///
 /// `max_change_hint_streams` caps the open `GET /api/v1/bot/change-hints` streams of one process
-/// (each bot is also limited to 64 of its own).
+/// (each bot is also limited to 64 of its own). `max_change_hint_streams_per_workspace` caps the
+/// streams all bots of one workspace may hold together, so a workspace with many bots cannot take
+/// every place of the process.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ApiConfig {
     pub max_change_hint_streams: u32,
+    pub max_change_hint_streams_per_workspace: u32,
 }
 
 impl Default for ApiConfig {
     fn default() -> Self {
         Self {
             max_change_hint_streams: DEFAULT_MAX_CHANGE_HINT_STREAMS,
+            max_change_hint_streams_per_workspace: DEFAULT_MAX_CHANGE_HINT_STREAMS_PER_WORKSPACE,
         }
     }
 }

@@ -401,6 +401,18 @@ async fn deliver_task(
         };
         return settle_delivery(state, task, verdict).await;
     }
+    // The lease is looked at once more right before sending: a task that waited in a lane may have
+    // been swept back to `pending` (or picked up again as a later attempt) meanwhile, and a swept
+    // task is neither delivered nor logged as delivered.
+    if !task_lease_held(db, task).await? {
+        tracing::warn!(
+            task_id = %task.id,
+            attempt = task.attempts,
+            lane_wait_ms,
+            "the lease of the AI task was lost before delivery; not delivering"
+        );
+        return Ok(());
+    }
     let started = Instant::now();
     let dispatched = dispatch_task(db, task, &deliverer.pool).await;
     // No token, secret, signature, body or URL goes into this line; `status` 0 means no answer.
@@ -431,6 +443,19 @@ async fn deliver_task(
         Err(err) => DeliveryVerdict::Transient(format!("the runner could not be reached: {err}")),
     };
     settle_delivery(state, task, verdict).await
+}
+
+/// Whether `task` still holds the lease it was picked up with: it is `processing` and still on the
+/// attempt that was picked up.
+async fn task_lease_held<C: ConnectionTrait>(db: &C, task: &AiTaskDispatchRow) -> anyhow::Result<bool> {
+    let held = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT 1 AS held FROM ai_tasks WHERE id = $1 AND status = 'processing' AND attempts = $2",
+            vec![task.id.into(), task.attempts.into()],
+        ))
+        .await?;
+    Ok(held.is_some())
 }
 
 /// `accepted`, `declined` or `transient`, as [`classify_delivery_answer`] will say of an answer

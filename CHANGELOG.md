@@ -24,6 +24,22 @@ name.
   name a placeholder path and show how to make a verified copy. `sylvode-tls.sh` exits 6 when it
   cannot write its pid into the lock.
 
+- **MCP subscription follow-ups.** The attempt counted by the listen refusal limiter now stays
+  counted by default and is given back only on a definite API answer that does not refuse the
+  credential, so a client that hangs up after its request reached the API no longer escapes the
+  per-address limit. The subscription caps are applied before the per-URI permission checks, so a
+  credential at its cap costs no API calls. A URI granted while a re-check ran is re-checked once
+  more. `subscription_verdict` denies everything on a Flow-only server. An inbox read with a user
+  token answers not found instead of a backend error, and the bot identity is asked of the API once
+  per session.
+- **Change-hint streams are capped per workspace.** New `[api] max_change_hint_streams_per_workspace`
+  (default 1024, range 1..=100000) limits the streams, and the open response bodies, that all bots of
+  one workspace hold together; beyond it the answer is `429` with `Retry-After`. The proxy
+  requirement (a send timeout) is documented in docs/operations.md.
+- **Runner tunnel messages use the webhook signature format.** `sig` is `v1=` and the HMAC-SHA256 of
+  `<ts>.<envelope without sig>`; the former `sha256=` form is refused. The Sylvode server has no
+  tunnel endpoint, so only a control plane of your own is affected.
+
 ### Removed
 
 - **Flow reader floor and reader leases.** Migration `0128` drops `flow_runtime_readers` and
@@ -54,6 +70,11 @@ name.
 
 ### Changed
 
+- **Worker and runner delivery.** The worker checks that a task still holds its lease right before it
+  sends it, so a task swept while it waited in a lane is neither delivered nor logged as delivered. A
+  rebalance never moves a queued task onto a member already at `max_queued_per_session`, and leaves
+  it where it is when every healthy member is full. Loading the pool affinity file no longer does
+  quadratic work while the pool lock is held.
 - **MCP: the per-address bound on refused credentials uses the real client address.** Behind a reverse
   proxy every request used to come from one socket address, so one client could throttle every other.
   The new `[mcp] trusted_proxies` (default `["loopback"]`) lists the peers whose `X-Real-IP` header is
