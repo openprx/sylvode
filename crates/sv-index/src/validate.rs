@@ -352,10 +352,17 @@ pub fn validate_plugin_into(
         }
     }
     let lp = member(&member(path, "channels"), "latest");
-    match doc.versions.iter().find(|v| v.version == doc.channels.latest) {
-        Some(v) if v.status == VersionStatus::Listed => {}
-        Some(_) => issues.push(&lp, "must name a listed version"),
-        None => issues.push(&lp, "names a version that does not exist"),
+    match &doc.channels.latest {
+        Some(latest) => match doc.versions.iter().find(|v| v.version == *latest) {
+            Some(v) if v.status == VersionStatus::Listed => {}
+            Some(_) => issues.push(&lp, "must name a listed version"),
+            None => issues.push(&lp, "names a version that does not exist"),
+        },
+        None => {
+            if doc.versions.iter().any(|v| v.status == VersionStatus::Listed) {
+                issues.push(&lp, "required while a version is listed");
+            }
+        }
     }
 }
 
