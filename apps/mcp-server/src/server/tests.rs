@@ -2003,7 +2003,7 @@ mod protocol_eras {
             "sylvode-mcp-server"
         );
         assert_eq!(result["instructions"], json!(guides::SERVER_INSTRUCTIONS));
-        assert_eq!(result["capabilities"]["tools"], json!({}));
+        assert_eq!(result["capabilities"]["tools"], json!({"listChanged": false}));
         assert_eq!(
             result["capabilities"]["resources"],
             json!({"subscribe": false, "listChanged": false})
@@ -2140,6 +2140,58 @@ mod protocol_eras {
             )
             .await?,
             -32602
+        );
+        Ok(())
+    }
+
+    fn grant() -> crate::oauth::DelegatedGrant {
+        crate::oauth::DelegatedGrant {
+            scopes: api::oauth::scopes::ScopeSet::all(),
+            workspace_id: uuid::Uuid::from_u128(1),
+            projects: None,
+        }
+    }
+
+    async fn tools_list_ttl(server: &super::super::McpServer) -> Result<Value, Box<dyn std::error::Error>> {
+        Ok(result_of(server, request(1, "tools/list", Some(modern_params(json!({}))))).await?["ttlMs"].clone())
+    }
+
+    #[tokio::test]
+    async fn with_listen_on_discover_declares_list_changed_and_a_plain_caller_caches_the_tool_list_longer() -> TestResult
+    {
+        let router = Router::new().fallback(get(|| async { Json(json!({"code": 0, "data": []})) }));
+        let base = crate::client::test_api::spawn(router).await?;
+        let plain = server(base.clone())?.with_listen(true);
+        let discovered = result_of(&plain, request(1, "server/discover", None)).await?;
+        assert_eq!(discovered["capabilities"]["tools"], json!({"listChanged": true}));
+        assert_eq!(tools_list_ttl(&plain).await?, json!(300_000));
+        // The switch off: nothing is declared and the short interval stays.
+        assert_eq!(tools_list_ttl(&server(base.clone())?).await?, json!(60_000));
+
+        // A delegated caller declares the process capability but gets no push: short interval.
+        let delegated = super::super::McpServer::new_delegated(crate::client::test_api::client(base.clone())?, grant())
+            .with_listen(true);
+        let discovered = result_of(&delegated, request(1, "server/discover", None)).await?;
+        assert_eq!(discovered["capabilities"]["tools"], json!({"listChanged": true}));
+        assert_eq!(tools_list_ttl(&delegated).await?, json!(60_000));
+
+        // Flow-only declares `tools` alone, whatever the switch says.
+        let flow_only =
+            super::super::McpServer::new(crate::client::test_api::client(base)?.flow_only(), McpToolMode::Full)
+                .with_listen(true);
+        let discovered = result_of(&flow_only, request(1, "server/discover", None)).await?;
+        assert_eq!(discovered["capabilities"], json!({"tools": {}}));
+        assert_eq!(tools_list_ttl(&flow_only).await?, json!(60_000));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn the_legacy_handshake_never_declares_push() -> TestResult {
+        let plain = server("http://127.0.0.1:1".to_string())?.with_listen(true);
+        let response = serde_json::to_value(plain.handle_request(request(1, "initialize", None)).await)?;
+        assert_eq!(
+            response.pointer("/result/capabilities/tools"),
+            Some(&json!({"listChanged": false}))
         );
         Ok(())
     }

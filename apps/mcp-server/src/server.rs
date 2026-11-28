@@ -573,12 +573,24 @@ pub fn requested_tool_mode(
 pub struct ToolSurface {
     pub mode: McpToolMode,
     pub allow_write_call: bool,
+    /// `[mcp] listen`: the server declares `tools.listChanged` and serves `subscriptions/listen`.
+    pub listen: bool,
 }
 
 impl ToolSurface {
     /// The surface of `[mcp]`: its `tool_mode` and `allow_write_call`.
     pub const fn new(mode: McpToolMode, allow_write_call: bool) -> Self {
-        Self { mode, allow_write_call }
+        Self {
+            mode,
+            allow_write_call,
+            listen: false,
+        }
+    }
+
+    /// The same switches with `[mcp] listen` set.
+    #[must_use]
+    pub const fn with_listen(self, listen: bool) -> Self {
+        Self { listen, ..self }
     }
 
     /// The same switches with another mode (a connection that asked for one).
@@ -618,6 +630,9 @@ pub struct McpServer {
     tool_mode: McpToolMode,
     /// Whether `sylvode_write` may be used. `false` makes it answer that writes are disabled.
     write_call_allowed: bool,
+    /// `[mcp] listen`: `tools.listChanged` is declared and `tools/list` may be cached for the
+    /// longer time a push makes safe.
+    listen: bool,
 }
 
 impl McpServer {
@@ -630,12 +645,22 @@ impl McpServer {
             delegated: None,
             tool_mode,
             write_call_allowed: true,
+            listen: false,
         }
     }
 
     /// A server for one plain caller on a transport that decided its [`ToolSurface`].
     pub fn for_surface(client: OpenPrClient, surface: ToolSurface) -> Self {
-        Self::new(client, surface.mode).with_write_call_allowed(surface.allow_write_call)
+        Self::new(client, surface.mode)
+            .with_write_call_allowed(surface.allow_write_call)
+            .with_listen(surface.listen)
+    }
+
+    /// Sets whether the server declares push (`[mcp] listen`).
+    #[must_use]
+    pub const fn with_listen(mut self, listen: bool) -> Self {
+        self.listen = listen;
+        self
     }
 
     /// Sets whether `sylvode_write` may be used (`[mcp] allow_write_call`).
@@ -655,6 +680,7 @@ impl McpServer {
             // Ignored: a delegated server lists the scoped registry whatever a transport asked.
             tool_mode: McpToolMode::Full,
             write_call_allowed: true,
+            listen: false,
         }
     }
 
@@ -716,7 +742,14 @@ impl McpServer {
         let method = req.method.clone();
         let response = self.dispatch(era, req).await;
         Some(if era.is_modern() {
-            decorate_modern_response(&method, static_guide_read, response)
+            // A plain caller of a server that pushes may cache the tool list for longer: it is told
+            // when the list changes. Everyone else polls at the short interval.
+            let tools_ttl_ms = if self.listen && self.applicable_mode().is_some() {
+                era::TTL_TOOLS_LISTEN_MS
+            } else {
+                era::TTL_TOOLS_NO_LISTEN_MS
+            };
+            decorate_modern_response(&method, static_guide_read, tools_ttl_ms, response)
         } else {
             response
         })
@@ -983,6 +1016,7 @@ impl McpServer {
             delegated: self.delegated.clone(),
             tool_mode: self.tool_mode,
             write_call_allowed: self.write_call_allowed,
+            listen: self.listen,
         };
         if scoped.client.is_flow_only() {
             let request = match tools::flow_scope::prepare(&scoped.client, name, &args).await {
@@ -1760,7 +1794,13 @@ impl McpServer {
     /// The task protocol and the instructions are for a plain caller only: a delegated server has
     /// no task tools and a Flow-only server none of this surface.
     fn handle_discover(&self, id: Option<Value>) -> JsonRpcResponse {
-        let mut capabilities = self.base_capabilities(&json!({}));
+        // Flow-only declares `tools` alone; every other server declares what `[mcp] listen` allows.
+        let tools = if self.client.is_flow_only() {
+            json!({})
+        } else {
+            json!({ "listChanged": self.listen })
+        };
+        let mut capabilities = self.base_capabilities(&tools);
         let mut result = json!({ "supportedVersions": era::MODERN_VERSIONS });
         if self.applicable_mode().is_some() {
             if let Some(fields) = capabilities.as_object_mut() {
@@ -2345,15 +2385,19 @@ fn client_label(era: &Era, req: &JsonRpcRequest) -> String {
 
 /// Adds the modern fields to a successful result: `resultType`, `serverInfo`, the cache policy of
 /// the method and, for `tools/call`, `structuredContent` when the first text block is JSON.
-fn decorate_modern_response(method: &str, static_guide_read: bool, mut response: JsonRpcResponse) -> JsonRpcResponse {
+fn decorate_modern_response(
+    method: &str,
+    static_guide_read: bool,
+    tools_ttl_ms: u64,
+    mut response: JsonRpcResponse,
+) -> JsonRpcResponse {
     let Some(result) = response.result.as_mut() else {
         return response;
     };
     let cache = match method {
         "server/discover" => return response,
-        // No push exists yet, so a client cannot learn of a change sooner than the short TTL.
         "tools/list" => CachePolicy::Ttl {
-            ms: era::TTL_TOOLS_NO_LISTEN_MS,
+            ms: tools_ttl_ms,
             scope: CacheScope::Private,
         },
         "resources/list" | "resources/templates/list" => CachePolicy::Ttl {

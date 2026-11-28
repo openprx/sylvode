@@ -242,6 +242,8 @@ pub fn server_instructions(catalogue: &Catalogue<'_>) -> String {
          If sylvode_write answers that writes are disabled, do not retry. A refusal that names the project agent \
          policy, or says this bot may not do this in this project, is final for that project.\n\
          \n\
+         Limits: 1,000 open listen streams per credential; streams end when the credential is revoked or expires.\n\
+         \n\
          Categories: {categories}.\n\
          Read the resource sylvode://skills/sylvode-mcp for the full guide and sylvode://skills/sylvode-mcp/tools for \
          every tool.\n"

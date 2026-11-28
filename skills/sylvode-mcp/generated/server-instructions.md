@@ -11,5 +11,7 @@ Sylvode posts the reply where the task came from. Do not post your own.
 Other tools. If sylvode_search is listed, find tools with it, call a read tool with sylvode_read and a write tool with sylvode_write, as {"tool": name, "arguments": {...}}. If the list holds the tools themselves, call them by name. The task tools are always called directly.
 If sylvode_write answers that writes are disabled, do not retry. A refusal that names the project agent policy, or says this bot may not do this in this project, is final for that project.
 
+Limits: 1,000 open listen streams per credential; streams end when the credential is revoked or expires.
+
 Categories: projects, project_types, context, forms, layouts, plugins, work_items, comments, files, labels, sprints, milestones, proposals, release, code, documents, operations, workspace, flow, tasks.
 Read the resource sylvode://skills/sylvode-mcp for the full guide and sylvode://skills/sylvode-mcp/tools for every tool.
