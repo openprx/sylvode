@@ -120,7 +120,9 @@ suite.check('workspace sections and the instance sections keep their URLs', () =
 			`/workspace/${W}/webhooks`,
 			`/workspace/${W}/connections`,
 			`/workspace/${W}/workflows`,
-			`/workspace/${W}/settings/flow`
+			`/workspace/${W}/settings/flow`,
+			`/workspace/${W}/settings/navigation`,
+			`/workspace/${W}/settings/installations`
 		],
 		'workspace hrefs'
 	);
@@ -230,7 +232,7 @@ await suite.checkAsync(
 		assert(html.includes('shell.settings.leavesSettings'), 'external link says it leaves settings');
 		assertEqual(
 			count(html, /<a [^>]*data-settings-section/g),
-			3 + 6 + 3,
+			3 + 8 + 3,
 			'every section is a link'
 		);
 	}

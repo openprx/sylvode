@@ -63,6 +63,13 @@ export class Suite {
 		console.log(`  SKIP ${label} -- ${reason}`);
 	}
 
+	/** `check` / `checkAsync` that is parked: the body does not run, the skip and its reason are
+	 * recorded. Use it for a check that exposes a known product bug, with the reason naming it. */
+	skipCheck(label: string, reason: string, _body: () => unknown): void {
+		void _body;
+		this.skip(label, reason);
+	}
+
 	result(): SuiteResult {
 		return {
 			name: this.name,

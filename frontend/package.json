@@ -90,6 +90,8 @@
 		"design-lint": "node scripts/design-lint.mjs",
 		"design-lint:gate": "node scripts/design-lint.mjs --rules palette,dark,hex,rounded --allow scripts/design-lint-allow.json --gate --out reports/design-lint-gate --root src/routes --root src/lib/shell --root src/lib/surface --root src/lib/ui --root src/lib/components --root src/lib/project",
 		"test:design-lint": "bun test tests/design-lint.test.ts",
+		"test": "node scripts/run-tests.mjs",
+		"test:canary": "node scripts/run-tests.mjs --canary",
 		"test:ui": "node scripts/run-ui-tests.mjs",
 		"test:ui-browser": "node scripts/ui-behaviour.mjs",
 		"codemod:tokens": "node scripts/codemod-tokens.mjs",
