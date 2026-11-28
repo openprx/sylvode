@@ -19,20 +19,25 @@ impl OpenPrClient {
         self.get("/api/v1/ai/tasks/active").await
     }
 
-    /// The id of the bot this credential belongs to (`GET /api/v1/auth/me`). A credential that
-    /// belongs to no bot, or an answer without a valid id, is an error.
-    pub async fn bot_identity(&self) -> Result<Uuid, String> {
+    /// The id of the bot this credential belongs to (`GET /api/v1/auth/me`); `None` for a credential
+    /// that belongs to no bot (a user token). An answer that is not an identity at all is an error.
+    pub async fn bot_identity(&self) -> Result<Option<Uuid>, String> {
         let me: Value = self.get("/api/v1/auth/me").await?;
         bot_id_of_me(&me)
     }
 }
 
-fn bot_id_of_me(me: &Value) -> Result<Uuid, String> {
+fn bot_id_of_me(me: &Value) -> Result<Option<Uuid>, String> {
     let data = me.get("data").unwrap_or(me);
-    data.get("bot")
-        .filter(|bot| !bot.is_null())
-        .and_then(|bot| bot.get("bot_id"))
+    if !data.is_object() {
+        return Err("Malformed response from /api/v1/auth/me".to_string());
+    }
+    let Some(bot) = data.get("bot").filter(|bot| !bot.is_null()) else {
+        return Ok(None);
+    };
+    bot.get("bot_id")
         .and_then(Value::as_str)
         .and_then(|raw| Uuid::parse_str(raw).ok())
+        .map(Some)
         .ok_or_else(|| "Malformed response from /api/v1/auth/me: no bot id".to_string())
 }
