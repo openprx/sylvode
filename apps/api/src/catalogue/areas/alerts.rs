@@ -1,11 +1,15 @@
 //! Catalogue entries of the `alerts` router area (`router/alerts.rs`).
 
 use crate::catalogue::types::dsl::{
-    Admin, Delete, Entry, Find, Get, Patch, Post, Project, Put, Read, Secret, WorkspaceAdmin, bot,
+    Admin, Delete, Entry, Find, Get, Patch, Post, Project, Public, Put, Read, Secret, WorkspaceAdmin, Write, bot,
+    console,
 };
 
 #[rustfmt::skip]
 pub static ENTRIES: &[Entry] = &[
+    // The inbound event endpoint authenticates a source credential (`svi_`) in its own layer and
+    // accepts no session, bot or delegated token: console exposure only, no scope.
+    console("alerts.inbound_events.create", Post, "/api/v1/inbound/events", Public, Write),
     bot("alerts.issue_alerts.read", Get, "/api/v1/issues/{id}/alert", Project(Find::Issue("id")), Read),
     bot("alerts.rules.create", Post, "/api/v1/projects/{project_id}/alert-rules", WorkspaceAdmin, Admin),
     bot("alerts.rules.delete", Delete, "/api/v1/alert-rules/{id}", WorkspaceAdmin, Admin),
@@ -27,6 +31,7 @@ pub static ENTRIES: &[Entry] = &[
 mod tests {
     use super::ENTRIES;
     use crate::catalogue::bot_class_counts;
+    use crate::inbound::INBOUND_EVENTS_PATH;
     use std::collections::BTreeMap;
 
     /// The count per class is part of the review of a change to this area's table.
@@ -36,6 +41,16 @@ mod tests {
             bot_class_counts(ENTRIES),
             BTreeMap::from([("admin", 14), ("project-resolved", 1)]),
             "the classes of the alerts routes changed"
+        );
+    }
+
+    /// The route is registered with a literal path (the source scan reads literals only); it must
+    /// stay the endpoint the inbound module serves.
+    #[test]
+    fn the_inbound_events_entry_names_the_inbound_path() {
+        assert!(
+            ENTRIES.iter().any(|entry| entry.path == INBOUND_EVENTS_PATH),
+            "no entry for {INBOUND_EVENTS_PATH}"
         );
     }
 }
