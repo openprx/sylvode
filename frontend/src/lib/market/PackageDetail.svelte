@@ -40,7 +40,12 @@
 				: layout.key
 		)
 	);
-	const pages = $derived(detail.analysis.pages.map((page) => page.route));
+	const pages = $derived(detail.analysis.pages);
+	const pageLabel = (nav: Record<string, string> | null): string => {
+		if (!nav) return '';
+		const lang = ($locale ?? 'en').split('-')[0] ?? 'en';
+		return nav[lang] ?? nav.en ?? Object.values(nav)[0] ?? '';
+	};
 	const actions = $derived(detail.analysis.actions.map((action) => action.name));
 	const rules = $derived(detail.analysis.rules.map((rule) => rule.name));
 	const summary = $derived(
@@ -77,9 +82,6 @@
 			{#if layouts.length}<li>
 					{$t('market.contentsLayouts', { values: { list: names(layouts) } })}
 				</li>{/if}
-			{#if pages.length}<li>
-					{$t('market.contentsPages', { values: { list: names(pages) } })}
-				</li>{/if}
 			{#if actions.length}<li>
 					{$t('market.contentsActions', { values: { list: names(actions) } })}
 				</li>{/if}
@@ -91,6 +93,26 @@
 			{/if}
 		</ul>
 	</div>
+
+	{#if pages.length}
+		<div class="text-sm text-fg" data-market-site-pages>
+			<div class="font-medium">{$t('market.sitePages')}</div>
+			<ul class="mt-2 space-y-1">
+				{#each pages as page (page.route)}
+					<li class="flex flex-wrap items-center gap-2" data-market-site-page={page.route}>
+						<span class="text-fg">{page.route}</span>
+						<StatusChip tone={page.audience === 'visitor' ? 'neutral' : 'warning'}>
+							{$t(`market.pageAudience.${page.audience}`)}
+						</StatusChip>
+						<span class="text-fg-muted">
+							{pageLabel(page.nav) || $t('market.pageNoMenu')}
+						</span>
+					</li>
+				{/each}
+			</ul>
+			<p class="mt-2 text-xs text-fg-muted">{$t('market.sitePagesNote')}</p>
+		</div>
+	{/if}
 
 	<div class="text-sm text-fg" data-market-requests>
 		<div class="font-medium">{$t('market.asksDetail')}</div>

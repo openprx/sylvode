@@ -109,7 +109,11 @@
 				<StatusChip tone={statusTone(draft.status)}
 					>{$t(`drafts.status.${draft.status}`)}</StatusChip
 				>
-				<span>{$t(`drafts.kind.${draft.kind}`)}: {targetLine(draft)}</span>
+				<span
+					>{$t(`drafts.kind.${draft.kind}`)}: {targetLine(draft, (key, values) =>
+						$t(key, { values })
+					)}</span
+				>
 				<span
 					>{$t('drafts.review.by', {
 						values: { name: draft.author.name ?? draft.author.id }

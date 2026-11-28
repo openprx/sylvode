@@ -11,6 +11,7 @@
 	import { projectsApi } from '#lib/api/projects.js';
 	import { describeResult } from '#lib/i18n/describe.js';
 	import { PLUGIN_ADMIN_CONTEXT } from '#lib/plugins/context.js';
+	import { draftsApi } from '#lib/project/drafts/api.js';
 	import Button from '#lib/ui/button/Button.svelte';
 	import DataTable from '#lib/ui/data-table/DataTable.svelte';
 	import type { Column } from '#lib/ui/data-table/data-table.js';
@@ -19,7 +20,7 @@
 	import StatusChip from '#lib/ui/status-chip/StatusChip.svelte';
 	import { sitesApi } from './api';
 	import NewSiteDialog from './NewSiteDialog.svelte';
-	import { siteTitle, statusTone } from './view';
+	import { pendingBySite, siteTitle, statusTone } from './view';
 	import type { Site } from './wire';
 
 	/** The sites of one project: status, address, source and last publication. */
@@ -33,6 +34,7 @@
 	let problem = $state('');
 	let projectName = $state('');
 	let creating = $state(false);
+	let waiting = $state.raw(new Map<string, number>());
 
 	const base = $derived(`/workspace/${encodeURIComponent(workspaceId)}`);
 	const siteHref = (site: Site) =>
@@ -44,10 +46,21 @@
 		if (result.code === 0 && result.data) {
 			items = result.data.items;
 			phase = 'ready';
+			void loadWaiting();
 		} else {
 			problem = describeResult(result);
 			phase = 'failed';
 		}
+	}
+
+	/** One project-wide list of pending site drafts, counted per site; the column stays empty if it fails. */
+	async function loadWaiting(): Promise<void> {
+		const result = await draftsApi.list(projectId, {
+			status: 'pending',
+			kind: 'site_page',
+			perPage: 200
+		});
+		if (result.code === 0 && result.data) waiting = pendingBySite(result.data.items);
 	}
 
 	onMount(() => {
@@ -64,6 +77,7 @@
 		{ id: 'status', header: $t('sites.list.col.status'), width: 120, cell: statusCell },
 		{ id: 'address', header: $t('sites.list.col.address'), width: 280, cell: addressCell },
 		{ id: 'source', header: $t('sites.list.col.source'), width: 180, cell: sourceCell },
+		{ id: 'waiting', header: $t('sites.list.col.waiting'), width: 150, cell: waitingCell },
 		{ id: 'published', header: $t('sites.list.col.published'), width: 180, cell: publishedCell }
 	]);
 
@@ -96,6 +110,16 @@
 		>
 	{:else}
 		<span class="muted">{$t('sites.list.manual')}</span>
+	{/if}
+{/snippet}
+{#snippet waitingCell(site: Site)}
+	{@const count = waiting.get(site.id) ?? 0}
+	{#if count > 0}
+		<a class="waiting" href={`${siteHref(site)}?tab=drafts`} data-testid="site-waiting">
+			<StatusChip tone="warning">{$t('sites.list.waiting', { values: { count } })}</StatusChip>
+		</a>
+	{:else}
+		<span class="muted">-</span>
 	{/if}
 {/snippet}
 {#snippet publishedCell(site: Site)}{when(site.published_at)}{/snippet}

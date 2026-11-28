@@ -162,7 +162,6 @@
 		"contents": "内容",
 		"contentsForms": "表单:{list}",
 		"contentsLayouts": "布局:{list}",
-		"contentsPages": "页面:{list}",
 		"contentsActions": "动作:{list}",
 		"contentsRules": "规则:{list}",
 		"contentsNothing": "没有列出内容。",
@@ -176,6 +175,14 @@
 		"detailLoadFailed": "无法加载该包。",
 		"fromMarketNote": "已安装包的布局由其安装项放置,这里仅供参考。",
 		"fromMarketEmpty": "没有已安装的包提供适合此插槽的布局。",
-		"fromMarketPick": "已安装的布局"
+		"fromMarketPick": "已安装的布局",
+		"sitePages": "站点页面",
+		"pageAudience": {
+			"visitor": "访客",
+			"operator": "操作员"
+		},
+		"pageNoMenu": "不在菜单中",
+		"sitePagesNote": "安装到项目会创建一个草稿站点。在有人发布之前，任何内容都不会公开。",
+		"openSite": "打开站点"
 	}
 }

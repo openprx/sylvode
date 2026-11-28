@@ -25,8 +25,10 @@
 				"status": "状态",
 				"address": "地址",
 				"source": "来源",
-				"published": "最近发布"
-			}
+				"published": "最近发布",
+				"waiting": "待处理变更"
+			},
+			"waiting": "{count} 项变更"
 		},
 		"create": {
 			"title": "新建站点",
@@ -55,7 +57,11 @@
 		},
 		"tabs": {
 			"label": "站点分区",
-			"settings": "设置"
+			"settings": "设置",
+			"pages": "页面",
+			"roles": "角色",
+			"drafts": "草稿",
+			"draftsWaiting": "草稿（{count}）"
 		},
 		"publish": {
 			"title": "发布 {title}？",
@@ -124,7 +130,104 @@
 			"allowed_origin_invalid": "请输入一个精确的 https 来源，不带路径，例如 https://help.example.com。",
 			"frame_ancestors_invalid": "最多输入 8 个精确的 https 来源，每行一个。",
 			"update_empty": "没有需要保存的内容。",
-			"user_not_member": "此人不是工作区的有效成员。"
+			"user_not_member": "此人不是工作区的有效成员。",
+			"role_invalid": "请选择站点操作员或站点编辑。",
+			"route_invalid": "请使用 / 或小写路径段，例如 /help 或 /requests/:id。",
+			"route_taken": "此站点在该路由上已有页面。",
+			"audience_invalid": "请选择访客或操作员。",
+			"nav_invalid": "请填写英文菜单名称（最多 200 个字符），或将两个字段都留空。",
+			"layout_required": "请选择布局。",
+			"layout_invalid": "此布局无法在站点上显示。",
+			"package_page_readonly": "此页面属于某个扩展包。请升级或移除该扩展包后再修改。",
+			"site_route_taken": "此站点已有页面占用了扩展包的某个路由。请重命名或删除该页面，然后再次批准。"
+		},
+		"pages": {
+			"title": "页面",
+			"thing": "页面",
+			"lead": "此站点的页面。访客看到访客页面；拥有站点角色的人登录后可看到操作员页面。",
+			"readOnlyLead": "所有者、管理员和站点编辑可修改页面。",
+			"add": "添加页面",
+			"addTitle": "添加页面",
+			"editTitle": "修改页面",
+			"route": "路由",
+			"routeHelper": "/ 或小写路径段，例如 /help。用 :name 表示记录 ID，例如 /requests/:id。",
+			"audience": "面向对象",
+			"audienceVisitor": "访客",
+			"audienceOperator": "操作员",
+			"audience_visitor": "访客",
+			"audience_operator": "操作员",
+			"navEn": "菜单名称",
+			"navZh": "中文菜单名称（可选）",
+			"navHelper": "两个字段都留空则页面不出现在菜单中。",
+			"layout": "布局",
+			"layoutPlaceholder": "选择布局",
+			"layoutHelper": "本项目的布局。布局由智能体和扩展包编写。",
+			"noLayouts": "本项目还没有布局。请让智能体编写，或从市场安装模板。",
+			"layoutNeeded": "请选择布局。",
+			"layoutNotUsable": "此布局不能用于该站点。",
+			"layoutsFailed": "无法加载布局。",
+			"save": "保存页面",
+			"create": "添加页面",
+			"saved": "页面已保存。",
+			"deleted": "页面已删除。",
+			"deleteTitle": "删除页面 {route}？",
+			"deleteBody": "访客和操作员将无法再打开它。除非布局是专为此页面编写的，否则布局仍保留在项目中。",
+			"deleteConfirm": "删除页面",
+			"col": {
+				"route": "路由",
+				"nav": "菜单名称",
+				"audience": "受众",
+				"layout": "布局",
+				"source": "来源"
+			},
+			"notInMenu": "不在菜单中",
+			"readOnly": "只读",
+			"packageReadOnly": "来自扩展包 {key} 的页面在此为只读。请升级扩展包后再修改。",
+			"packageRoutes": "如果扩展包带来的路由与你自己的某个页面相同，批准会被拒绝，直到你重命名或删除该页面。",
+			"empty": "还没有页面。添加页面，或从市场安装模板。",
+			"moveUp": "上移",
+			"moveDown": "下移",
+			"edit": "修改页面",
+			"delete": "删除页面"
+		},
+		"roles": {
+			"title": "站点角色",
+			"thing": "站点角色",
+			"lead": "可以登录此站点的人。操作员处理记录；编辑还可以在这里修改页面和标题。",
+			"readOnlyLead": "所有者和管理员负责授予站点访问权限。",
+			"person": "成员",
+			"personPlaceholder": "选择工作区成员",
+			"noCandidates": "所有活跃成员都已在此站点拥有角色。",
+			"roleLabel": "角色",
+			"operatorText": "站点操作员：在站点上登录，查看操作员页面并处理记录",
+			"editorText": "站点编辑：还可以在控制台修改页面和标题",
+			"add": "添加成员",
+			"added": "成员已添加。",
+			"changed": "角色已修改。",
+			"removed": "成员已移除。",
+			"remove": "移除成员",
+			"removeTitle": "将 {name} 从此站点移除？",
+			"removeBody": "其在此站点的登录将立即失效，仍是工作区成员。",
+			"removeConfirm": "移除成员",
+			"role_site_operator": "站点操作员",
+			"role_site_editor": "站点编辑",
+			"empty": "还没有人能登录此站点。添加一位操作员来处理请求。",
+			"col": {
+				"member": "成员",
+				"role": "角色"
+			}
+		},
+		"drafts": {
+			"lead": "智能体不能直接修改已发布的站点。它们对页面和标题的修改会在这里等待所有者或管理员批准。",
+			"whyLabel": "为什么智能体的修改会出现在这里？",
+			"whyTitle": "修改为何在此等待或被拒绝",
+			"rule": {
+				"pageChange": "对已发布站点的页面或标题修改会保存为草稿，等待审阅。",
+				"layout_on_published_site": "智能体试图归档已发布页面正在显示的布局。只有人可以这样做。",
+				"form_on_published_site": "智能体试图归档已发布站点正在使用的表单。只有人可以这样做。",
+				"public_site_text_requires_human": "智能体对表单的修改会改变访客看到的文字。必须由人来修改或批准。",
+				"draft_stale": "智能体写下草稿后页面又发生了变化。批准前请重新审阅当前状态。"
+			}
 		}
 	}
 }

@@ -25,8 +25,10 @@
 				"status": "Status",
 				"address": "Address",
 				"source": "Source",
-				"published": "Last published"
-			}
+				"published": "Last published",
+				"waiting": "Waiting changes"
+			},
+			"waiting": "{count, plural, one {# change} other {# changes}}"
 		},
 		"create": {
 			"title": "New site",
@@ -55,7 +57,11 @@
 		},
 		"tabs": {
 			"label": "Site sections",
-			"settings": "Settings"
+			"settings": "Settings",
+			"pages": "Pages",
+			"roles": "Roles",
+			"drafts": "Drafts",
+			"draftsWaiting": "Drafts ({count})"
 		},
 		"publish": {
 			"title": "Publish {title}?",
@@ -124,7 +130,104 @@
 			"allowed_origin_invalid": "Enter one exact https origin without a path, such as https://help.example.com.",
 			"frame_ancestors_invalid": "Enter at most 8 exact https origins, one per line.",
 			"update_empty": "Nothing to save.",
-			"user_not_member": "That person is not an active member of this workspace."
+			"user_not_member": "That person is not an active member of this workspace.",
+			"role_invalid": "Choose site operator or site editor.",
+			"route_invalid": "Use / or lowercase segments such as /help or /requests/:id.",
+			"route_taken": "This site already has a page at this route.",
+			"audience_invalid": "Choose visitors or operators.",
+			"nav_invalid": "Give the menu label in English (at most 200 characters), or leave both fields empty.",
+			"layout_required": "Choose a layout.",
+			"layout_invalid": "This layout cannot be shown on a site.",
+			"package_page_readonly": "This page belongs to a package. Upgrade or remove the package to change it.",
+			"site_route_taken": "A page of this site already uses a route of the package. Rename or delete that page, then approve again."
+		},
+		"pages": {
+			"title": "Pages",
+			"thing": "pages",
+			"lead": "The pages of this site. Visitors see visitor pages; people with a site role see operator pages after they sign in.",
+			"readOnlyLead": "Owners, admins and site editors change pages.",
+			"add": "Add page",
+			"addTitle": "Add page",
+			"editTitle": "Change page",
+			"route": "Route",
+			"routeHelper": "/ or lowercase segments, for example /help. Use :name for a record id, for example /requests/:id.",
+			"audience": "Who sees it",
+			"audienceVisitor": "Visitors",
+			"audienceOperator": "Operators",
+			"audience_visitor": "Visitors",
+			"audience_operator": "Operators",
+			"navEn": "Menu label",
+			"navZh": "Menu label in Chinese (optional)",
+			"navHelper": "Leave both empty to keep the page out of the menu.",
+			"layout": "Layout",
+			"layoutPlaceholder": "Choose a layout",
+			"layoutHelper": "A layout of this project. Agents and packages write layouts.",
+			"noLayouts": "This project has no layout yet. Ask an agent to write one, or install a template from the Market.",
+			"layoutNeeded": "Choose a layout.",
+			"layoutNotUsable": "This layout cannot be used on this site.",
+			"layoutsFailed": "The layouts could not be loaded.",
+			"save": "Save page",
+			"create": "Add page",
+			"saved": "Page saved.",
+			"deleted": "Page deleted.",
+			"deleteTitle": "Delete page {route}?",
+			"deleteBody": "Visitors and operators can no longer open it. The layout stays in the project unless it was written for this page alone.",
+			"deleteConfirm": "Delete page",
+			"col": {
+				"route": "Route",
+				"nav": "Menu label",
+				"audience": "Audience",
+				"layout": "Layout",
+				"source": "Source"
+			},
+			"notInMenu": "Not in menu",
+			"readOnly": "Read-only",
+			"packageReadOnly": "Pages from package {key} are read-only here. Upgrade the package to change them.",
+			"packageRoutes": "If a package brings a route that one of your own pages uses, its approval is refused until you rename or delete your page.",
+			"empty": "No pages yet. Add a page, or install a template from the Market.",
+			"moveUp": "Move up",
+			"moveDown": "Move down",
+			"edit": "Change page",
+			"delete": "Delete page"
+		},
+		"roles": {
+			"title": "Site roles",
+			"thing": "site roles",
+			"lead": "People who can sign in on this site. Operators work on records; editors also change pages and the title here.",
+			"readOnlyLead": "Owners and admins give people access to the site.",
+			"person": "Person",
+			"personPlaceholder": "Choose a workspace member",
+			"noCandidates": "Every active member already has a role on this site.",
+			"roleLabel": "Role",
+			"operatorText": "Site operator: signs in on the site, sees operator pages and works on records",
+			"editorText": "Site editor: also changes pages and the title here in the console",
+			"add": "Add person",
+			"added": "Person added.",
+			"changed": "Role changed.",
+			"removed": "Person removed.",
+			"remove": "Remove person",
+			"removeTitle": "Remove {name} from this site?",
+			"removeBody": "Their sign-ins on this site end now. They stay members of the workspace.",
+			"removeConfirm": "Remove person",
+			"role_site_operator": "Site operator",
+			"role_site_editor": "Site editor",
+			"empty": "Nobody can sign in on this site yet. Add an operator to handle requests.",
+			"col": {
+				"member": "Member",
+				"role": "Role"
+			}
+		},
+		"drafts": {
+			"lead": "Agents cannot change a published site directly. Their page and title changes wait here until an owner or admin approves them.",
+			"whyLabel": "Why did an agent's change land here?",
+			"whyTitle": "Why a change waits here, or is refused",
+			"rule": {
+				"pageChange": "A page or title change on a published site is stored as a draft for review.",
+				"layout_on_published_site": "An agent tried to archive a layout that a published page shows. Only a person can do that.",
+				"form_on_published_site": "An agent tried to archive a form that a published site uses. Only a person can do that.",
+				"public_site_text_requires_human": "An agent's form change would alter text that visitors see. A person must make or approve it.",
+				"draft_stale": "The page changed after the agent wrote the draft. Review the current state again before you approve."
+			}
 		}
 	}
 }

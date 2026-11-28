@@ -162,7 +162,6 @@
 		"contents": "Contents",
 		"contentsForms": "Forms: {list}",
 		"contentsLayouts": "Layouts: {list}",
-		"contentsPages": "Pages: {list}",
 		"contentsActions": "Actions: {list}",
 		"contentsRules": "Rules: {list}",
 		"contentsNothing": "Nothing is listed.",
@@ -176,6 +175,14 @@
 		"detailLoadFailed": "The package could not be loaded.",
 		"fromMarketNote": "Layouts of installed packages are placed by their installation. Here they are listed for reference.",
 		"fromMarketEmpty": "No installed package has a layout for this slot.",
-		"fromMarketPick": "Installed layout"
+		"fromMarketPick": "Installed layout",
+		"sitePages": "Site pages",
+		"pageAudience": {
+			"visitor": "Visitors",
+			"operator": "Operators"
+		},
+		"pageNoMenu": "not in the menu",
+		"sitePagesNote": "Installing into a project creates a draft site. Nothing is public until someone publishes it.",
+		"openSite": "Open site"
 	}
 }

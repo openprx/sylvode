@@ -2,6 +2,7 @@
 
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
 	import { describeResult } from '#lib/i18n/describe.js';
@@ -292,6 +293,13 @@
 	const sortedPackages = $derived(
 		[...packages].sort((a, b) => a.package_key.localeCompare(b.package_key))
 	);
+	/** The console page of the site the package's pages live on (project scope, active, with pages). */
+	function siteHref(installation: Installation): string | null {
+		const project = installation.scope.project_id;
+		if (installation.status !== 'active' || !installation.site_id || !project) return null;
+		return `/workspace/${encodeURIComponent(workspaceId)}/projects/${encodeURIComponent(project)}/sites/${encodeURIComponent(installation.site_id)}`;
+	}
+
 	const pendingOf = (installation: Installation) =>
 		installation.generations.find((generation) => generation.status === 'pending');
 </script>
@@ -378,6 +386,17 @@
 							</td>
 							<td class="px-4 py-3 text-right">
 								<div class="flex flex-wrap items-center justify-end gap-2">
+									{#if siteHref(installation)}
+										<Button
+											variant="text"
+											size="sm"
+											data-market-open-site
+											onclick={() => {
+												// eslint-disable-next-line svelte/no-navigation-without-resolve -- console path built in full
+												void goto(siteHref(installation) ?? '');
+											}}>{$t('market.openSite')}</Button
+										>
+									{/if}
 									{#if installation.status !== 'revoked'}
 										<Button variant="text" size="sm" onclick={() => openReview(installation)}
 											>{$t('market.review')}</Button

@@ -59,6 +59,12 @@
 			"publicWarning": "This would be shown to visitors of a published site",
 			"spec": "Spec",
 			"comment": "Review comment"
+		},
+		"target": {
+			"siteTitle": "Site title",
+			"pageCreate": "New page",
+			"page_update": "Page {route} (change)",
+			"page_delete": "Page {route} (delete)"
 		}
 	}
 }

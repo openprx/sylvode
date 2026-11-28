@@ -29,8 +29,13 @@ export function riskTone(risk: string): Tone {
 	}
 }
 
-/** One line that says what a draft is about: a form's key or id, or the slot and the scope. */
-export function targetLine(draft: Pick<DraftSummary, 'kind' | 'target'>): string {
+export type Words = (key: string, values?: Record<string, string>) => string;
+
+/**
+ * One line that says what a draft is about: a form's key or id, the slot and the scope, or the
+ * page of a site. A site page draft without a page is a title change (update) or a new page.
+ */
+export function targetLine(draft: Pick<DraftSummary, 'kind' | 'target'>, words?: Words): string {
 	const target = draft.target;
 	const text = (key: string): string => {
 		const value = target[key];
@@ -40,6 +45,19 @@ export function targetLine(draft: Pick<DraftSummary, 'kind' | 'target'>): string
 		return text('form_id') ? `form ${text('form_id')}` : `new form ${text('key')}`;
 	}
 	if (draft.kind === 'layout') return `${text('slot_id')} / ${text('scope_kind')}`;
+	if (draft.kind === 'site_page' && words) {
+		const op = text('op');
+		const base = draft.target.base_page;
+		const route =
+			typeof base === 'object' &&
+			base !== null &&
+			typeof (base as { route?: unknown }).route === 'string'
+				? (base as { route: string }).route
+				: '';
+		if (text('page_id') === '' && op === 'update') return words('drafts.target.siteTitle');
+		if (op === 'create') return words('drafts.target.pageCreate');
+		return words(`drafts.target.page_${op}`, { route });
+	}
 	return draft.kind;
 }
 
