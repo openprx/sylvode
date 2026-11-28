@@ -10,12 +10,23 @@ import type { RefScope } from './types';
 
 const CACHE_LIMIT = 256;
 const programs = new Map<string, CelProgram | null>();
+const reported = new Set<string>();
+
+/** Logs a failing expression once per source so a re-render does not flood the console. */
+function reportOnce(source: string, stage: 'compile' | 'evaluate', code: string): void {
+	if (reported.size >= CACHE_LIMIT) reported.clear();
+	const key = `${stage}:${source}`;
+	if (reported.has(key)) return;
+	reported.add(key);
+	console.warn(`layout expression ${stage} failed (${code}): ${source}`);
+}
 
 function program(source: string): CelProgram | null {
 	const cached = programs.get(source);
 	if (cached !== undefined) return cached;
 	const compiled = compile(source, 'layout_when');
 	if (programs.size >= CACHE_LIMIT) programs.clear();
+	if (!compiled.ok) reportOnce(source, 'compile', String(compiled.code));
 	const value = compiled.ok ? compiled.program : null;
 	programs.set(source, value);
 	return value;
@@ -34,6 +45,7 @@ export function evaluateWhen(
 	const compiled = program(expression);
 	if (!compiled) return false;
 	const result = compiled.evalBool(variables(scope));
+	if (!result.ok) reportOnce(expression, 'evaluate', String(result.code));
 	return result.ok && result.value;
 }
 
@@ -45,7 +57,10 @@ export function evaluateText(
 	const compiled = program(expression);
 	if (!compiled) return '';
 	const result = compiled.evaluate(variables(scope));
-	if (!result.ok) return '';
+	if (!result.ok) {
+		reportOnce(expression, 'evaluate', String(result.code));
+		return '';
+	}
 	const value = result.value;
 	if (typeof value === 'string') return value;
 	if (typeof value === 'number' || typeof value === 'bigint' || typeof value === 'boolean') {
