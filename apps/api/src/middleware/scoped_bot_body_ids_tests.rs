@@ -9,7 +9,9 @@
 //! scanned the same way. A new field fails here until it is classified on purpose.
 //!
 //! Limits: fields of nested types and of an untyped `Json<Value>` body are not seen; an untyped body
-//! must be listed in `UNTYPED_BODIES` with the reason it is covered.
+//! must be listed in `UNTYPED_BODIES` with the reason it is covered. A `Value` field is accounted for
+//! like any other: its reason names the code that consumes it and why that code resolves no id
+//! outside the route's project (no field is left open).
 #![cfg(test)]
 #![allow(clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
@@ -29,11 +31,8 @@ enum Account {
     Checked(&'static str, &'static str, &'static str),
     /// A scope-native handler (the named function calls `user()`, which refuses bot credentials).
     ScopeNative(&'static str),
-    /// Not closed by this change: the field names something the handler may not confine to the
-    /// bot's project. Listed so it stays visible; the reason says what is known.
-    Open(&'static str),
 }
-use Account::{Checked, Exempt, Open, ScopeNative};
+use Account::{Checked, Exempt, ScopeNative};
 
 /// Calls that hold a scoped bot to its project level: the helper and the thin wrappers around it.
 const CHECK_CALLS: &[&str] = &[
@@ -44,11 +43,17 @@ const CHECK_CALLS: &[&str] = &[
     "require_write(",
 ];
 
-/// Why a `Value` field is listed as open: its content is stored or interpreted by code that has not
-/// been read for object ids it might resolve (a form schema's relation targets, a layout's bindings).
-/// Follow-up of audit item 2; each entry closes by reading that code, then becomes `Exempt` or `Checked`.
-const UNREAD_VALUE: &str =
-    "an untyped JSON value: the code that interprets it has not been read for ids it resolves (audit re-check item 2)";
+/// Record `values` (create, update, child create and update).
+const RECORD_VALUES: &str = "field values of the route's own form, normalized by forms/values.rs and stored: a relation value is an opaque snapshot (forms/types/reference.rs keeps it as sent; child rows are links, not values), attachment and image upload keys owned by another workspace are refused (routes/form.rs ensure_record_objects_claimable), a signature URL is reduced to a signatures/<safe name> key by signature_object_key_from_url, and forms/rules, forms/calculation.rs and forms/types run no SQL";
+
+/// Record `source` (create, update, child create and update).
+const RECORD_SOURCE: &str = "the record's provenance object: ensure_json_object plus ensure_no_site_origin (routes/form.rs) and stored; the only code that acts on it is the signature retention cleanup, which deletes only signatures/<safe name> keys (forms/signature_media.rs is_signature_object_key), whatever the entry says";
+
+/// Free JSON stored with a row and read back as data.
+const STORED_METADATA: &str = "stored in the row (form_record_links.metadata, record_comments.metadata) and read back as data; the only readers are the SELECTs in forms/relations.rs and forms/record_comments.rs, which resolve nothing";
+
+/// The pure field-rule and schema validators.
+const PURE_VALIDATOR: &str = "checked only: ensure_project_actor resolves the route's project (a bot needs its level there), the schema and rule validators get that project's SchemaScope and the sample run has no plugin rules (without_plugin_rules) and no SQL (forms/rules, forms/types); nothing is stored";
 
 /// `(struct name, field)`: the id fields of request bodies and command payloads that name something
 /// beyond the route's resolved target.
@@ -458,10 +463,10 @@ const ACCOUNTED: &[(&str, &str, Account)] = &[
         Exempt("user ids, not project objects (audit F5)"),
     ),
     // Values the scan cannot see into (re-audit item 2); not yet read for embedded ids.
-    ("UpdateChildRecordRequest", "source", Open(UNREAD_VALUE)),
-    ("UpdateChildRecordRequest", "values", Open(UNREAD_VALUE)),
-    ("UpdateRecordRequest", "source", Open(UNREAD_VALUE)),
-    ("UpdateRecordRequest", "values", Open(UNREAD_VALUE)),
+    ("UpdateChildRecordRequest", "source", Exempt(RECORD_SOURCE)),
+    ("UpdateChildRecordRequest", "values", Exempt(RECORD_VALUES)),
+    ("UpdateRecordRequest", "source", Exempt(RECORD_SOURCE)),
+    ("UpdateRecordRequest", "values", Exempt(RECORD_VALUES)),
     (
         "UpdateViewRequest",
         "config",
@@ -490,11 +495,41 @@ const ACCOUNTED: &[(&str, &str, Account)] = &[
             "validated and stored only: no data source or action is resolved on the server (the analysis lists form keys and capabilities as text); reads run later with the viewer's own principal",
         ),
     ),
-    ("UpdateProjectResourceRequest", "locator", Open(UNREAD_VALUE)),
-    ("UpdateProjectResourceRequest", "permission_policy", Open(UNREAD_VALUE)),
-    ("UpdateImpactReviewRequest", "data_sources", Open(UNREAD_VALUE)),
-    ("UpdateImpactReviewRequest", "goal_achievements", Open(UNREAD_VALUE)),
-    ("UpdateImpactReviewRequest", "metrics", Open(UNREAD_VALUE)),
+    (
+        "UpdateProjectResourceRequest",
+        "locator",
+        Exempt(
+            "stored in project_resources and echoed; nothing outside routes/project_type.rs reads the column, so no server fetch or lookup follows the value",
+        ),
+    ),
+    (
+        "UpdateProjectResourceRequest",
+        "permission_policy",
+        Exempt(
+            "stored in project_resources and echoed; nothing outside routes/project_type.rs reads the column, so no server fetch or lookup follows the value",
+        ),
+    ),
+    (
+        "UpdateImpactReviewRequest",
+        "data_sources",
+        Exempt(
+            "stored on the review of the route's proposal (services/impact_review_service.rs complete_review); the service only adds repair_suggestion_required to data_sources and resolves nothing",
+        ),
+    ),
+    (
+        "UpdateImpactReviewRequest",
+        "goal_achievements",
+        Exempt(
+            "stored on the review of the route's proposal (services/impact_review_service.rs complete_review); the service only adds repair_suggestion_required to data_sources and resolves nothing",
+        ),
+    ),
+    (
+        "UpdateImpactReviewRequest",
+        "metrics",
+        Exempt(
+            "stored on the review of the route's proposal (services/impact_review_service.rs complete_review); the service only adds repair_suggestion_required to data_sources and resolves nothing",
+        ),
+    ),
     (
         "PageRequest",
         "layout_spec",
@@ -526,26 +561,44 @@ const ACCOUNTED: &[(&str, &str, Account)] = &[
             "form_candidate and layout_candidate require the form or scope to lie in the request's own project (resolved by the middleware from project_id)",
         ),
     ),
-    ("CreateChildRecordRequest", "metadata", Open(UNREAD_VALUE)),
-    ("CreateChildRecordRequest", "source", Open(UNREAD_VALUE)),
-    ("CreateChildRecordRequest", "values", Open(UNREAD_VALUE)),
-    ("CreateRecordCommentRequest", "metadata", Open(UNREAD_VALUE)),
-    ("CreateLinkRequest", "metadata", Open(UNREAD_VALUE)),
-    ("ValidateRulesRequest", "default", Open(UNREAD_VALUE)),
-    ("ValidateRulesRequest", "options", Open(UNREAD_VALUE)),
-    ("ValidateRulesRequest", "rules", Open(UNREAD_VALUE)),
-    ("ValidateRulesRequest", "samples", Open(UNREAD_VALUE)),
-    ("ValidateSchemaRequest", "schema", Open(UNREAD_VALUE)),
+    ("CreateChildRecordRequest", "metadata", Exempt(STORED_METADATA)),
+    ("CreateChildRecordRequest", "source", Exempt(RECORD_SOURCE)),
+    ("CreateChildRecordRequest", "values", Exempt(RECORD_VALUES)),
+    ("CreateRecordCommentRequest", "metadata", Exempt(STORED_METADATA)),
+    ("CreateLinkRequest", "metadata", Exempt(STORED_METADATA)),
+    ("ValidateRulesRequest", "default", Exempt(PURE_VALIDATOR)),
+    ("ValidateRulesRequest", "options", Exempt(PURE_VALIDATOR)),
+    ("ValidateRulesRequest", "rules", Exempt(PURE_VALIDATOR)),
+    ("ValidateRulesRequest", "samples", Exempt(PURE_VALIDATOR)),
+    ("ValidateSchemaRequest", "schema", Exempt(PURE_VALIDATOR)),
     (
         "SaveImportMappingTemplateRequest",
         "id",
         Exempt("refused unless the template belongs to the route's form (routes/form.rs)"),
     ),
-    ("RecalculatePreviewRequest", "values", Open(UNREAD_VALUE)),
-    ("CreateRecordRequest", "source", Open(UNREAD_VALUE)),
-    ("CreateRecordRequest", "values", Open(UNREAD_VALUE)),
-    ("ValidateRecordRequest", "schema", Open(UNREAD_VALUE)),
-    ("ValidateRecordRequest", "values", Open(UNREAD_VALUE)),
+    (
+        "RecalculatePreviewRequest",
+        "values",
+        Exempt(
+            "a preview against the route's own form with record.create; apply_child_aggregates returns at once without a record id (routes/form.rs), nothing is stored",
+        ),
+    ),
+    ("CreateRecordRequest", "source", Exempt(RECORD_SOURCE)),
+    ("CreateRecordRequest", "values", Exempt(RECORD_VALUES)),
+    (
+        "ValidateRecordRequest",
+        "schema",
+        Exempt(
+            "a draft schema for the route's own form: needs form.design on that form (forms/endpoints.rs validate_form_record), is checked inside the form's SchemaScope and is never stored",
+        ),
+    ),
+    (
+        "ValidateRecordRequest",
+        "values",
+        Exempt(
+            "values for a dry run against the route's own form (record.create or record.update on it); nothing is stored and the pipeline runs no SQL",
+        ),
+    ),
     (
         "CreateViewRequest",
         "config",
@@ -563,9 +616,27 @@ const ACCOUNTED: &[(&str, &str, Account)] = &[
         "spec",
         Exempt("as for UpdateLayoutRequest.spec: validated and stored, never resolved on the server"),
     ),
-    ("InvokePluginRequest", "input", Open(UNREAD_VALUE)),
-    ("CreateAiTaskRequest", "payload", Open(UNREAD_VALUE)),
-    ("CreateCheckResultRequest", "result", Open(UNREAD_VALUE)),
+    (
+        "InvokePluginRequest",
+        "input",
+        Exempt(
+            "passed to the plugin module as its input; the module has no imports (plugins/runtime.rs instantiates with an empty import list), so it can reach no data, and the plugin row is the route's own target",
+        ),
+    ),
+    (
+        "CreateAiTaskRequest",
+        "payload",
+        Exempt(
+            "stored on the task and delivered to the project's own AI participant; the one server-side read is payload.issue_id for comment tasks, looked up with wi.project_id = task.project_id (services/ai_task_reply.rs find_issue)",
+        ),
+    ),
+    (
+        "CreateCheckResultRequest",
+        "result",
+        Exempt(
+            "approved_effects are applied on approval with the check result's own project in every statement (routes/check_result.rs apply_comment_create_effect and apply_work_item_update_effect: AND wi.project_id / project_id = row.project_id; another project's item changes nothing and fails); assignee_id is a user id, not a project object",
+        ),
+    ),
     (
         "CreateFormRequest",
         "detail_layout",
@@ -585,8 +656,20 @@ const ACCOUNTED: &[(&str, &str, Account)] = &[
         "manifest",
         Exempt("in-project: hooks load only the plugin's own project (plugins/hooks.rs load_active_plugins)"),
     ),
-    ("CreateProjectResourceRequest", "locator", Open(UNREAD_VALUE)),
-    ("CreateProjectResourceRequest", "permission_policy", Open(UNREAD_VALUE)),
+    (
+        "CreateProjectResourceRequest",
+        "locator",
+        Exempt(
+            "stored in project_resources and echoed; nothing outside routes/project_type.rs reads the column, so no server fetch or lookup follows the value",
+        ),
+    ),
+    (
+        "CreateProjectResourceRequest",
+        "permission_policy",
+        Exempt(
+            "stored in project_resources and echoed; nothing outside routes/project_type.rs reads the column, so no server fetch or lookup follows the value",
+        ),
+    ),
     (
         "CreateSiteRequest",
         "title",
@@ -604,8 +687,20 @@ const ACCOUNTED: &[(&str, &str, Account)] = &[
             "field definitions only (label, type, config checked by validate_written_field_config); no object id in them is resolved. Relation values live in record properties and are confined to the collection's scope and the user's view right (flow/collections.rs validate_properties_against_fields, scope_collections.rs validate_relation_access)",
         ),
     ),
-    ("scope::CreateInput", "initial_view", Open(UNREAD_VALUE)),
-    ("UpdateProjectRequest", "type_settings", Open(UNREAD_VALUE)),
+    (
+        "scope::CreateInput",
+        "initial_view",
+        Exempt(
+            "one view of the new collection itself (flow/collections.rs apply_initial_collection_schema: typed ViewCreatePayload, view type and name checked); its config is stored in that collection's own document and names no other object",
+        ),
+    ),
+    (
+        "UpdateProjectRequest",
+        "type_settings",
+        Exempt(
+            "stored settings of the route's own project; the only server reader is routes/context.rs, which returns them, and no code resolves an id inside them",
+        ),
+    ),
     (
         "PutConfig",
         "doc",
@@ -613,7 +708,13 @@ const ACCOUNTED: &[(&str, &str, Account)] = &[
             "in-project: nav targets are located within the config's scope and filtered by the viewer's visible set; for a bot by readable_projects (nav/handlers.rs visible_ids)",
         ),
     ),
-    ("UpdateProposalTemplateRequest", "content", Open(UNREAD_VALUE)),
+    (
+        "UpdateProposalTemplateRequest",
+        "content",
+        Exempt(
+            "template text of the route's own project; read only by proposal creation, which copies the strings title, proposal_type, content and domains after ensure_bot_level on the template's project (routes/proposal.rs)",
+        ),
+    ),
     // Layout and placement creation: the handler resolves the scope and requires write in its project.
     (
         "CreateLayoutRequest",
@@ -1263,34 +1364,6 @@ fn every_id_of_a_flow_command_payload_is_accounted_for() {
     );
 }
 
-/// How many `Value` fields are still open for reading; closing one lowers it, opening a new one
-/// needs a conscious edit.
-const KNOWN_OPEN: usize = 32;
-
-/// Nothing stays open without a written reason: an open entry is an untyped `Value` field with
-/// `UNREAD_VALUE`, and no other kind of field is open.
-#[test]
-fn the_open_entries_are_untyped_values_and_counted() {
-    let sources = sources();
-    let mut open = 0;
-    for (name, field, account) in ACCOUNTED {
-        if let Open(reason) = account {
-            open += 1;
-            assert_eq!(
-                *reason, UNREAD_VALUE,
-                "{name}.{field}: an open entry names the unread value"
-            );
-            let (module, bare) = key_parts(name);
-            let fields = fields_near(&sources, bare, None, module).unwrap_or_else(|| panic!("no struct {name}"));
-            assert!(
-                fields.iter().any(|f| f.name == *field && f.ty.contains("Value")),
-                "{name}.{field} is open but is not a Value field"
-            );
-        }
-    }
-    assert_eq!(open, KNOWN_OPEN);
-}
-
 /// Whether `name` is a test function in the sources.
 fn is_test(sources: &BTreeMap<PathBuf, String>, name: &str) -> bool {
     sources.values().any(|text| {
@@ -1331,7 +1404,7 @@ fn the_accounting_is_true() {
                     "{name}.{field}: the proof test {proof} never names the field"
                 );
             }
-            Exempt(reason) | Open(reason) => assert!(!reason.is_empty(), "{name}.{field} needs a reason"),
+            Exempt(reason) => assert!(!reason.is_empty(), "{name}.{field} needs a reason"),
             ScopeNative(handler) => {
                 // Every non-test definition of the name must refuse bot credentials.
                 let bodies: Vec<_> = sources

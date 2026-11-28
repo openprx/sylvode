@@ -12,6 +12,24 @@ name.
 
 ### Security
 
+- **Site operator login follows the console login model.** `POST /api/site/v1/{slug}/auth/operator/login`
+  no longer has its own in-memory 5 per minute per e-mail limit. It uses the database-backed limiter
+  with the console's figures on separate site buckets, so the console and a site never share a
+  counter: 30 attempts per address and minute, 10 per account and address together per minute, and 50
+  failed attempts per account in 15 minutes from any address. A successful sign-in is not counted, and
+  an address that has signed in to a site as that account within 30 days is not stopped by the account
+  cap (up to 200 failures per account and day). The limits follow `[auth] rate_limit_scale`. Over a
+  limit the answer is `429` with `Retry-After`. The console login uses the same shared code.
+- **Retention cleanup of replaced signatures deletes only signature objects.** A record's `source` is
+  written by the client, and the cleanup of replaced signature files deleted the object named by an
+  audit entry's `previous_object_key` without checking its shape. It now deletes only keys of the form
+  `signatures/<file name>.png` and skips any other entry.
+- **Bot request-body accounting is complete.** The last 32 untyped JSON body fields (record `values`
+  and `source`, link and comment `metadata`, validate and preview bodies, plugin invoke input, AI task
+  payload, check-result `result`, project resource `locator` and `permission_policy`, impact review
+  fields, project `type_settings`, proposal template `content`, a new collection's `initial_view`)
+  were read and are each accounted for with the code that consumes them; none is left open.
+
 - **Intranet HTTPS toolkit hardening.** `init-ca` and `rotate-ca` refuse an existing key directory
   that is a symlink, is not owned by the invoking user or is not mode 0700, instead of writing the
   key there. A stale lock is taken over by renaming it, so two instances cannot delete each other's
@@ -87,6 +105,14 @@ name.
 
 ### Added
 
+- **Grid column span.** A child of a `grid` layout node may carry `col_span` (1 up to the grid's
+  `columns`, default 2), and both renderers (console and site) lay it out; the schema stays
+  `sv.layout.v1` because the member is an optional addition. A `col_span` on a node that is not a
+  direct child of a grid, or above the grid's column count, is refused `shape_invalid`. In the layout
+  structure editor each grid child has a width handle (drag, or Left and Right on the handle) and
+  Shift + Left or Right on its grip sets the span as an undoable edit; lowering the grid's columns first
+  narrows spans that no longer fit. The editor now treats a grid without `columns` as 2 columns, like
+  the renderers.
 - **OpenAPI description of the API.** `GET /api/v1/openapi.json` returns an OpenAPI 3.1 document
   generated from the operation catalogue: one operation per catalogued route with its tag, path
   parameters, accepted authentication channels and the exposure, risk, scope and stability as
