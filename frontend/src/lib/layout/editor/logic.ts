@@ -113,6 +113,21 @@ export function refusalLines(result: {
 	return [[result.error_code, result.message].filter(Boolean).join('  ')];
 }
 
+/** The node errors of a refused save, for the structural mode (empty when the refusal has none). */
+export function refusalErrors(result: { details?: unknown }): LayoutValidationError[] {
+	const details = result.details;
+	if (!details || typeof details !== 'object' || !('errors' in details)) return [];
+	const errors = (details as { errors: unknown }).errors;
+	if (!Array.isArray(errors)) return [];
+	return errors.filter(
+		(item): item is LayoutValidationError =>
+			!!item &&
+			typeof item === 'object' &&
+			typeof (item as LayoutValidationError).path === 'string' &&
+			typeof (item as LayoutValidationError).code === 'string'
+	);
+}
+
 /** Layouts that belong to an installed package: placed by their installation, never by a user. */
 export function fromInstalledPackages<T extends { status: string; installation_id: string | null }>(
 	items: readonly T[]
