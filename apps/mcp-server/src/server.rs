@@ -3,6 +3,7 @@ use crate::client::{
 };
 use crate::era::{self, CachePolicy, CacheScope, Era};
 use crate::guides;
+use crate::listen::{SubKey, Subscribable, Verdict};
 use crate::oauth::{DelegatedGrant, ToolRefusal, gate_tool_call, is_static_guide_resource};
 use crate::protocol::{CallToolParams, CallToolResult, JsonRpcError, JsonRpcRequest, JsonRpcResponse, ListToolsResult};
 use crate::tools;
@@ -11,6 +12,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use uuid::Uuid;
 
 /// How a single `tools/call` is bound to a project agent policy.
 ///
@@ -633,6 +635,9 @@ pub struct McpServer {
     /// `[mcp] listen`: `tools.listChanged` is declared and `tools/list` may be cached for the
     /// longer time a push makes safe.
     listen: bool,
+    /// The id of the bot this server's credential belongs to, asked of the API once and kept: a
+    /// server serves one credential for its whole life.
+    bot_id: tokio::sync::OnceCell<Uuid>,
 }
 
 impl McpServer {
@@ -646,6 +651,7 @@ impl McpServer {
             tool_mode,
             write_call_allowed: true,
             listen: false,
+            bot_id: tokio::sync::OnceCell::new(),
         }
     }
 
@@ -681,6 +687,7 @@ impl McpServer {
             tool_mode: McpToolMode::Full,
             write_call_allowed: true,
             listen: false,
+            bot_id: tokio::sync::OnceCell::new(),
         }
     }
 
@@ -1017,6 +1024,7 @@ impl McpServer {
             tool_mode: self.tool_mode,
             write_call_allowed: self.write_call_allowed,
             listen: self.listen,
+            bot_id: self.bot_id.clone(),
         };
         if scoped.client.is_flow_only() {
             let request = match tools::flow_scope::prepare(&scoped.client, name, &args).await {
@@ -1760,6 +1768,57 @@ impl McpServer {
         }
     }
 
+    /// Whether `agent_id` (a canonical UUID) is the bot of this server's credential. The bot id
+    /// is asked of the API once; a failed ask is not remembered.
+    async fn is_own_bot(&self, agent_id: &str) -> Result<bool, ResourceError> {
+        let own = self
+            .bot_id
+            .get_or_try_init(|| self.client.bot_identity())
+            .await
+            .map_err(|error| ResourceError::from_backend("Failed to identify the calling bot", &error))?;
+        Ok(own.to_string() == agent_id)
+    }
+
+    /// Decides one subscription of a listen request as the caller: the read policy of the URI must
+    /// pass and the object must be one the caller may read now. A refusal, an unknown object and
+    /// another bot's object all come out as [`Verdict::Denied`], so a caller learns nothing it
+    /// could not learn by reading. Only a failure of the API itself is [`Verdict::Unavailable`].
+    pub async fn subscription_verdict(&self, uri: &str, subscribable: &Subscribable) -> Verdict {
+        if self.delegated.is_some() {
+            return Verdict::Denied;
+        }
+        if let Err(error) = self.enforce_resource_read_policy(uri).await {
+            return verdict_of_error(&error);
+        }
+        match subscribable {
+            Subscribable::Task(task_id) => match self.client.get_ai_task_current(&task_id.to_string()).await {
+                Ok(_) => Verdict::Granted(SubKey::Task(*task_id)),
+                Err(error) => verdict_of_error(&ResourceError::from_backend(
+                    "Failed to check a task subscription",
+                    &error,
+                )),
+            },
+            Subscribable::Issue(identifier) => match self.client.get_work_item_by_identifier(identifier).await {
+                Ok(item) => item
+                    .get("data")
+                    .unwrap_or(&item)
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .and_then(|raw| Uuid::parse_str(raw).ok())
+                    .map_or(Verdict::Denied, |id| Verdict::Granted(SubKey::Issue(id))),
+                Err(error) => verdict_of_error(&ResourceError::from_backend(
+                    "Failed to check an issue subscription",
+                    &error,
+                )),
+            },
+            Subscribable::Inbox(agent_id) => match self.is_own_bot(&agent_id.to_string()).await {
+                Ok(true) => Verdict::Granted(SubKey::Inbox),
+                Ok(false) => Verdict::Denied,
+                Err(error) => verdict_of_error(&error),
+            },
+        }
+    }
+
     /// Applies the project agent policy to one `resources/read`.
     ///
     /// The resource is mapped to the tool whose policy already governs the same payload
@@ -1778,13 +1837,16 @@ impl McpServer {
     }
 
     /// The capabilities both handshakes announce, before the per-caller additions.
-    fn base_capabilities(&self, tools: &Value) -> Value {
+    ///
+    /// `subscribe` is declared by the modern handshake only, and only while `[mcp] listen` is on:
+    /// the legacy transports offer no push.
+    fn base_capabilities(&self, tools: &Value, subscribe: bool) -> Value {
         if self.client.is_flow_only() {
             json!({ "tools": tools })
         } else {
             json!({
                 "tools": tools,
-                "resources": { "subscribe": false, "listChanged": false }
+                "resources": { "subscribe": subscribe, "listChanged": false }
             })
         }
     }
@@ -1800,7 +1862,7 @@ impl McpServer {
         } else {
             json!({ "listChanged": self.listen })
         };
-        let mut capabilities = self.base_capabilities(&tools);
+        let mut capabilities = self.base_capabilities(&tools, self.listen);
         let mut result = json!({ "supportedVersions": era::MODERN_VERSIONS });
         if self.applicable_mode().is_some() {
             if let Some(fields) = capabilities.as_object_mut() {
@@ -1833,7 +1895,7 @@ impl McpServer {
             .and_then(Value::as_str);
         let mut result = json!({
             "protocolVersion": era::negotiate_legacy(requested),
-            "capabilities": self.base_capabilities(&json!({ "listChanged": false })),
+            "capabilities": self.base_capabilities(&json!({ "listChanged": false }), false),
             "serverInfo": era::server_info()
         });
 
@@ -2003,6 +2065,18 @@ impl McpServer {
                 "uriTemplate": "sylvode://issues/{identifier}",
                 "name": "Issue by Identifier",
                 "description": "Get issue details by human-readable identifier (e.g. PRX-42)",
+                "mimeType": "application/json"
+            }),
+            json!({
+                "uriTemplate": "sylvode://tasks/{task_id}",
+                "name": "Agent Task",
+                "description": "Read one task of this bot (current attempt): status, plan, progress and result",
+                "mimeType": "application/json"
+            }),
+            json!({
+                "uriTemplate": "sylvode://agents/{agent_id}/inbox",
+                "name": "Agent Inbox",
+                "description": "The open tasks of this bot; agent_id is the bot's own id",
                 "mimeType": "application/json"
             }),
             json!({
@@ -2266,7 +2340,36 @@ impl McpServer {
             );
         }
 
+        // Only the task's own bot may read it, and the API answers another bot's task as not
+        // found; the id was validated by the policy step above.
+        if let Some(task_id) = parse_task_resource_uri(uri).and_then(canonical_uuid) {
+            return ResourceRead::from_api(
+                self.client.get_ai_task_current(&task_id).await,
+                "Failed to read task resource",
+            );
+        }
+
+        // The inbox of the caller's own bot only: any other agent id is not found, without a
+        // call that could tell whether that bot exists.
+        if let Some(agent_id) = parse_agent_inbox_resource_uri(uri).and_then(canonical_uuid) {
+            if !self.is_own_bot(&agent_id).await? {
+                return Err(ResourceError::NotFound);
+            }
+            return ResourceRead::from_api(
+                self.client.list_active_ai_tasks().await,
+                "Failed to read agent inbox resource",
+            );
+        }
+
         Err(ResourceError::NotFound)
+    }
+}
+
+/// How a failed check counts as a verdict: only a backend failure leaves the question open.
+const fn verdict_of_error(error: &ResourceError) -> Verdict {
+    match error {
+        ResourceError::Backend(_) => Verdict::Unavailable,
+        ResourceError::NotFound | ResourceError::Refused(_) | ResourceError::Invalid(_) => Verdict::Denied,
     }
 }
 
@@ -2569,6 +2672,18 @@ fn resource_policy_subject(uri: &str) -> Result<ResourceSubject, String> {
         }
     }
 
+    // A task and an inbox are the calling bot's own state: the API answers another bot's task as
+    // not found and `is_own_bot` refuses another agent id, so no project policy applies. The ids
+    // are still validated before they reach a URL.
+    if let Some(task_id) = parse_task_resource_uri(uri) {
+        canonical_resource_id(task_id, "task_id")?;
+        return Ok(ResourceSubject::Ungoverned);
+    }
+    if let Some(agent_id) = parse_agent_inbox_resource_uri(uri) {
+        canonical_resource_id(agent_id, "agent_id")?;
+        return Ok(ResourceSubject::Ungoverned);
+    }
+
     if let Some(identifier) = parse_issue_identifier_uri(uri) {
         // Validated with the allowlist the tool path uses, and the exact string that
         // passed is the one the policy is evaluated against — an identifier that only
@@ -2668,13 +2783,31 @@ fn parse_form_record_resource_uri<'a>(uri: &'a str, suffix: &str) -> Option<&'a 
     Some(record_id)
 }
 
-fn parse_issue_identifier_uri(uri: &str) -> Option<String> {
+pub(crate) fn parse_issue_identifier_uri(uri: &str) -> Option<String> {
     let identifier = uri.strip_prefix("sylvode://issues/")?;
     if identifier.is_empty() || identifier.contains('/') {
         return None;
     }
 
     Some(identifier.to_string())
+}
+
+/// `sylvode://tasks/{task_id}` -> the id text as written.
+pub(crate) fn parse_task_resource_uri(uri: &str) -> Option<&str> {
+    let task_id = uri.strip_prefix("sylvode://tasks/")?;
+    if task_id.is_empty() || task_id.contains('/') || task_id.contains('?') {
+        return None;
+    }
+    Some(task_id)
+}
+
+/// `sylvode://agents/{agent_id}/inbox` -> the id text as written.
+pub(crate) fn parse_agent_inbox_resource_uri(uri: &str) -> Option<&str> {
+    let agent_id = uri.strip_prefix("sylvode://agents/")?.strip_suffix("/inbox")?;
+    if agent_id.is_empty() || agent_id.contains('/') || agent_id.contains('?') {
+        return None;
+    }
+    Some(agent_id)
 }
 
 /// The project whose policy filters `tools/list`. Validated as a UUID for the same
@@ -2720,7 +2853,7 @@ fn string_argument(args: &Value, key: &str) -> Option<String> {
 /// `GET /api/v1/projects/{id}/agent-policy` into a completely different, always
 /// permissive request. The result is lower-cased so that two spellings of the same id
 /// compare equal.
-fn canonical_uuid(value: &str) -> Option<String> {
+pub(crate) fn canonical_uuid(value: &str) -> Option<String> {
     let value = value.trim();
     if value.len() != 36 {
         return None;
@@ -2774,7 +2907,7 @@ fn uuid_argument(args: &Value, key: &str) -> Result<Option<String>, String> {
 
 /// Human readable work item identifiers (`PRX-42`) are not UUIDs, so they get their own
 /// conservative character allowlist before they are used to address the API.
-fn identifier_argument(args: &Value) -> Result<Option<String>, String> {
+pub(crate) fn identifier_argument(args: &Value) -> Result<Option<String>, String> {
     let Some(identifier) = string_argument(args, "identifier") else {
         return Ok(None);
     };

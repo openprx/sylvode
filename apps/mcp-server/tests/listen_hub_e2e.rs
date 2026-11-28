@@ -13,8 +13,9 @@ use axum::{
 };
 use mcp_server::client::{ClientConfig, OpenPrClient, TRANSPORT_LABEL_HTTP};
 use mcp_server::listen::{ListenAuth, ListenConfig, ListenHandle, ListenRegistry, OpenError, caller_key};
+use mcp_server::server::McpServer;
 use parking_lot::Mutex;
-use platform::config::Secret;
+use platform::config::{McpToolMode, Secret};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -129,6 +130,7 @@ fn auth(base: &str, token: &str) -> Result<ListenAuth, Box<dyn std::error::Error
     .acting_as(Secret::new(token));
     Ok(ListenAuth::Token {
         key: caller_key(token),
+        server: Arc::new(McpServer::new(client.clone(), McpToolMode::Full)),
         client,
     })
 }

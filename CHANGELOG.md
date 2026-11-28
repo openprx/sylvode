@@ -40,6 +40,19 @@ name.
 
 ### Added
 
+- **MCP resource subscriptions.** `subscriptions/listen` honours `resourceSubscriptions` for
+  `sylvode://tasks/{task_id}`, `sylvode://issues/{identifier}` and `sylvode://agents/{agent_id}/inbox`
+  and pushes `notifications/resources/updated` (the URI echoed byte for byte) after each change
+  commits, from the existing change-hint stream (no extra upstream connection). Every URI is decided as
+  the caller at listen time and again when project access or the tool surface changes; refused URIs are
+  left out of the acknowledgment without saying why. Tasks and inboxes are readable with
+  `resources/read` and listed as resource templates, and `resources.subscribe` is declared (modern
+  handshake, `[mcp] listen = true`). Caps: 100 URIs per request, 2,000 subscriptions per credential,
+  20,000 per process.
+- **MCP: refused credentials are throttled per client address.** An address that has had 20 credentials
+  refused by the API within a minute gets no further API request for an unknown credential until the
+  window ends, and an API that is at its stream limits is answered `429` with `Retry-After: 30`
+  (`-32000`, `data.reason` `throttled` or `busy`) instead of `-32603`.
 - **`[auth] rate_limit_scale`.** A positive integer (default `1`) that multiplies every limit of the
   console authentication routes (sign-in, register, refresh, setup status). The Web E2E stack sets it
   to `1000` so its many sign-ins from one address are not throttled; the limits stay on.

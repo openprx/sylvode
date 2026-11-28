@@ -64,6 +64,12 @@ impl Default for NetOptions {
     }
 }
 
+/// The address of the peer that opened a connection, put on every request of that connection. It is
+/// the socket's address, never a forwarding header: behind a proxy it is the proxy's, which only
+/// makes the per-address bound coarser, never bypassable.
+#[derive(Clone, Copy)]
+struct PeerAddr(std::net::IpAddr);
+
 /// How long a client may take to send the head of a request before its connection is closed.
 const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -362,8 +368,8 @@ async fn serve_until_shutdown(
                 accepted = listener.accept() => accepted,
                 () = shutdown.requested() => break,
             };
-            let stream = match accepted {
-                Ok((stream, _)) => stream,
+            let (stream, peer) = match accepted {
+                Ok(accepted) => accepted,
                 Err(error) => {
                     tracing::warn!(error = %error, "Failed to accept a connection");
                     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -371,7 +377,10 @@ async fn serve_until_shutdown(
                 }
             };
             let connection = builder
-                .serve_connection_with_upgrades(TokioIo::new(stream), TowerToHyperService::new(app.clone()))
+                .serve_connection_with_upgrades(
+                    TokioIo::new(stream),
+                    TowerToHyperService::new(app.clone().layer(Extension(PeerAddr(peer.ip())))),
+                )
                 .into_owned();
             let connection = graceful.watch(connection);
             tokio::spawn(async move {
@@ -475,6 +484,7 @@ fn bad_tool_mode(message: &str) -> Response {
 async fn handle_jsonrpc(
     State(state): State<SseState>,
     Extension(caller): Extension<Caller>,
+    peer: Option<Extension<PeerAddr>>,
     RawQuery(query): RawQuery,
     headers: HeaderMap,
     Json(req): Json<JsonRpcRequest>,
@@ -495,7 +505,7 @@ async fn handle_jsonrpc(
         return refusal_response(req.id, error);
     }
     if era.is_modern() && req.method == "subscriptions/listen" && req.id.is_some() {
-        return open_http_listen(&state, &caller, &era, &req).await;
+        return open_http_listen(&state, &caller, peer.map(|Extension(peer)| peer.0), &era, &req).await;
     }
     oauth::handle_rpc(
         &state.client,
@@ -521,10 +531,14 @@ fn refusal_response(id: Option<serde_json::Value>, error: protocol::JsonRpcError
 /// client that acts as it (a hub keeps that client, and so the token, for the life of its streams).
 fn listen_auth(state: &SseState, caller: &Caller) -> ListenAuth {
     match caller {
-        Caller::Legacy(token) => ListenAuth::Token {
-            key: caller_key(token.expose()),
-            client: state.client.acting_as(token.clone()),
-        },
+        Caller::Legacy(token) => {
+            let client = state.client.acting_as(token.clone());
+            ListenAuth::Token {
+                key: caller_key(token.expose()),
+                server: Arc::new(McpServer::for_surface(client.clone(), state.surface)),
+                client,
+            }
+        }
         Caller::Delegated(delegated) => ListenAuth::Delegated {
             key: caller_key(delegated.token.expose()),
         },
@@ -535,7 +549,13 @@ fn listen_auth(state: &SseState, caller: &Caller) -> ListenAuth {
 ///
 /// A credential the API refuses is answered `401` with the challenge before any SSE byte; an API
 /// that cannot be asked is answered with a JSON-RPC error as plain JSON, so the client backs off.
-async fn open_http_listen(state: &SseState, caller: &Caller, era: &Era, req: &JsonRpcRequest) -> Response {
+async fn open_http_listen(
+    state: &SseState,
+    caller: &Caller,
+    peer: Option<std::net::IpAddr>,
+    era: &Era,
+    req: &JsonRpcRequest,
+) -> Response {
     let Some(id) = req.id.clone() else {
         return refusal_response(None, protocol::JsonRpcError::invalid_request("missing id"));
     };
@@ -551,7 +571,7 @@ async fn open_http_listen(state: &SseState, caller: &Caller, era: &Era, req: &Js
         );
     }
     let handle = match registry
-        .open(listen_auth(state, caller), &id, req.params.as_ref())
+        .open_from(peer, listen_auth(state, caller), &id, req.params.as_ref())
         .await
     {
         Ok(handle) => handle,
@@ -1401,6 +1421,7 @@ async fn open_stdio_listen(
     // One pipe is one credential: the configured bot.
     let auth = ListenAuth::Token {
         key: caller_key("stdio"),
+        server: Arc::new(McpServer::new(client.clone(), McpToolMode::Full)),
         client: client.clone(),
     };
     let mut handle = match listen.open(auth, &id, request.params.as_ref()).await {

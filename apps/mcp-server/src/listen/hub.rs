@@ -6,12 +6,25 @@
 //! hub: the map is keyed by the SHA-256 of the bearer token and every hub holds exactly one client.
 //!
 //! Nothing here ever waits for a downstream consumer. A hint sets a flag on each stream and wakes
-//! it; a stream that does not read costs one boolean, and the upstream read goes on.
+//! it; a stream that does not read costs a few flags and one entry per URI it subscribed to (at
+//! most one pending notification per URI), and the upstream read goes on.
+//!
+//! A stream may also hold resource subscriptions. Each acknowledged URI has a key (`SubKey`: a
+//! task, a work item or the bot's inbox) and a hint sets the pending flag of the URIs with that key.
+//! A hint that carries no valid id marks every URI of its kind (anything may have changed). When the
+//! API reports a change of project access or of the tool surface, every acknowledged URI of the hub is
+//! decided again as the caller, and a stream that holds one the caller may no longer read is ended
+//! with its final result; the client listens again and gets the smaller acknowledgment.
 
 use super::CallerKey;
+use super::decide::{RECHECK_BUDGET, decide};
+use super::limiter::RefusalLimiter;
+use super::uris::{KeyKind, SubKey, Subscribable, Verdict, parse_subscribable};
 use crate::client::{FIRST_OPEN_TIMEOUT, HintEvent, HintOpenError, HintStream, OpenPrClient, RECONNECT_OPEN_TIMEOUT};
+use crate::server::McpServer;
 use parking_lot::Mutex;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Notify;
@@ -49,15 +62,21 @@ pub(super) enum Access {
 pub(super) enum AcquireError {
     Unauthorized,
     Unavailable,
+    /// The API holds too many streams for this credential or process (`429`); retry later.
+    Busy,
+    /// The client address has had too many credentials refused lately.
+    Throttled,
 }
 
 /// What a stream finds when it looks at its shared state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Take {
     /// The hub ended the stream (revoked); the final result is next.
     Ended,
     /// A tool list change is pending; one notification is next.
     Tools,
+    /// A subscribed resource changed; one notification with this URI is next.
+    Uri(Arc<str>),
     Nothing,
 }
 
@@ -71,14 +90,82 @@ pub(super) struct StreamShared {
 
 #[derive(Default)]
 struct SharedState {
+    /// Whether the stream asked for, and was granted, tool list changes.
+    wants_tools: bool,
     tools_pending: bool,
     ended: bool,
+    /// The acknowledged URIs, as the client wrote them.
+    uris: Vec<Arc<str>>,
+    /// Indexes into `uris` by the key a hint is matched on.
+    by_key: HashMap<SubKey, Vec<usize>>,
+    /// Indexes of the URIs with a change to report, so a URI is announced once however many hints
+    /// came.
+    pending: BTreeSet<usize>,
 }
 
 impl StreamShared {
+    /// Declares what the stream receives: tool list changes, and the acknowledged URIs with their
+    /// keys (in acknowledgment order).
+    pub(super) fn configure(&self, wants_tools: bool, subscriptions: &[(Arc<str>, SubKey)]) {
+        let mut state = self.state.lock();
+        state.wants_tools = wants_tools;
+        state.uris = subscriptions.iter().map(|(uri, _)| Arc::clone(uri)).collect();
+        state.by_key.clear();
+        for (index, (_, key)) in subscriptions.iter().enumerate() {
+            state.by_key.entry(*key).or_default().push(index);
+        }
+    }
+
     fn mark_tools(&self) {
-        self.state.lock().tools_pending = true;
+        let mut state = self.state.lock();
+        if state.wants_tools {
+            state.tools_pending = true;
+            drop(state);
+            self.wake.notify_one();
+        }
+    }
+
+    /// Marks the URIs with `key`.
+    fn mark_key(&self, key: &SubKey) {
+        let mut state = self.state.lock();
+        let marked = state.by_key.get(key).cloned().unwrap_or_default();
+        if marked.is_empty() {
+            return;
+        }
+        state.pending.extend(marked);
+        drop(state);
         self.wake.notify_one();
+    }
+
+    /// Marks every URI whose key is of `kind`.
+    fn mark_kind(&self, kind: KeyKind) {
+        let mut state = self.state.lock();
+        let marked: Vec<usize> = state
+            .by_key
+            .iter()
+            .filter(|(key, _)| key.kind() == Some(kind))
+            .flat_map(|(_, indexes)| indexes.iter().copied())
+            .collect();
+        if marked.is_empty() {
+            return;
+        }
+        state.pending.extend(marked);
+        drop(state);
+        self.wake.notify_one();
+    }
+
+    /// "Maybe changed": every URI, and the tool list when the stream wants it.
+    fn mark_everything(&self) {
+        let mut state = self.state.lock();
+        let all = 0..state.uris.len();
+        state.pending.extend(all);
+        state.tools_pending = state.wants_tools;
+        drop(state);
+        self.wake.notify_one();
+    }
+
+    fn uris(&self) -> Vec<Arc<str>> {
+        self.state.lock().uris.clone()
     }
 
     fn end(&self) {
@@ -93,6 +180,11 @@ impl StreamShared {
             Take::Ended
         } else if std::mem::take(&mut state.tools_pending) {
             Take::Tools
+        } else if let Some(index) = state.pending.pop_first() {
+            state
+                .uris
+                .get(index)
+                .map_or(Take::Nothing, |uri| Take::Uri(Arc::clone(uri)))
         } else {
             Take::Nothing
         }
@@ -109,18 +201,30 @@ struct HubInner {
     ended: bool,
 }
 
+/// Whether a re-check of the subscriptions is running, and whether another was asked for meanwhile.
+#[derive(Default)]
+struct Recheck {
+    running: bool,
+    again: bool,
+}
+
 /// The streams of one credential and the upstream that feeds them.
 pub(super) struct Hub {
     key: CallerKey,
     inner: Mutex<HubInner>,
     /// Stops the upstream task: the last stream left, or the hub ended.
     stop: CancellationToken,
+    /// Decides subscriptions as the hub's credential.
+    authority: Arc<McpServer>,
+    recheck: Mutex<Recheck>,
 }
 
 impl Hub {
-    fn new(key: CallerKey) -> Arc<Self> {
+    fn new(key: CallerKey, authority: Arc<McpServer>) -> Arc<Self> {
         Arc::new(Self {
             key,
+            authority,
+            recheck: Mutex::new(Recheck::default()),
             inner: Mutex::new(HubInner {
                 streams: HashMap::new(),
                 next_id: 0,
@@ -151,11 +255,70 @@ impl Hub {
         })
     }
 
-    /// Asks every stream to send one `tools/list_changed` (coalesced per stream).
+    /// Asks every stream that wants it to send one `tools/list_changed` (coalesced per stream).
     fn broadcast_tools(&self) {
         for shared in self.inner.lock().streams.values() {
             shared.mark_tools();
         }
+    }
+
+    /// A task or work item changed (`id`), or an unknown one of that kind did (`None`).
+    fn broadcast_object(&self, kind: KeyKind, id: Option<uuid::Uuid>) {
+        let key = id.map(|id| match kind {
+            KeyKind::Task => SubKey::Task(id),
+            KeyKind::Issue => SubKey::Issue(id),
+        });
+        for shared in self.inner.lock().streams.values() {
+            match &key {
+                Some(key) => shared.mark_key(key),
+                None => shared.mark_kind(kind),
+            }
+        }
+    }
+
+    fn broadcast_inbox(&self) {
+        for shared in self.inner.lock().streams.values() {
+            shared.mark_key(&SubKey::Inbox);
+        }
+    }
+
+    /// Hints may have been lost: every stream re-reads everything it follows.
+    fn broadcast_everything(&self) {
+        for shared in self.inner.lock().streams.values() {
+            shared.mark_everything();
+        }
+    }
+
+    /// Decides every acknowledged URI of the hub again; see [`recheck_once`]. One re-check runs at a
+    /// time; a request that comes while one runs makes it run once more.
+    fn request_recheck(self: &Arc<Self>) {
+        {
+            let mut state = self.recheck.lock();
+            if state.running {
+                state.again = true;
+                return;
+            }
+            state.running = true;
+        }
+        let hub = Arc::clone(self);
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    () = hub.stop.cancelled() => {}
+                    () = recheck_once(&hub) => {}
+                }
+                let again = {
+                    let mut state = hub.recheck.lock();
+                    let again = state.again && !hub.stop.is_cancelled();
+                    state.again = false;
+                    state.running = again;
+                    again
+                };
+                if !again {
+                    return;
+                }
+            }
+        });
     }
 
     /// Ends every stream with its final result and refuses further registrations.
@@ -212,6 +375,8 @@ struct HubsState {
 #[derive(Default)]
 pub(super) struct Hubs {
     state: Mutex<HubsState>,
+    /// Counts the credentials the API refused, per client address.
+    limiter: RefusalLimiter,
 }
 
 impl Hubs {
@@ -283,10 +448,16 @@ impl Hubs {
         self: &Arc<Self>,
         key: CallerKey,
         client: &OpenPrClient,
+        server: &Arc<McpServer>,
+        peer: Option<IpAddr>,
         shutdown: &CancellationToken,
     ) -> Result<Access, AcquireError> {
         if let Some(access) = self.known(&key)? {
             return Ok(access);
+        }
+        // Past this point the credential costs the API a request.
+        if peer.is_some_and(|address| self.limiter.throttled(address)) {
+            return Err(AcquireError::Throttled);
         }
         let gate = GateRelease {
             hubs: self,
@@ -294,13 +465,15 @@ impl Hubs {
             gate: self.gate(key),
         };
         let _open = gate.gate.lock().await;
-        self.open_locked(key, client, shutdown).await
+        self.open_locked(key, client, server, peer, shutdown).await
     }
 
     async fn open_locked(
         self: &Arc<Self>,
         key: CallerKey,
         client: &OpenPrClient,
+        server: &Arc<McpServer>,
+        peer: Option<IpAddr>,
         shutdown: &CancellationToken,
     ) -> Result<Access, AcquireError> {
         // Another first listen may have finished while this one waited for the gate.
@@ -309,7 +482,7 @@ impl Hubs {
         }
         match client.open_change_hints(FIRST_OPEN_TIMEOUT).await {
             Ok(stream) => {
-                let hub = Hub::new(key);
+                let hub = Hub::new(key, Arc::clone(server));
                 let Some(registration) = hub.register(self) else {
                     return Err(AcquireError::Unavailable);
                 };
@@ -319,6 +492,9 @@ impl Hubs {
             }
             Err(HintOpenError::Unauthorized) => {
                 self.refuse(key, Refusal::Unauthorized);
+                if let Some(address) = peer {
+                    self.limiter.record(address);
+                }
                 Err(AcquireError::Unauthorized)
             }
             Err(HintOpenError::NotABot) => {
@@ -326,7 +502,8 @@ impl Hubs {
                 Ok(Access::NoPush)
             }
             // A full API is not a verdict on the credential; the caller backs off and retries.
-            Err(HintOpenError::TooMany | HintOpenError::Unavailable) => Err(AcquireError::Unavailable),
+            Err(HintOpenError::TooMany) => Err(AcquireError::Busy),
+            Err(HintOpenError::Unavailable) => Err(AcquireError::Unavailable),
         }
     }
 }
@@ -349,6 +526,48 @@ impl Drop for GateRelease<'_> {
     }
 }
 
+/// Decides every acknowledged URI of the hub again, once per distinct URI, and ends each stream
+/// that holds a URI the credential may no longer read. A URI that could not be decided (the API is
+/// down, or the budget ran out) keeps its stream: no answer is not a refusal.
+async fn recheck_once(hub: &Arc<Hub>) {
+    let streams: Vec<Arc<StreamShared>> = hub.inner.lock().streams.values().cloned().collect();
+    let mut seen: HashSet<Arc<str>> = HashSet::new();
+    let mut items: Vec<(Arc<str>, Subscribable)> = Vec::new();
+    for shared in &streams {
+        for uri in shared.uris() {
+            if seen.insert(Arc::clone(&uri))
+                && let Some(parsed) = parse_subscribable(&uri)
+            {
+                items.push((uri, parsed));
+            }
+        }
+    }
+    if items.is_empty() {
+        return;
+    }
+    let verdicts = decide(&hub.authority, &items, RECHECK_BUDGET).await;
+    let denied: HashSet<Arc<str>> = items
+        .iter()
+        .zip(verdicts)
+        .filter(|(_, verdict)| *verdict == Some(Verdict::Denied))
+        .map(|((uri, _), _)| Arc::clone(uri))
+        .collect();
+    if denied.is_empty() {
+        return;
+    }
+    let mut ended = 0_usize;
+    for shared in &streams {
+        if shared.uris().iter().any(|uri| denied.contains(uri)) {
+            shared.end();
+            ended += 1;
+        }
+    }
+    tracing::info!(
+        ended,
+        "Ended listen streams: a subscribed resource is no longer readable"
+    );
+}
+
 /// How one pass over an upstream stream ended.
 enum Pass {
     /// The hub or the process is stopping.
@@ -359,7 +578,7 @@ enum Pass {
     Dropped,
 }
 
-async fn read_upstream(hub: &Hub, stream: &mut HintStream, shutdown: &CancellationToken) -> Pass {
+async fn read_upstream(hub: &Arc<Hub>, stream: &mut HintStream, shutdown: &CancellationToken) -> Pass {
     loop {
         let next = tokio::select! {
             biased;
@@ -371,10 +590,16 @@ async fn read_upstream(hub: &Hub, stream: &mut HintStream, shutdown: &Cancellati
             Ok(Ok(Some(event))) => match event {
                 // A change of project access can change what `tools/list` shows, so it is a
                 // tool-list hint too. Pushing more than needed only costs a re-list.
-                HintEvent::Tools | HintEvent::AccessChanged => hub.broadcast_tools(),
+                HintEvent::Tools | HintEvent::AccessChanged => {
+                    hub.broadcast_tools();
+                    hub.request_recheck();
+                }
+                HintEvent::Task(id) => hub.broadcast_object(KeyKind::Task, id),
+                HintEvent::Issue(id) => hub.broadcast_object(KeyKind::Issue, id),
+                HintEvent::Inbox => hub.broadcast_inbox(),
                 HintEvent::Revoked => return Pass::Revoked,
                 HintEvent::Lagged | HintEvent::Shutdown => return Pass::Dropped,
-                HintEvent::Task | HintEvent::Inbox | HintEvent::Issue | HintEvent::Draft | HintEvent::Unknown => {}
+                HintEvent::Draft | HintEvent::Unknown => {}
             },
             Ok(Ok(None) | Err(_)) | Err(_) => return Pass::Dropped,
         }
@@ -420,7 +645,7 @@ async fn run_hub(
                     stream = next;
                     opened = Instant::now();
                     // Hints committed while the upstream was away are lost: maybe changed.
-                    hub.broadcast_tools();
+                    hub.broadcast_everything();
                     break;
                 }
                 Err(HintOpenError::Unauthorized) => {
@@ -495,14 +720,20 @@ mod tests {
         let hubs = Arc::new(Hubs::default());
         let shutdown = CancellationToken::new();
         let key = [7_u8; 32];
-        let failed = hubs.acquire(key, &client, &shutdown).await;
+        let server = Arc::new(McpServer::new(client.clone(), platform::config::McpToolMode::Full));
+        let failed = hubs.acquire(key, &client, &server, None, &shutdown).await;
         assert!(matches!(failed, Err(AcquireError::Unavailable)));
         assert!(hubs.state.lock().opening.is_empty());
         // An open that is dropped while it waits (the client hung up) cleans up too.
         let pending = {
             let hubs = Arc::clone(&hubs);
             let client = client.clone();
-            tokio::spawn(async move { hubs.acquire(key, &client, &CancellationToken::new()).await.is_ok() })
+            let server = Arc::clone(&server);
+            tokio::spawn(async move {
+                hubs.acquire(key, &client, &server, None, &CancellationToken::new())
+                    .await
+                    .is_ok()
+            })
         };
         pending.abort();
         let _ = pending.await;

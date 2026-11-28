@@ -132,6 +132,17 @@ impl JsonRpcError {
         }
     }
 
+    /// `-32000`: the server asks the caller to come back later (`reason`: `busy` when the API is at
+    /// its stream limits, `throttled` when the client address has had too many credentials
+    /// refused). Over HTTP it is `429` with `Retry-After`.
+    pub fn too_many_requests(reason: &str) -> Self {
+        Self {
+            code: -32000,
+            message: "Too many requests".to_string(),
+            data: Some(json!({ "reason": reason })),
+        }
+    }
+
     /// `-32000`: the caller holds too many listen streams.
     pub fn too_many_streams(limit: u32) -> Self {
         Self {
