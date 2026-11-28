@@ -4,7 +4,7 @@ import { For, lazy, Show } from "solid-js";
 import { ConfirmHost } from "./components/confirm";
 import { Button, ThemeToggle, Toaster } from "./components/ui";
 import { isHashRouting, routerBase, withBase } from "./lib/base";
-import { pickText } from "./lib/i18n";
+import { detectLocale, pickText, translate } from "./lib/i18n";
 import { resolveSlug, SiteProvider, useSite } from "./lib/site/store";
 import type { ManifestPage } from "./lib/site/types";
 
@@ -145,6 +145,13 @@ function Header(): JSX.Element {
   );
 }
 
+function Confirm(): JSX.Element {
+  const site = useSite();
+  return (
+    <ConfirmHost confirmLabel={site.t("layout.confirm")} cancelLabel={site.t("layout.cancel")} />
+  );
+}
+
 function Shell(props: { children?: JSX.Element }): JSX.Element {
   const slug = resolveSlug();
   return (
@@ -153,9 +160,7 @@ function Shell(props: { children?: JSX.Element }): JSX.Element {
         when={slug}
         fallback={
           <main class="flex-1 w-full max-w-5xl mx-auto px-6 py-8">
-            <p>
-              No site is configured. Set VITE_SV_SITE_SLUG or open the page with ?site=&lt;slug&gt;.
-            </p>
+            <p>{translate(detectLocale(), "app.noSite")}</p>
           </main>
         }
       >
@@ -163,7 +168,7 @@ function Shell(props: { children?: JSX.Element }): JSX.Element {
           <SiteProvider slug={value()}>
             <Header />
             <main class="flex-1 w-full max-w-5xl mx-auto px-6 py-8">{props.children}</main>
-            <ConfirmHost confirmLabel="OK" cancelLabel="Cancel" />
+            <Confirm />
           </SiteProvider>
         )}
       </Show>

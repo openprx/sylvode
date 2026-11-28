@@ -1,11 +1,22 @@
 import type { JSX } from "@solidjs/web";
-import { createSignal, Errored, For, Match, Show, Switch } from "solid-js";
+import {
+  createContext,
+  createSignal,
+  Errored,
+  For,
+  Match,
+  Show,
+  Switch,
+  useContext,
+} from "solid-js";
+import { useAppNavigate } from "../../lib/base";
 import { formatValue } from "../../lib/layout/format";
 import { renderMarkdown } from "../../lib/layout/markdown";
-import { displayValue, resolveText, resolveValue } from "../../lib/layout/refs";
+import { dataSource, displayValue, resolveText, resolveValue } from "../../lib/layout/refs";
 import type { LayoutNode as NodeSpec } from "../../lib/layout/types";
 import { evaluateWhen } from "../../lib/layout/when";
 import { useSite } from "../../lib/site/store";
+import { ListFailed, ListSkeleton } from "../list-state";
 import { Button } from "../ui";
 import { useRuntime } from "./context";
 import { LayoutForm } from "./layout-form";
@@ -50,6 +61,20 @@ const TONE_CLASS: Record<string, string> = {
 };
 const BUTTON_VARIANT = new Set(["primary", "secondary", "danger", "ghost"]);
 
+/** Nesting depth of cards: a top-level card title is an `h2` (the page `h1` is the layout title). */
+const CardDepth = createContext<number>(0);
+
+/** Last-resort column header: the field key as words (`created_at` -> `Created at`). */
+function humanize(key: string): string {
+  const words = key.replaceAll("_", " ").trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** Developer-facing placeholders are for operators and previews, never for a public visitor. */
+function showDiagnostics(role: string): boolean {
+  return role !== "site_visitor";
+}
+
 export const KNOWN_TYPES = new Set([
   "stack",
   "grid",
@@ -90,15 +115,18 @@ function Children(props: { nodes: NodeSpec[] | undefined }): JSX.Element {
 /** One node with its own error boundary: a failing node never takes the page down. */
 export function LayoutNode(props: { node: NodeSpec }): JSX.Element {
   const site = useSite();
+  const runtime = useRuntime();
   return (
     <Errored
       fallback={
-        <div
-          class="rounded-input border border-dashed border-line px-3 py-2 text-meta text-secondary"
-          data-layout-error={props.node.type}
-        >
-          {site.t("layout.nodeError")}
-        </div>
+        <Show when={showDiagnostics(runtime.viewer.role)}>
+          <div
+            class="rounded-input border border-dashed border-line px-3 py-2 text-meta text-secondary"
+            data-layout-error={props.node.type}
+          >
+            {site.t("layout.nodeError")}
+          </div>
+        </Show>
       }
     >
       <NodeView node={props.node} />
@@ -115,6 +143,8 @@ function NodeView(props: { node: NodeSpec }): JSX.Element {
   const value = (raw: unknown) => resolveValue(raw, runtime.scope());
   const loc = runtime.locale;
   const gap = GAP[String(cfg.gap)] ?? GAP.md ?? "";
+  const depth = useContext(CardDepth);
+  const navigate = useAppNavigate();
   const [collapsed, setCollapsed] = createSignal(false);
   const [activeTab, setActiveTab] = createSignal(0);
 
@@ -151,8 +181,25 @@ function NodeView(props: { node: NodeSpec }): JSX.Element {
     const found = Array.isArray(list)
       ? (list as { key: string; label?: string }[]).find((item) => item.key === fieldKey)
       : undefined;
-    return found?.label ?? fieldKey;
+    return found?.label ?? humanize(fieldKey);
   };
+  /** Where a node's data stands: its own source is loading, failed, or its value is usable. */
+  const sourceState = (raw: unknown): "loading" | "failed" | "ready" => {
+    const name = dataSource(raw);
+    if (name === null) return "ready";
+    if (runtime.loading()) return "loading";
+    return name in runtime.errors() ? "failed" : "ready";
+  };
+  const retry = () => void runtime.retry();
+  const sourceLabels = () => {
+    const name = dataSource(cfg.rows);
+    const found = name ? (runtime.data()[name] as { fields?: unknown } | undefined)?.fields : null;
+    return Array.isArray(found) ? (found as { key: string; label?: string }[]) : [];
+  };
+  const columnLabel = (column: { field: string; label?: unknown }) =>
+    column.label
+      ? text(column.label)
+      : (sourceLabels().find((item) => item.key === column.field)?.label ?? humanize(column.field));
   const unavailable = () => runtime.unavailable(node.on_click);
   const running = () =>
     node.on_click ? runtime.actions()[node.on_click]?.status === "running" : false;
@@ -162,12 +209,14 @@ function NodeView(props: { node: NodeSpec }): JSX.Element {
     <Show when={evaluateWhen(node.when, runtime.scope())}>
       <Switch
         fallback={
-          <div
-            class="rounded-input border border-dashed border-line px-3 py-2 text-meta text-secondary"
-            data-layout-placeholder={node.type}
-          >
-            {site.t("layout.unknownNode", { type: node.type })}
-          </div>
+          <Show when={showDiagnostics(runtime.viewer.role)}>
+            <div
+              class="rounded-input border border-dashed border-line px-3 py-2 text-meta text-secondary"
+              data-layout-placeholder={node.type}
+            >
+              {site.t("layout.unknownNode", { type: node.type })}
+            </div>
+          </Show>
         }
       >
         <Match when={node.type === "stack"}>
@@ -195,9 +244,18 @@ function NodeView(props: { node: NodeSpec }): JSX.Element {
               <header class="mb-3 flex items-start justify-between gap-2">
                 <div class="min-w-0">
                   <Show when={cfg.title}>
-                    <h3 class="m-0 truncate text-body font-semibold text-text">
-                      {text(cfg.title)}
-                    </h3>
+                    <Show
+                      when={depth === 0}
+                      fallback={
+                        <h3 class="m-0 truncate text-body font-semibold text-text">
+                          {text(cfg.title)}
+                        </h3>
+                      }
+                    >
+                      <h2 class="m-0 truncate text-body font-semibold text-text">
+                        {text(cfg.title)}
+                      </h2>
+                    </Show>
                   </Show>
                   <Show when={cfg.subtitle}>
                     <p class="m-0 text-meta text-secondary">{text(cfg.subtitle)}</p>
@@ -216,9 +274,11 @@ function NodeView(props: { node: NodeSpec }): JSX.Element {
               </header>
             </Show>
             <Show when={!collapsed()}>
-              <div class="flex min-w-0 flex-col gap-3">
-                <Children nodes={node.children} />
-              </div>
+              <CardDepth value={depth + 1}>
+                <div class="flex min-w-0 flex-col gap-3">
+                  <Children nodes={node.children} />
+                </div>
+              </CardDepth>
             </Show>
           </section>
         </Match>
@@ -264,16 +324,50 @@ function NodeView(props: { node: NodeSpec }): JSX.Element {
           <div
             class="min-w-0 break-words text-small text-text sv-markdown"
             data-layout-node="markdown"
-            innerHTML={renderMarkdown(text(cfg.value))}
+            innerHTML={renderMarkdown(text(cfg.value), site.t("md.newTab"))}
+            ref={(element) => {
+              // Delegated on the container: keyboard activation of a link also fires `click`.
+              element.addEventListener("click", (event) => {
+                const link = (event.target as Element).closest("a[data-app-route]");
+                const route = link?.getAttribute("data-app-route");
+                if (!route || event.defaultPrevented || event.button !== 0) return;
+                if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                event.preventDefault();
+                navigate(route);
+              });
+            }}
           />
         </Match>
         <Match when={node.type === "stat"}>
           <div class="flex flex-col gap-1" data-layout-node="stat">
             <span class="text-meta text-secondary">{text(cfg.label)}</span>
-            <span class="text-title font-semibold text-text">
-              {formatValue(value(cfg.value), cfg.format, loc)}
-            </span>
-            <Show when={cfg.trend !== undefined}>
+            <Show
+              when={sourceState(cfg.value) === "ready"}
+              fallback={
+                <Show
+                  when={sourceState(cfg.value) === "loading"}
+                  fallback={
+                    <span class="flex flex-col items-start gap-1">
+                      <span class="text-title font-semibold text-secondary" aria-hidden="true">
+                        –
+                      </span>
+                      <ListFailed message={site.t("layout.sourceError")} onRetry={retry} />
+                    </span>
+                  }
+                >
+                  <span
+                    class="h-7 w-16 rounded-chip bg-hover motion-safe:animate-pulse"
+                    role="status"
+                    aria-label={site.t("app.loading")}
+                  />
+                </Show>
+              }
+            >
+              <span class="text-title font-semibold text-text">
+                {formatValue(value(cfg.value), cfg.format, loc)}
+              </span>
+            </Show>
+            <Show when={cfg.trend !== undefined && sourceState(cfg.value) === "ready"}>
               <span class="text-meta text-secondary">{displayValue(value(cfg.trend))}</span>
             </Show>
           </div>
@@ -289,57 +383,81 @@ function NodeView(props: { node: NodeSpec }): JSX.Element {
         <Match when={node.type === "table"}>
           <div class="min-w-0 overflow-x-auto" data-layout-node="table">
             <Show
-              when={rows().length > 0}
+              when={sourceState(cfg.rows) === "ready"}
               fallback={
-                <p class="m-0 text-small text-secondary">
-                  {cfg.empty ? text(cfg.empty) : site.t("layout.noRows")}
-                </p>
+                <Show
+                  when={sourceState(cfg.rows) === "loading"}
+                  fallback={<ListFailed message={site.t("layout.sourceError")} onRetry={retry} />}
+                >
+                  <ListSkeleton columns={columns().length} rows={3} />
+                </Show>
               }
             >
-              <table class="w-full border-collapse text-left text-small">
-                <thead>
-                  <tr class="border-b border-line text-meta text-secondary">
-                    <For each={columns()}>
-                      {(column) => (
-                        <th class="px-2 py-1 font-medium">
-                          {column.label ? text(column.label) : column.field}
-                        </th>
+              <Show
+                when={rows().length > 0}
+                fallback={
+                  <p class="m-0 text-small text-secondary" data-list-state="empty">
+                    {cfg.empty ? text(cfg.empty) : site.t("layout.noRows")}
+                  </p>
+                }
+              >
+                <table class="w-full border-collapse text-left text-small">
+                  <thead>
+                    <tr class="border-b border-line text-meta text-secondary">
+                      <For each={columns()}>
+                        {(column) => <th class="px-2 py-1 font-medium">{columnLabel(column)}</th>}
+                      </For>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <For each={rows()}>
+                      {(row) => (
+                        <tr
+                          class={`border-b border-line last:border-0 ${rowClick ? "cursor-pointer hover:bg-hover" : ""}`}
+                          onClick={() => rowClick && void runtime.run(rowClick)}
+                        >
+                          <For each={columns()}>
+                            {(column) => (
+                              <td class="px-2 py-1 text-text">
+                                {formatValue(cell(row, column.field), column.format, loc)}
+                              </td>
+                            )}
+                          </For>
+                        </tr>
                       )}
                     </For>
-                  </tr>
-                </thead>
-                <tbody>
-                  <For each={rows()}>
-                    {(row) => (
-                      <tr
-                        class={`border-b border-line last:border-0 ${rowClick ? "cursor-pointer hover:bg-hover" : ""}`}
-                        onClick={() => rowClick && void runtime.run(rowClick)}
-                      >
-                        <For each={columns()}>
-                          {(column) => (
-                            <td class="px-2 py-1 text-text">
-                              {formatValue(cell(row, column.field), column.format, loc)}
-                            </td>
-                          )}
-                        </For>
-                      </tr>
-                    )}
-                  </For>
-                </tbody>
-              </table>
+                  </tbody>
+                </table>
+              </Show>
             </Show>
           </div>
         </Match>
         <Match when={node.type === "field-display"}>
           <div class="min-w-0 text-small" data-layout-node="field-display">
-            <Show when={cfg.label !== false}>
+            <Show when={cfg.label !== false && sourceState(cfg.record) === "ready"}>
               <span class="text-meta text-secondary">{fieldLabel()}</span>
             </Show>
-            <div class="break-words text-text">
-              {displayValue(
-                (fieldRecord()?.values as Record<string, unknown> | undefined)?.[fieldKey],
-              )}
-            </div>
+            <Show
+              when={sourceState(cfg.record) === "ready"}
+              fallback={
+                <Show
+                  when={sourceState(cfg.record) === "loading"}
+                  fallback={<ListFailed message={site.t("layout.sourceError")} onRetry={retry} />}
+                >
+                  <div
+                    class="mt-1 h-4 w-32 rounded-chip bg-hover motion-safe:animate-pulse"
+                    role="status"
+                    aria-label={site.t("app.loading")}
+                  />
+                </Show>
+              }
+            >
+              <div class="break-words text-text">
+                {displayValue(
+                  (fieldRecord()?.values as Record<string, unknown> | undefined)?.[fieldKey],
+                )}
+              </div>
+            </Show>
           </div>
         </Match>
         <Match when={node.type === "form"}>

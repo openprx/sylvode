@@ -2,6 +2,7 @@ import { Toast, toaster } from "@kobalte/core/toast";
 import type { JSX } from "@solidjs/web";
 import { Portal } from "@solidjs/web";
 import { X } from "lucide";
+import { detectLocale, translate } from "../../lib/i18n";
 import { Icon } from "./icon";
 
 export type ToastTone = "neutral" | "success" | "danger";
@@ -22,7 +23,7 @@ export function showToast(options: {
   return toaster.show((props) => (
     <Toast
       toastId={props.toastId}
-      class={`flex items-start gap-3 w-80 bg-overlay border ${toneBorder[tone]} rounded-md shadow-overlay p-4 animate-[site-slide-in_150ms_ease-out]`}
+      class={`flex items-start gap-3 w-80 max-w-[calc(100vw-2rem)] bg-overlay border ${toneBorder[tone]} rounded-md shadow-overlay p-4 animate-[site-slide-in_150ms_ease-out]`}
     >
       <div class="flex-1 flex flex-col gap-1">
         <Toast.Title class="font-semibold text-body">{options.title}</Toast.Title>
@@ -34,7 +35,7 @@ export function showToast(options: {
       </div>
       <Toast.CloseButton
         class="inline-flex size-6 items-center justify-center rounded-button hover:bg-hover cursor-pointer"
-        aria-label="Dismiss"
+        aria-label={translate(detectLocale(), "common.dismiss")}
       >
         <Icon icon={X} size={14} />
       </Toast.CloseButton>

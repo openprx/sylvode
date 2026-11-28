@@ -211,11 +211,20 @@ export class LayoutRuntime {
         const items = result.items.filter((record) =>
           client_side.every(({ filter, value }) => matchesFilter(record, filter, value)),
         );
+        // Field labels give a `table` node its column headers; a failure here only costs the labels.
+        const labels = await this.#bindingFields(key)
+          .then((all) =>
+            all
+              .filter((field) => (spec.fields ? spec.fields.includes(field.key) : true))
+              .map((field) => ({ key: field.key, label: field.label, type: field.type })),
+          )
+          .catch(() => []);
         return {
           ok: true,
           value: {
             items: items.map((record) => recordRow(record, spec.fields)),
             total: client_side.length ? items.length : result.total,
+            fields: labels,
           },
         };
       }
@@ -265,6 +274,12 @@ export class LayoutRuntime {
     this.#setData(data);
     this.#setErrors(errors);
     this.#setLoading(false);
+  }
+
+  /** Loads every source again after a failure, showing the loading state meanwhile. */
+  retry(): Promise<void> {
+    this.#setLoading(true);
+    return this.load();
   }
 
   /** Why an action cannot run now (disabled tooltip), or null when it can. */

@@ -1,6 +1,8 @@
 import { useParams } from "@solidjs/router";
 import type { JSX } from "@solidjs/web";
 import { createSignal, onSettled, Show } from "solid-js";
+import type { ListStatus } from "../components/list-state";
+import { PageTitle } from "../components/page-title";
 import { RecordTable } from "../components/record-table";
 import { Button } from "../components/ui";
 import { ManifestGate, useSite } from "../lib/site/store";
@@ -14,65 +16,69 @@ function Mine(props: { binding: string; manifest: Manifest }): JSX.Element {
   const [fields, setFields] = createSignal<SiteField[]>([]);
   const [result, setResult] = createSignal<Paginated<SiteRecord> | null>(null);
   const [page, setPage] = createSignal(1);
-  const [failed, setFailed] = createSignal(false);
+  const [status, setStatus] = createSignal<ListStatus>("loading");
 
-  const load = async (next: number) => {
+  const loadFields = async () => {
+    if (fields().length > 0) return;
+    const response = await site.client.fields(props.binding);
+    const keep = new Set(info?.visitor.read_fields ?? []);
+    setFields(() => response.fields.filter((field) => keep.has(field.key)));
+  };
+
+  const fetchPage = async (next: number) => {
     try {
-      const data = await site.client.listRecords(props.binding, {
+      return await site.client.listRecords(props.binding, {
         page: next,
         per_page: PER_PAGE,
         sort: "-created_at",
       });
-      setResult(() => data);
-      setPage(next);
-      setFailed(false);
     } catch {
       // `created_at` may be absent from the visitor sort list: retry unsorted before failing.
-      try {
-        const data = await site.client.listRecords(props.binding, {
-          page: next,
-          per_page: PER_PAGE,
-        });
-        setResult(() => data);
-        setPage(next);
-        setFailed(false);
-      } catch {
-        setFailed(true);
-      }
+      return await site.client.listRecords(props.binding, { page: next, per_page: PER_PAGE });
+    }
+  };
+
+  /** Fields and one page of records; the list is `ready` only when both arrived. */
+  const load = async (next: number) => {
+    if (!result()) setStatus("loading");
+    try {
+      await loadFields();
+      const data = await fetchPage(next);
+      setResult(() => data);
+      setPage(next);
+      setStatus("ready");
+    } catch {
+      setStatus("failed");
     }
   };
 
   onSettled(() => {
     if (!info || info.visitor.read_fields.length === 0) return;
-    void site.client
-      .fields(props.binding)
-      .then((response) => {
-        const keep = new Set(info.visitor.read_fields);
-        setFields(() => response.fields.filter((field) => keep.has(field.key)));
-      })
-      .catch(() => setFailed(true));
     void load(1);
   });
+
+  const retry = () => {
+    setResult(() => null);
+    void load(page());
+  };
 
   const pages = () => Math.max(Math.ceil((result()?.total ?? 0) / PER_PAGE), 1);
 
   return (
     <section class="flex flex-col gap-4" data-view="mine">
+      <PageTitle title={site.t("mine.title")} />
       <h1 class="text-page font-semibold m-0">{site.t("mine.title")}</h1>
       <Show
         when={info && info.visitor.read_fields.length > 0}
         fallback={<p class="text-secondary m-0">{site.t("mine.none")}</p>}
       >
-        <Show when={failed()}>
-          <p class="m-0" role="alert">
-            {site.t("app.error")}
-          </p>
-        </Show>
         <RecordTable
           fields={fields()}
           rows={result()?.items ?? []}
           locale={site.locale}
           empty={site.t("mine.empty")}
+          status={status()}
+          onRetry={retry}
         />
         <Show when={pages() > 1}>
           <div class="flex items-center gap-3">

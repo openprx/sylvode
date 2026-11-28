@@ -15,6 +15,12 @@ function segments(path: string): (string | number)[] {
   return out;
 }
 
+/** Name of the data source a `$data.<name>...` reference reads, or null for any other value. */
+export function dataSource(value: unknown): string | null {
+  const match = typeof value === "string" ? /^\$data\.([a-z_][a-z0-9_]*)/.exec(value) : null;
+  return match?.[1] ?? null;
+}
+
 /** Resolves one reference; a missing path yields `undefined` (renders empty). */
 export function resolveRef(ref: string, scope: RefScope): unknown {
   const match = REF.exec(ref);

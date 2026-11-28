@@ -2,6 +2,7 @@ import { Dialog } from "@kobalte/core/dialog";
 import type { JSX } from "@solidjs/web";
 import { X } from "lucide";
 import { Show } from "solid-js";
+import { detectLocale, translate } from "../../lib/i18n";
 import { cn } from "./cn";
 import { Icon } from "./icon";
 
@@ -43,7 +44,7 @@ export function Modal(props: ModalProps): JSX.Element {
               </div>
               <Dialog.CloseButton
                 class="inline-flex size-8 items-center justify-center rounded-button hover:bg-hover cursor-pointer"
-                aria-label="Close"
+                aria-label={translate(detectLocale(), "common.close")}
               >
                 <Icon icon={X} />
               </Dialog.CloseButton>

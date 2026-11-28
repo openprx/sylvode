@@ -71,6 +71,10 @@ const MESSAGES = {
     "op.noAccess": "You have no access to this list.",
     "common.created": "Created",
     "common.updated": "Updated",
+    "common.close": "Close",
+    "common.dismiss": "Dismiss",
+    "list.failed": "The list could not be loaded.",
+    "md.newTab": "(opens in a new tab)",
   },
   zh: {
     "app.loading": "加载中...",
@@ -128,6 +132,10 @@ const MESSAGES = {
     "op.noAccess": "你无权访问此列表。",
     "common.created": "创建时间",
     "common.updated": "更新时间",
+    "common.close": "关闭",
+    "common.dismiss": "关闭通知",
+    "list.failed": "列表加载失败。",
+    "md.newTab": "（在新标签页打开）",
   },
 } as const;
 
