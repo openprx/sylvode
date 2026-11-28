@@ -3,7 +3,8 @@
 //! A lane delivers its tasks one at a time in pick-up order, so a bot's tasks reach its runner in
 //! the order they were picked up. Lanes run concurrently up to a cap. With a cap of 1 there is no
 //! lane machinery: the tasks are delivered one after the other in pick-up order and the first
-//! error ends the batch, exactly as the worker did before lanes existed.
+//! error ends the batch. The worker's own `deliver` settles every task on its own and never
+//! returns an error (see `ai_tasks::settle_task`), so one failing task does not end a batch there.
 //!
 //! With a cap above 1 a failed delivery ends only its own lane (its remaining tasks keep their
 //! lease and are swept as before); other lanes finish, and the first error is returned after all

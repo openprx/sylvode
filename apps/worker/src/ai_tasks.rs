@@ -20,7 +20,7 @@
 //! and `acknowledged`) and the attempt number (`api::services::ai_task_service`), so an end
 //! that commits first wins and several workers never end the same attempt twice.
 
-use api::outbound::{AddressPolicy, DeliveryPool, PoolError, PoolSettings, delivery_client, resolve_outbound_target};
+use api::outbound::{AddressPolicy, DeliveryPool, PoolError, PoolSettings};
 use api::services::ai_task_reply::announce_start_refusal;
 use api::services::ai_task_service::{
     AttemptEnd, TASK_PROTOCOL, WorkerEndReason, end_processing_attempt, end_stalled_attempts,
@@ -202,10 +202,9 @@ async fn read_capped(mut response: reqwest::Response) -> String {
     String::from_utf8_lossy(&buffer).into_owned()
 }
 
-/// How the worker delivers: the pooled client (when `[ai_tasks] delivery_pool` is on) or a client
-/// per delivery, and how many bots' lanes run at once.
+/// How the worker delivers: the pooled client, and how many bots' lanes run at once.
 struct Deliverer {
-    pool: Option<Arc<DeliveryPool>>,
+    pool: Arc<DeliveryPool>,
     concurrency: usize,
     lane_batch: i64,
 }
@@ -216,24 +215,18 @@ static DELIVERER: OnceLock<Result<Deliverer, String>> = OnceLock::new();
 fn deliverer(config: &AiTasksConfig) -> anyhow::Result<&'static Deliverer> {
     DELIVERER
         .get_or_init(|| {
-            let pool = if config.delivery_pool {
-                let settings = PoolSettings {
-                    timeout: DELIVERY_TIMEOUT,
-                    connect_timeout: DELIVERY_CONNECT_TIMEOUT,
-                    idle_timeout: Duration::from_secs(config.pool_idle_timeout_secs),
-                    max_idle_per_host: usize::try_from(config.pool_max_idle_per_host).unwrap_or(usize::MAX),
-                    tcp_keepalive: (config.tcp_keepalive_secs > 0)
-                        .then(|| Duration::from_secs(config.tcp_keepalive_secs)),
-                    per_target_concurrency: usize::try_from(config.per_runner_concurrency).unwrap_or(usize::MAX),
-                };
-                let pool = DeliveryPool::new(AddressPolicy::from_runtime(), settings)
-                    .map_err(|err| format!("the delivery pool could not be built: {err}"))?;
-                Some(Arc::new(pool))
-            } else {
-                None
+            let settings = PoolSettings {
+                timeout: DELIVERY_TIMEOUT,
+                connect_timeout: DELIVERY_CONNECT_TIMEOUT,
+                idle_timeout: Duration::from_secs(config.pool_idle_timeout_secs),
+                max_idle_per_host: usize::try_from(config.pool_max_idle_per_host).unwrap_or(usize::MAX),
+                tcp_keepalive: (config.tcp_keepalive_secs > 0).then(|| Duration::from_secs(config.tcp_keepalive_secs)),
+                per_target_concurrency: usize::try_from(config.per_runner_concurrency).unwrap_or(usize::MAX),
             };
+            let pool = DeliveryPool::new(AddressPolicy::from_runtime(), settings)
+                .map_err(|err| format!("the delivery pool could not be built: {err}"))?;
             Ok(Deliverer {
-                pool,
+                pool: Arc::new(pool),
                 concurrency: usize::try_from(config.delivery_concurrency)
                     .unwrap_or(usize::MAX)
                     .max(1),
@@ -247,8 +240,9 @@ fn deliverer(config: &AiTasksConfig) -> anyhow::Result<&'static Deliverer> {
 /// Picks up due tasks and delivers each to its bot's webhook.
 ///
 /// Each picked-up task gets a lease of `processing_timeout_secs` from the pick-up. With the
-/// default configuration the tasks are delivered one after the other and the first error ends the
-/// batch; see [`crate::lanes`] for `delivery_concurrency` above 1.
+/// default configuration the tasks are delivered one after the other; see [`crate::lanes`] for
+/// `delivery_concurrency` above 1. Every task is settled on its own: a delivery or settlement that
+/// fails is logged and leaves that task to its lease, and the rest of the batch goes on.
 pub async fn process_pending_tasks(state: &AppState, concurrency: usize, config: &AiTasksConfig) -> anyhow::Result<()> {
     let deliverer = deliverer(config)?;
     let db = &state.db;
@@ -270,7 +264,7 @@ pub async fn process_pending_tasks(state: &AppState, concurrency: usize, config:
             deliverer.concurrency,
             move |task| {
                 let state = state.clone();
-                async move { deliver_task(&state, &task, deliverer, picked_at).await }
+                async move { Ok(settle_task(&state, &task, deliverer, picked_at).await) }
             },
         )
         .await
@@ -283,7 +277,36 @@ pub async fn process_pending_tasks(state: &AppState, concurrency: usize, config:
         elapsed_ms = elapsed_ms(picked_at),
         "delivery tick"
     );
+    // Counters only: no host, address, URL, token or body.
+    let pool = deliverer.pool.stats();
+    tracing::info!(
+        requests = pool.requests,
+        connections_opened = pool.connections_opened,
+        resolver_lookups = pool.resolver_lookups,
+        resolver_refusals = pool.resolver_refusals,
+        targets = pool.targets,
+        permits_waiting = pool.permits_waiting,
+        "delivery pool"
+    );
     outcome
+}
+
+/// Delivers and settles one task; an error ends only this task's attempt handling. The task keeps
+/// its lease and the sweep takes it back, exactly as for a worker that stopped mid-batch.
+async fn settle_task(state: &AppState, task: &AiTaskDispatchRow, deliverer: &Deliverer, picked_at: Instant) {
+    log_unsettled(task, deliver_task(state, task, deliverer, picked_at).await);
+}
+
+/// Logs why `task` could not be settled; the batch does not see the error.
+fn log_unsettled(task: &AiTaskDispatchRow, settled: anyhow::Result<()>) {
+    if let Err(err) = settled {
+        tracing::warn!(
+            task_id = %task.id,
+            attempt = task.attempts,
+            error = %err,
+            "settling the delivery failed; the task keeps its lease"
+        );
+    }
 }
 
 fn elapsed_ms(since: Instant) -> u64 {
@@ -310,7 +333,7 @@ async fn deliver_task(
         return settle_delivery(state, task, verdict).await;
     }
     let started = Instant::now();
-    let dispatched = dispatch_task(db, task, deliverer.pool.as_deref()).await;
+    let dispatched = dispatch_task(db, task, &deliverer.pool).await;
     // No token, secret, signature, body or URL goes into this line; `status` 0 means no answer.
     tracing::info!(
         task_id = %task.id,
@@ -320,7 +343,6 @@ async fn deliver_task(
         answer_ms = elapsed_ms(started),
         status = dispatched.as_ref().map_or(0, |answer| answer.status),
         verdict = dispatched.as_ref().map_or("transient", |answer| verdict_label(answer.status)),
-        pooled = deliverer.pool.is_some(),
         "delivery"
     );
     let verdict = match dispatched {
@@ -616,7 +638,7 @@ fn dispatch_request(
 async fn dispatch_task(
     db: &sea_orm::DatabaseConnection,
     task: &AiTaskDispatchRow,
-    pool: Option<&DeliveryPool>,
+    pool: &DeliveryPool,
 ) -> anyhow::Result<DeliveryAnswer> {
     let webhook = BotWebhookRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -658,49 +680,33 @@ async fn dispatch_task(
     })
 }
 
-/// Signs and sends one delivery, through the pool when there is one and with a client of its own
-/// otherwise. The permit, when there is one, is held until the caller drops it.
+/// Signs and sends one delivery through the pool. The permit of the runner's address is held until
+/// the caller drops it.
 async fn send_delivery(
-    pool: Option<&DeliveryPool>,
+    pool: &DeliveryPool,
     webhook: &BotWebhookRow,
     body: &Value,
-) -> anyhow::Result<(reqwest::Response, Option<tokio::sync::OwnedSemaphorePermit>)> {
-    let sent = if let Some(pool) = pool {
-        // Signed over the exact bytes that are sent, as below. The pool checks the address of every
-        // connection it opens, and holds the target's concurrency permit until the answer is read.
-        let raw_body = serde_json::to_string(body)?;
-        let signature = sign_payload(&webhook.secret, &raw_body)
-            .map_err(|err| anyhow::anyhow!("webhook {} signing failed: {err}", webhook.webhook_id))?;
-        let pooled = pool
-            .send(&webhook.url, |client, url| {
-                dispatch_request(client, url, &signature, raw_body)
-            })
-            .await
-            .map_err(|err| match err {
-                PoolError::Rejected(reason) => anyhow::anyhow!("webhook {} url rejected: {reason}", webhook.webhook_id),
-                PoolError::Transport(err) => anyhow::anyhow!("webhook {} delivery failed: {err}", webhook.webhook_id),
-            })?;
-        (pooled.response, Some(pooled.permit))
-    } else {
-        let target = resolve_outbound_target(&webhook.url)
-            .await
-            .map_err(|err| anyhow::anyhow!("webhook {} url rejected: {err}", webhook.webhook_id))?;
-        // The checked addresses are the ones connected to: the name is not resolved a second time.
-        let client = delivery_client(target.pin.as_ref(), DELIVERY_TIMEOUT, DELIVERY_CONNECT_TIMEOUT)?;
-
-        // Signed over the exact bytes that are sent, the same way the API's own webhook deliveries
-        // are, so a runner can refuse unsigned traffic instead of having to trust this path.
-        let raw_body = serde_json::to_string(body)?;
-        let signature = sign_payload(&webhook.secret, &raw_body)
-            .map_err(|err| anyhow::anyhow!("webhook {} signing failed: {err}", webhook.webhook_id))?;
-
-        let response = dispatch_request(&client, target.url, &signature, raw_body)
-            .send()
-            .await
-            .map_err(|err| anyhow::anyhow!("webhook {} delivery failed: {}", webhook.webhook_id, err.without_url()))?;
-        (response, None)
-    };
-    Ok(sent)
+) -> anyhow::Result<(reqwest::Response, tokio::sync::OwnedSemaphorePermit)> {
+    // Signed over the exact bytes that are sent, so a runner can refuse unsigned traffic instead of
+    // having to trust this path. The pool checks the address of every connection it opens, and
+    // holds the target's concurrency permit until the answer is read.
+    let raw_body = serde_json::to_string(body)?;
+    let signature = sign_payload(&webhook.secret, &raw_body)
+        .map_err(|err| anyhow::anyhow!("webhook {} signing failed: {err}", webhook.webhook_id))?;
+    let pooled = pool
+        .send(&webhook.url, |client, url| {
+            dispatch_request(client, url, &signature, raw_body)
+        })
+        .await
+        .map_err(|err| match err {
+            PoolError::Rejected(reason) => anyhow::anyhow!("webhook {} url rejected: {reason}", webhook.webhook_id),
+            PoolError::Refused(refusal) => anyhow::anyhow!(
+                "webhook {} url rejected: the outbound address policy refused the target: {refusal}",
+                webhook.webhook_id
+            ),
+            PoolError::Transport(err) => anyhow::anyhow!("webhook {} delivery failed: {err}", webhook.webhook_id),
+        })?;
+    Ok((pooled.response, pooled.permit))
 }
 
 /// The JSON body of a delivery. Every field a runner already reads is unchanged; `project_key`
@@ -810,8 +816,8 @@ async fn insert_task_event(
 #[allow(clippy::expect_used)]
 mod tests {
     use super::{
-        AiTaskDispatchRow, DELIVERY_CONNECT_TIMEOUT, DELIVERY_TIMEOUT, DeliveryVerdict, MAX_ANSWER_BYTES,
-        MAX_REASON_CHARS, classify_delivery_answer, delivery_body, delivery_client, dispatch_request, read_capped,
+        AiTaskDispatchRow, DeliveryVerdict, MAX_ANSWER_BYTES, MAX_REASON_CHARS, classify_delivery_answer,
+        delivery_body, dispatch_request, read_capped,
     };
     use serde_json::json;
     use uuid::Uuid;
@@ -1018,6 +1024,61 @@ mod tests {
         assert_eq!(declined(&verdict), ("the runner refused the task", None));
     }
 
+    fn dispatch_row(sequence: u8) -> AiTaskDispatchRow {
+        AiTaskDispatchRow {
+            id: Uuid::from_u128(u128::from(sequence)),
+            workspace_id: Uuid::nil(),
+            project_id: Uuid::nil(),
+            project_key: "P".to_string(),
+            ai_participant_id: Uuid::from_u128(u128::from(sequence % 2)),
+            ai_participant_name: None,
+            ai_participant_agent_type: None,
+            task_type: "mention".to_string(),
+            reference_type: None,
+            reference_id: None,
+            payload: json!({}),
+            attempts: 1,
+            max_attempts: 3,
+            priority: 0,
+        }
+    }
+
+    /// One task that cannot be settled never stops the others, at one lane and at several.
+    #[tokio::test]
+    async fn one_failing_delivery_does_not_stop_the_rest() {
+        for concurrency in [1_usize, 4] {
+            let done = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let tasks: Vec<AiTaskDispatchRow> = (1..=6).map(dispatch_row).collect();
+            let outcome = crate::lanes::run_lanes(tasks, |task| task.ai_participant_id, concurrency, {
+                let done = done.clone();
+                move |task| {
+                    let done = done.clone();
+                    async move {
+                        let sequence = task.id.as_u128();
+                        let settled = if sequence == 2 {
+                            Err(anyhow::anyhow!("the settlement failed"))
+                        } else {
+                            done.lock()
+                                .map(|mut done| done.push(sequence))
+                                .map_err(|_| anyhow::anyhow!("poisoned"))
+                        };
+                        super::log_unsettled(&task, settled);
+                        Ok(())
+                    }
+                }
+            })
+            .await;
+            assert!(outcome.is_ok(), "concurrency {concurrency}");
+            let mut done = done.lock().expect("done").clone();
+            done.sort_unstable();
+            assert_eq!(
+                done,
+                vec![1, 3, 4, 5, 6],
+                "every other task was settled at {concurrency}"
+            );
+        }
+    }
+
     /// An answer is read up to a named cap and no further.
     #[tokio::test]
     async fn an_answer_is_read_only_up_to_the_cap() {
@@ -1026,56 +1087,6 @@ mod tests {
         let response = reqwest::get(format!("http://{addr}/")).await.expect("answer");
         let read = read_capped(response).await;
         assert_eq!(read.len(), MAX_ANSWER_BYTES);
-        server.abort();
-    }
-
-    /// A pinned client connects to the address it was given for the host and never asks DNS: the
-    /// name below does not exist.
-    #[tokio::test]
-    async fn a_pinned_client_connects_to_the_validated_address() {
-        let (addr, server) = serve_once("pinned".to_string()).await;
-        let pin = ("pin.sylvode-test.invalid".to_string(), vec![addr]);
-        let client = delivery_client(Some(&pin), DELIVERY_TIMEOUT, DELIVERY_CONNECT_TIMEOUT).expect("client");
-        let response = client
-            .get(format!("http://pin.sylvode-test.invalid:{}/", addr.port()))
-            .send()
-            .await
-            .expect("the pinned address answers");
-        assert_eq!(response.text().await.expect("text"), "pinned");
-        server.abort();
-        // Without the pin the same name does not resolve.
-        let unpinned = delivery_client(None, DELIVERY_TIMEOUT, DELIVERY_CONNECT_TIMEOUT).expect("client");
-        assert!(
-            unpinned
-                .get(format!("http://pin.sylvode-test.invalid:{}/", addr.port()))
-                .send()
-                .await
-                .is_err()
-        );
-    }
-
-    /// Redirects are not followed.
-    #[tokio::test]
-    async fn a_redirect_is_not_followed() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
-        let addr = listener.local_addr().expect("addr");
-        let server = tokio::spawn(async move {
-            use tokio::io::{AsyncReadExt, AsyncWriteExt};
-            if let Ok((mut socket, _)) = listener.accept().await {
-                let mut buffer = [0_u8; 1024];
-                let _ = socket.read(&mut buffer).await;
-                let _ = socket
-                    .write_all(b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/\r\nContent-Length: 0\r\n\r\n")
-                    .await;
-            }
-        });
-        let response = delivery_client(None, DELIVERY_TIMEOUT, DELIVERY_CONNECT_TIMEOUT)
-            .expect("client")
-            .get(format!("http://{addr}/"))
-            .send()
-            .await
-            .expect("answer");
-        assert_eq!(response.status().as_u16(), 302);
         server.abort();
     }
 
@@ -1173,10 +1184,20 @@ mod database_tests {
         };
     }
 
-    /// Today's delivery: a client per delivery, no pool.
-    fn legacy_deliverer() -> super::Deliverer {
+    /// The delivery of the default configuration: a pool that lists no private target.
+    fn test_deliverer() -> super::Deliverer {
+        let settings = api::outbound::PoolSettings {
+            timeout: std::time::Duration::from_secs(5),
+            connect_timeout: std::time::Duration::from_secs(2),
+            idle_timeout: std::time::Duration::from_secs(30),
+            max_idle_per_host: 4,
+            tcp_keepalive: None,
+            per_target_concurrency: 1,
+        };
         super::Deliverer {
-            pool: None,
+            pool: std::sync::Arc::new(
+                api::outbound::DeliveryPool::new(api::outbound::AddressPolicy::new("", false), settings).expect("pool"),
+            ),
             concurrency: 1,
             lane_batch: 10,
         }
@@ -1789,7 +1810,7 @@ mod database_tests {
         )
         .await;
         // The runner address is unreachable by design: a delivery attempt would fail differently.
-        super::deliver_task(&state, task, &legacy_deliverer(), std::time::Instant::now())
+        super::deliver_task(&state, task, &test_deliverer(), std::time::Instant::now())
             .await
             .expect("the attempt settles");
         assert_eq!(status_by(db, w.enabled.1).await, "failed");
@@ -1963,7 +1984,7 @@ mod database_tests {
             // Delivery: no webhook is left, so it is not delivered; it burns an attempt.
             let picked = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
             for picked in picked {
-                super::deliver_task(&state, &picked, &legacy_deliverer(), std::time::Instant::now())
+                super::deliver_task(&state, &picked, &test_deliverer(), std::time::Instant::now())
                     .await
                     .expect("the attempt settles");
             }
@@ -1987,8 +2008,11 @@ mod database_tests {
 #[allow(clippy::expect_used)]
 mod delivery_transport_tests {
     use super::{BotWebhookRow, send_delivery};
-    use api::outbound::{AddressPolicy, DeliveryPool, PoolSettings};
+    use api::outbound::{AddressPolicy, DeliveryPool, Lookup, PoolSettings};
     use serde_json::json;
+    use std::net::IpAddr;
+    use std::pin::Pin;
+    use std::sync::Arc;
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use uuid::Uuid;
@@ -2012,42 +2036,115 @@ mod delivery_transport_tests {
         }
     }
 
-    /// The pooled path (the `delivery_pool` gate open) signs the body, sends it to an allow-listed
-    /// local runner, and refuses a loopback target the policy does not list.
-    #[tokio::test]
-    async fn the_pooled_path_signs_sends_and_refuses_an_unlisted_loopback_target() {
+    /// A lookup that answers every name with one fixed address.
+    struct Fixed(IpAddr);
+
+    impl Lookup for Fixed {
+        fn lookup<'a>(
+            &'a self,
+            _host: &'a str,
+        ) -> Pin<Box<dyn std::future::Future<Output = std::io::Result<Vec<IpAddr>>> + Send + 'a>> {
+            let address = self.0;
+            Box::pin(async move { Ok(vec![address]) })
+        }
+    }
+
+    /// Answers every request on every connection with `{"status":"ok"}`; returns the port, the
+    /// count of accepted connections and the request heads seen.
+    async fn serve() -> (
+        u16,
+        Arc<std::sync::atomic::AtomicUsize>,
+        Arc<std::sync::Mutex<Vec<String>>>,
+    ) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let port = listener.local_addr().expect("addr").port();
-        let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.expect("accept");
-            let mut buffer = vec![0_u8; 8192];
-            let read = socket.read(&mut buffer).await.expect("read");
-            let request = String::from_utf8_lossy(buffer.get(..read).unwrap_or_default()).to_lowercase();
-            socket
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 15\r\n\r\n{\"status\":\"ok\"}")
-                .await
-                .expect("write");
-            request
+        let accepted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let heads = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (accepted_in, heads_in) = (accepted.clone(), heads.clone());
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                accepted_in.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let heads = heads_in.clone();
+                tokio::spawn(async move {
+                    let mut buffer = vec![0_u8; 8192];
+                    while let Ok(read) = socket.read(&mut buffer).await {
+                        if read == 0 {
+                            return;
+                        }
+                        let request = String::from_utf8_lossy(buffer.get(..read).unwrap_or_default()).to_lowercase();
+                        if let Ok(mut heads) = heads.lock() {
+                            heads.push(request);
+                        }
+                        let reply = b"HTTP/1.1 200 OK\r\nContent-Length: 15\r\n\r\n{\"status\":\"ok\"}";
+                        if socket.write_all(reply).await.is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
         });
+        (port, accepted, heads)
+    }
+
+    /// The pool signs the body, sends it to an allow-listed local runner, and refuses a loopback
+    /// target the policy does not list.
+    #[tokio::test]
+    async fn the_pool_signs_sends_and_refuses_an_unlisted_loopback_target() {
+        let (port, _, heads) = serve().await;
         let body = json!({ "task_id": "t" });
         let listed =
             DeliveryPool::new(AddressPolicy::new(format!("127.0.0.1:{port}"), false), settings()).expect("pool");
-        let (response, permit) = send_delivery(Some(&listed), &webhook(format!("http://127.0.0.1:{port}/hook")), &body)
+        let (response, _permit) = send_delivery(&listed, &webhook(format!("http://127.0.0.1:{port}/hook")), &body)
             .await
             .expect("delivered");
         assert_eq!(response.status().as_u16(), 200);
-        assert!(permit.is_some());
-        let request = server.await.expect("server");
+        let request = heads.lock().expect("heads").first().cloned().expect("one request");
         assert!(request.starts_with("post /hook http/1.1"), "{request}");
         assert!(request.contains("sha256="), "the body is signed");
         let unlisted = DeliveryPool::new(AddressPolicy::new("", false), settings()).expect("pool");
-        let refused = send_delivery(
-            Some(&unlisted),
-            &webhook(format!("http://127.0.0.1:{port}/hook")),
-            &body,
-        )
-        .await;
+        let refused = send_delivery(&unlisted, &webhook(format!("http://127.0.0.1:{port}/hook")), &body).await;
         let message = refused.expect_err("loopback is refused").to_string();
         assert!(message.contains("url rejected"), "{message}");
+    }
+
+    /// Ten deliveries to one runner open one connection and reuse it.
+    #[tokio::test]
+    async fn ten_deliveries_to_one_runner_reuse_one_connection() {
+        let (port, accepted, _) = serve().await;
+        let pool = DeliveryPool::new(AddressPolicy::new(format!("127.0.0.1:{port}"), false), settings()).expect("pool");
+        let hook = webhook(format!("http://127.0.0.1:{port}/hook"));
+        let body = json!({ "task_id": "t" });
+        for _ in 0..10 {
+            let (response, permit) = send_delivery(&pool, &hook, &body).await.expect("delivered");
+            let _ = super::read_capped(response).await;
+            drop(permit);
+        }
+        let stats = pool.stats();
+        assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!((stats.requests, stats.connections_opened), (10, 1));
+    }
+
+    /// A name that resolves to a private address is refused, and the refusal says so: it is not
+    /// reported as a bare network failure. Nothing connects.
+    #[tokio::test]
+    async fn a_name_resolving_to_a_private_address_is_refused_with_its_reason() {
+        let (port, accepted, _) = serve().await;
+        let lookup = Arc::new(Fixed("127.0.0.1".parse().expect("address")));
+        let pool = DeliveryPool::with_lookup(AddressPolicy::new("", false), settings(), lookup).expect("pool");
+        let refused = send_delivery(
+            &pool,
+            &webhook(format!("http://runner.test:{port}/hook")),
+            &json!({ "task_id": "t" }),
+        )
+        .await;
+        let message = refused.expect_err("refused").to_string();
+        assert!(message.contains("url rejected"), "{message}");
+        assert!(message.contains("blocked address"), "{message}");
+        assert_eq!(accepted.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(
+            pool.stats().connections_opened,
+            1,
+            "the attempt was made and refused at resolve"
+        );
     }
 }

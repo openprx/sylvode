@@ -97,7 +97,6 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(
         concurrency = args.concurrency,
         ai_task_processing_timeout_secs,
-        ai_task_delivery_pool = config.ai_tasks.delivery_pool,
         ai_task_delivery_concurrency = config.ai_tasks.delivery_concurrency,
         app = %cfg.app_name,
         storage_backend = ?runtime.storage.backend,
