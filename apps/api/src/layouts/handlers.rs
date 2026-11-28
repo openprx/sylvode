@@ -101,7 +101,7 @@ async fn load_with_scope(state: &AppState, id: Uuid) -> Result<(LayoutRow, super
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ListQuery {
+pub struct ListLayoutsQuery {
     scope_kind: String,
     scope_id: Uuid,
     #[serde(flatten)]
@@ -113,7 +113,7 @@ pub async fn list_layouts(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
-    Query(query): Query<ListQuery>,
+    Query(query): Query<ListLayoutsQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let who = Principal::new(claims, bot);
     let scope = resolve_scope(&state.db, ScopeKind::parse(&query.scope_kind)?, query.scope_id).await?;

@@ -484,7 +484,7 @@ pub(crate) async fn create_site_page_draft(
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ListQuery {
+pub struct ListDraftsQuery {
     project_id: Option<Uuid>,
     workspace_id: Option<Uuid>,
     status: Option<String>,
@@ -499,7 +499,7 @@ pub async fn list_drafts(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
     bot: Option<Extension<BotAuthContext>>,
-    Query(query): Query<ListQuery>,
+    Query(query): Query<ListDraftsQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let who = Principal::new(claims, bot);
     let workspace_id = match (query.project_id, query.workspace_id) {

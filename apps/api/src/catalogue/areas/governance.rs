@@ -1,8 +1,8 @@
 //! Catalogue entries of the `governance` router area (`router/governance.rs`).
 
 use crate::catalogue::types::dsl::{
-    Admin, Delete, Destructive, Entry, Find, Get, Global, InstanceAdmin, Own, Patch, Post, Project, Put, Read,
-    Workspace, WorkspaceAdmin, Write, bot, console,
+    Admin, Delete, Destructive, Entry, Find, Get, InstanceAdmin, Own, Patch, Post, Project, Put, Read, Workspace,
+    WorkspaceAdmin, Write, bot, console,
 };
 
 #[rustfmt::skip]
@@ -19,7 +19,7 @@ pub static ENTRIES: &[Entry] = &[
     bot("governance.audit_reports.create", Post, "/api/v1/projects/{pid}/audit-reports", Project(Find::Project("pid")), Write),
     bot("governance.audit_reports.read", Get, "/api/v1/projects/{pid}/audit-reports/{id}", Project(Find::Project("pid")), Read),
     bot("governance.audit_reports.read/list", Get, "/api/v1/projects/{pid}/audit-reports", Project(Find::Project("pid")), Read),
-    bot("governance.config.read", Get, "/api/v1/governance/config", Global, Read),
+    bot("governance.config.read", Get, "/api/v1/governance/config", Project(Find::Query("project_id")), Read),
     console("governance.config.update", Put, "/api/v1/governance/config", InstanceAdmin, Admin),
     bot("governance.decisions.read", Get, "/api/v1/decisions/{id}", Project(Find::Decision("id")), Read),
     bot("governance.decisions.read/analytics", Get, "/api/v1/decisions/analytics", Workspace, Read),
@@ -82,9 +82,8 @@ mod tests {
             bot_class_counts(ENTRIES),
             BTreeMap::from([
                 ("admin", 8),
-                ("no project", 1),
                 ("own resource", 1),
-                ("project-resolved", 42),
+                ("project-resolved", 43),
                 ("refused", 6)
             ]),
             "the classes of the governance routes changed"

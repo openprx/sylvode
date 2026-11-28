@@ -21,13 +21,19 @@ use super::scoped_bot::REFUSAL;
 use super::scoped_bot_flow_reads_tests::seed_object;
 use super::scoped_bot_projects_tests::scoped_bot;
 use super::scoped_bot_tests::{Cast, call, cast};
-use crate::middleware::bot_auth::bot_or_user_auth_middleware;
-use crate::routes::context::tenant_fixture::{count, exec, state_for};
-use crate::routes::flow::{
-    post_flow_v2_body_asset_copy, post_flow_v2_command, post_flow_v2_conversion, post_flow_v2_conversion_preview,
-    post_flow_v2_reference,
+use crate::layouts::{
+    handlers::{create_layout, list_layouts, validate_layout},
+    placements::create_placement,
 };
+use crate::middleware::bot_auth::bot_or_user_auth_middleware;
+use crate::routes::context::tenant_fixture::{count, exec, seed_proposal, state_for};
+use crate::routes::flow::{
+    get_flow_v2_object, post_flow_v2_body_asset_copy, post_flow_v2_command, post_flow_v2_conversion,
+    post_flow_v2_conversion_preview, post_flow_v2_reference,
+};
+use crate::routes::governance::get_governance_config;
 use crate::routes::issue_pages::{link_issue_page, list_issue_pages};
+use crate::routes::proposal::{create_proposal, link_issue_to_proposal};
 use crate::scratch_or_skip;
 
 fn app(db: &DatabaseConnection) -> Router {
@@ -58,6 +64,21 @@ fn app(db: &DatabaseConnection) -> Router {
             "/api/v1/issues/{issue_id}/pages",
             get(list_issue_pages).post(link_issue_page).route_layer(layer()),
         )
+        .route(
+            "/api/v2/flow/objects/{object_id}",
+            get(get_flow_v2_object).route_layer(layer()),
+        )
+        .route("/api/v1/proposals", post(create_proposal).route_layer(layer()))
+        .route(
+            "/api/v1/governance/config",
+            get(get_governance_config).route_layer(layer()),
+        )
+        .route(
+            "/api/v1/layouts",
+            get(list_layouts).post(create_layout).route_layer(layer()),
+        )
+        .route("/api/v1/layouts/validate", post(validate_layout).route_layer(layer()))
+        .route("/api/v1/placements", post(create_placement).route_layer(layer()))
         .with_state(state)
 }
 
@@ -549,5 +570,223 @@ async fn an_unrestricted_bot_is_not_limited() {
     )
     .await;
     assert!(!is_refusal(&answer), "{answer:?}");
+    scratch.drop_self().await;
+}
+
+/// F7 and `template_id`: a proposal template of a project the bot cannot read is not copied into a
+/// proposal; one of its own project passes the scope check (the control).
+#[tokio::test]
+async fn a_proposal_template_of_an_unreadable_project_is_refused() {
+    let scratch = scratch_or_skip!("secondary_f7_template");
+    let s = scene("sx10", &scratch.db).await;
+    let mut templates = Vec::new();
+    for project in [s.p1, s.p2] {
+        let template_id = format!("TPL-{}", Uuid::new_v4());
+        exec(
+            &scratch.db,
+            "INSERT INTO proposal_templates (id, project_id, name, content) VALUES ($1, $2, 'template', $3::jsonb)",
+            vec![
+                template_id.clone().into(),
+                project.into(),
+                json!({"title": "A template title", "content": "secret template text"})
+                    .to_string()
+                    .into(),
+            ],
+        )
+        .await;
+        templates.push(template_id);
+    }
+    for (kind, token) in bots(&s) {
+        let foreign = call(
+            &s.app,
+            "POST",
+            "/api/v1/proposals",
+            &token,
+            Some(json!({"template_id": templates[1]})),
+        )
+        .await;
+        assert!(is_refusal(&foreign), "{kind}: {foreign:?}");
+        let own = call(
+            &s.app,
+            "POST",
+            "/api/v1/proposals",
+            &token,
+            Some(json!({"template_id": templates[0]})),
+        )
+        .await;
+        assert!(!is_refusal(&own), "{kind} control: {own:?}");
+    }
+    let made = count(
+        &scratch.db,
+        "SELECT count(*) AS count FROM proposals WHERE content LIKE '%secret template text%'",
+        vec![],
+    )
+    .await;
+    assert!(made <= 2, "only proposals of the control template can exist: {made}");
+    scratch.drop_self().await;
+}
+
+/// F7: a bot links an issue of a project it can read to its proposal and not one of a project it
+/// cannot (the helper `link_issue` calls; the route needs an approved proposal of its own).
+#[tokio::test]
+async fn a_proposal_links_only_an_issue_of_a_readable_project() {
+    let scratch = scratch_or_skip!("secondary_f7_link");
+    let s = scene("sx11", &scratch.db).await;
+    let mut issues = Vec::new();
+    for project in [s.p1, s.p2] {
+        let issue_id = Uuid::new_v4();
+        exec(
+            &scratch.db,
+            "INSERT INTO work_items (id, project_id, title, state, created_by) VALUES ($1, $2, 'issue', 'todo', $3)",
+            vec![issue_id.into(), project.into(), s.c.w.owner.into()],
+        )
+        .await;
+        issues.push(issue_id);
+    }
+    for (kind, bot) in [("project-scoped", s.scoped.1), ("runner", s.runner.1)] {
+        let proposal = seed_proposal(&scratch.db, Some(s.workspace), s.c.w.owner).await;
+        let foreign = link_issue_to_proposal(&scratch.db, &proposal, Some(s.workspace), issues[1], Some(bot)).await;
+        assert!(
+            matches!(&foreign, Err(crate::error::ApiError::Forbidden(message)) if message == REFUSAL),
+            "{kind}: {foreign:?}"
+        );
+        let linked = count(
+            &scratch.db,
+            "SELECT count(*) AS count FROM proposal_issue_links WHERE proposal_id = $1",
+            vec![proposal.clone().into()],
+        )
+        .await;
+        assert_eq!(linked, 0, "{kind}: a refused link writes no row");
+        link_issue_to_proposal(&scratch.db, &proposal, Some(s.workspace), issues[0], Some(bot))
+            .await
+            .expect("an issue of the bot's own project links");
+    }
+    scratch.drop_self().await;
+}
+
+/// `GET /api/v1/governance/config?project_id=`: the project in the query is judged by the middleware.
+#[tokio::test]
+async fn a_query_project_id_is_judged_by_the_middleware() {
+    let scratch = scratch_or_skip!("secondary_query_project");
+    let s = scene("sx12", &scratch.db).await;
+    for (kind, token) in bots(&s) {
+        let foreign = call(
+            &s.app,
+            "GET",
+            &format!("/api/v1/governance/config?project_id={}", s.p2),
+            &token,
+            None,
+        )
+        .await;
+        assert!(is_refusal(&foreign), "{kind}: {foreign:?}");
+        let own = call(
+            &s.app,
+            "GET",
+            &format!("/api/v1/governance/config?project_id={}", s.p1),
+            &token,
+            None,
+        )
+        .await;
+        assert!(!is_refusal(&own), "{kind} control: {own:?}");
+    }
+    scratch.drop_self().await;
+}
+
+/// Layouts, placements and the validator name a scope in the body or the query: a scope of a project
+/// the bot cannot reach reads as not found, and nothing is written. The scope of its own project is
+/// not answered that way (the control).
+#[tokio::test]
+async fn layout_scopes_of_another_project_are_refused() {
+    let scratch = scratch_or_skip!("secondary_layout_scope");
+    let s = scene("sx13", &scratch.db).await;
+    let slot = sv_layout::slots()
+        .into_iter()
+        .find(|slot| slot.scope_kinds.contains(&"project"))
+        .expect("a slot that takes project placements");
+    let not_found = |answer: &(u16, Value)| answer.1["code"] == 404 && answer.1["message"] == "scope not found";
+    for (kind, token) in bots(&s) {
+        let requests = |project: Uuid| {
+            [
+                (
+                    "POST",
+                    "/api/v1/layouts".to_string(),
+                    Some(json!({"scope_kind": "project", "scope_id": project, "spec": {}})),
+                ),
+                (
+                    "POST",
+                    "/api/v1/placements".to_string(),
+                    Some(
+                        json!({"slot_id": slot.id, "scope_kind": "project", "scope_id": project, "layout_id": Uuid::new_v4()}),
+                    ),
+                ),
+                (
+                    "POST",
+                    "/api/v1/layouts/validate".to_string(),
+                    Some(json!({"spec": {}, "scope_kind": "project", "scope_id": project})),
+                ),
+                (
+                    "GET",
+                    format!("/api/v1/layouts?scope_kind=project&scope_id={project}"),
+                    None,
+                ),
+            ]
+        };
+        for (method, path, body) in requests(s.p2) {
+            let answer = call(&s.app, method, &path, &token, body).await;
+            assert!(not_found(&answer), "{kind} {method} {path}: {answer:?}");
+        }
+        for (method, path, body) in requests(s.p1) {
+            let answer = call(&s.app, method, &path, &token, body).await;
+            assert!(!not_found(&answer), "{kind} control {method} {path}: {answer:?}");
+        }
+    }
+    let made = count(
+        &scratch.db,
+        "SELECT count(*) AS count FROM layouts WHERE scope_id = $1",
+        vec![s.p2.into()],
+    )
+    .await;
+    assert_eq!(made, 0, "no layout is stored in the other project");
+    scratch.drop_self().await;
+}
+
+/// F3 class: a page of P1 whose child links point at a page of P2 shows the bot no title of that
+/// page: reading the source page returns none, and reading the child itself is refused. (The child
+/// reference is stored by id only; no route resolves its title for the reader.)
+#[tokio::test]
+async fn a_child_link_to_an_unreadable_page_shows_no_title() {
+    let scratch = scratch_or_skip!("secondary_child_link");
+    let s = scene("sx14", &scratch.db).await;
+    exec(
+        &scratch.db,
+        "INSERT INTO flow_page_child_refs (scope_id, source_object_id, block_cid, child_page_id, active, first_seen_seq, last_seen_seq) \
+         SELECT scope_id, id, 'child-block', $2, true, 1, 1 FROM flow_objects WHERE id = $1",
+        vec![s.page1.into(), s.page2.into()],
+    )
+    .await;
+    for (kind, token) in bots(&s) {
+        let source = call(
+            &s.app,
+            "GET",
+            &format!("/api/v2/flow/objects/{}", s.page1),
+            &token,
+            None,
+        )
+        .await;
+        assert!(
+            !source.1.to_string().contains("page two secret"),
+            "{kind}: the child's title leaked through the source page: {source:?}"
+        );
+        let child = call(
+            &s.app,
+            "GET",
+            &format!("/api/v2/flow/objects/{}", s.page2),
+            &token,
+            None,
+        )
+        .await;
+        assert!(is_refusal(&child), "{kind}: {child:?}");
+        assert!(!child.1.to_string().contains("page two secret"), "{kind}: {child:?}");
+    }
     scratch.drop_self().await;
 }
