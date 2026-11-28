@@ -39,9 +39,14 @@ import type { FlowObjectView } from '../src/lib/api/flow';
 
 const suite = new Suite('flow_read_only');
 
-async function open(server: FakeCollabServer, factory?: IDBFactory) {
+/**
+ * `peer` opens a second client on the fakes the first one already installed. Installing again
+ * calls `apiClient.setToken`, which starts a new sign-in session and, by design, ends the first
+ * client's connection (`auth_required`), so a peer must not reinstall them.
+ */
+async function open(server: FakeCollabServer, factory?: IDBFactory, peer = false) {
 	const idb = factory ?? (await freshIndexedDb());
-	const restore = await installFakes(server);
+	const restore = peer ? () => {} : await installFakes(server);
 	const store = await IndexedDbOutboxStore.open(idb, OUTBOX_DB);
 	assert(store, 'fake IndexedDB opens');
 	const connectivity = new FakeConnectivity();
@@ -226,9 +231,8 @@ function notifications(server: FakeCollabServer) {
 	};
 }
 
-suite.skipCheck(
+await suite.checkAsync(
 	'bound permission downgrade updates read-only without an edit or losing legitimate peer updates',
-	'SKIPPED: read stream no longer applies peer content after a downgrade within 2000 ms; real bug or stale fake, deterministic (found when the suite joined CI)',
 	async () => {
 		const server = new FakeCollabServer();
 		notifications(server);
@@ -243,7 +247,7 @@ suite.skipCheck(
 			await waitFor(() => a.readOnly(), 'notification makes editor read-only');
 			assertEqual(server.updatesSeen.length, 0, 'no rejected first edit needed');
 			assertEqual(socket.readyState, MockWebSocket.OPEN, 'legitimate view socket remains open');
-			const b = await open(server);
+			const b = await open(server, undefined, true);
 			try {
 				edit(b.entry.doc, 'peer remains visible');
 				await waitFor(

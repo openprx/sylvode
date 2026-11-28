@@ -2679,6 +2679,7 @@
 			}
 		},
 		"canvas": {
+			"restoringEdits": "正在恢复未保存的编辑…",
 			"emptyTitle": "无标题页面",
 			"placeholder": "输入 “/” 插入区块，或直接开始输入",
 			"slashMenu": {
