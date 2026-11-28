@@ -2,7 +2,7 @@
 
 use super::principal::{InstallationView, Principal, Resource};
 use super::refusal::{Refusal, RefusalCode};
-use super::types::{Entry, Exposure};
+use super::types::{Entry, Exposure, Scope};
 
 /// The channel a principal calls through.
 const fn channel(principal: &Principal) -> Exposure {
@@ -79,7 +79,34 @@ pub fn allowed_target(principal: &Principal, entry: &Entry, resource: &Resource)
         | Principal::SiteOperator { .. } => return Ok(()),
         Principal::Plugin { installation, .. } | Principal::Installation { installation, .. } => installation,
     };
-    check_target(installation, capability, resource).map_err(|code| Refusal::new(code, Some(capability)))
+    let checked = match entry.scope {
+        Scope::Global | Scope::Own | Scope::Filtered => check_workspace_wide(installation, capability, resource),
+        _ => check_target(installation, capability, resource),
+    };
+    checked.map_err(|code| Refusal::new(code, Some(capability)))
+}
+
+/// An operation that names no project (`Global`, `Own`, `Filtered`): only a workspace installation
+/// may call it, and only with a grant that has no selector. A project installation is a scope
+/// mismatch, so it learns nothing from a grant it cannot use; a selector narrows to a project or
+/// form the operation does not have, so it never matches.
+fn check_workspace_wide(
+    installation: &InstallationView,
+    capability: &str,
+    resource: &Resource,
+) -> Result<(), RefusalCode> {
+    if resource.workspace_id != installation.workspace_id || installation.project_id.is_some() {
+        return Err(RefusalCode::CapabilityScopeMismatch);
+    }
+    let matched = installation
+        .grants
+        .iter()
+        .any(|grant| grant.capability == capability && grant.project.is_none() && grant.form.is_none());
+    if matched {
+        Ok(())
+    } else {
+        Err(RefusalCode::CapabilityNotGranted)
+    }
 }
 
 fn check_requested_and_granted(installation: &InstallationView, capability: &str) -> Result<(), RefusalCode> {

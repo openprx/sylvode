@@ -3,22 +3,34 @@
 use sea_orm::{DatabaseConnection, DbBackend, FromQueryResult, Statement};
 use uuid::Uuid;
 
-use crate::catalogue::{Entry, Find, Resource, Scope};
+use crate::catalogue::{Entry, Find, Principal, Resource, Scope};
 use crate::middleware::scoped_bot::{Target, resolve};
 
-/// The path parameter the entry's `Find` resolves, if the entry resolves one.
+/// The UUID path parameter the entry's `Find` resolves, which the host holds to the canonical form.
+///
+/// The identifier of an issue (`PREFIX-N`) and the ids of proposals, decisions and
+/// proposal comments are not UUIDs; they pass the plain-value check like every other parameter.
 #[must_use]
 pub const fn primary_param(entry: &Entry) -> Option<&'static str> {
     match entry.scope {
         Scope::Project(
             Find::Project(name)
             | Find::Issue(name)
-            | Find::IssueIdentifier(name)
             | Find::Comment(name)
-            | Find::Table(_, name),
+            | Find::Table(_, name)
+            | Find::FlowObject(name)
+            | Find::FlowScope(name)
+            | Find::FlowVia(_, _, _, name),
         ) => Some(name),
         _ => None,
     }
+}
+
+/// Whether the target of the entry is named in the request body, which the host must hand to
+/// [`resolve_resource`].
+#[must_use]
+pub const fn resolves_from_body(entry: &Entry) -> bool {
+    matches!(entry.scope, Scope::Project(Find::Body | Find::Conversion))
 }
 
 /// The parameter in canonical UUID form (lowercase, hyphenated), or `None`.
@@ -33,24 +45,65 @@ struct FormRow {
     form_id: Uuid,
 }
 
-/// Resolves the target of `entry` for the path parameters `params`.
+/// The tables whose rows belong to a form (`form_id` column), for the form selector of a grant.
+const FORM_CHILD_TABLES: [&str; 6] = [
+    "form_views",
+    "form_attachments",
+    "form_import_jobs",
+    "form_export_jobs",
+    "form_import_mapping_templates",
+    "form_attachment_package_jobs",
+];
+
+/// The workspace of the installation a plugin principal acts for.
+const fn installation_workspace(principal: &Principal) -> Option<Uuid> {
+    match principal {
+        Principal::Plugin { installation, .. } | Principal::Installation { installation, .. } => {
+            Some(installation.workspace_id)
+        }
+        _ => None,
+    }
+}
+
+/// Resolves the target of `entry` for the request a plugin call makes: the path parameters
+/// `params`, the raw `query` and the JSON `body`, exactly as the host sends them.
 ///
-/// `None` when there is no such target, or the entry has no resolvable scope; callers answer both
-/// like a target outside the workspace, so an answer never says whether an id exists.
+/// * A project scope resolves through the same finder a scoped bot is judged by, with the nil bot:
+///   a personal-space Flow object, a proposal no project claims and any other "own" target resolve
+///   to nothing, and the installation's workspace is the workspace of an issue identifier.
+/// * A `Global`, `Own` or `Filtered` scope names no project: it resolves to the installation's
+///   workspace alone, and the checker admits it only for a workspace installation with an
+///   unrestricted grant.
+/// * Every other scope has no plugin target.
+///
+/// `None` when there is no such target, or the entry has none; callers answer both like a target
+/// outside the workspace, so an answer never says whether an id exists.
 ///
 /// # Errors
 /// A database failure.
 pub async fn resolve_resource(
     db: &DatabaseConnection,
     entry: &Entry,
+    principal: &Principal,
     params: &[(String, String)],
+    query: Option<&str>,
+    body: Option<&serde_json::Value>,
 ) -> Result<Option<Resource>, crate::error::ApiError> {
-    let Scope::Project(find) = entry.scope else {
+    let Some(installation_workspace) = installation_workspace(principal) else {
         return Ok(None);
     };
-    // The plugin-reachable `Find`s read only the target row; the bot and workspace arguments
-    // matter for `IssueIdentifier` and Flow finds, which are not plugin operations.
-    let target = resolve(db, find, params, None, None, Uuid::nil(), Uuid::nil()).await?;
+    let find = match entry.scope {
+        Scope::Project(find) => find,
+        Scope::Global | Scope::Own | Scope::Filtered => {
+            return Ok(Some(Resource {
+                workspace_id: installation_workspace,
+                project_id: None,
+                form_id: None,
+            }));
+        }
+        _ => return Ok(None),
+    };
+    let target = resolve(db, find, params, query, body, Uuid::nil(), installation_workspace).await?;
     let Target::Project {
         workspace_id,
         project_id,
@@ -77,21 +130,21 @@ async fn form_of(
     let Some(value) = params.iter().find(|(key, _)| key == name).map(|(_, value)| value) else {
         return Ok(None);
     };
-    match table {
-        "project_forms" => Ok(canonical_uuid(value)),
-        "form_records" => {
-            let row = FormRow::find_by_statement(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "SELECT form_id FROM form_records WHERE id::text = $1",
-                vec![value.clone().into()],
-            ))
-            .one(db)
-            .await
-            .map_err(crate::error::ApiError::internal_database_failure)?;
-            Ok(row.map(|row| row.form_id))
-        }
-        _ => Ok(None),
-    }
+    let sql = match table {
+        "project_forms" => return Ok(canonical_uuid(value)),
+        "form_records" => "SELECT form_id FROM form_records WHERE id::text = $1".to_string(),
+        child if FORM_CHILD_TABLES.contains(&child) => format!("SELECT form_id FROM {child} WHERE id::text = $1"),
+        _ => return Ok(None),
+    };
+    let row = FormRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        &sql,
+        vec![value.clone().into()],
+    ))
+    .one(db)
+    .await
+    .map_err(crate::error::ApiError::internal_database_failure)?;
+    Ok(row.map(|row| row.form_id))
 }
 
 #[cfg(test)]

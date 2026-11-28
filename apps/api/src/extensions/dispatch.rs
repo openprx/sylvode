@@ -161,9 +161,17 @@ pub async fn call(
     let principal = fresh_principal(env).await?;
     allowed_pre(&principal, entry)?;
     let params = path_params(entry, &request.path)?;
-    let resource = resolve_resource(&env.state.db, entry, &params)
-        .await
-        .map_err(|_| CallError::Unavailable)?;
+    let query = query_string(&request.query)?;
+    let resource = resolve_resource(
+        &env.state.db,
+        entry,
+        &principal,
+        &params,
+        query.strip_prefix('?'),
+        request.body.as_ref(),
+    )
+    .await
+    .map_err(|_| CallError::Unavailable)?;
     let Some(resource) = resource else {
         return Err(CallError::Denied("capability_scope_mismatch".to_string()));
     };
@@ -297,6 +305,21 @@ fn encode(value: &str, out: &mut String) {
     }
 }
 
+/// The query of a call as it goes on the request URI: `?k=v&...`, or empty.
+fn query_string(query: &BTreeMap<String, String>) -> Result<String, CallError> {
+    let mut out = String::new();
+    for (index, (key, value)) in query.iter().enumerate() {
+        if key.is_empty() || key.len() > 64 || value.len() > 1024 {
+            return Err(CallError::Invalid("bad_request".to_string()));
+        }
+        out.push(if index == 0 { '?' } else { '&' });
+        encode(key, &mut out);
+        out.push('=');
+        encode(value, &mut out);
+    }
+    Ok(out)
+}
+
 /// The idempotency key the host sends for a call; see [`IDEMPOTENT_OPS`].
 fn host_key(
     internal: &InternalCall,
@@ -348,15 +371,7 @@ fn build_request(
             None => uri.push_str(segment),
         }
     }
-    for (index, (key, value)) in request.query.iter().enumerate() {
-        if key.is_empty() || key.len() > 64 || value.len() > 1024 {
-            return Err(bad());
-        }
-        uri.push(if index == 0 { '?' } else { '&' });
-        encode(key, &mut uri);
-        uri.push('=');
-        encode(value, &mut uri);
-    }
+    uri.push_str(&query_string(&request.query)?);
     let writes = !matches!(entry.method, Method::Get | Method::Delete);
     let body = match (&request.body, writes) {
         (Some(Value::Object(object)), true) => {

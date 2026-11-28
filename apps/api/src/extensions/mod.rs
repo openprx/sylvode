@@ -270,7 +270,25 @@ pub async fn handle_internal(
         .iter()
         .map(|(key, value)| (key.to_string(), value.to_string()))
         .collect();
-    let resource = resource::resolve_resource(&state.db, entry, &params).await?;
+    // A body is read only for an entry that names its target there; the handler gets it back.
+    let (body, json) = if resource::resolves_from_body(entry) {
+        let bytes = axum::body::to_bytes(body, host::limits::CALL_BODY_MAX)
+            .await
+            .map_err(|_| not_exposed())?;
+        let json = serde_json::from_slice::<serde_json::Value>(&bytes).ok();
+        (axum::body::Body::from(bytes), json)
+    } else {
+        (body, None)
+    };
+    let resource = resource::resolve_resource(
+        &state.db,
+        entry,
+        &call.principal,
+        &params,
+        parts.uri.query(),
+        json.as_ref(),
+    )
+    .await?;
     let Some(resource) = resource else {
         return Err(Refusal::new(RefusalCode::CapabilityScopeMismatch, Some(entry.capability())).into());
     };
