@@ -60,6 +60,8 @@ mod checks_tests;
 #[cfg(test)]
 mod cli_tests;
 #[cfg(test)]
+mod config_tests;
+#[cfg(test)]
 mod detect_tests;
 #[cfg(test)]
 mod files_tests;
@@ -158,7 +160,7 @@ impl RunnerRuntime {
                 Err(e)
             }
         };
-        let http = build_http_client();
+        let http = build_http_client(&config.runner.http);
         let state_path = state_dir(config, home.as_deref());
         let state = state_path.as_deref().map_or_else(
             || Err("no state directory: set [runner] state_dir (no home directory is known)".to_string()),
@@ -345,9 +347,21 @@ pub fn write_bot_files_at_start(state: &AppState) {
 }
 
 /// The one HTTP client of the runner agents: no redirect is ever followed.
-pub fn build_http_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
+/// The pool settings come from `[runner.http]`; at their defaults the client is the library's own.
+pub fn build_http_client(settings: &config::RunnerHttpConfig) -> Result<reqwest::Client, String> {
+    let mut builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
+        .pool_idle_timeout(std::time::Duration::from_secs(settings.pool_idle_timeout_secs));
+    if settings.pool_max_idle_per_host > 0 {
+        builder = builder.pool_max_idle_per_host(settings.pool_max_idle_per_host as usize);
+    }
+    if settings.tcp_keepalive_secs > 0 {
+        builder = builder.tcp_keepalive(std::time::Duration::from_secs(settings.tcp_keepalive_secs));
+    }
+    if settings.connect_timeout_secs > 0 {
+        builder = builder.connect_timeout(std::time::Duration::from_secs(settings.connect_timeout_secs));
+    }
+    builder
         .build()
         .map_err(|e| format!("the HTTP client for Sylvode could not be built: {e}"))
 }

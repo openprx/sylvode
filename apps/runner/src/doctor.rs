@@ -498,7 +498,7 @@ pub fn run(options: &Options) -> ExitCode {
         None
     } else {
         config.as_ref().and_then(|config| {
-            let http = crate::runner::build_http_client().ok()?;
+            let http = crate::runner::build_http_client(&config.runner.http).ok()?;
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()

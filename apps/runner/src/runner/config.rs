@@ -24,6 +24,11 @@ pub struct RunnerConfig {
     pub heartbeat_secs: u64,
     /// Overrides the report interval the API advertises (seconds).
     pub report_interval_secs: Option<u64>,
+    /// How long an enqueue waits for the session's queue position before it answers without one,
+    /// in milliseconds. 0 (the default) waits for the session's worker, as always.
+    pub enqueue_answer_ms: u64,
+    /// The most tasks one session may hold queued. 0 (the default) means no limit.
+    pub max_queued_per_session: u32,
     /// Install the skill or the managed `AGENTS.md` section into the project directory.
     pub install_agent_guide: bool,
     /// Add managed paths to `.git/info/exclude` when the directory has a `.git` directory.
@@ -31,6 +36,7 @@ pub struct RunnerConfig {
     pub tmux: RunnerTmuxConfig,
     pub cli: RunnerCliConfig,
     pub mcp: RunnerMcpConfig,
+    pub http: RunnerHttpConfig,
 }
 
 impl Default for RunnerConfig {
@@ -41,12 +47,64 @@ impl Default for RunnerConfig {
             delivery_check_timeout_secs: 5,
             heartbeat_secs: 600,
             report_interval_secs: None,
+            enqueue_answer_ms: 0,
+            max_queued_per_session: 0,
             install_agent_guide: true,
             git_exclude_managed: true,
             tmux: RunnerTmuxConfig::default(),
             cli: RunnerCliConfig::default(),
             mcp: RunnerMcpConfig::default(),
+            http: RunnerHttpConfig::default(),
         }
+    }
+}
+
+/// `[runner.http]`: the connection pool of the one HTTP client the runner uses towards Sylvode.
+/// The defaults are the HTTP library's own, so an absent section changes nothing.
+#[derive(Deserialize, Clone, Debug)]
+#[serde(default, deny_unknown_fields)]
+pub struct RunnerHttpConfig {
+    /// How long an idle pooled connection is kept (library default 90).
+    pub pool_idle_timeout_secs: u64,
+    /// The most idle pooled connections per host; 0 means no limit (library default).
+    pub pool_max_idle_per_host: u32,
+    /// TCP keep-alive interval; 0 means off (library default).
+    pub tcp_keepalive_secs: u64,
+    /// Time allowed to open a connection; 0 means none (library default).
+    pub connect_timeout_secs: u64,
+}
+
+impl Default for RunnerHttpConfig {
+    fn default() -> Self {
+        Self {
+            pool_idle_timeout_secs: 90,
+            pool_max_idle_per_host: 0,
+            tcp_keepalive_secs: 0,
+            connect_timeout_secs: 0,
+        }
+    }
+}
+
+impl RunnerHttpConfig {
+    /// Refuses values that parse but can never work.
+    ///
+    /// # Errors
+    ///
+    /// A message naming the key.
+    pub fn validate(&self) -> Result<(), String> {
+        if !(1..=3600).contains(&self.pool_idle_timeout_secs) {
+            return Err("runner.http.pool_idle_timeout_secs must be between 1 and 3600".to_string());
+        }
+        if self.pool_max_idle_per_host > 1024 {
+            return Err("runner.http.pool_max_idle_per_host must be at most 1024".to_string());
+        }
+        if self.tcp_keepalive_secs > 3600 {
+            return Err("runner.http.tcp_keepalive_secs must be at most 3600".to_string());
+        }
+        if self.connect_timeout_secs > 600 {
+            return Err("runner.http.connect_timeout_secs must be at most 600".to_string());
+        }
+        Ok(())
     }
 }
 
@@ -289,6 +347,13 @@ impl RunnerConfig {
         if self.heartbeat_secs == 0 {
             return Err("runner.heartbeat_secs must be at least 1".to_string());
         }
+        if self.enqueue_answer_ms > 60_000 {
+            return Err("runner.enqueue_answer_ms must be at most 60000".to_string());
+        }
+        if self.max_queued_per_session > 100_000 {
+            return Err("runner.max_queued_per_session must be at most 100000".to_string());
+        }
+        self.http.validate()?;
         let tmux = &self.tmux;
         let Some((major, minor)) = parse_major_minor(&tmux.min_version) else {
             return Err("runner.tmux.min_version must look like 3.2".to_string());
