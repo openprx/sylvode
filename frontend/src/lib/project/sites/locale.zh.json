@@ -61,7 +61,8 @@
 			"pages": "页面",
 			"roles": "角色",
 			"drafts": "草稿",
-			"draftsWaiting": "草稿（{count}）"
+			"draftsWaiting": "草稿（{count}）",
+			"bindings": "表单绑定"
 		},
 		"publish": {
 			"title": "发布 {title}？",
@@ -139,7 +140,10 @@
 			"layout_required": "请选择布局。",
 			"layout_invalid": "此布局无法在站点上显示。",
 			"package_page_readonly": "此页面属于某个扩展包。请升级或移除该扩展包后再修改。",
-			"site_route_taken": "此站点已有页面占用了扩展包的某个路由。请重命名或删除该页面，然后再次批准。"
+			"site_route_taken": "此站点已有页面占用了扩展包的某个路由。请重命名或删除该页面，然后再次批准。",
+			"binding_key_invalid": "请使用 1 到 40 个小写字母、数字或下划线,且以字母开头。",
+			"binding_key_taken": "本站点已有同名的绑定。",
+			"projection_invalid": "所选字段与表单不匹配。"
 		},
 		"pages": {
 			"title": "页面",
@@ -227,6 +231,79 @@
 				"form_on_published_site": "智能体试图归档已发布站点正在使用的表单。只有人可以这样做。",
 				"public_site_text_requires_human": "智能体对表单的修改会改变访客看到的文字。必须由人来修改或批准。",
 				"draft_stale": "智能体写下草稿后页面又发生了变化。批准前请重新审阅当前状态。"
+			}
+		},
+		"bindings": {
+			"title": "表单绑定",
+			"thing": "表单绑定",
+			"lead": "绑定让本站点使用项目中的一个表单:访客可以提交和读取什么,操作员可以读取和修改什么。布局通过绑定的键名引用它。",
+			"readOnlyLead": "所有者和管理员可以修改表单绑定。",
+			"add": "添加绑定",
+			"addTitle": "添加绑定",
+			"editTitle": "绑定 {key}",
+			"edit": "修改绑定",
+			"delete": "移除绑定",
+			"save": "保存绑定",
+			"empty": "还没有绑定。添加后页面即可展示或收集表单数据。",
+			"saved": "绑定已保存。",
+			"deleted": "绑定已移除。",
+			"publishedTip": "本站点已发布,保存后访客会立即看到变化。",
+			"col": {
+				"key": "键名",
+				"form": "表单",
+				"visitors": "访客",
+				"operators": "操作员"
+			},
+			"summary": {
+				"none": "无访问",
+				"submit": "提交 {count} 个字段",
+				"readOwn": "读取本人记录 {count} 个字段",
+				"readAll": "读取全部记录 {count} 个字段",
+				"update": "修改 {count} 个字段"
+			},
+			"key": "键名",
+			"keyHelper": "1 到 40 个小写字母、数字或下划线,以字母开头。布局通过该键名引用绑定,创建后不能修改。",
+			"form": "表单",
+			"formPlaceholder": "选择表单",
+			"noForms": "本项目没有你可以查看的表单。",
+			"formRequired": "请选择表单。",
+			"formNotUsable": "该表单无法绑定:已归档、属于其他项目,或你无权查看。",
+			"formGone": "此绑定的表单已归档或对你不可见。请选择其他表单后再修改。",
+			"formUnavailable": "不可用",
+			"submitTitle": "访客可以提交",
+			"submitOn": "允许访客提交记录",
+			"maxPerHour": "每小时最多提交次数",
+			"maxPerHourHelper": "1 到 1000 的整数。",
+			"captchaOff": "暂不提供验证码。",
+			"visitorReadTitle": "访客可以读取",
+			"operatorReadTitle": "操作员可以读取",
+			"updateTitle": "操作员可以修改",
+			"updateOn": "允许操作员修改记录",
+			"scopeNone": "无",
+			"scopeOwn": "本人记录",
+			"scopeAll": "全部记录",
+			"filterable": "筛选",
+			"sortable": "排序",
+			"column": {
+				"created_at": "创建时间",
+				"updated_at": "更新时间"
+			},
+			"cannotShow": "不能在站点上展示:{fields}。",
+			"deleteTitle": "移除绑定 {key}?",
+			"deleteBody": "使用它的页面将不再显示其数据。表单中的记录会保留。",
+			"deleteUsed": "以下路由的页面在使用:{routes}。",
+			"deleteConfirm": "移除绑定",
+			"issue": {
+				"shape_invalid": "绑定内容格式不正确。",
+				"field_unknown": "表单中没有这个字段。",
+				"field_not_allowed": "该字段不能在此处使用。",
+				"derived_input_not_listed": "计算字段需要把它依赖的字段放在同一列表中。",
+				"field_duplicate": "该字段重复出现。",
+				"limit_invalid": "请输入 1 到 1000 的整数。",
+				"scope_invalid": "请选择有效的范围。",
+				"field_not_readable": "筛选和排序的字段必须同时是读取字段。",
+				"field_not_filterable": "该字段不能用于筛选或排序。",
+				"captcha_unsupported": "暂不提供验证码。"
 			}
 		}
 	}

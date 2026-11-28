@@ -20,6 +20,7 @@
 	import StatusChip from '#lib/ui/status-chip/StatusChip.svelte';
 	import TipBar from '#lib/ui/tip-bar/TipBar.svelte';
 	import { sitesApi } from './api';
+	import BindingsTab from './BindingsTab.svelte';
 	import DraftsTab from './DraftsTab.svelte';
 	import { errorText } from './errors';
 	import PagesTab from './PagesTab.svelte';
@@ -300,6 +301,8 @@
 
 		{#if tab === 'pages'}
 			<PagesTab {site} {projectId} canEdit={canTitle} />
+		{:else if tab === 'bindings'}
+			<BindingsTab {site} {projectId} {isAdmin} />
 		{:else if tab === 'roles'}
 			<RolesTab {siteId} {workspaceId} {isAdmin} onchanged={() => void loadRoles()} />
 		{:else if tab === 'drafts'}

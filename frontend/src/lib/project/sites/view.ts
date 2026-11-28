@@ -1,5 +1,14 @@
 /** Pure helpers of the sites console: titles, slugs, origins, the publish summary and error codes. */
-import type { SiteBinding, SitePage, SiteRole, SiteSettings, SiteStatus, SiteText } from './wire';
+import type {
+	BindingProjection,
+	BindingRead,
+	SiteBinding,
+	SitePage,
+	SiteRole,
+	SiteSettings,
+	SiteStatus,
+	SiteText
+} from './wire';
 
 export type Tone = 'neutral' | 'success' | 'warning' | 'danger';
 
@@ -201,15 +210,18 @@ export const KNOWN_ERRORS: ReadonlySet<string> = new Set([
 	'layout_required',
 	'layout_invalid',
 	'package_page_readonly',
-	'site_route_taken'
+	'site_route_taken',
+	'binding_key_invalid',
+	'binding_key_taken',
+	'projection_invalid'
 ]);
 
 export function knownError(code: string | undefined): string | null {
 	return code && KNOWN_ERRORS.has(code) ? code : null;
 }
 
-/** Tabs of the site page. Form bindings join with their screen. */
-export const SITE_TABS = ['pages', 'roles', 'settings', 'drafts'] as const;
+/** Tabs of the site page, in the order the design gives. */
+export const SITE_TABS = ['pages', 'bindings', 'roles', 'settings', 'drafts'] as const;
 export type SiteTab = (typeof SITE_TABS)[number];
 
 export function tabOf(raw: string | null): SiteTab {
@@ -341,4 +353,309 @@ export interface MemberLike {
 export function roleCandidates(members: MemberLike[], roles: SiteRole[]): MemberLike[] {
 	const held = new Set(roles.map((role) => role.user_id));
 	return members.filter((member) => member.entity_type !== 'bot' && !held.has(member.user_id));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Form bindings
+
+export const MAX_PER_HOUR_DEFAULT = 20;
+
+/** 1-40 lowercase letters, digits or `_`, starting with a letter (as the server checks it). */
+export function isBindingKey(key: string): boolean {
+	return /^[a-z][a-z0-9_]{0,39}$/.test(key);
+}
+
+/** The record columns a read list may name besides form fields: readable and sortable only. */
+export const RECORD_COLUMNS = ['created_at', 'updated_at'] as const;
+
+/** Field types whose value the server computes: never submitted or updated from a site. */
+const DERIVED_TYPES: ReadonlySet<string> = new Set(['formula', 'autonumber', 'ai_summary']);
+
+/** What the form schema and the field-type outlets say about one field, for the panel. */
+export interface BindingField {
+	key: string;
+	label: string;
+	type: string;
+	/** A record column (`created_at`, `updated_at`), not a form field. */
+	column: boolean;
+	read: boolean;
+	submit: boolean;
+	filter: boolean;
+	sort: boolean;
+}
+
+/** Outlets of each field type, as `GET /field-types` lists them: `{ type: { outlet: rule } }`. */
+export type TypeOutlets = Record<string, Record<string, string>>;
+
+/** The fields of a form schema with their site facts, in schema order, then the record columns. */
+export function bindingFields(schema: unknown, outlets: TypeOutlets): BindingField[] {
+	const raw = (schema as { fields?: unknown } | null)?.fields;
+	const list = Array.isArray(raw) ? raw : [];
+	const out: BindingField[] = [];
+	for (const entry of list) {
+		const field = entry as {
+			key?: unknown;
+			label?: unknown;
+			type?: unknown;
+			formula?: unknown;
+		} | null;
+		if (!field || typeof field.key !== 'string' || typeof field.type !== 'string') continue;
+		const rules = outlets[field.type] ?? {};
+		const value = (outlet: string): boolean => rules[outlet] === 'value';
+		const derived =
+			DERIVED_TYPES.has(field.type) || (!!field.formula && typeof field.formula === 'object');
+		out.push({
+			key: field.key,
+			label: typeof field.label === 'string' && field.label !== '' ? field.label : field.key,
+			type: field.type,
+			column: false,
+			read: value('site_read'),
+			submit: value('site_submit') && !derived,
+			filter: value('filter'),
+			sort: value('sort')
+		});
+	}
+	for (const key of RECORD_COLUMNS) {
+		if (out.some((field) => field.key === key)) continue;
+		out.push({
+			key,
+			label: key,
+			type: 'datetime',
+			column: true,
+			read: true,
+			submit: false,
+			filter: false,
+			sort: true
+		});
+	}
+	return out;
+}
+
+export interface ReadDraft {
+	scope: string;
+	fields: string[];
+	filter: string[];
+	sort: string[];
+}
+
+/** The panel's working copy of a binding. */
+export interface BindingDraft {
+	key: string;
+	formId: string | null;
+	submit: { on: boolean; fields: string[]; maxPerHour: string };
+	visitorRead: ReadDraft;
+	operatorRead: ReadDraft;
+	update: { on: boolean; fields: string[] };
+}
+
+export function emptyDraft(): BindingDraft {
+	return {
+		key: '',
+		formId: null,
+		submit: { on: false, fields: [], maxPerHour: String(MAX_PER_HOUR_DEFAULT) },
+		visitorRead: { scope: 'none', fields: [], filter: [], sort: [] },
+		operatorRead: { scope: 'none', fields: [], filter: [], sort: [] },
+		update: { on: false, fields: [] }
+	};
+}
+
+const readDraft = (read: BindingRead | undefined): ReadDraft => ({
+	scope: read?.scope ?? 'none',
+	fields: [...(read?.fields ?? [])],
+	filter: [...(read?.filter ?? [])],
+	sort: [...(read?.sort ?? [])]
+});
+
+export function draftOf(binding: SiteBinding): BindingDraft {
+	const { visitor, operator } = binding.projection;
+	return {
+		key: binding.binding_key,
+		formId: binding.form_id,
+		submit: {
+			on: !!visitor?.submit,
+			fields: [...(visitor?.submit?.fields ?? [])],
+			maxPerHour: String(visitor?.submit?.max_per_hour ?? MAX_PER_HOUR_DEFAULT)
+		},
+		visitorRead: readDraft(visitor?.read),
+		operatorRead: readDraft(operator?.read),
+		update: { on: !!operator?.update, fields: [...(operator?.update?.fields ?? [])] }
+	};
+}
+
+/** The same keys in schema order, so the saved lists do not depend on the order of clicks. */
+export function inFieldOrder(keys: string[], fields: BindingField[]): string[] {
+	const wanted = new Set(keys);
+	const known = fields.filter((field) => wanted.has(field.key)).map((field) => field.key);
+	return [...known, ...keys.filter((key) => !fields.some((field) => field.key === key))];
+}
+
+/** A list with one key added or removed. */
+export function withKey(keys: string[], key: string, on: boolean): string[] {
+	const rest = keys.filter((item) => item !== key);
+	return on ? [...rest, key] : rest;
+}
+
+/** A read list with one field switched; dropping a field also drops it from filter and sort. */
+export function withReadField(read: ReadDraft, key: string, on: boolean): ReadDraft {
+	return {
+		...read,
+		fields: withKey(read.fields, key, on),
+		filter: on ? read.filter : withKey(read.filter, key, false),
+		sort: on ? read.sort : withKey(read.sort, key, false)
+	};
+}
+
+/** `max_per_hour` as the server takes it: a whole number from 1 to 1000; `null` otherwise. */
+export function parseMaxPerHour(text: string): number | null {
+	const trimmed = text.trim();
+	if (!/^\d{1,4}$/.test(trimmed)) return null;
+	const value = Number(trimmed);
+	return value >= 1 && value <= 1000 ? value : null;
+}
+
+function readOf(read: ReadDraft, fields: BindingField[]): BindingRead | undefined {
+	if (read.scope === 'none') return undefined;
+	const listed = inFieldOrder(read.fields, fields);
+	return {
+		fields: listed,
+		scope: read.scope,
+		filter: inFieldOrder(
+			read.filter.filter((key) => listed.includes(key)),
+			fields
+		),
+		sort: inFieldOrder(
+			read.sort.filter((key) => listed.includes(key)),
+			fields
+		)
+	};
+}
+
+/**
+ * The projection to send. A section that is off is left out, which clears it; the order of every
+ * list follows the schema. `max_per_hour` falls back to the default when the text is not valid, so
+ * the panel checks it first with `parseMaxPerHour`.
+ */
+export function projectionOf(draft: BindingDraft, fields: BindingField[]): BindingProjection {
+	const visitor: NonNullable<BindingProjection['visitor']> = {};
+	const operator: NonNullable<BindingProjection['operator']> = {};
+	const visitorRead = readOf(draft.visitorRead, fields);
+	if (visitorRead) visitor.read = visitorRead;
+	if (draft.submit.on)
+		visitor.submit = {
+			fields: inFieldOrder(draft.submit.fields, fields),
+			max_per_hour: parseMaxPerHour(draft.submit.maxPerHour) ?? MAX_PER_HOUR_DEFAULT
+		};
+	const operatorRead = readOf(draft.operatorRead, fields);
+	if (operatorRead) operator.read = operatorRead;
+	if (draft.update.on) operator.update = { fields: inFieldOrder(draft.update.fields, fields) };
+	const projection: BindingProjection = {};
+	if (Object.keys(visitor).length > 0) projection.visitor = visitor;
+	if (Object.keys(operator).length > 0) projection.operator = operator;
+	return projection;
+}
+
+/** How much each audience gets through a binding, for the list. */
+export interface BindingAccess {
+	submit: number;
+	visitorRead: number;
+	operatorRead: number;
+	update: number;
+}
+
+export function accessOf(projection: BindingProjection): BindingAccess {
+	const reads = (read: BindingRead | undefined): number =>
+		read && read.scope !== 'none' ? read.fields.length : 0;
+	return {
+		submit: projection.visitor?.submit?.fields.length ?? 0,
+		visitorRead: reads(projection.visitor?.read),
+		operatorRead: reads(projection.operator?.read),
+		update: projection.operator?.update?.fields.length ?? 0
+	};
+}
+
+export type IssueSection = 'visitorSubmit' | 'visitorRead' | 'operatorRead' | 'operatorUpdate';
+export type IssuePart = 'fields' | 'filter' | 'sort' | 'scope' | 'limit' | 'captcha';
+
+/** One `projection_invalid` entry placed in the panel. `key` is the field it names, if any. */
+export interface PlacedIssue {
+	/** `null` for an entry that fits no section (a malformed projection). */
+	section: IssueSection | null;
+	part: IssuePart;
+	key: string | null;
+	code: string;
+}
+
+function sectionOf(audience: string | undefined, what: string | undefined): IssueSection | null {
+	if (audience === 'visitor' && what === 'submit') return 'visitorSubmit';
+	if (audience === 'visitor' && what === 'read') return 'visitorRead';
+	if (audience === 'operator' && what === 'read') return 'operatorRead';
+	if (audience === 'operator' && what === 'update') return 'operatorUpdate';
+	return null;
+}
+
+function listAt(projection: BindingProjection, section: IssueSection, part: IssuePart): string[] {
+	switch (section) {
+		case 'visitorSubmit':
+			return projection.visitor?.submit?.fields ?? [];
+		case 'operatorUpdate':
+			return projection.operator?.update?.fields ?? [];
+		case 'visitorRead':
+		case 'operatorRead': {
+			const read = section === 'visitorRead' ? projection.visitor?.read : projection.operator?.read;
+			return (part === 'filter' ? read?.filter : part === 'sort' ? read?.sort : read?.fields) ?? [];
+		}
+	}
+}
+
+/**
+ * The entries of `details.errors` (`{ path, code }`, a JSON pointer into the projection that was
+ * sent) placed in the panel. A path like `/visitor/read/fields/2` names the third read field, found
+ * in `sent`, so the message can sit at that field's row.
+ */
+export function placeIssues(details: unknown, sent: BindingProjection): PlacedIssue[] {
+	const errors = (details as { errors?: unknown } | null | undefined)?.errors;
+	if (!Array.isArray(errors)) return [];
+	return errors.flatMap((entry: unknown): PlacedIssue[] => {
+		const issue = entry as { path?: unknown; code?: unknown } | null;
+		if (!issue || typeof issue.code !== 'string') return [];
+		const parts = (typeof issue.path === 'string' ? issue.path : '').split('/').slice(1);
+		const [audience, what, part, index] = parts;
+		const section = sectionOf(audience, what);
+		if (!section) return [{ section: null, part: 'fields', key: null, code: issue.code }];
+		// Submit and update lists are `/<audience>/<what>/fields/<i>`; every other part has no index.
+		const kind: IssuePart =
+			part === 'scope'
+				? 'scope'
+				: part === 'max_per_hour'
+					? 'limit'
+					: part === 'captcha'
+						? 'captcha'
+						: part === 'filter' || part === 'sort'
+							? part
+							: 'fields';
+		const at = index !== undefined && /^\d+$/.test(index) ? Number(index) : null;
+		const key = at === null ? null : (listAt(sent, section, kind)[at] ?? null);
+		return [{ section, part: kind, key, code: issue.code }];
+	});
+}
+
+/** The issues that name field `key` in a section, or, without `key`, those that name no single field. */
+export function issuesAt(
+	issues: PlacedIssue[],
+	section: IssueSection,
+	key?: string
+): PlacedIssue[] {
+	return issues.filter(
+		(issue) =>
+			issue.section === section && (key === undefined ? issue.key === null : issue.key === key)
+	);
+}
+
+/** Pages whose layout names the binding key; deleting the binding leaves them without data. */
+export function pagesUsing(
+	key: string,
+	pages: SitePage[],
+	pageBindingKeys: Record<string, string[]>
+): SitePage[] {
+	return pages.filter((page) => (pageBindingKeys[page.id] ?? []).includes(key));
 }
