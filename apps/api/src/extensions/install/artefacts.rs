@@ -104,8 +104,9 @@ pub async fn create_layouts(
     Ok(created)
 }
 
-/// Creates the site pages of `manifest` for generation `generation` in a site of the installation (a new
-/// `draft` site for its first pages). A page serves nothing until the site is published
+/// Creates the site pages of `manifest` for generation `generation` in a site of the installation.
+///
+/// A new `draft` site holds its first pages. A page serves nothing until the site is published
 /// and a binding gives its form visitor access (contract C3 §6): the package never opens a form to
 /// the public by itself.
 ///

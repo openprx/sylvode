@@ -248,8 +248,9 @@ pub async fn approve(
     outcome
 }
 
-/// [`approve`] inside a transaction the caller opened and commits: the installation and its
-/// generation may be rows of that transaction. The caller rebuilds the rule registry afterwards
+/// [`approve`] inside a transaction the caller opened and commits.
+///
+/// The installation and its generation may be rows of that transaction. The caller rebuilds the rule registry afterwards
 /// ([`refresh_rules`]), whatever the outcome was.
 ///
 /// # Errors

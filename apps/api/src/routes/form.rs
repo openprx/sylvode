@@ -3858,13 +3858,13 @@ pub(crate) async fn update_record_for_plugin(
     // reserved-source check of the client entry points does not apply.
     // The package-apply writer opens its transaction before this call, so its rules are prepared by
     // its caller's scope when it has one; without one a plugin rule refuses `plugin_failed`.
-    crate::extensions::rules::PreparedRules::around(
+    Box::pin(crate::extensions::rules::PreparedRules::around(
         state,
         form.workspace_id,
         form.project_id,
         &form.schema,
         update_record_for_form_internal(state, form, record, actor_id, role, false, req, Some(plugin)),
-    )
+    ))
     .await?
     .map(|(record, _)| record)
 }
@@ -3880,13 +3880,13 @@ pub(crate) async fn update_record_for_site(
     req: UpdateRecordRequest,
 ) -> Result<RecordResponse, ApiError> {
     // The site operator update opens its transaction inside; its plugin rules are loaded first.
-    crate::extensions::rules::PreparedRules::around(
+    Box::pin(crate::extensions::rules::PreparedRules::around(
         state,
         form.workspace_id,
         form.project_id,
         &form.schema,
         update_record_for_form_internal(state, form, record, actor_id, role, false, req, None),
-    )
+    ))
     .await?
     .map(|(record, _)| record)
 }

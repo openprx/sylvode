@@ -117,9 +117,10 @@ pub async fn prepare(state: &AppState, workspace_id: Uuid, package_key: &str) ->
     })
 }
 
-/// Installs a prepared template into `project_id` and approves it, as `admin`, inside the caller's
-/// transaction (the project may be a row of it). The caller commits, then rebuilds the rule registry
-/// with [`approve::refresh_rules`](super::approve::refresh_rules).
+/// Installs a prepared template into `project_id` and approves it, as `admin`.
+///
+/// Runs inside the caller's transaction (the project may be a row of it). The caller commits, then
+/// rebuilds the rule registry with [`approve::refresh_rules`](super::approve::refresh_rules).
 ///
 /// # Errors
 /// `install_invalid`, `installation_exists`, `form_key_taken`, `layout_key_taken`, `slot_occupied`,
@@ -226,9 +227,63 @@ impl Prepared {
     }
 }
 
-/// Creates the workflow and the labels of the package's `project` block for a project that is being
-/// created, and points the project at the workflow. Returns whether a workflow was created. Runs on
-/// the create's transaction; the labels are the workspace's, matched by `lower(name)`, and an existing
+/// Inserts the workflow of a project block with its states and points the project at it.
+async fn insert_workflow(
+    tx: &DatabaseTransaction,
+    states: &[sv_package::ProjectState],
+    workspace_id: Uuid,
+    project_id: Uuid,
+    project_label: &str,
+    package_key: &str,
+    locale: &str,
+) -> Result<(), ApiError> {
+    let workflow_id = Uuid::new_v4();
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO workflows (id, workspace_id, name, description, is_system_default, created_at, updated_at) \
+         VALUES ($1, $2, $3, $4, false, now(), now())",
+        vec![
+            workflow_id.into(),
+            workspace_id.into(),
+            project_label.to_owned().into(),
+            format!("Created from template {package_key}").into(),
+        ],
+    ))
+    .await?;
+    for (index, state) in states.iter().enumerate() {
+        let position = i32::try_from(index + 1).map_err(|_| ApiError::internal())?;
+        tx.execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO workflow_states (id, workflow_id, key, display_name, category, position, color, \
+                                          is_initial, is_terminal, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), now())",
+            vec![
+                Uuid::new_v4().into(),
+                workflow_id.into(),
+                state.key.clone().into(),
+                localised(&state.name, locale).to_owned().into(),
+                state.category.clone().into(),
+                position.into(),
+                state.color.clone().into(),
+                state.initial.into(),
+                matches!(state.category.as_str(), "completed" | "cancelled").into(),
+            ],
+        ))
+        .await?;
+    }
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE projects SET workflow_id = $2 WHERE id = $1",
+        vec![project_id.into(), workflow_id.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// Creates the workflow and the labels of the package's `project` block for a new project.
+///
+/// Points the project at the workflow and returns whether a workflow was created. Runs on the
+/// create's transaction; the labels are the workspace's, matched by `lower(name)`, and an existing
 /// label is kept as it is.
 ///
 /// # Errors
@@ -246,50 +301,22 @@ pub async fn apply_project_block(
         return Ok(false);
     };
     let package_key = &prepared.opened.package.manifest.id;
-    let mut created = false;
-    if let Some(states) = &block.workflow_states {
-        let workflow_id = Uuid::new_v4();
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "INSERT INTO workflows (id, workspace_id, name, description, is_system_default, created_at, updated_at) \
-             VALUES ($1, $2, $3, $4, false, now(), now())",
-            vec![
-                workflow_id.into(),
-                workspace_id.into(),
-                format!("{project_name} ({project_key})").into(),
-                format!("Created from template {package_key}").into(),
-            ],
-        ))
+    let created = if let Some(states) = &block.workflow_states {
+        let project_label = format!("{project_name} ({project_key})");
+        insert_workflow(
+            tx,
+            states,
+            workspace_id,
+            project_id,
+            &project_label,
+            package_key,
+            locale,
+        )
         .await?;
-        for (index, state) in states.iter().enumerate() {
-            let position = i32::try_from(index + 1).map_err(|_| ApiError::internal())?;
-            tx.execute(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "INSERT INTO workflow_states (id, workflow_id, key, display_name, category, position, color, \
-                                              is_initial, is_terminal, created_at, updated_at) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), now())",
-                vec![
-                    Uuid::new_v4().into(),
-                    workflow_id.into(),
-                    state.key.clone().into(),
-                    localised(&state.name, locale).to_owned().into(),
-                    state.category.clone().into(),
-                    position.into(),
-                    state.color.clone().into(),
-                    state.initial.into(),
-                    matches!(state.category.as_str(), "completed" | "cancelled").into(),
-                ],
-            ))
-            .await?;
-        }
-        tx.execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "UPDATE projects SET workflow_id = $2 WHERE id = $1",
-            vec![project_id.into(), workflow_id.into()],
-        ))
-        .await?;
-        created = true;
-    }
+        true
+    } else {
+        false
+    };
     for label in block.labels.iter().flatten() {
         tx.execute(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -500,13 +527,14 @@ mod tests {
             check_requests(manifest, &mut check);
             check_layout_slots(opened, &mut check);
             for (bind, spec) in &manifest.binds {
-                if let Some(from) = &spec.create_from {
-                    let template = parse_template(opened, bind, from, Uuid::new_v4(), Uuid::new_v4(), &mut check);
-                    let template = template.expect("the template parses");
-                    let fields = template.schema["fields"].as_array().expect("fields");
-                    for required in spec.requires_fields.keys() {
-                        assert!(fields.iter().any(|f| f["key"] == *required), "{name}: {required}");
-                    }
+                let Some(from) = &spec.create_from else {
+                    continue;
+                };
+                let template = parse_template(opened, bind, from, Uuid::new_v4(), Uuid::new_v4(), &mut check);
+                let template = template.expect("the template parses");
+                let fields = template.schema["fields"].as_array().expect("fields");
+                for required in spec.requires_fields.keys() {
+                    assert!(fields.iter().any(|f| f["key"] == *required), "{name}: {required}");
                 }
             }
             let bindings: BTreeSet<String> = manifest.binds.keys().cloned().collect();
