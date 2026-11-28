@@ -183,27 +183,25 @@ max_processing_secs = 86400
 # depth, or one that brings the same bot into a chain twice for the same work item, creates no
 # task and is recorded as an `ai_task.chain_refused` event. Default: 3. Accepted range: 1..=10.
 max_chain_depth = 3
-# Delivery of tasks to runners. The defaults are the behaviour without these keys: a new client
-# for every delivery, one delivery at a time.
-# Deliver through one long-lived client pair that reuses connections and checks the address of
-# every new connection against the [outbound] rules. Default: false.
-delivery_pool = false
+# Delivery of tasks to runners. The worker always delivers through one long-lived client pair that
+# reuses connections and checks the address of every new connection against the [outbound] rules;
+# the defaults deliver one task at a time.
 # Deliveries that run at once; each bot's tasks are still delivered in order, one at a time.
 # 1 delivers a batch serially. Default: 1. Accepted range: 1..=64.
 delivery_concurrency = 1
-# Requests in flight to one runner address at once (delivery_pool only). Default: 1.
+# Requests in flight to one runner address at once. Default: 1.
 # Accepted range: 1..=64.
 per_runner_concurrency = 1
 # The worker picks up at most its --concurrency times this many tasks per tick. Default: 10.
 # Accepted range: 1..=1000.
 lane_batch = 10
-# An idle pooled connection is closed after this many seconds (delivery_pool only). Default: 30.
+# An idle pooled connection is closed after this many seconds. Default: 30.
 # Accepted range: 1..=3600.
 pool_idle_timeout_secs = 30
-# Idle pooled connections kept per runner address (delivery_pool only). Default: 4.
+# Idle pooled connections kept per runner address. Default: 4.
 # Accepted range: 1..=64.
 pool_max_idle_per_host = 4
-# TCP keepalive interval of pooled connections in seconds, 0 for none (delivery_pool only).
+# TCP keepalive interval of pooled connections in seconds, 0 for none.
 # Default: 30. Accepted range: 0..=3600.
 tcp_keepalive_secs = 30
 

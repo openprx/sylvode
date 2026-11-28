@@ -27,7 +27,6 @@
       "lease_extension_secs",
       "max_processing_secs",
       "max_chain_depth",
-      "delivery_pool",
       "delivery_concurrency",
       "per_runner_concurrency",
       "lane_batch",

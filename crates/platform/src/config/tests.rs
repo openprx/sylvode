@@ -293,7 +293,6 @@ fn ai_task_cap_below_the_timeout_names_both_keys() {
 #[test]
 fn ai_task_delivery_keys_default_to_the_behaviour_without_them() {
     let config = parse("").expect("an empty file is valid").ai_tasks;
-    assert!(!config.delivery_pool);
     assert_eq!(config.delivery_concurrency, 1);
     assert_eq!(config.per_runner_concurrency, 1);
     assert_eq!(config.lane_batch, 10);
@@ -306,12 +305,11 @@ fn ai_task_delivery_keys_default_to_the_behaviour_without_them() {
 #[test]
 fn ai_task_delivery_keys_are_read_and_bounded() {
     let config = parse(
-        "[ai_tasks]\ndelivery_pool = true\ndelivery_concurrency = 8\nper_runner_concurrency = 4\n\
+        "[ai_tasks]\ndelivery_concurrency = 8\nper_runner_concurrency = 4\n\
          lane_batch = 20\npool_idle_timeout_secs = 60\npool_max_idle_per_host = 8\ntcp_keepalive_secs = 0\n",
     )
     .expect("valid delivery keys")
     .ai_tasks;
-    assert!(config.delivery_pool);
     assert_eq!(
         (
             config.delivery_concurrency,
@@ -396,7 +394,6 @@ fn the_example_configuration_delivery_keys_equal_the_defaults() {
         .collect::<Vec<_>>()
         .join("\n");
     let config = parse(&format!("[ai_tasks]\n{uncommented}\n")).expect("example ai_tasks parses");
-    assert!(!config.ai_tasks.delivery_pool);
     assert_eq!(
         config.ai_tasks,
         super::AiTasksConfig::default(),

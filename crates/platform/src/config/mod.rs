@@ -129,10 +129,6 @@ pub const DEFAULT_AI_TASK_MAX_CHAIN_DEPTH: u32 = 3;
 /// Accepted range of `ai_tasks.max_chain_depth`.
 pub const AI_TASK_MAX_CHAIN_DEPTH_RANGE: std::ops::RangeInclusive<u32> = 1..=10;
 
-/// Whether the worker delivers AI tasks through the shared, address-checked connection pool.
-/// Off unless `[ai_tasks] delivery_pool` turns it on: a delivery then builds its own client.
-pub const DEFAULT_AI_TASK_DELIVERY_POOL: bool = false;
-
 /// AI task deliveries the worker runs at once. 1 is the serial delivery of a batch.
 pub const DEFAULT_AI_TASK_DELIVERY_CONCURRENCY: u32 = 1;
 
@@ -577,13 +573,11 @@ impl Default for ApiConfig {
 /// `max_chain_depth` is the deepest hop of a bot-to-bot chain (see
 /// [`DEFAULT_AI_TASK_MAX_CHAIN_DEPTH`]).
 ///
-/// The remaining keys shape the worker's delivery to runners; every default is today's behaviour
-/// (a client per delivery, one delivery at a time):
+/// The remaining keys shape the worker's delivery to runners, which always goes through one
+/// long-lived client pair whose every new connection is address-checked:
 ///
-/// - `delivery_pool` switches delivery to one long-lived client pair whose every new connection
-///   is address-checked; `pool_idle_timeout_secs`, `pool_max_idle_per_host` and
-///   `tcp_keepalive_secs` shape its connections, and `per_runner_concurrency` caps the requests in
-///   flight to one runner address.
+/// - `pool_idle_timeout_secs`, `pool_max_idle_per_host` and `tcp_keepalive_secs` shape its
+///   connections, and `per_runner_concurrency` caps the requests in flight to one runner address.
 /// - `delivery_concurrency` is how many bots' deliveries run at once (1 is serial) and
 ///   `lane_batch` multiplies the worker's `--concurrency` into the pick-up limit of one tick.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -592,7 +586,6 @@ pub struct AiTasksConfig {
     pub lease_extension_secs: u64,
     pub max_processing_secs: u64,
     pub max_chain_depth: u32,
-    pub delivery_pool: bool,
     pub delivery_concurrency: u32,
     pub per_runner_concurrency: u32,
     pub lane_batch: u32,
@@ -608,7 +601,6 @@ impl Default for AiTasksConfig {
             lease_extension_secs: DEFAULT_AI_TASK_LEASE_EXTENSION_SECS,
             max_processing_secs: DEFAULT_AI_TASK_MAX_PROCESSING_SECS,
             max_chain_depth: DEFAULT_AI_TASK_MAX_CHAIN_DEPTH,
-            delivery_pool: DEFAULT_AI_TASK_DELIVERY_POOL,
             delivery_concurrency: DEFAULT_AI_TASK_DELIVERY_CONCURRENCY,
             per_runner_concurrency: DEFAULT_AI_TASK_PER_RUNNER_CONCURRENCY,
             lane_batch: DEFAULT_AI_TASK_LANE_BATCH,
