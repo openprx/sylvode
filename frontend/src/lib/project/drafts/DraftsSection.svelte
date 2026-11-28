@@ -71,7 +71,10 @@
 	}
 
 	function author(draft: DraftSummary): string {
-		return draft.author.name ?? draft.author.id;
+		const name = draft.author.name ?? draft.author.id;
+		return draft.source
+			? $t('drafts.review.byPlugin', { values: { plugin: draft.source.package_key, name } })
+			: name;
 	}
 
 	function closed(): void {

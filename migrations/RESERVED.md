@@ -28,3 +28,4 @@ until the owning batch adds the real migration.
 | 0152 | package_index (added: `0152_package_index.sql`; M15-3: `publisher_keys.origin`, `packages.origin`, tables `package_index_cache`, `workspace_index_sources`, `package_index_events`, installation disabled reason `index_revoked`; the contract's 0150 was taken) |
 | 0153 | package_upload_draft_hints (added: `0153_package_upload_draft_hints.sql`; `sv_hint_draft` names the bot of a project-less draft and sends nothing for a person's) |
 | 0151 | extension_invocation_calls (added: `0151_extension_invocation_calls.sql`; per-call plugin audit table and `extension_invocations.read_calls`; design M10 §3.6, which names 0150) |
+| 0154 | artefact_draft_source (added: `0154_artefact_draft_source.sql`; M14-4: nullable `artefact_drafts.source` with the plugin installation, generation and package key of a draft written by a plugin call) |

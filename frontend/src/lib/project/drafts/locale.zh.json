@@ -29,6 +29,7 @@
 		"review": {
 			"title": "审阅草稿",
 			"by": "作者：{name}",
+			"byPlugin": "由插件 {plugin} 写入，由 {name} 运行",
 			"approve": "批准",
 			"approved": "草稿已批准并保存。",
 			"approveFailed": "无法批准该草稿。",

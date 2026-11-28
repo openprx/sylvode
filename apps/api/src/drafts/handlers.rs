@@ -108,6 +108,10 @@ pub struct DraftSummary {
     status: String,
     valid: bool,
     created_at: Timestamp,
+    /// The plugin call that wrote the draft (`installation_id`, `generation`, `package_key`); the
+    /// author is then the person who invoked the plugin. Absent for a draft written directly.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -147,6 +151,7 @@ fn summary(row: &DraftRow) -> DraftSummary {
         status: row.status.clone(),
         valid: row.validation.get("valid").and_then(Value::as_bool).unwrap_or(false),
         created_at: row.created_at,
+        source: row.source.clone(),
     }
 }
 
@@ -365,8 +370,25 @@ pub async fn create_draft(
     Ok(ApiResponse::success(body(&state.db, &row).await?))
 }
 
+/// The source of a draft written inside a plugin call: the installation, its generation and its
+/// package key. `None` outside a plugin call. An installation that cannot be found fails the write
+/// rather than storing a plugin's draft as a person's.
+async fn plugin_source(db: &impl ConnectionTrait) -> Result<Option<Value>, ApiError> {
+    let Some(call) = crate::extensions::current() else {
+        return Ok(None);
+    };
+    let package_key = store::installation_package_key(db, call.installation_id)
+        .await?
+        .ok_or_else(ApiError::internal)?;
+    Ok(Some(json!({
+        "installation_id": call.installation_id,
+        "generation": call.generation,
+        "package_key": package_key,
+    })))
+}
+
 /// Stores a judged draft under the author's quotas, superseding the author's older pending
-/// drafts for the same target. The public-exposure list is computed here, so the stored digest
+/// drafts of the same source for the same target. The public-exposure list is computed here, so the stored digest
 /// covers it.
 async fn store_draft(
     state: &AppState,
@@ -386,10 +408,21 @@ async fn store_draft(
     )
     .await?;
     let digest = candidate.prepared.digest()?;
+    let source = plugin_source(&state.db).await?;
+    let source_installation = crate::extensions::current().map(|call| call.installation_id);
 
     let tx = state.db.begin().await?;
     store::lock_author(&tx, author_id).await?;
-    store::supersede(&tx, Some(project.id), kind, author_kind, author_id, &candidate.identity).await?;
+    store::supersede(
+        &tx,
+        Some(project.id),
+        kind,
+        author_kind,
+        author_id,
+        &candidate.identity,
+        source_installation,
+    )
+    .await?;
     if store::count_last_minute(&tx, author_kind, author_id).await? >= CREATIONS_PER_MINUTE {
         return Err(rate_limited("too many drafts in the last minute"));
     }
@@ -410,6 +443,7 @@ async fn store_draft(
             validation: &candidate.prepared.validation,
             capability_diff: &candidate.prepared.capability_diff,
             review_digest: &digest,
+            source: source.as_ref(),
         },
     )
     .await?;
@@ -551,7 +585,7 @@ pub(crate) async fn create_package_upload_draft(
     let tx = state.db.begin().await?;
     store::lock_author(&tx, bot_id).await?;
     store::lock_author(&tx, workspace_id).await?;
-    store::supersede(&tx, None, KIND_PACKAGE_UPLOAD, "bot", bot_id, &target.identity()).await?;
+    store::supersede(&tx, None, KIND_PACKAGE_UPLOAD, "bot", bot_id, &target.identity(), None).await?;
     if store::count_last_minute(&tx, "bot", bot_id).await? >= CREATIONS_PER_MINUTE {
         return Err(rate_limited("too many drafts in the last minute"));
     }
@@ -574,6 +608,7 @@ pub(crate) async fn create_package_upload_draft(
             validation: &prepared.validation,
             capability_diff: &prepared.capability_diff,
             review_digest: &digest,
+            source: None,
         },
     )
     .await?;

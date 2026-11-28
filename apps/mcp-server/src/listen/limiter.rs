@@ -31,12 +31,24 @@ pub const WINDOW: Duration = Duration::from_secs(RETRY_AFTER_SECS);
 pub const CAPACITY: usize = 4_096;
 
 /// Where a listen request came from, as far as the limiter is concerned.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Client {
     /// The client's address (a trusted proxy's `X-Real-IP`, or the socket peer).
     Address(IpAddr),
     /// A trusted proxy that did not say who the client is: only the process-wide ceiling applies.
     Unattributed,
+}
+
+impl Client {
+    /// The client as the limiter groups it (IPv4-mapped IPv6 as IPv4, real IPv6 by its /64), so two
+    /// addresses of one subscriber are one client for any per-client bound.
+    #[must_use]
+    pub fn grouped(self) -> Self {
+        match self {
+            Self::Address(address) => Self::Address(normalise(address)),
+            Self::Unattributed => Self::Unattributed,
+        }
+    }
 }
 
 /// A client address as the limiter groups it: IPv4 (an IPv4-mapped IPv6 address counts as the IPv4

@@ -14,6 +14,13 @@ export interface DraftAuthor {
 	name: string | null;
 }
 
+/** The plugin call that wrote a draft; the author is then the person who invoked the plugin. */
+export interface DraftSource {
+	installation_id: string;
+	generation: number;
+	package_key: string;
+}
+
 export interface DraftSummary {
 	id: string;
 	kind: DraftKind;
@@ -24,6 +31,8 @@ export interface DraftSummary {
 	status: DraftStatus;
 	valid: boolean;
 	created_at: string;
+	/** Set when a plugin call wrote the draft. */
+	source?: DraftSource | null;
 }
 
 export interface ValidationIssue {

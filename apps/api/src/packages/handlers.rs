@@ -3,7 +3,8 @@
 use axum::{
     Extension, Json,
     extract::{Multipart, Path, Query, State},
-    response::IntoResponse,
+    http::{StatusCode, header},
+    response::{IntoResponse, Response},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use platform::{app::AppState, auth::JwtClaims};
@@ -17,7 +18,7 @@ use super::{
     access::Caller,
     keys::{self, PublisherKey},
     store::{self, NewPackage, PackageSummary},
-    verify::{KeyScope, Refusal, Requester, Verified, verify_blob},
+    verify::{KeyScope, Refusal, Requester, Verified, try_bot_slot, verify_blob},
 };
 use crate::{
     error::ApiError,
@@ -267,7 +268,7 @@ pub async fn submit_package_upload(
     bot: Option<Extension<BotAuthContext>>,
     Path(workspace_id): Path<Uuid>,
     multipart: Multipart,
-) -> Result<impl IntoResponse, ApiError> {
+) -> Result<Response, ApiError> {
     let Some(Extension(bot)) = bot else {
         return Err(ApiError::forbidden(
             "package uploads are submitted by bots; people upload packages in the console",
@@ -280,11 +281,36 @@ pub async fn submit_package_upload(
     // the attempt window (failed verifications count), the drafts per minute and the pending cap.
     let _submission = super::submit_gate::begin(caller.user_id)?;
     crate::drafts::handlers::precheck_package_upload(&state, workspace_id, caller.user_id).await?;
+    // The bot share of the verification slots is taken before the body is read: when another bot
+    // submission holds it, this one is refused rather than buffered and made to wait.
+    let Some(slot) = try_bot_slot() else {
+        return Ok(package_verify_busy());
+    };
     let bytes = read_file_part(multipart).await?;
-    let prepared = PreparedUpload::verify(&state.db, workspace_id, bytes, Requester::Bot).await?;
+    let prepared = PreparedUpload::verify(&state.db, workspace_id, bytes, Requester::Bot(slot)).await?;
     let draft =
         crate::drafts::handlers::create_package_upload_draft(&state, workspace_id, caller.user_id, prepared).await?;
-    Ok(ApiResponse::success(draft))
+    Ok(ApiResponse::success(draft).into_response())
+}
+
+/// `Retry-After` of [`package_verify_busy`], in seconds.
+const VERIFY_BUSY_RETRY_AFTER_SECS: u64 = 15;
+
+/// The `429` of a bot submission that found the verification share busy; nothing was read.
+fn package_verify_busy() -> Response {
+    let body = ApiResponse::<Value> {
+        code: 429,
+        message: "another package is being verified; retry shortly".to_owned(),
+        data: None,
+        error_code: Some("package_verify_busy"),
+        details: Some(json!({"retry_after_secs": VERIFY_BUSY_RETRY_AFTER_SECS})),
+    };
+    let mut response = (StatusCode::TOO_MANY_REQUESTS, Json(body)).into_response();
+    response.headers_mut().insert(
+        header::RETRY_AFTER,
+        header::HeaderValue::from(VERIFY_BUSY_RETRY_AFTER_SECS),
+    );
+    response
 }
 
 fn package_in_use() -> ApiError {

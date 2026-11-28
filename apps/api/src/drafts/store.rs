@@ -15,7 +15,7 @@ const COLUMNS: &str = "d.id, d.workspace_id, d.project_id, d.kind, d.target, d.s
        WHEN 'bot' THEN (SELECT b.name::text FROM workspace_bots b WHERE b.id = d.author_id) \
        ELSE (SELECT u.name::text FROM users u WHERE u.id = d.author_id) END AS author_name, \
      d.note, d.validation, d.capability_diff, d.status, d.reviewed_by, d.reviewed_at, \
-     d.review_comment, d.result, d.created_at";
+     d.review_comment, d.result, d.created_at, d.source";
 
 #[derive(Debug, Clone, FromQueryResult)]
 pub(super) struct DraftRow {
@@ -38,6 +38,9 @@ pub(super) struct DraftRow {
     pub(super) review_comment: Option<String>,
     pub(super) result: Option<Value>,
     pub(super) created_at: Timestamp,
+    /// The plugin call that wrote the draft (`installation_id`, `generation`, `package_key`); `None`
+    /// for a draft a person or a bot wrote directly. The author is still the invoking person.
+    pub(super) source: Option<Value>,
 }
 
 impl DraftRow {
@@ -60,6 +63,7 @@ pub(super) struct NewDraft<'a> {
     pub(super) validation: &'a Value,
     pub(super) capability_diff: &'a Value,
     pub(super) review_digest: &'a str,
+    pub(super) source: Option<&'a Value>,
 }
 
 #[derive(FromQueryResult)]
@@ -119,7 +123,9 @@ pub(super) async fn count_last_minute(
 }
 
 /// Marks the older pending drafts of the same author for the same target `superseded` (for a
-/// `site_page` draft: `site::drafts::PageTarget::identity`).
+/// `site_page` draft: `site::drafts::PageTarget::identity`). Only drafts of the same source count:
+/// a plugin installation's drafts replace that installation's, and a draft written directly
+/// replaces only drafts written directly, so a plugin never retires the person's own draft.
 pub(super) async fn supersede(
     db: &impl ConnectionTrait,
     project_id: Option<Uuid>,
@@ -127,6 +133,7 @@ pub(super) async fn supersede(
     author_kind: &str,
     author_id: Uuid,
     identity: &str,
+    source_installation: Option<Uuid>,
 ) -> Result<(), ApiError> {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -140,13 +147,15 @@ pub(super) async fn supersede(
                                           THEN '/layout' ELSE '' END, \
                 CASE WHEN target->>'op' = 'create' THEN 'create:' || COALESCE(spec->>'route', '') ELSE 'title' END) \
               WHEN 'package_upload' THEN (target->>'package_key') || '@' || (target->>'version') \
-              ELSE target::text END = $5",
+              ELSE target::text END = $5 \
+           AND (source->>'installation_id') IS NOT DISTINCT FROM $6::text",
         vec![
             project_id.into(),
             kind.to_owned().into(),
             author_kind.to_owned().into(),
             author_id.into(),
             identity.to_owned().into(),
+            source_installation.map(|id| id.to_string()).into(),
         ],
     ))
     .await?;
@@ -278,8 +287,8 @@ pub(super) async fn insert(db: &impl ConnectionTrait, draft: &NewDraft<'_>) -> R
         DbBackend::Postgres,
         "INSERT INTO artefact_drafts \
            (workspace_id, project_id, kind, target, spec, author_kind, author_id, note, validation, \
-            capability_diff, review_digest) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id",
+            capability_diff, review_digest, source) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id",
         vec![
             draft.workspace_id.into(),
             draft.project_id.into(),
@@ -292,6 +301,7 @@ pub(super) async fn insert(db: &impl ConnectionTrait, draft: &NewDraft<'_>) -> R
             draft.validation.clone().into(),
             draft.capability_diff.clone().into(),
             draft.review_digest.to_owned().into(),
+            draft.source.cloned().into(),
         ],
     ))
     .one(db)
@@ -442,4 +452,23 @@ pub(super) async fn close(
     ))
     .await?;
     Ok(())
+}
+
+/// The package key of an installation, for the source a plugin's draft records.
+pub(super) async fn installation_package_key(
+    db: &impl ConnectionTrait,
+    installation_id: Uuid,
+) -> Result<Option<String>, ApiError> {
+    #[derive(FromQueryResult)]
+    struct Key {
+        package_key: String,
+    }
+    Ok(Key::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT package_key FROM installations WHERE id = $1",
+        vec![installation_id.into()],
+    ))
+    .one(db)
+    .await?
+    .map(|row| row.package_key))
 }

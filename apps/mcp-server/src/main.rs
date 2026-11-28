@@ -17,6 +17,7 @@ use mcp_server::cli::{self, Cli, Commands};
 use mcp_server::client::OpenPrClient;
 use mcp_server::era::{self, Era};
 use mcp_server::http_modern;
+use mcp_server::large_body::{self, LargeBodies};
 use mcp_server::listen::{Client, ListenAuth, ListenConfig, ListenRegistry, STALL_LIMIT, caller_key};
 use mcp_server::oauth::{self, Caller, InboundAuth};
 use mcp_server::protocol::{self, JsonRpcRequest, JsonRpcResponse};
@@ -42,6 +43,8 @@ struct NetOptions {
     /// Peers whose `X-Real-IP` names the real client (`[mcp] trusted_proxies`).
     trusted_proxies: Arc<Vec<TrustedProxy>>,
     listen: ListenRegistry,
+    /// Who holds a place among the large-body requests.
+    large_bodies: Arc<LargeBodies>,
 }
 
 impl NetOptions {
@@ -53,6 +56,7 @@ impl NetOptions {
                 mcp.listen,
                 usize::try_from(mcp.max_listen_streams).unwrap_or(usize::MAX),
             )),
+            large_bodies: Arc::default(),
         }
     }
 }
@@ -64,6 +68,7 @@ impl Default for NetOptions {
             allowed_origins: Arc::new(Vec::new()),
             trusted_proxies: Arc::new(vec![TrustedProxy::Loopback]),
             listen: ListenRegistry::new(ListenConfig::new(false, ListenConfig::default().max_streams)),
+            large_bodies: Arc::default(),
         }
     }
 }
@@ -536,19 +541,25 @@ async fn run_with_body(
 }
 
 /// The rule of the JSON-RPC routes for body size and time. The inbound authentication does not
-/// look up an ordinary bearer token before the handler, so this runs without trusting the
-/// caller: a body is read up to 2 MiB within 30 s; a larger one only when its `Content-Length` (at
-/// most [`RPC_BODY_LIMIT`]) is declared and a permit of the small process-wide pool is free,
-/// before a byte of it is read, and then within 120 s in total. The permit is held until the
-/// request is answered, so a body that does not arrive in time frees it. A body without a length
-/// (chunked) stays capped at 2 MiB, whatever it declares later.
-async fn body_gate(request: axum::extract::Request, next: middleware::Next) -> Response {
+/// look up an ordinary bearer token before the handler, so a body is read up to 2 MiB within 30 s
+/// without trusting the caller. A larger one is admitted only when its `Content-Length` (at most
+/// [`RPC_BODY_LIMIT`]) is declared, its client address holds no other large body, its credential is
+/// verified (a delegated token already was; any other is asked of the API, see [`large_body`]) and a
+/// permit of the small process-wide pool is free, all before a byte of it is read; it then has 120 s
+/// in total. The permit and the address slot are held until the request is answered, so a body that
+/// does not arrive in time frees both. A body without a length (chunked) stays capped at 2 MiB,
+/// whatever it declares later.
+async fn body_gate(
+    State(state): State<SseState>,
+    peer: Option<Extension<PeerAddr>>,
+    request: axum::extract::Request,
+    next: middleware::Next,
+) -> Response {
     let declared = request
         .headers()
         .get(axum::http::header::CONTENT_LENGTH)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<usize>().ok());
-    let (parts, body) = request.into_parts();
     match declared {
         Some(length) if length > SMALL_BODY_LIMIT => {
             if length > RPC_BODY_LIMIT {
@@ -558,17 +569,74 @@ async fn body_gate(request: axum::extract::Request, next: middleware::Next) -> R
                 )
                     .into_response();
             }
-            let Ok(_permit) = LARGE_BODIES.try_acquire() else {
-                return (
-                    StatusCode::TOO_MANY_REQUESTS,
-                    Json(json!({"error": "too many large requests at once; retry shortly"})),
-                )
-                    .into_response();
+            let client = peer.map_or(Client::Unattributed, |Extension(peer)| {
+                client_of(peer.0, request.headers(), &state.net.trusted_proxies)
+            });
+            let Some(caller) = request.extensions().get::<Caller>().cloned() else {
+                return large_body_refusal(
+                    StatusCode::UNAUTHORIZED,
+                    "a verified credential is required for a large request",
+                );
             };
+            let Some(_slot) = state.net.large_bodies.reserve(client) else {
+                return large_body_refusal(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "this client already has a large request in progress; retry shortly",
+                );
+            };
+            match state.net.large_bodies.verify(client, &caller, &state.client).await {
+                Ok(()) => {}
+                Err(large_body::Refusal::Busy) => {
+                    return large_body_refusal(
+                        StatusCode::TOO_MANY_REQUESTS,
+                        "too many refused credentials from this client; retry later",
+                    );
+                }
+                Err(large_body::Refusal::Unauthorized) => {
+                    return large_body_refusal(
+                        StatusCode::UNAUTHORIZED,
+                        "the credential is not valid for a large request",
+                    );
+                }
+                Err(large_body::Refusal::Unavailable) => {
+                    return large_body_refusal(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "the credential could not be verified; try again later",
+                    );
+                }
+            }
+            let Ok(_permit) = LARGE_BODIES.try_acquire() else {
+                return large_body_refusal(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "too many large requests at once; retry shortly",
+                );
+            };
+            let (parts, body) = request.into_parts();
             run_with_body(parts, body, RPC_BODY_LIMIT, LARGE_BODY_DEADLINE, next).await
         }
-        _ => run_with_body(parts, body, SMALL_BODY_LIMIT, SMALL_BODY_DEADLINE, next).await,
+        _ => {
+            let (parts, body) = request.into_parts();
+            run_with_body(parts, body, SMALL_BODY_LIMIT, SMALL_BODY_DEADLINE, next).await
+        }
     }
+}
+
+/// A refusal of a large body, before any of it is read.
+fn large_body_refusal(status: StatusCode, message: &str) -> Response {
+    let mut response = (status, Json(json!({"error": message}))).into_response();
+    if status == StatusCode::TOO_MANY_REQUESTS || status == StatusCode::SERVICE_UNAVAILABLE {
+        response.headers_mut().insert(
+            axum::http::header::RETRY_AFTER,
+            axum::http::HeaderValue::from(large_body::RETRY_AFTER_SECS),
+        );
+    }
+    if status == StatusCode::UNAUTHORIZED {
+        response.headers_mut().insert(
+            axum::http::header::WWW_AUTHENTICATE,
+            axum::http::HeaderValue::from_static("Bearer"),
+        );
+    }
+    response
 }
 
 /// Answers `408` for a request that has produced no response head within
@@ -587,13 +655,10 @@ async fn head_timeout(request: axum::extract::Request, next: middleware::Next) -
 
 /// A JSON-RPC POST route under [`body_gate`]; the 48 MiB limit only ever applies to a request the
 /// gate let through with a permit.
-fn gated<S>(route: axum::routing::MethodRouter<S>) -> axum::routing::MethodRouter<S>
-where
-    S: Clone + Send + Sync + 'static,
-{
+fn gated(state: &SseState, route: axum::routing::MethodRouter<SseState>) -> axum::routing::MethodRouter<SseState> {
     route
         .layer(DefaultBodyLimit::max(RPC_BODY_LIMIT))
-        .layer(middleware::from_fn(body_gate))
+        .layer(middleware::from_fn_with_state(state.clone(), body_gate))
 }
 
 async fn run_http(
@@ -615,9 +680,9 @@ async fn run_http(
     };
 
     let protected = Router::new()
-        .route("/mcp/rpc", gated(post(handle_jsonrpc)))
+        .route("/mcp/rpc", gated(&state, post(handle_jsonrpc)))
         .route("/sse", get(handle_sse_connect))
-        .route("/messages", gated(post(handle_sse_message)));
+        .route("/messages", gated(&state, post(handle_sse_message)));
     let app = serve_router(state, protected);
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
@@ -833,7 +898,7 @@ async fn run_sse(
 
     let protected = Router::new()
         .route("/sse", get(handle_sse_connect))
-        .route("/messages", gated(post(handle_sse_message)));
+        .route("/messages", gated(&state, post(handle_sse_message)));
     let app = serve_router(state, protected);
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;

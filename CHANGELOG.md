@@ -24,6 +24,19 @@ name.
 
 ### Security
 
+- **MCP large bodies need a verified credential.** A request body above 2 MiB is admitted only after
+  its bearer token is verified against the API (through the workspace cache of verified tokens; a
+  delegated token already was) and only when its client address holds no other large body. An
+  unknown token is answered `401` and a busy address `429` with `Retry-After`, before any body byte is
+  read, so a client with an arbitrary `Bearer x` can no longer keep the two large-body permits.
+- **Bot package submissions are refused when verification is busy.** When another bot submission holds
+  the bot share of the verification slots, a submission is answered `429 package_verify_busy` with
+  `Retry-After` before its body is read, instead of queueing the package in memory.
+- **A draft written by a plugin records the plugin.** A draft created inside a plugin call stores the
+  installation, generation and package key as its source next to the invoking person as author
+  (migration 0154), and the console draft list and review show "written by plugin ...". A plugin's
+  draft replaces only drafts of the same installation, never the person's own pending draft for the
+  same target.
 - **MCP request bodies and requests have time limits.** A request body must arrive within 30 seconds
   (120 seconds for a body above 2 MiB, which holds one of two process-wide large-body permits); a
   request that runs out of time is answered `408` and frees its permit, so a client that trickles
