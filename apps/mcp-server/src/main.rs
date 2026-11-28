@@ -459,7 +459,10 @@ fn serve_router(state: SseState, protected: Router<SseState>) -> Router {
     if let Some(settings) = state.inbound.settings() {
         router = router.merge(oauth::well_known_routes(settings));
     }
-    router.route("/health", get(health_check)).with_state(state)
+    router
+        .route("/health", get(health_check))
+        .layer(middleware::from_fn(head_timeout))
+        .with_state(state)
 }
 
 /// Largest JSON-RPC body of the HTTP transports: a 32 MiB package is 44.7 MiB of base64 in
@@ -471,18 +474,81 @@ const SMALL_BODY_LIMIT: usize = 2 * 1024 * 1024;
 /// Requests with a body above [`SMALL_BODY_LIMIT`] that run at once in this process.
 static LARGE_BODIES: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 
-/// The rule of the JSON-RPC routes for body size. The inbound authentication does not look up an
-/// ordinary bearer token before the handler, so this runs without trusting the caller: a body is
-/// read up to 2 MiB; a larger one only when its `Content-Length` (at most [`RPC_BODY_LIMIT`]) is
-/// declared and a permit of the small process-wide pool is free, before a byte of it is read. The
-/// permit is held until the request is answered. A body without a length (chunked) stays capped at
-/// 2 MiB, whatever it declares later.
+/// Total time a request body may take to arrive when it is at most [`SMALL_BODY_LIMIT`].
+const SMALL_BODY_DEADLINE: Duration = Duration::from_secs(30);
+/// Total time a large body (a permit holder) may take to arrive. A trickling client cannot hold
+/// one of the [`LARGE_BODIES`] permits longer than this.
+const LARGE_BODY_DEADLINE: Duration = Duration::from_mins(2);
+/// Longest a request may run before its response head is produced, for every route. Streams
+/// (`GET /sse`, `subscriptions/listen`) answer with their head at once and keep streaming after
+/// it, so the limit never ends one; their request body read is bounded by the body deadline.
+const REQUEST_HEAD_TIMEOUT: Duration = Duration::from_mins(3);
+
+/// A request body that fails once a total deadline passes, recording that it did.
+struct DeadlineBody {
+    inner: axum::body::Body,
+    sleep: std::pin::Pin<Box<tokio::time::Sleep>>,
+    expired: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl http_body::Body for DeadlineBody {
+    type Data = axum::body::Bytes;
+    type Error = axum::BoxError;
+
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        use std::task::Poll;
+        if std::future::Future::poll(self.sleep.as_mut(), cx).is_ready() {
+            self.expired.store(true, std::sync::atomic::Ordering::Release);
+            return Poll::Ready(Some(Err("the request body did not arrive in time".into())));
+        }
+        std::pin::Pin::new(&mut self.inner).poll_frame(cx).map_err(Into::into)
+    }
+}
+
+/// Runs `next` with `body` limited to `limit` bytes and `deadline` in total. A request whose
+/// body ran out of time is answered `408` whatever the handler made of the read error.
+async fn run_with_body(
+    parts: axum::http::request::Parts,
+    body: axum::body::Body,
+    limit: usize,
+    deadline: Duration,
+    next: middleware::Next,
+) -> Response {
+    let expired = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let limited = axum::body::Body::new(http_body_util::Limited::new(body, limit));
+    let body = axum::body::Body::new(DeadlineBody {
+        inner: limited,
+        sleep: Box::pin(tokio::time::sleep(deadline)),
+        expired: Arc::clone(&expired),
+    });
+    let response = next.run(axum::extract::Request::from_parts(parts, body)).await;
+    if expired.load(std::sync::atomic::Ordering::Acquire) {
+        return (
+            StatusCode::REQUEST_TIMEOUT,
+            Json(json!({"error": "the request body did not arrive in time"})),
+        )
+            .into_response();
+    }
+    response
+}
+
+/// The rule of the JSON-RPC routes for body size and time. The inbound authentication does not
+/// look up an ordinary bearer token before the handler, so this runs without trusting the
+/// caller: a body is read up to 2 MiB within 30 s; a larger one only when its `Content-Length` (at
+/// most [`RPC_BODY_LIMIT`]) is declared and a permit of the small process-wide pool is free,
+/// before a byte of it is read, and then within 120 s in total. The permit is held until the
+/// request is answered, so a body that does not arrive in time frees it. A body without a length
+/// (chunked) stays capped at 2 MiB, whatever it declares later.
 async fn body_gate(request: axum::extract::Request, next: middleware::Next) -> Response {
     let declared = request
         .headers()
         .get(axum::http::header::CONTENT_LENGTH)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<usize>().ok());
+    let (parts, body) = request.into_parts();
     match declared {
         Some(length) if length > SMALL_BODY_LIMIT => {
             if length > RPC_BODY_LIMIT {
@@ -499,14 +565,24 @@ async fn body_gate(request: axum::extract::Request, next: middleware::Next) -> R
                 )
                     .into_response();
             };
-            next.run(request).await
+            run_with_body(parts, body, RPC_BODY_LIMIT, LARGE_BODY_DEADLINE, next).await
         }
-        _ => {
-            let (parts, body) = request.into_parts();
-            let body = axum::body::Body::new(http_body_util::Limited::new(body, SMALL_BODY_LIMIT));
-            next.run(axum::extract::Request::from_parts(parts, body)).await
-        }
+        _ => run_with_body(parts, body, SMALL_BODY_LIMIT, SMALL_BODY_DEADLINE, next).await,
     }
+}
+
+/// Answers `408` for a request that has produced no response head within
+/// [`REQUEST_HEAD_TIMEOUT`]; applies to every route of the HTTP transports.
+async fn head_timeout(request: axum::extract::Request, next: middleware::Next) -> Response {
+    tokio::time::timeout(REQUEST_HEAD_TIMEOUT, next.run(request))
+        .await
+        .unwrap_or_else(|_| {
+            (
+                StatusCode::REQUEST_TIMEOUT,
+                Json(json!({"error": "the request took too long"})),
+            )
+                .into_response()
+        })
 }
 
 /// A JSON-RPC POST route under [`body_gate`]; the 48 MiB limit only ever applies to a request the

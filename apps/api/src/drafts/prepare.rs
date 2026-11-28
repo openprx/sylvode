@@ -24,7 +24,10 @@ use crate::{
         access::{Scope, ScopeKind, resolve_scope},
         apply::{draft_slot, validate_for_slot},
     },
-    packages::handlers::{PreparedUpload, UploadInfo},
+    packages::{
+        handlers::{PreparedUpload, UploadInfo},
+        verify::Requester,
+    },
     site::drafts::{self as site_drafts, Base, PageTarget},
 };
 
@@ -424,7 +427,7 @@ async fn judge_stored(tx: &DatabaseTransaction, row: &DraftRow) -> Result<(Prepa
             let bytes = store::upload_blob(tx, row.id)
                 .await?
                 .ok_or_else(|| stale("blob_missing", json!({})))?;
-            let upload = PreparedUpload::verify(tx, row.workspace_id, bytes).await?;
+            let upload = PreparedUpload::verify(tx, row.workspace_id, bytes, Requester::Internal).await?;
             let info = upload.info();
             if info.digest != target.digest || info.blob_digest != target.blob_digest {
                 return Err(stale("target_changed", json!({})));

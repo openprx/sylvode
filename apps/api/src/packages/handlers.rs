@@ -17,7 +17,7 @@ use super::{
     access::Caller,
     keys::{self, PublisherKey},
     store::{self, NewPackage, PackageSummary},
-    verify::{KeyScope, Refusal, Verified, verify_blob},
+    verify::{KeyScope, Refusal, Requester, Verified, verify_blob},
 };
 use crate::{
     error::ApiError,
@@ -147,8 +147,9 @@ impl PreparedUpload {
         db: &impl sea_orm::ConnectionTrait,
         workspace_id: Uuid,
         bytes: Vec<u8>,
+        requester: Requester,
     ) -> Result<Self, ApiError> {
-        let verified = verify_blob(db, bytes.clone(), KeyScope::Workspace(workspace_id)).await?;
+        let verified = verify_blob(db, bytes.clone(), KeyScope::Workspace(workspace_id), requester).await?;
         Ok(Self { bytes, verified })
     }
 
@@ -248,7 +249,7 @@ pub async fn upload_package(
     let caller = Caller::resolve(&state, &claims, None, workspace_id).await?;
     caller.require_admin()?;
     let bytes = read_file_part(multipart).await?;
-    let prepared = PreparedUpload::verify(&state.db, workspace_id, bytes).await?;
+    let prepared = PreparedUpload::verify(&state.db, workspace_id, bytes, Requester::Internal).await?;
     let tx = state.db.begin().await?;
     let summary = prepared.store(&tx, workspace_id, caller.user_id).await?;
     tx.commit().await?;
@@ -280,7 +281,7 @@ pub async fn submit_package_upload(
     let _submission = super::submit_gate::begin(caller.user_id)?;
     crate::drafts::handlers::precheck_package_upload(&state, workspace_id, caller.user_id).await?;
     let bytes = read_file_part(multipart).await?;
-    let prepared = PreparedUpload::verify(&state.db, workspace_id, bytes).await?;
+    let prepared = PreparedUpload::verify(&state.db, workspace_id, bytes, Requester::Bot).await?;
     let draft =
         crate::drafts::handlers::create_package_upload_draft(&state, workspace_id, caller.user_id, prepared).await?;
     Ok(ApiResponse::success(draft))

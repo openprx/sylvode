@@ -275,6 +275,12 @@ target that fails the check is not sent and is recorded with `error: "outbound t
 ..."`. At start-up the API logs a warning for every active webhook whose stored URL fails the
 current policy. The same policy applies to the runner address of a bot connection.
 
+Webhook deliveries and deliveries to a bot's openprx agent go through the shared outbound HTTP
+client. It does not follow redirects, and its connect timeout is 5 seconds. A target that answers
+with a `3xx` is not followed to the new address: the delivery fails (it is retried like any other
+transient failure), so register the final URL of the receiver, and make sure it accepts a
+connection within 5 seconds.
+
 ## Bot context
 
 A webhook with a `bot_user_id` carries the tasks of that bot. A delivery to such a webhook is a bot

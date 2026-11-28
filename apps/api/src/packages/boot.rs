@@ -16,7 +16,7 @@ use sea_orm::{DatabaseConnection, TransactionTrait};
 use super::{
     keys,
     store::{self, NewPackage},
-    verify::{KeyScope, verify_blob},
+    verify::{KeyScope, Requester, verify_blob},
 };
 use crate::error::ApiError;
 
@@ -71,7 +71,7 @@ async fn reverify_stored(db: &DatabaseConnection) -> anyhow::Result<()> {
                 row.package_key
             ));
         }
-        let verified = verify_blob(db, bytes, KeyScope::Builtin)
+        let verified = verify_blob(db, bytes, KeyScope::Builtin, Requester::Internal)
             .await
             .map_err(|e| anyhow!("stored built-in package {} no longer verifies: {e:?}", row.package_key))?;
         if verified.package.digest != row.digest {
@@ -100,7 +100,7 @@ async fn store_directory(db: &DatabaseConnection, dir: &Path) -> anyhow::Result<
         let bytes = tokio::fs::read(&path)
             .await
             .with_context(|| format!("built-in package {} is unreadable", path.display()))?;
-        let verified = verify_blob(db, bytes.clone(), KeyScope::Builtin)
+        let verified = verify_blob(db, bytes.clone(), KeyScope::Builtin, Requester::Internal)
             .await
             .map_err(|e| anyhow!("built-in package {} refused: {e:?}", path.display()))?;
         let package = &verified.package;

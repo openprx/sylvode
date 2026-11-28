@@ -445,13 +445,15 @@ async fn deliver_task(
     settle_delivery(state, task, verdict).await
 }
 
-/// Whether `task` still holds the lease it was picked up with: it is `processing` and still on the
-/// attempt that was picked up.
+/// Whether `task` still holds the lease it was picked up with: it is `processing`, still on the
+/// attempt that was picked up, and its lease has not run out (a sweep that is about to take it back
+/// has not run yet, but the task is no longer ours to deliver).
 async fn task_lease_held<C: ConnectionTrait>(db: &C, task: &AiTaskDispatchRow) -> anyhow::Result<bool> {
     let held = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT 1 AS held FROM ai_tasks WHERE id = $1 AND status = 'processing' AND attempts = $2",
+            "SELECT 1 AS held FROM ai_tasks WHERE id = $1 AND status = 'processing' AND attempts = $2 \
+             AND lease_expires_at > now()",
             vec![task.id.into(), task.attempts.into()],
         ))
         .await?;
