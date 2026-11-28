@@ -255,14 +255,9 @@ impl Rig {
         let token = format!("opr_hint{}", Uuid::new_v4().simple());
         exec(
             self.db(),
-            "INSERT INTO workspace_bots (id, workspace_id, name, token_hash, token_prefix, project_scope) \
-             VALUES ($1, $2, 'hint bot', $3, 'opr_test', $4)",
-            vec![
-                id.into(),
-                self.tenant.workspace_id.into(),
-                sha256_hex(&token).into(),
-                scope.to_string().into(),
-            ],
+            "UPDATE workspace_bots SET name = 'hint bot', token_hash = $2, token_prefix = 'opr_test', \
+             project_scope = $3 WHERE id = $1",
+            vec![id.into(), sha256_hex(&token).into(), scope.to_string().into()],
         )
         .await;
         Bot { id, token }
@@ -428,9 +423,8 @@ async fn the_triggers_send_exactly_the_documented_payloads_after_commit_and_noth
     let bot = seed_bot_user(db, &tenant).await;
     exec(
         db,
-        "INSERT INTO workspace_bots (id, workspace_id, name, token_hash, token_prefix) \
-         VALUES ($1, $2, 'trigger bot', $3, 'opr_test')",
-        vec![bot.into(), tenant.workspace_id.into(), sha256_hex("opr_trigger").into()],
+        "UPDATE workspace_bots SET name = 'trigger bot', token_hash = $2, token_prefix = 'opr_test' WHERE id = $1",
+        vec![bot.into(), sha256_hex("opr_trigger").into()],
     )
     .await;
     let mut listen = Listen::start(db).await;

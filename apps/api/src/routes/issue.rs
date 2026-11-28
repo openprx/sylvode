@@ -20,7 +20,10 @@ use crate::{
     response::{ApiResponse, PaginatedData},
     routes::milestone::ensure_open_milestone,
     services::{
-        ai_task_service::{CreateAiTaskInput, DispatchOrigin, DispatchOutcome, dispatch_ai_task, runner_bot_block},
+        ai_task_service::{
+            CreateAiTaskInput, DispatchOrigin, DispatchOutcome, bot_cannot_read_project, dispatch_ai_task,
+            runner_bot_block,
+        },
         bot_identity::is_bot_user,
         issue_view::{
             IssueResponse, PageCaller, attach_page_links, identifier, issue_labels, load_issue, page_link_counts,
@@ -199,6 +202,17 @@ pub(crate) async fn queue_assignment_ai_task(
             issue_id = %input.issue_id,
             bot_id = %input.assignee_id,
             reason = block.code(),
+            "assignment queued no task"
+        );
+        return Ok(AssignmentOutcome {
+            ai_task_bots: Vec::new(),
+        });
+    }
+    if bot_cannot_read_project(db, input.project_id, input.assignee_id).await? {
+        tracing::info!(
+            issue_id = %input.issue_id,
+            bot_id = %input.assignee_id,
+            reason = "project_not_readable",
             "assignment queued no task"
         );
         return Ok(AssignmentOutcome {

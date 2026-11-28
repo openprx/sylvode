@@ -30,7 +30,7 @@ use crate::{
     },
     middleware::bot_auth::{BotAuthContext, require_workspace_access_from_auth},
     response::ApiResponse,
-    services::workflow_service::resolve_effective_workflow_for_project,
+    services::{ai_task_service::bot_cannot_read_project, workflow_service::resolve_effective_workflow_for_project},
 };
 
 const NAME_MAX: usize = 100;
@@ -716,6 +716,9 @@ async fn check_rule_references<C: ConnectionTrait>(
             // Not refused: the bot may be connected later, but a task for a bot that is not
             // connected to this project cannot reach a runner that will run it.
             warnings.push("bot_not_connected_to_project");
+        } else if bot_cannot_read_project(db, project_id, bot).await? {
+            // Not refused: the bot's access may be widened later, but until then it gets no task.
+            warnings.push("bot_cannot_read_project");
         }
     }
     if !rule.label_ids.is_empty() {
