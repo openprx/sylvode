@@ -316,6 +316,13 @@ transport = "stdio"
 # to, so an unauthenticated caller can reach nothing but /health.
 # bind_addr = "127.0.0.1:8090"
 
+# Peers allowed to say who the real client is, through the `X-Real-IP` header, for the per-address
+# limit on refused credentials. Entries: "loopback" (any loopback address) or an IP address.
+# Default: ["loopback"], which fits a reverse proxy on the same host. The proxy MUST overwrite
+# the header (nginx: `proxy_set_header X-Real-IP $remote_addr;`). A request from a peer that is
+# not listed is attributed to its socket address and its headers are ignored. [] trusts nobody.
+# trusted_proxies = ["loopback"]
+
 # Delegated access (OAuth). Set all three or none: a partial set refuses to start and names what
 # is missing. Without them this server accepts workspace bot tokens only and answers 401 to a
 # delegated `sva_` token.

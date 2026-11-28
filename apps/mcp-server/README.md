@@ -216,7 +216,7 @@ URI; `resources/read` then returns the new state (tasks and inboxes are readable
 `sylvode://tasks/{task_id}` and `sylvode://agents/{agent_id}/inbox`). When the API reports a change of
 project access or of the tool surface, every acknowledged URI is decided again as the caller, and
 a stream that holds one the bot may no longer read ends with its final result (listen again to
-get the smaller acknowledgment). After a lost API connection every URI is announced once. A client
+get the smaller acknowledgment). A URI the re-check cannot confirm (the API fails or the 30 s budget ends) ends its stream as well, so a client that may no longer read a resource never keeps hearing about it; re-checks share 32 parallel API calls in the whole process. After a lost API connection every URI is announced once. A client
 reads the state after the acknowledgment: a change that commits between the server's check and the
 acknowledgment is not announced. `resources/subscribe` and `resources/unsubscribe` do not exist
 (`-32601`); `subscriptions/listen` is the only way to subscribe. Caps: 100 URIs per request, 2,000
@@ -242,11 +242,15 @@ Limits: 1,000 open streams per credential (the key is a digest of the bearer tok
 `[mcp] max_listen_streams` (default 10,000) per process, beyond either the request is answered
 `429` with `Retry-After: 30`. Two more refusals are `429` with `Retry-After: 30` (`-32000`,
 `data.reason`): `busy`, when the API itself is at its stream limits for the credential or the
-process, and `throttled`, when the client address (the socket's peer, IPv6 as /64) has had 20
-credentials refused by the API within 60 seconds; until the window ends such an address gets no
-API request for a credential the server does not already serve (credentials with a live stream
-are unaffected). The table of addresses holds 4,096 entries, oldest dropped first. Behind a proxy
-the address is the proxy's. A stream whose client stops reading for 30 seconds is closed. Every
+process, and `throttled`, when the client address has had 20 credentials refused by the API within 30
+seconds (the window equals `Retry-After`), or the whole process has had 600; until the window
+ends such a client gets no API request for a credential the server does not already serve
+(credentials with a live stream are unaffected). The client address is the socket peer, except
+when the peer is listed in `[mcp] trusted_proxies` (default: loopback): then it is the peer's
+`X-Real-IP` header, which the proxy must overwrite (nginx: `proxy_set_header X-Real-IP
+$remote_addr;`). A trusted peer without a valid header is counted only against the process-wide
+ceiling. IPv4-mapped IPv6 addresses count as IPv4, other IPv6 addresses by their /64; the table
+holds 4,096 addresses, oldest dropped first. A stream whose client stops reading for 30 seconds is closed. Every
 open stream ends with its final result on SIGTERM or SIGINT. A comment line every 15 seconds keeps
 an idle stream alive. `[mcp] listen = false` removes the method (`-32601`) and the capability.
 

@@ -38,7 +38,7 @@ use super::{
     DatabaseConfig, FlowConfig, IpCidr, LogFormat, LogOutput, LoggingConfig, MAX_CHANGE_HINT_STREAMS_CEILING,
     MAX_FLOW_BODY_ASSET_BYTES, MAX_FLOW_CONVERSION_REAP_INTERVAL_SECS, MAX_FLOW_SETUP_CPU_BUDGET_MS,
     MIN_FLOW_SETUP_CPU_BUDGET_MS, MIN_JWT_SECRET_LEN, McpConfig, McpToolMode, McpTransport, OAuthConfig, OpenPrConfig,
-    OutboundConfig, S3Config, ServerConfig, StorageBackend, StorageConfig,
+    OutboundConfig, S3Config, ServerConfig, StorageBackend, StorageConfig, TrustedProxy,
 };
 
 const DEFAULT_MAX_CONNECTIONS: u32 = 20;
@@ -221,6 +221,7 @@ struct RawMcp {
     listen: Option<bool>,
     allowed_origins: Option<Vec<String>>,
     max_listen_streams: Option<u32>,
+    trusted_proxies: Option<Vec<String>>,
 }
 
 /// Collects validation problems so the operator sees all of them at once.
@@ -1002,6 +1003,12 @@ impl RawMcp {
                 Some(limit)
             }
         });
+        let trusted_proxies = self.trusted_proxies.map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| issues.record(TrustedProxy::parse(entry)))
+                .collect()
+        });
         McpConfig {
             api_url,
             bot_token,
@@ -1016,6 +1023,7 @@ impl RawMcp {
             listen: self.listen,
             allowed_origins,
             max_listen_streams,
+            trusted_proxies,
         }
     }
 }

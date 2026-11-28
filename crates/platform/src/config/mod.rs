@@ -783,6 +783,39 @@ pub struct McpConfig {
     pub allowed_origins: Option<Vec<String>>,
     /// Process wide cap on open listen streams of the HTTP transport. `None` means the default.
     pub max_listen_streams: Option<u32>,
+    /// Peers whose `X-Real-IP` header names the real client. `None` means loopback only.
+    pub trusted_proxies: Option<Vec<TrustedProxy>>,
+}
+
+/// A peer the MCP server believes about the client address: a reverse proxy in front of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrustedProxy {
+    /// Any loopback address (`127.0.0.0/8`, `::1`).
+    Loopback,
+    /// Exactly this address.
+    Address(std::net::IpAddr),
+}
+
+impl TrustedProxy {
+    /// Parses one `[mcp] trusted_proxies` entry: `loopback` or an IP address.
+    pub fn parse(entry: &str) -> Result<Self, String> {
+        let entry = entry.trim();
+        if entry.eq_ignore_ascii_case("loopback") {
+            return Ok(Self::Loopback);
+        }
+        entry
+            .parse()
+            .map(Self::Address)
+            .map_err(|_| format!("mcp.trusted_proxies entry {entry} must be `loopback` or an IP address"))
+    }
+
+    /// Whether `peer` is this proxy.
+    pub fn matches(self, peer: std::net::IpAddr) -> bool {
+        match self {
+            Self::Loopback => peer.to_canonical().is_loopback(),
+            Self::Address(address) => address.to_canonical() == peer.to_canonical(),
+        }
+    }
 }
 
 /// Default of `[mcp] max_listen_streams`.
@@ -837,6 +870,10 @@ impl McpConfig {
             listen: self.listen.unwrap_or(true),
             allowed_origins: self.allowed_origins.clone().unwrap_or_default(),
             max_listen_streams: self.max_listen_streams.unwrap_or(DEFAULT_MCP_MAX_LISTEN_STREAMS),
+            trusted_proxies: self
+                .trusted_proxies
+                .clone()
+                .unwrap_or_else(|| vec![TrustedProxy::Loopback]),
         })
     }
 
@@ -907,6 +944,8 @@ pub struct McpRuntime {
     pub allowed_origins: Vec<String>,
     /// Open listen streams the HTTP transport accepts in total.
     pub max_listen_streams: u32,
+    /// Peers whose `X-Real-IP` header names the real client; loopback by default.
+    pub trusted_proxies: Vec<TrustedProxy>,
 }
 
 /// The subset of the configuration carried in `AppState` and reached from request handlers.

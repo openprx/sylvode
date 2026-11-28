@@ -14,7 +14,10 @@ const PARALLEL_CHECKS: usize = 8;
 /// the acknowledgment within 5 s).
 pub const ACK_BUDGET: Duration = Duration::from_secs(4);
 /// The time a re-check of the open subscriptions of one credential may take.
-pub const RECHECK_BUDGET: Duration = Duration::from_secs(10);
+pub const RECHECK_BUDGET: Duration = Duration::from_secs(30);
+/// API checks of re-checks in flight at once in the whole process, over every credential, so a
+/// change that every hub reacts to at once cannot flood the API.
+pub static RECHECK_PERMITS: Semaphore = Semaphore::const_new(32);
 
 /// The verdict of each item, in order; `None` for one not decided in time. The checks that are
 /// still running when the budget ends are abandoned.
@@ -22,6 +25,7 @@ pub async fn decide(
     server: &Arc<McpServer>,
     items: &[(Arc<str>, Subscribable)],
     budget: Duration,
+    process_wide: Option<&'static Semaphore>,
 ) -> Vec<Option<Verdict>> {
     let deadline = Instant::now() + budget;
     let permits = Arc::new(Semaphore::new(PARALLEL_CHECKS));
@@ -34,6 +38,13 @@ pub async fn decide(
         checks.spawn(async move {
             let Ok(_permit) = permits.acquire_owned().await else {
                 return (index, Verdict::Unavailable);
+            };
+            let _process_permit = match process_wide {
+                Some(pool) => match pool.acquire().await {
+                    Ok(permit) => Some(permit),
+                    Err(_) => return (index, Verdict::Unavailable),
+                },
+                None => None,
             };
             (index, server.subscription_verdict(&uri, &subscribable).await)
         });
