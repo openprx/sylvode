@@ -217,22 +217,25 @@ pub async fn update_site(
     Json(req): Json<UpdateSiteRequest>,
 ) -> Result<Response, ApiError> {
     let who = Who::new(claims, bot);
+    // Rights before shapes: an unauthorised caller gets 403 whatever it sent.
+    let site = page_writable_site(&state, &who, id).await?;
+    if req.slug.is_some() {
+        admin_site(&state, &who, id).await?;
+    }
     if req.title.is_none() && req.slug.is_none() {
         return Err(invalid("update_empty", "send a title, a slug or both"));
     }
     if let Some(title) = &req.title {
         check_text(title, "title_invalid")?;
     }
-    if let Some(slug) = &req.slug {
-        if !is_slug(slug) {
-            return Err(invalid(
-                "slug_invalid",
-                "a slug is 2-40 lowercase letters, digits or hyphens",
-            ));
-        }
-        admin_site(&state, &who, id).await?;
+    if let Some(slug) = &req.slug
+        && !is_slug(slug)
+    {
+        return Err(invalid(
+            "slug_invalid",
+            "a slug is 2-40 lowercase letters, digits or hyphens",
+        ));
     }
-    let site = page_writable_site(&state, &who, id).await?;
     if req.slug.is_some() && site.status != "draft" {
         return Err(ApiError::conflict_coded(
             "site_not_draft",
@@ -389,7 +392,13 @@ pub async fn delete_site(
         ));
     }
     let tx = state.db.begin().await?;
-    store::delete_site(&tx, site.id).await?;
+    if !store::delete_site(&tx, site.id).await? {
+        return Err(ApiError::conflict_coded(
+            "site_published",
+            "unpublish the site before deleting it",
+            None,
+        ));
+    }
     tx.commit().await?;
     Ok(ApiResponse::success(json!({ "id": site.id })))
 }
