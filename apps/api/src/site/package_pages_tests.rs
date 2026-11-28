@@ -3,7 +3,7 @@
 //! its own scratch database (skipped without `OPENPR_TEST_DATABASE_URL`).
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
 
-use sea_orm::{ConnectionTrait, DatabaseConnection};
+use sea_orm::{ConnectionTrait, DatabaseConnection, FromQueryResult};
 use uuid::Uuid;
 
 use super::store::{self, SiteRow};
@@ -181,25 +181,110 @@ async fn package_page_is_hidden_when_the_installation_is_not_active() {
     scratch.drop_self().await;
 }
 
+#[derive(FromQueryResult)]
+struct Id {
+    site_id: Uuid,
+}
+
+fn manifest_with_page(route: &str) -> sv_package::Manifest {
+    serde_json::from_value(serde_json::json!({
+        "schema": "sv.package.v1",
+        "kind": "page-template",
+        "id": "acme/desk",
+        "version": "1.0.0",
+        "publisher": { "id": "acme", "key_id": "ed25519:00" },
+        "sv": { "min": "0.5.0" },
+        "summary": { "en": "Desk" },
+        "license": "MIT",
+        "layouts": [{ "key": "home", "path": "layouts/home.json" }],
+        "pages": [{ "route": route, "layout": "home", "audience": "visitor" }],
+        "files": {}
+    }))
+    .expect("manifest parses")
+}
+
 #[tokio::test]
-async fn a_superseded_generation_is_hidden_and_never_swapped_under_a_published_site() {
-    let scratch = scratch_or_skip!("site_pkg_pages_generation");
+async fn an_upgrade_replaces_the_pages_of_the_published_site() {
+    use crate::extensions::install::artefacts::{PlacementScope, create_pages};
+    use std::collections::BTreeMap;
+
+    let scratch = scratch_or_skip!("site_pkg_pages_upgrade");
     let db = &scratch.db;
     let tenant = seed_tenant(db, "a").await;
-    let published = seed_site(db, &tenant, "pkg-gen-old", "published").await;
-    let draft = seed_site(db, &tenant, "pkg-gen-new", "draft").await;
-    // Generation 2 is active: the upgrade put its pages on a new draft site.
-    let installation = seed_installation(db, &tenant, "acme/desk", "active", 2).await;
-    let old_layout = seed_layout(db, &tenant, published, "home", Some((installation, 1))).await;
-    let new_layout = seed_layout(db, &tenant, draft, "home", Some((installation, 2))).await;
-    seed_page(db, published, old_layout, "/", "visitor", Some((installation, 1))).await;
-    seed_page(db, draft, new_layout, "/", "visitor", Some((installation, 2))).await;
+    let scope = PlacementScope {
+        workspace_id: tenant.workspace_id,
+        project_id: Some(tenant.project_id),
+    };
+    let installation = seed_installation(db, &tenant, "acme/desk", "active", 1).await;
 
-    assert!(
-        routes(db, published).await.is_empty(),
-        "the old generation is superseded"
-    );
-    assert_eq!(routes(db, draft).await, vec!["/".to_string()]);
+    // Generation 1 creates the installation's site (a draft); a person publishes it.
+    let layout_one = seed_layout(db, &tenant, Uuid::new_v4(), "home", Some((installation, 1))).await;
+    let layouts = BTreeMap::from([("home".to_string(), layout_one)]);
+    create_pages(
+        db,
+        &manifest_with_page("/"),
+        &layouts,
+        scope,
+        installation,
+        1,
+        tenant.member_id,
+    )
+    .await
+    .unwrap();
+    let site = Id::find_by_statement(sea_orm::Statement::from_sql_and_values(
+        sea_orm::DbBackend::Postgres,
+        "SELECT site_id FROM site_pages WHERE installation_id = $1",
+        vec![installation.into()],
+    ))
+    .one(db)
+    .await
+    .unwrap()
+    .expect("the install created a page")
+    .site_id;
+    exec(
+        db,
+        "UPDATE sites SET status = 'published' WHERE id = $1",
+        vec![site.into()],
+    )
+    .await;
+    assert_eq!(routes(db, site).await, vec!["/".to_string()]);
+
+    // Generation 2 becomes active: its pages land in the same, published site; generation 1's are gone.
+    exec(
+        db,
+        "UPDATE installations SET active_generation = 2 WHERE id = $1",
+        vec![installation.into()],
+    )
+    .await;
+    let layout_two = seed_layout(db, &tenant, site, "home", Some((installation, 2))).await;
+    let layouts = BTreeMap::from([("home".to_string(), layout_two)]);
+    create_pages(
+        db,
+        &manifest_with_page("/help"),
+        &layouts,
+        scope,
+        installation,
+        2,
+        tenant.member_id,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(routes(db, site).await, vec!["/help".to_string()]);
+    let total = crate::routes::context::tenant_fixture::count(
+        db,
+        "SELECT COUNT(*) AS n FROM site_pages WHERE installation_id = $1",
+        vec![installation.into()],
+    )
+    .await;
+    assert_eq!(total, 1, "the old generation's rows are deleted");
+    let sites = crate::routes::context::tenant_fixture::count(
+        db,
+        "SELECT COUNT(*) AS n FROM sites WHERE project_id = $1",
+        vec![tenant.project_id.into()],
+    )
+    .await;
+    assert_eq!(sites, 1, "the upgrade created no new site");
     scratch.drop_self().await;
 }
 
@@ -275,5 +360,63 @@ async fn a_package_page_serves_only_a_layout_of_its_own_installation_and_generat
         let page = store::load_page(db, id).await.unwrap().unwrap();
         assert!(store::load_page_layout(db, &row, &page).await.unwrap().is_none());
     }
+    scratch.drop_self().await;
+}
+
+#[tokio::test]
+async fn store_writes_work_and_a_user_page_cannot_take_a_package_route() {
+    let scratch = scratch_or_skip!("site_pkg_pages_writes");
+    let db = &scratch.db;
+    let tenant = seed_tenant(db, "a").await;
+    let site = seed_site(db, &tenant, "pkg-writes", "draft").await;
+    let installation = seed_installation(db, &tenant, "acme/desk", "active", 1).await;
+    let package_layout = seed_layout(db, &tenant, site, "home", Some((installation, 1))).await;
+    let user_layout = seed_layout(db, &tenant, site, "mine", None).await;
+    seed_page(db, site, package_layout, "/help", "visitor", Some((installation, 1))).await;
+    let values = |route: &'static str| store::PageValues {
+        route,
+        layout_id: user_layout,
+        audience: "visitor",
+        nav: None,
+        position: 0,
+    };
+
+    // insert_page and update_page return the row (the RETURNING list needs the table alias).
+    let created = store::insert_page(db, site, values("/mine"))
+        .await
+        .unwrap()
+        .expect("inserted");
+    assert_eq!(created.route, "/mine");
+    assert_eq!(created.installation_id, None);
+    let updated = store::update_page(db, created.id, values("/mine-2"))
+        .await
+        .unwrap()
+        .expect("updated");
+    assert_eq!(updated.route, "/mine-2");
+
+    // A route of a visible package page is taken for user pages: insert, update and the draft check.
+    assert!(store::insert_page(db, site, values("/help")).await.unwrap().is_none());
+    assert!(
+        store::update_page(db, created.id, values("/help"))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(store::route_taken(db, site, "/help", None).await.unwrap());
+    assert!(!store::route_taken(db, site, "/free", None).await.unwrap());
+
+    // A package page is never changed through the user-page update.
+    let package = store::list_pages(db, site)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|p| p.route == "/help")
+        .unwrap();
+    assert!(
+        store::update_page(db, package.id, values("/other"))
+            .await
+            .unwrap()
+            .is_none()
+    );
     scratch.drop_self().await;
 }

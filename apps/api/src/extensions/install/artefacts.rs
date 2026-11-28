@@ -106,7 +106,9 @@ pub async fn create_layouts(
 
 /// Creates the site pages of `manifest` for generation `generation` in a site of the installation.
 ///
-/// A new `draft` site holds its first pages. A page serves nothing until the site is published
+/// Pages of earlier generations of the installation are deleted: the site serves the active generation
+/// only, so an upgrade of a published site changes what it serves at once. A new `draft` site holds the
+/// first pages. A page serves nothing until the site is published
 /// and a binding gives its form visitor access (contract C3 §6): the package never opens a form to
 /// the public by itself.
 ///
@@ -122,6 +124,13 @@ pub async fn create_pages(
     generation: i32,
     created_by: Uuid,
 ) -> Result<(), ApiError> {
+    // The site serves the active generation only: an upgrade replaces the earlier generations' pages.
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "DELETE FROM site_pages WHERE installation_id = $1 AND generation IS DISTINCT FROM $2",
+        vec![installation_id.into(), generation.into()],
+    ))
+    .await?;
     if manifest.pages.is_empty() {
         return Ok(());
     }
@@ -164,9 +173,9 @@ pub async fn create_pages(
     Ok(())
 }
 
-/// The `draft` site that already holds pages of this installation (an upgrade adds its pages beside the
-/// earlier generation's), or a new `draft` site named after the project. A package never adds pages
-/// to a site that is not a draft (published or disabled, which a person runs) and never publishes one.
+/// The site that already holds pages of this installation, whatever its status (an upgrade replaces
+/// the earlier generation's pages there, so a published site serves the new generation at once), or a
+/// new `draft` site named after the project. A package never publishes a site.
 async fn site_of_installation(
     tx: &impl ConnectionTrait,
     workspace_id: Uuid,
@@ -177,7 +186,7 @@ async fn site_of_installation(
     let existing = Id::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "SELECT p.site_id AS id FROM site_pages p JOIN sites s ON s.id = p.site_id \
-         WHERE p.installation_id = $1 AND s.status = 'draft' ORDER BY p.generation DESC, p.id LIMIT 1",
+         WHERE p.installation_id = $1 ORDER BY p.generation DESC, p.id LIMIT 1",
         vec![installation_id.into()],
     ))
     .one(tx)

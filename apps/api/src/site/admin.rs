@@ -553,13 +553,13 @@ async fn page_and_site(state: &AppState, who: &Who, page_id: Uuid) -> Result<(Pa
     let page = store::load_page(&state.db, page_id)
         .await?
         .ok_or_else(|| ApiError::not_found("page not found"))?;
-    refuse_package_page(&page)?;
     let site = page_writable_site(state, who, page.site_id)
         .await
         .map_err(|error| match error {
             ApiError::Forbidden(message) => ApiError::Forbidden(message),
             _ => ApiError::not_found("page not found"),
         })?;
+    refuse_package_page(&page)?;
     Ok((page, site))
 }
 

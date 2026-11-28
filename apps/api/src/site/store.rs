@@ -266,8 +266,11 @@ pub async fn insert_page(
 ) -> Result<Option<PageRow>, ApiError> {
     Ok(PageRow::find_by_statement(statement(
         &format!(
-            "INSERT INTO site_pages (site_id, route, layout_id, audience, nav, position) \
-             VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING RETURNING {PAGE_COLUMNS}"
+            "INSERT INTO site_pages AS p (site_id, route, layout_id, audience, nav, position) \
+             SELECT $1, $2, $3, $4, $5, $6 \
+             WHERE NOT EXISTS (SELECT 1 FROM site_pages p JOIN sites s ON s.id = p.site_id \
+                               WHERE p.site_id = $1 AND p.route = $2 AND {VISIBLE_PAGE}) \
+             ON CONFLICT DO NOTHING RETURNING {PAGE_COLUMNS}"
         ),
         vec![
             site_id.into(),
@@ -290,8 +293,11 @@ pub async fn update_page(
 ) -> Result<Option<PageRow>, ApiError> {
     let taken = db
         .query_one(statement(
-            "SELECT 1 AS one FROM site_pages p JOIN site_pages me ON me.id = $1 \
-             WHERE p.site_id = me.site_id AND p.route = $2 AND p.id <> $1 AND p.generation IS NULL",
+            &format!(
+                "SELECT 1 AS one FROM site_pages p JOIN site_pages me ON me.id = $1 \
+                 JOIN sites s ON s.id = p.site_id \
+                 WHERE p.site_id = me.site_id AND p.route = $2 AND p.id <> $1 AND {VISIBLE_PAGE}"
+            ),
             vec![id.into(), page.route.into()],
         ))
         .await?
@@ -301,8 +307,8 @@ pub async fn update_page(
     }
     Ok(PageRow::find_by_statement(statement(
         &format!(
-            "UPDATE site_pages SET route = $2, layout_id = $3, audience = $4, nav = $5, position = $6 \
-             WHERE id = $1 RETURNING {PAGE_COLUMNS}"
+            "UPDATE site_pages p SET route = $2, layout_id = $3, audience = $4, nav = $5, position = $6 \
+             WHERE p.id = $1 AND p.installation_id IS NULL RETURNING {PAGE_COLUMNS}"
         ),
         vec![
             id.into(),
@@ -428,8 +434,11 @@ pub async fn route_taken(
 ) -> Result<bool, ApiError> {
     Ok(db
         .query_one(statement(
-            "SELECT 1 AS one FROM site_pages \
-             WHERE site_id = $1 AND route = $2 AND generation IS NULL AND ($3::uuid IS NULL OR id <> $3)",
+            &format!(
+                "SELECT 1 AS one FROM site_pages p JOIN sites s ON s.id = p.site_id \
+                 WHERE p.site_id = $1 AND p.route = $2 AND {VISIBLE_PAGE} \
+                 AND ($3::uuid IS NULL OR p.id <> $3)"
+            ),
             vec![site_id.into(), route.into(), except.into()],
         ))
         .await?
