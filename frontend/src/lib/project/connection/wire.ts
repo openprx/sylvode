@@ -67,6 +67,8 @@ export type SessionMcp = 'ok' | 'missing' | 'other' | 'stale';
 export interface SessionRow {
 	/** `bot`: the bot's own session on the runner, one for all its projects. */
 	scope: SessionScope | null;
+	/** The member of the bot's session pool (0 is the primary); `null` when not reported. */
+	member: number | null;
 	session_name: string | null;
 	status: 'ok' | 'warn' | 'fail' | null;
 	state: SessionState | null;
@@ -87,6 +89,8 @@ export interface Status {
 	tmux: { state: ComponentState; version: string | null } | null;
 	/** The session rows of 6.6; `null` when the status does not carry them (headless, no report). */
 	tmux_session: SessionRow | null;
+	/** One row per member of the bot's session pool, in member order; empty unless it has several. */
+	tmux_members: SessionRow[];
 	/** Whether tasks of this connection run with permission checks off; `null` when unknown. */
 	bypass: boolean | null;
 	last_delivery: {
@@ -249,6 +253,13 @@ function sessionRow(value: unknown): SessionRow | null {
 	if (!isRecord(value)) return null;
 	return {
 		scope: member(SESSION_SCOPES, value.scope),
+		member:
+			typeof value.member === 'number' &&
+			Number.isInteger(value.member) &&
+			value.member >= 0 &&
+			value.member <= 7
+				? value.member
+				: null,
 		session_name: str(value.session_name),
 		status: member(ROW_STATUS, value.status),
 		state: member(SESSION_STATES, value.state),
@@ -278,6 +289,12 @@ export function parseStatus(value: unknown): Status | null {
 		cli,
 		tmux,
 		tmux_session: sessionRow(value.tmux_session),
+		tmux_members: Array.isArray(value.tmux_members)
+			? value.tmux_members
+					.slice(0, 8)
+					.map(sessionRow)
+					.filter((row): row is SessionRow => row !== null)
+			: [],
 		bypass: typeof value.bypass === 'boolean' ? value.bypass : null,
 		last_delivery: {
 			state: deliveryState,

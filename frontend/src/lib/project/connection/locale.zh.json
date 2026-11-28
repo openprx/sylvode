@@ -101,6 +101,7 @@
 				"refresh": "刷新状态",
 				"session": {
 					"label": "会话",
+					"member": "会话 {number}",
 					"running": "运行中",
 					"runningBot": "运行中（此机器人自己的会话）",
 					"runningRunner": "运行中（由 runner 启动）",

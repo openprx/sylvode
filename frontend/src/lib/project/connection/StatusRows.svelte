@@ -78,7 +78,24 @@
 				{/snippet}
 			</SettingRow>
 		{/if}
-		{@const session = showTmux ? sessionChip(status.tmux_session) : null}
+		{@const members = showTmux && status.tmux_members.length > 1 ? status.tmux_members : []}
+		{#each members as row, index (index)}
+			{@const memberChip = sessionChip(row)}
+			{#if memberChip}
+				<SettingRow
+					label={$t('execution.connection.status.session.member', {
+						values: { number: (row.member ?? index) + 1 }
+					})}
+				>
+					{#snippet chip()}
+						<StatusChip tone={memberChip.tone} data-testid="session-member-chip">
+							{$t(memberChip.key)}
+						</StatusChip>
+					{/snippet}
+				</SettingRow>
+			{/if}
+		{/each}
+		{@const session = showTmux && members.length === 0 ? sessionChip(status.tmux_session) : null}
 		{#if session}
 			<SettingRow label={$t('execution.connection.status.session.label')}>
 				{#snippet chip()}
