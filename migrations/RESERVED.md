@@ -18,3 +18,4 @@ until the owning batch adds the real migration. 0128 and 0129 are reserved by an
 - 0142 cap_record_titles (landed)
 - 0143 change_hints_narrow (landed: work_items hint trigger WHEN, lock_timeout 2s)
 - 0144 drop_project_type_default_connectors (landed)
+- 0146 drop_flow_capability_rollouts (landed; 0126 is an existing file, 0145 belongs to the sites batch)

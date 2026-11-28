@@ -1,4 +1,4 @@
-use super::{MIGRATIONS, migration_checksum, plan_migrations};
+use super::{MIGRATIONS, RecordedMigration, migration_checksum, plan_migrations};
 use std::collections::HashMap;
 
 /// [`MIGRATIONS`] is generated from the `migrations/` directory at build time; this compares the
@@ -55,11 +55,18 @@ const FILES: &[(&str, &str)] = &[
     ("0003_d.sql", "select 3;"),
 ];
 
-fn recorded(names: &[&str]) -> HashMap<String, String> {
+fn row(sql: &str, status: &str) -> RecordedMigration {
+    RecordedMigration {
+        checksum: migration_checksum(sql),
+        status: status.to_string(),
+    }
+}
+
+fn recorded(names: &[&str]) -> HashMap<String, RecordedMigration> {
     FILES
         .iter()
         .filter(|(name, _)| names.contains(name))
-        .map(|(name, sql)| ((*name).to_string(), migration_checksum(sql)))
+        .map(|(name, sql)| ((*name).to_string(), row(sql, "applied")))
         .collect()
 }
 
@@ -85,55 +92,44 @@ fn a_file_numbered_below_a_recorded_one_still_runs() {
 #[test]
 fn a_changed_recorded_file_is_refused() {
     let mut ledger = recorded(&["0000_a.sql", "0001_b.sql"]);
-    ledger.insert("0001_b.sql".to_string(), migration_checksum("select 99;"));
+    ledger.insert("0001_b.sql".to_string(), row("select 99;", "applied"));
     let err = plan_migrations(FILES, &ledger).expect_err("checksum mismatch must refuse");
-    assert!(err.to_string().contains("0001_b.sql changed after it was applied"));
+    let text = err.to_string();
+    assert!(text.contains("0001_b.sql changed after it was applied"), "{text}");
+    assert!(
+        text.contains(&migration_checksum("select 99;")),
+        "names the recorded checksum: {text}"
+    );
+    assert!(
+        text.contains(&migration_checksum("select 1;")),
+        "names the shipped checksum: {text}"
+    );
+    assert!(text.contains("restore the pre-upgrade backup") && text.contains("never edit schema_migrations"));
 }
 
 #[test]
 fn a_recorded_file_that_is_not_shipped_is_refused() {
     let mut ledger = recorded(&["0000_a.sql"]);
-    ledger.insert("0099_gone.sql".to_string(), migration_checksum("select 9;"));
+    ledger.insert("0099_gone.sql".to_string(), row("select 9;", "applied"));
     let err = plan_migrations(FILES, &ledger).expect_err("unshipped record must refuse");
-    assert!(err.to_string().contains("0099_gone.sql is recorded but not shipped"));
+    let text = err.to_string();
+    assert!(text.contains("0099_gone.sql is recorded but not shipped"), "{text}");
+    assert!(text.contains("Deploy the newer build") && text.contains("never edit schema_migrations"));
 }
 
-/// 0115 is applied once: the capability switch-on must be claimed
-/// through its marker and may only raise values, and the backfill must never overwrite a row.
 #[test]
-fn flow_default_on_migration_runs_once_and_never_overwrites() {
-    let sql = MIGRATIONS
-        .iter()
-        .find(|(name, _)| *name == "0115_flow_default_on.sql")
-        .map(|(_, sql)| *sql)
-        .expect("0115 must be registered");
-    let statements: String = sql
-        .lines()
-        .filter(|line| !line.trim_start().starts_with("--"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let update = statements
-        .split_once("UPDATE flow_runtime_capabilities")
-        .map(|(_, rest)| rest)
-        .and_then(|rest| rest.split_once("CREATE OR REPLACE FUNCTION"))
-        .map(|(update, _)| update)
-        .expect("0115 updates the singleton row");
-    assert!(
-        statements.contains("ON CONFLICT (name) DO NOTHING") && update.contains("AND EXISTS (SELECT 1 FROM claimed)"),
-        "the row update must run only in the execution that claims the rollout marker"
-    );
-    assert!(
-        !update.to_lowercase().contains("false"),
-        "the one-time update may only switch capabilities on"
-    );
-    assert!(
-        !statements.contains("UPDATE flow_workspace_settings"),
-        "an existing settings row is never changed"
-    );
-    assert!(
-        statements.matches("ON CONFLICT (workspace_id) DO NOTHING").count() == 2,
-        "the trigger and the backfill both leave an existing row alone"
-    );
+fn a_failed_row_is_retried_whatever_its_checksum() {
+    let mut ledger = recorded(&["0000_a.sql", "0002_c.sql"]);
+    ledger.insert("0001_b.sql".to_string(), row("select 99;", "failed"));
+    let pending = plan_migrations(FILES, &ledger).expect("plan");
+    assert_eq!(pending, vec![("0001_b.sql", "select 1;"), ("0003_d.sql", "select 3;")]);
+}
+
+#[test]
+fn a_failed_row_without_a_shipped_file_is_ignored() {
+    let mut ledger = recorded(&["0000_a.sql"]);
+    ledger.insert("0099_gone.sql".to_string(), row("select 9;", "failed"));
+    assert!(plan_migrations(FILES, &ledger).is_ok());
 }
 /// Routes are authenticated one by one with `route_layer`, so forgetting one is invisible
 /// until somebody calls it. Four proposal reads were unauthenticated that way, two of which

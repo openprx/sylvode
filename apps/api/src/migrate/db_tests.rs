@@ -410,6 +410,35 @@ async fn a_failing_migration_aborts_the_start_and_is_retried_later() {
     scratch.drop_self().await;
 }
 
+/// A `failed` row written by an older runner is retried: the file runs and the row is replaced.
+#[tokio::test]
+async fn a_failed_ledger_row_is_retried() {
+    let scratch = scratch_or_skip!("failed_row");
+    run_migrations(&scratch.db).await.expect("first start");
+    // Make 0118 absent and leave a failed row for it, as the old runner did.
+    scratch
+        .db
+        .execute_unprepared(
+            "DROP INDEX labels_workspace_lower_name_key; \
+             ALTER TABLE labels DROP CONSTRAINT labels_color_hex; \
+             UPDATE schema_migrations SET status = 'failed', error = 'boom' WHERE name = '0118_label_rules.sql';",
+        )
+        .await
+        .expect("the file is made absent");
+
+    run_migrations(&scratch.db).await.expect("the failed file is retried");
+
+    let ledger = ledger(&scratch.db).await;
+    assert_eq!(status_of(&ledger, "0118_label_rules.sql"), "applied");
+    let index = scalar_text(
+        &scratch.db,
+        "SELECT (to_regclass('labels_workspace_lower_name_key') IS NOT NULL)::text AS v",
+    )
+    .await;
+    assert_eq!(index, "true", "its effect is back");
+    scratch.drop_self().await;
+}
+
 /// A second start on a fully migrated database executes nothing and changes no ledger row.
 #[tokio::test]
 async fn a_second_start_is_a_no_op() {

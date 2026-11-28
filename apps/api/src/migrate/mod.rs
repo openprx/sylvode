@@ -14,8 +14,9 @@ const MIGRATION_LOCK_ID: i32 = 1;
 
 /// Brings the database to the schema described by the shipped migration files.
 ///
-/// Every file the ledger does not record is executed in file name order, each in its own
-/// transaction together with its ledger row, so a file that arrives out of order (a number below
+/// Every file the ledger does not record as applied (no row, or a `failed` row left by an older
+/// runner) is executed in file name order, each in its own transaction together with its ledger
+/// row, so a file that arrives out of order (a number below
 /// one that is already recorded) still runs. The runner refuses to start when a recorded file
 /// changed or is no longer shipped, and when a migration fails.
 pub async fn run_migrations(db: &DatabaseConnection) -> anyhow::Result<()> {
@@ -48,42 +49,67 @@ pub async fn run_migrations(db: &DatabaseConnection) -> anyhow::Result<()> {
 
 /// Decides what a run has to execute, without touching the database.
 ///
-/// `ledger` maps every recorded migration name to its checksum. A recorded file whose content
-/// changed, or a recorded name without a shipped file, is an error: the database no longer
-/// matches the build, and starting anyway would run code against a schema nobody can describe.
-/// The result lists the unrecorded files in the order of `files`.
+/// `ledger` maps every ledger row to its checksum and status. A row counts as recorded when its
+/// status is `applied` or `adopted`; a `failed` row (written by an older runner) is retried. A
+/// recorded file whose content changed, or a recorded name without a shipped file, is an error:
+/// the database no longer matches the build, and starting anyway would run code against a schema
+/// nobody can describe. The result lists the files to execute in the order of `files`.
 fn plan_migrations<'a>(
     files: &[(&'a str, &'a str)],
-    ledger: &HashMap<String, String>,
+    ledger: &HashMap<String, RecordedMigration>,
 ) -> anyhow::Result<Vec<(&'a str, &'a str)>> {
     let mut pending = Vec::new();
     for (name, sql) in files {
-        match ledger.get(*name) {
-            Some(recorded) if *recorded == migration_checksum(sql) => {}
-            Some(_) => {
-                return Err(anyhow::anyhow!(
-                    "migration {name} changed after it was applied; a recorded migration file must never be edited, add a new migration instead"
-                ));
+        match ledger.get(*name).filter(|row| row.is_success()) {
+            Some(recorded) => {
+                let shipped = migration_checksum(sql);
+                if recorded.checksum != shipped {
+                    return Err(anyhow::anyhow!(
+                        "migration {name} changed after it was applied (recorded checksum {}, shipped checksum {shipped}). \
+                         Deploy the build that applied it or a newer one, or restore the pre-upgrade backup; \
+                         never edit schema_migrations",
+                        recorded.checksum
+                    ));
+                }
             }
             None => pending.push((*name, *sql)),
         }
     }
     let mut unshipped: Vec<&str> = ledger
-        .keys()
-        .map(String::as_str)
+        .iter()
+        .filter(|(_, row)| row.is_success())
+        .map(|(name, _)| name.as_str())
         .filter(|name| !files.iter().any(|(file, _)| file == name))
         .collect();
     unshipped.sort_unstable();
     if let Some(name) = unshipped.first() {
-        return Err(anyhow::anyhow!("migration {name} is recorded but not shipped"));
+        return Err(anyhow::anyhow!(
+            "migration {name} is recorded but not shipped by this build: the database is newer than this binary. \
+             Deploy the newer build, or restore the pre-upgrade backup; never edit schema_migrations"
+        ));
     }
     Ok(pending)
 }
 
+/// One `schema_migrations` row.
+struct RecordedMigration {
+    checksum: String,
+    status: String,
+}
+
+impl RecordedMigration {
+    /// Rows the runner writes are `applied`; `adopted` rows come from the removed pre-ledger
+    /// adoption. Anything else, `failed` in particular, is a migration that never completed.
+    fn is_success(&self) -> bool {
+        matches!(self.status.as_str(), "applied" | "adopted")
+    }
+}
+
 /// Runs one migration under the runner lock, inside the transaction that also writes the ledger
-/// row. Execution and bookkeeping are therefore one atomic step: an interrupted run leaves no
-/// half claimed ledger, and a second replica re-reads the ledger under the same lock instead of
-/// acting on a snapshot taken before it was blocked. Returns whether this call applied the file.
+/// row (replacing a `failed` row an older runner left). Execution and bookkeeping are therefore
+/// one atomic step: an interrupted run leaves no half claimed ledger, and a second replica
+/// re-reads the ledger under the same lock instead of acting on a snapshot taken before it was
+/// blocked. Returns whether this call applied the file.
 async fn run_one_migration(db: &DatabaseConnection, name: &str, sql: &str) -> anyhow::Result<bool> {
     let txn = db.begin().await?;
     lock_migration_runner(&txn).await?;
@@ -110,7 +136,7 @@ async fn migration_is_recorded<C: ConnectionTrait>(conn: &C, name: &str) -> anyh
     let row = conn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT 1 AS present FROM schema_migrations WHERE name = $1",
+            "SELECT 1 AS present FROM schema_migrations WHERE name = $1 AND status IN ('applied', 'adopted')",
             vec![name.into()],
         ))
         .await?;
@@ -123,6 +149,11 @@ async fn record_migration_with_conn<C: ConnectionTrait>(conn: &C, name: &str, ch
         r"
             INSERT INTO schema_migrations (name, checksum, status, error, applied_at)
             VALUES ($1, $2, 'applied', NULL, now())
+            ON CONFLICT (name) DO UPDATE
+            SET checksum = EXCLUDED.checksum,
+                status = 'applied',
+                error = NULL,
+                applied_at = EXCLUDED.applied_at
         ",
         vec![name.into(), checksum.into()],
     ))
@@ -146,11 +177,11 @@ async fn record_migration_if_absent(db: &DatabaseConnection, name: &str, checksu
     Ok(())
 }
 
-async fn load_migration_ledger(db: &DatabaseConnection) -> anyhow::Result<HashMap<String, String>> {
+async fn load_migration_ledger(db: &DatabaseConnection) -> anyhow::Result<HashMap<String, RecordedMigration>> {
     let rows = db
         .query_all(Statement::from_string(
             DbBackend::Postgres,
-            "SELECT name, checksum FROM schema_migrations".to_string(),
+            "SELECT name, checksum, status FROM schema_migrations".to_string(),
         ))
         .await?;
 
@@ -158,7 +189,10 @@ async fn load_migration_ledger(db: &DatabaseConnection) -> anyhow::Result<HashMa
     for row in rows {
         ledger.insert(
             row.try_get::<String>("", "name")?,
-            row.try_get::<String>("", "checksum")?,
+            RecordedMigration {
+                checksum: row.try_get::<String>("", "checksum")?,
+                status: row.try_get::<String>("", "status")?,
+            },
         );
     }
     Ok(ledger)

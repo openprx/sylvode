@@ -17,6 +17,8 @@ name.
   and refuses to start when one fails, when a recorded file changed, or when the ledger records a
   file the build does not ship. A configuration that still contains `[migrations]` (`replay`,
   `continue_on_error`) is refused at start as an unknown section, so remove it before upgrading.
+- **Flow capability rollout markers.** Migration `0146` drops `flow_runtime_capability_rollouts`; the
+  column defaults stay and no start re-applies them.
 - **`project_types.default_connectors`.** Nothing read the column; migration `0144` drops it.
 - **Worker: `[ai_tasks] delivery_pool` is gone.** The worker always delivers through the checked
   connection pool; a configuration that still sets `delivery_pool` is refused at start, so remove the
