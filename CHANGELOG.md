@@ -30,8 +30,9 @@ name.
   `POST /api/v1/auth/register` 10, `POST /api/v1/auth/refresh` 60 and
   `GET /api/v1/auth/setup-status` 30; `login` is also limited to 10 attempts per account and address
   together per minute, and to 50 failed attempts per account in 15 minutes from any address (a
-  successful sign-in is not counted, so a stranger who knows an e-mail cannot lock the owner out from
-  the owner's own address). Over a limit the answer is `429` with `Retry-After`. The client address is the connection
+  successful sign-in is not counted, and an address that has signed in to the account within the last
+  30 days is not stopped by that cap, so a stranger who knows an e-mail cannot lock the owner out).
+  Over a limit the answer is `429` with `Retry-After`. The client address is the connection
   peer, or the forwarded client when the peer is in `trusted_proxies`; the limits are fixed.
 - **Sites: console fields and rules.** A site answers `url` and `url_mode` (`separate`: its own
   `allowed_origin`; `same_origin`: served by the API from `[site] assets_dir`, `public_url` + `mount_path`

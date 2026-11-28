@@ -328,6 +328,16 @@ pub async fn login(
         return Ok(refused);
     }
     let account = account_key(&req.email);
+    // A pair that has signed in before is known. The account's failure cap does not stop a known
+    // pair, or one attacker address keeping the cap used up would lock the owner out.
+    let pair = account_address_key(&req.email, &headers, &peer);
+    let known = match rate::is_over_limit(&state.db, RateBucket::AuthLoginKnown, &pair, 1).await {
+        Ok(known) => known.is_some(),
+        Err(error) => {
+            tracing::warn!(error = %error, "auth known-pair lookup unavailable");
+            return Err(ApiError::Internal);
+        }
+    };
     match rate::is_over_limit(
         &state.db,
         RateBucket::AuthLoginAccountFail,
@@ -336,8 +346,8 @@ pub async fn login(
     )
     .await
     {
-        Ok(None) => {}
-        Ok(Some(limited)) => return Ok(rate::too_many_requests(limited)),
+        Ok(Some(limited)) if !known => return Ok(rate::too_many_requests(limited)),
+        Ok(_) => {}
         Err(error) => {
             tracing::warn!(error = %error, "auth failed-login counter unavailable");
             return Err(ApiError::Internal);
@@ -346,14 +356,20 @@ pub async fn login(
     let row = match check_login_credentials(&state, &req.email, req.password).await {
         Ok(row) => row,
         Err(error) => {
+            // A known pair is never refused by the account's cap, even while its failures count.
             if matches!(error, ApiError::Unauthorized(_))
                 && let Some(refused) = limit(&state, RateBucket::AuthLoginAccountFail, &account).await?
+                && !known
             {
                 return Ok(refused);
             }
             return Err(error);
         }
     };
+    if let Err(error) = rate::enforce_with_limit(&state.db, RateBucket::AuthLoginKnown, &pair, u32::MAX).await {
+        // Signing in does not depend on remembering the pair.
+        tracing::warn!(error = %error, "auth known-pair record failed");
+    }
     let session_version = row
         .try_get::<i64>("", "session_version")
         .map_err(|_| ApiError::Internal)?;

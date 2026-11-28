@@ -517,3 +517,23 @@ test('a 429 answer carries a translatable message and the wait', async () => {
 		globalThis.fetch = original;
 	}
 });
+test('refreshAccessToken tells a temporary failure from a refusal', async () => {
+	const { ApiClient } = await import('../src/lib/api/client');
+	const original = globalThis.fetch;
+	try {
+		for (const [answer, expected] of [
+			[() => tooMany('1'), 'unavailable'],
+			[() => envelope(401), 'denied'],
+			[() => envelope(0, { tokens: { access_token: jwt('actor-a', 2) } }), 'refreshed']
+		] as const) {
+			const client = new ApiClient('');
+			client.installAuthSession(jwt('actor-a'), 'synthetic-refresh-a', 'actor-a');
+			globalThis.fetch = async () => answer();
+			assert.equal(await client.refreshAccessToken(), expected);
+			assert.equal(await client.ensureFreshAccessToken(), expected === 'refreshed');
+			client.clearAuth();
+		}
+	} finally {
+		globalThis.fetch = original;
+	}
+});

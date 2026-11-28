@@ -313,7 +313,7 @@ fn absolute(path: &Path) -> PathBuf {
 pub struct ServerConfig {
     pub app_name: Option<String>,
     pub bind_addr: Option<String>,
-    /// Reverse proxies whose `X-Forwarded-For` / `X-Real-IP` headers may be believed.
+    /// Reverse proxies whose `X-Forwarded-For` header may be believed (`X-Real-IP` is never read).
     /// `None` means the key was absent and the API applies its built-in default.
     pub trusted_proxies: Option<Vec<IpCidr>>,
     /// Absolute `http(s)` origin that links in e-mails start with, without a trailing slash.

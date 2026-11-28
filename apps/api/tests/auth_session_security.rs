@@ -426,7 +426,7 @@ async fn failed_logins_from_one_address_do_not_lock_the_owner_out_elsewhere() {
 }
 
 #[tokio::test]
-async fn an_account_with_too_many_failures_is_limited_from_every_address() {
+async fn an_account_over_its_failure_cap_still_admits_a_known_address_only() {
     let Some(scratch) = scratch("login_account_fail").await else {
         eprintln!("skipped: {TEST_DATABASE_URL_ENV} is not set");
         return;
@@ -434,22 +434,30 @@ async fn an_account_with_too_many_failures_is_limited_from_every_address() {
     let state = state_for(scratch.db.clone());
     let created = call_register(&state, "ada@example.com").await;
     assert_eq!(created["code"], 0, "{created}");
+    // The owner signs in once, from address 250, so that pair is known.
+    let sign_in = |last_octet: u8, password: &'static str| {
+        let state = state.clone();
+        async move {
+            let request =
+                serde_json::from_value::<LoginRequest>(json!({"email": "ada@example.com", "password": password}))
+                    .expect("login");
+            login(State(state), HeaderMap::new(), Some(peer(last_octet)), Json(request))
+                .await
+                .unwrap_or_else(IntoResponse::into_response)
+        }
+    };
+    assert_eq!(body_json(sign_in(250, "password1").await).await["code"], 0);
     // 50 failures, spread over addresses so no pair or address limit is hit first.
     for n in 0..50_u8 {
-        let request =
-            serde_json::from_value::<LoginRequest>(json!({"email": "ada@example.com", "password": "wrong-password"}))
-                .expect("login");
-        let response = login(State(state.clone()), HeaderMap::new(), Some(peer(n)), Json(request))
-            .await
-            .unwrap_or_else(IntoResponse::into_response);
-        assert_eq!(body_json(response).await["code"], 401);
+        assert_eq!(body_json(sign_in(n, "wrong-password").await).await["code"], 401);
     }
-    let request = serde_json::from_value::<LoginRequest>(json!({"email": "ada@example.com", "password": "password1"}))
-        .expect("login");
-    let response = login(State(state.clone()), HeaderMap::new(), Some(peer(200)), Json(request))
-        .await
-        .unwrap_or_else(IntoResponse::into_response);
-    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    // The cap is used up: an address that never signed in is limited, even with the right password.
+    let stranger = sign_in(200, "password1").await;
+    assert_eq!(stranger.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(stranger.headers().contains_key(axum::http::header::RETRY_AFTER));
+    // The owner still signs in from the known address, and a wrong password there is a plain 401.
+    assert_eq!(body_json(sign_in(250, "password1").await).await["code"], 0);
+    assert_eq!(body_json(sign_in(250, "wrong-password").await).await["code"], 401);
     scratch.drop_self().await;
 }
 

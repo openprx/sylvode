@@ -35,6 +35,9 @@ pub const DAY_WINDOW_SECS: u32 = 86_400;
 /// Length of the failed-login window per account, in seconds (15 minutes).
 pub const ACCOUNT_FAIL_WINDOW_SECS: u32 = 900;
 
+/// How long a signed-in (account, address) pair stays known, in seconds (30 days).
+pub const KNOWN_PAIR_WINDOW_SECS: u32 = 2_592_000;
+
 /// The database-backed buckets and their limits per window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RateBucket {
@@ -64,6 +67,10 @@ pub enum RateBucket {
     AuthLoginPair,
     /// Failed console logins, per account. Successful logins are not counted.
     AuthLoginAccountFail,
+    /// An (account, address) pair that has signed in: one row per pair, kept for 30 days from its
+    /// first hit in a window and renewed by the next sign-in after that. Not a limit: a row means
+    /// "known", and the account's failure cap does not apply to a known pair.
+    AuthLoginKnown,
     /// Registration requests, per client address.
     AuthRegisterIp,
     /// Session refreshes, per client address.
@@ -73,7 +80,7 @@ pub enum RateBucket {
 }
 
 impl RateBucket {
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::Authorize,
         Self::Decision,
         Self::TokenIp,
@@ -87,6 +94,7 @@ impl RateBucket {
         Self::AuthLoginIp,
         Self::AuthLoginPair,
         Self::AuthLoginAccountFail,
+        Self::AuthLoginKnown,
         Self::AuthRegisterIp,
         Self::AuthRefreshIp,
         Self::AuthSetupStatusIp,
@@ -107,6 +115,7 @@ impl RateBucket {
             Self::AuthLoginIp => "auth_login_ip",
             Self::AuthLoginPair => "auth_login_pair",
             Self::AuthLoginAccountFail => "auth_login_account_fail",
+            Self::AuthLoginKnown => "auth_login_known",
             Self::AuthRegisterIp => "auth_register_ip",
             Self::AuthRefreshIp => "auth_refresh_ip",
             Self::AuthSetupStatusIp => "auth_setup_status_ip",
@@ -118,6 +127,7 @@ impl RateBucket {
         match self {
             Self::InboundSourceDay => DAY_WINDOW_SECS,
             Self::AuthLoginAccountFail => ACCOUNT_FAIL_WINDOW_SECS,
+            Self::AuthLoginKnown => KNOWN_PAIR_WINDOW_SECS,
             _ => WINDOW_SECS,
         }
     }
@@ -132,6 +142,8 @@ impl RateBucket {
             Self::Authorize | Self::Revoke | Self::InboundAuthFail | Self::AuthLoginIp | Self::AuthSetupStatusIp => 30,
             Self::Decision | Self::StreamConnect | Self::AuthLoginPair | Self::AuthRegisterIp => 10,
             Self::AuthLoginAccountFail => 50,
+            // One hit makes a pair known.
+            Self::AuthLoginKnown => 1,
             Self::TokenIp | Self::AuthRefreshIp => 60,
             Self::TokenGrant => 20,
             Self::InboundSourceMinute => 120,
@@ -426,6 +438,7 @@ mod tests {
             (RateBucket::AuthLoginIp, "auth_login_ip", 30),
             (RateBucket::AuthLoginPair, "auth_login_pair", 10),
             (RateBucket::AuthLoginAccountFail, "auth_login_account_fail", 50),
+            (RateBucket::AuthLoginKnown, "auth_login_known", 1),
             (RateBucket::AuthRegisterIp, "auth_register_ip", 10),
             (RateBucket::AuthRefreshIp, "auth_refresh_ip", 60),
             (RateBucket::AuthSetupStatusIp, "auth_setup_status_ip", 30),

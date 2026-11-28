@@ -486,7 +486,15 @@ export class LoroObjectSession implements ObjectSessionContract {
 		if (ticketResult.code === 401) {
 			// `ui-surface-v1.md` "连接、refresh 与恢复状态机" step 3: "ticket 401：最多一次
 			// `ensureFreshAccessToken` + 新 ticket；仍失败进入 `auth_required`，停止自动 loop."
-			const refreshed = await apiClient.ensureFreshAccessToken(this.authEpoch);
+			const outcome = await apiClient.refreshAccessToken(this.authEpoch);
+			if (!this.sameAuthSession() || this.disposed) return;
+			// A refresh answered 429 or 5xx leaves the session intact: try again later, do not
+			// report the person as signed out.
+			if (outcome === 'unavailable') {
+				this.scheduleReconnect();
+				return;
+			}
+			const refreshed = outcome === 'refreshed';
 			if (refreshed && this.sameAuthSession() && !this.disposed) {
 				ticketResult = await this.commandService.createTicket({
 					authorization_notifications: true,

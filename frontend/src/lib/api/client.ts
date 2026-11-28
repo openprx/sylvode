@@ -80,7 +80,7 @@ function rateLimited<T>(res: Pick<Response, 'headers'>): ApiResult<T> {
 
 /** What a token refresh came to: a new token, a refusal (sign in again), or a temporary failure
  * that leaves the session as it is. */
-type RefreshOutcome = 'refreshed' | 'denied' | 'unavailable';
+export type RefreshOutcome = 'refreshed' | 'denied' | 'unavailable';
 
 /** Local cancellation only: an earlier legitimate server mutation may already have applied. */
 export function authSessionChanged<T>(): ApiResult<T> {
@@ -355,7 +355,16 @@ export class ApiClient {
 	 * Resolves `true` only when the refresh actually produced a new access token.
 	 */
 	async ensureFreshAccessToken(epoch = this.authEpoch): Promise<boolean> {
-		return (await this.refreshAccessTokenOnce(epoch)) === 'refreshed';
+		return (await this.refreshAccessToken(epoch)) === 'refreshed';
+	}
+
+	/**
+	 * Like `ensureFreshAccessToken`, but says why it failed: `denied` means sign in again,
+	 * `unavailable` means the refresh was answered 429 or 5xx and the session is intact, so the
+	 * caller should try again later instead of treating the person as signed out.
+	 */
+	async refreshAccessToken(epoch = this.authEpoch): Promise<RefreshOutcome> {
+		return this.refreshAccessTokenOnce(epoch);
 	}
 
 	async request<T>(
