@@ -266,8 +266,23 @@ pub async fn approve_in(
     write(tx, admin, installation_id, request, &prepared).await
 }
 
+/// Takes the share lock on the package's publisher key and refuses `installation_package_revoked`
+/// when the key is no longer active. This is the first lock of every writer that also locks the
+/// installation (see [`store::lock_installation`] for the global order).
+///
+/// # Errors
+/// `installation_package_revoked`, or a database failure.
+pub async fn lock_key(tx: &impl ConnectionTrait, stored: &open::StoredPackage) -> Result<(), ApiError> {
+    if crate::packages::keys_lock_active(tx, stored.publisher_key_id).await? {
+        Ok(())
+    } else {
+        Err(refuse(RefusalCode::InstallationPackageRevoked))
+    }
+}
+
 /// Refuses `installation_package_revoked` unless the package's key is active and the package still
-/// installable, holding a share lock on the key until the transaction ends.
+/// installable, holding a share lock on the key until the transaction ends. A writer that locks the
+/// installation calls [`lock_key`] before locking it; the lock taken here is then already held.
 ///
 /// # Errors
 /// `installation_package_revoked`, or a database failure.
@@ -299,11 +314,13 @@ async fn write(
         opened,
         checked,
     } = prepared;
+    // Lock order: the publisher key first, then the installation (see `store::lock_installation`).
+    // The key was checked before the (slow) verification; check it again under a lock that makes a
+    // concurrent revocation wait, so a revoked key never ends up with an active installation.
+    lock_key(tx, stored).await?;
     let installation = store::lock_installation(tx, installation_id)
         .await?
         .ok_or_else(|| ApiError::not_found("installation not found"))?;
-    // The key was checked before the (slow) verification; check it again under a lock that makes a
-    // concurrent revocation wait, so a revoked key never ends up with an active installation.
     ensure_key_active(tx, installation.workspace_id, stored).await?;
     if installation.status == "revoked" {
         return Err(refuse(RefusalCode::InstallationRevoked));

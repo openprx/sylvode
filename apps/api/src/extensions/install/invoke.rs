@@ -22,7 +22,7 @@ use super::live::{self, LoadError};
 use crate::catalogue::{Invoker, Principal, Refusal, RefusalCode};
 use crate::entities::workspace_member::WorkspaceRole;
 use crate::error::ApiError;
-use crate::extensions::host::{World, invoke};
+use crate::extensions::host::{Source, World, invoke};
 use crate::packages::open;
 use crate::response::ApiResponse;
 
@@ -94,7 +94,15 @@ pub async fn invoke_action(
     };
     let input = serde_json::to_string(&body.input)
         .map_err(|_| ApiError::bad_request_coded("input_invalid", "the input is not JSON"))?;
-    let outcome = invoke(&state, &principal, &bytes, World::Action, &action, &input).await;
+    let outcome = invoke(
+        &state,
+        &principal,
+        Source::Bytes(&bytes),
+        World::Action,
+        &action,
+        &input,
+    )
+    .await;
     match outcome.result {
         Ok(output) => Ok(ApiResponse::success(json!({
             "ok": true,

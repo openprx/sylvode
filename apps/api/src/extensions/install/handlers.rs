@@ -516,6 +516,12 @@ async fn change_status(
 ) -> Result<Value, ApiError> {
     let (_, admin) = access::installation_for_admin(state, claims, installation_id).await?;
     let tx = state.db.begin().await?;
+    // Lock order (see `store::lock_installation`): the publisher key before the installation.
+    let locked_key = if matches!(change, Change::Enable) {
+        lock_key_of_active_generation(&tx, installation_id).await?
+    } else {
+        None
+    };
     let row = store::lock_installation(&tx, installation_id)
         .await?
         .ok_or_else(not_found)?;
@@ -534,7 +540,7 @@ async fn change_status(
             ))
             .await?;
         }
-        Change::Enable => enable(&tx, &row).await?,
+        Change::Enable => enable(&tx, &row, locked_key).await?,
         Change::Revoke => {
             tx.execute(Statement::from_sql_and_values(
                 DbBackend::Postgres,
@@ -559,9 +565,37 @@ async fn change_status(
     Ok(with_field(answer, "forms_using_rules", Value::Array(forms)))
 }
 
+/// Before the installation row is locked: reads the package of the installation's active generation
+/// and takes the share lock on its publisher key. Returns the key row, or `None` when there is no
+/// generation to enable (the locked checks in [`enable`] then refuse).
+async fn lock_key_of_active_generation(
+    tx: &impl ConnectionTrait,
+    installation_id: Uuid,
+) -> Result<Option<Uuid>, ApiError> {
+    let Some(row) = store::load_installation(tx, installation_id).await? else {
+        return Ok(None);
+    };
+    let generations = store::generations_of(tx, installation_id).await?;
+    let Some(active) = generations
+        .iter()
+        .find(|generation| Some(generation.generation) == row.active_generation && generation.status == "approved")
+    else {
+        return Ok(None);
+    };
+    let Some(stored) = open::find_by_row(tx, row.workspace_id, active.package_row_id).await? else {
+        return Ok(None);
+    };
+    super::approve::lock_key(tx, &stored).await?;
+    Ok(Some(stored.publisher_key_id))
+}
+
 /// Enabling needs a package that is still installable and, after `approver_lost`, an approver who is
 /// an administrator again (otherwise the installation must be approved again).
-async fn enable(tx: &impl ConnectionTrait, row: &InstallationRow) -> Result<(), ApiError> {
+///
+/// `locked_key` is the key row [`lock_key_of_active_generation`] locked before the installation was
+/// locked; when the active generation changed in between and uses another key, the call refuses
+/// `installation_generation_stale` rather than lock a key out of order.
+async fn enable(tx: &impl ConnectionTrait, row: &InstallationRow, locked_key: Option<Uuid>) -> Result<(), ApiError> {
     if row.status != "disabled" {
         return Err(refuse(RefusalCode::InstallationNotActive));
     }
@@ -575,6 +609,9 @@ async fn enable(tx: &impl ConnectionTrait, row: &InstallationRow) -> Result<(), 
         .ok_or_else(|| ApiError::not_found("package not found"))?;
     if !stored.installable || stored.key_status != "active" {
         return Err(refuse(RefusalCode::InstallationPackageRevoked));
+    }
+    if locked_key != Some(stored.publisher_key_id) {
+        return Err(refuse(RefusalCode::InstallationGenerationStale));
     }
     super::approve::ensure_key_active(tx, row.workspace_id, &stored).await?;
     if row.disabled_reason.as_deref() == Some("approver_lost") {

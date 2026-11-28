@@ -41,6 +41,16 @@ pub async fn load_installation(db: &impl ConnectionTrait, id: Uuid) -> Result<Op
 }
 
 /// Takes the row lock that serialises approve, disable, enable, revoke and upgrade of one installation.
+///
+/// Global lock order (one order for every writer, so two of them can never wait for each other):
+///
+/// 1. the `publisher_keys` row: `FOR SHARE` by approve and enable (`approve::lock_key`), the
+///    `UPDATE` of a revocation (`packages::keys`);
+/// 2. the `installations` row: this lock, and the `UPDATE` of `disable_for_revoked_key` that a
+///    revocation runs after step 1.
+///
+/// A writer that needs both takes the key first. Writers that take only the installation row
+/// (disable, revoke, reject, upgrade) cannot take part in a cycle.
 pub async fn lock_installation(db: &impl ConnectionTrait, id: Uuid) -> Result<Option<InstallationRow>, ApiError> {
     Ok(InstallationRow::find_by_statement(stmt(
         format!("SELECT {INSTALLATION_COLUMNS} FROM installations WHERE id = $1 FOR UPDATE"),
