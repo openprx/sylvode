@@ -6,7 +6,7 @@
 //! The site router never runs under the console's `CorsLayer::permissive()` or its 200 MiB body
 //! limit: `router/mod.rs` merges it after those layers are applied.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
@@ -265,59 +265,121 @@ pub(crate) fn client_address(headers: &HeaderMap, peer: Option<SocketAddr>) -> I
     crate::security::client_ip(headers, peer, &crate::config::runtime().trusted_proxies)
 }
 
-/// In-process fixed windows, keyed by bucket and identity, each entry with its own window length.
-/// Bounded: past the cap, expired entries are dropped; if the table is still full, a new key is
-/// refused (fail closed) and every existing window keeps counting.
-pub(crate) struct Windows {
-    table: Mutex<HashMap<String, Window>>,
-    capacity: usize,
+/// The rate-limit buckets of the site API. Each has its own bounded table and a fixed window
+/// length, so one bucket filling up never refuses keys of another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Bucket {
+    /// Every request, per client address (per minute).
+    Request,
+    /// Form submissions, per site, binding and client address (per hour).
+    Submit,
+    /// Operator sign-in attempts, per client address (per minute).
+    LoginAddress,
+    /// Operator sign-in attempts, per e-mail (per minute).
+    LoginEmail,
+}
+
+impl Bucket {
+    const COUNT: usize = 4;
+
+    const fn index(self) -> usize {
+        match self {
+            Self::Request => 0,
+            Self::Submit => 1,
+            Self::LoginAddress => 2,
+            Self::LoginEmail => 3,
+        }
+    }
+
+    const fn window(self) -> Duration {
+        match self {
+            Self::Submit => HOUR,
+            Self::Request | Self::LoginAddress | Self::LoginEmail => MINUTE,
+        }
+    }
+}
+
+/// One bucket's table: a key map plus the keys in the order their windows started. Every window of
+/// a bucket has the same length, so the oldest windows are the first to expire and expiry only ever
+/// looks at the front of the queue (amortised constant time, no scan of the table).
+struct Table {
+    windows: HashMap<String, Window>,
+    started: VecDeque<(Instant, String)>,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct Window {
     started: Instant,
     hits: u32,
-    length: Duration,
 }
 
-const MAX_WINDOWS: usize = 100_000;
+impl Table {
+    fn new() -> Self {
+        Self {
+            windows: HashMap::new(),
+            started: VecDeque::new(),
+        }
+    }
+
+    /// Drops the windows that have run out; the queue holds exactly the live windows afterwards.
+    fn expire(&mut self, now: Instant, length: Duration) {
+        while let Some((started, _)) = self.started.front() {
+            if now.duration_since(*started) < length {
+                break;
+            }
+            if let Some((_, key)) = self.started.pop_front() {
+                self.windows.remove(&key);
+            }
+        }
+    }
+}
+
+/// In-process fixed windows, one bounded table per [`Bucket`]. Past its cap a table first drops its
+/// expired windows; if it is still full a new key is refused (fail closed) and every existing
+/// window keeps counting.
+pub(crate) struct Windows {
+    tables: [Mutex<Table>; Bucket::COUNT],
+    capacity: usize,
+}
+
+const MAX_WINDOWS: usize = 50_000;
 
 impl Windows {
     fn new(capacity: usize) -> Self {
         Self {
-            table: Mutex::new(HashMap::new()),
+            tables: [
+                Mutex::new(Table::new()),
+                Mutex::new(Table::new()),
+                Mutex::new(Table::new()),
+                Mutex::new(Table::new()),
+            ],
             capacity,
         }
     }
 
     /// Counts a hit; `Err(retry_after_secs)` when the window already holds `limit` hits, or when
-    /// the table is full and `key` is new.
-    pub(crate) fn hit(&self, key: String, limit: u32, window: Duration) -> Result<(), u64> {
+    /// the bucket's table is full and `key` is new.
+    pub(crate) fn hit(&self, bucket: Bucket, key: String, limit: u32) -> Result<(), u64> {
+        let length = bucket.window();
         let now = Instant::now();
-        let mut table = self.table.lock();
-        if table.len() >= self.capacity && !table.contains_key(&key) {
-            table.retain(|_, entry| now.duration_since(entry.started) < entry.length);
-            if table.len() >= self.capacity {
-                return Err(window.as_secs().clamp(1, 60));
+        let mut table = self.tables[bucket.index()].lock();
+        table.expire(now, length);
+        if let Some(entry) = table.windows.get_mut(&key) {
+            if entry.hits >= limit {
+                let left = length.saturating_sub(now.duration_since(entry.started));
+                return Err(left.as_secs().max(1));
             }
+            entry.hits += 1;
+            return Ok(());
         }
-        let entry = table.entry(key).or_insert(Window {
-            started: now,
-            hits: 0,
-            length: window,
-        });
-        if now.duration_since(entry.started) >= entry.length {
-            *entry = Window {
-                started: now,
-                hits: 0,
-                length: window,
-            };
+        if table.windows.len() >= self.capacity {
+            return Err(length.as_secs().clamp(1, 60));
         }
-        if entry.hits >= limit {
-            let left = entry.length.saturating_sub(now.duration_since(entry.started));
-            return Err(left.as_secs().max(1));
+        if limit == 0 {
+            return Err(length.as_secs().max(1));
         }
-        entry.hits += 1;
+        table.started.push_back((now, key.clone()));
+        table.windows.insert(key, Window { started: now, hits: 1 });
         drop(table);
         Ok(())
     }
@@ -397,7 +459,7 @@ async fn admit(state: &AppState, request: &mut Request) -> Result<Admitted, Site
     let peer = request.extensions().get::<ConnectInfo<SocketAddr>>().map(|info| info.0);
     let address = address_key(client_address(headers, peer));
     WINDOWS
-        .hit(format!("req:{address}"), REQUESTS_PER_MINUTE, MINUTE)
+        .hit(Bucket::Request, address.clone(), REQUESTS_PER_MINUTE)
         .map_err(SiteError::rate_limited)?;
     request.extensions_mut().insert(ClientAddress(address));
     request.extensions_mut().insert(site);
@@ -528,33 +590,34 @@ mod tests {
     }
 
     #[test]
-    fn windows_refuse_past_the_limit() {
+    fn a_window_counts_to_its_limit() {
         let windows = Windows::new(16);
-        assert!(windows.hit("k".into(), 2, MINUTE).is_ok());
-        assert!(windows.hit("k".into(), 2, MINUTE).is_ok());
-        assert!(windows.hit("k".into(), 2, MINUTE).is_err());
-        assert!(windows.hit("other".into(), 2, MINUTE).is_ok());
+        assert!(windows.hit(Bucket::Request, "k".into(), 2).is_ok());
+        assert!(windows.hit(Bucket::Request, "k".into(), 2).is_ok());
+        assert!(windows.hit(Bucket::Request, "k".into(), 2).is_err());
+        assert!(windows.hit(Bucket::Request, "other".into(), 2).is_ok());
     }
 
     #[test]
-    fn a_full_table_refuses_new_keys_and_keeps_existing_windows() {
-        let windows = Windows::new(3);
+    fn a_full_bucket_refuses_new_keys_without_touching_other_buckets() {
+        let windows = Windows::new(2);
         for _ in 0..5 {
-            let _ = windows.hit("login-email:a@example.com".into(), 5, MINUTE);
+            let _ = windows.hit(Bucket::LoginEmail, "a@example.com".into(), 5);
         }
-        assert!(windows.hit("submit:x".into(), 20, HOUR).is_ok());
-        assert!(windows.hit("req:1".into(), 120, MINUTE).is_ok());
+        assert!(windows.hit(Bucket::LoginEmail, "b@example.com".into(), 5).is_ok());
         assert!(
-            windows.hit("req:2".into(), 120, MINUTE).is_err(),
-            "a new key is refused when full"
+            windows.hit(Bucket::LoginEmail, "c@example.com".into(), 5).is_err(),
+            "a new key is refused when its bucket is full"
         );
         assert!(
-            windows.hit("login-email:a@example.com".into(), 5, MINUTE).is_err(),
+            windows.hit(Bucket::LoginEmail, "a@example.com".into(), 5).is_err(),
             "the used-up login window survives"
         );
+        assert!(windows.hit(Bucket::Submit, "x".into(), 20).is_ok());
+        assert!(windows.hit(Bucket::Request, "1".into(), 120).is_ok());
         assert!(
-            windows.hit("submit:x".into(), 20, HOUR).is_ok(),
-            "the hour window survives"
+            windows.hit(Bucket::Submit, "x".into(), 20).is_ok(),
+            "another bucket is not starved"
         );
     }
 

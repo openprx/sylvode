@@ -19,7 +19,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
-use super::http::{ClientAddress, HOUR, MINUTE, SiteError, SiteJson, WINDOWS, empty_object, ok, set_cookie};
+use super::http::{Bucket, ClientAddress, HOUR, SiteError, SiteJson, WINDOWS, empty_object, ok, set_cookie};
 use super::layouts;
 use super::projection::{Audience, effective_read, field_items};
 use super::records::{self, Binding, ListRequest, MAX_PER_PAGE};
@@ -312,9 +312,9 @@ pub async fn submit_record(
     }
     WINDOWS
         .hit(
-            format!("submit:{}:{}:{}", caller.site.id, binding.row.binding_key, address.0),
+            Bucket::Submit,
+            format!("{}:{}:{}", caller.site.id, binding.row.binding_key, address.0),
             submit.max_per_hour,
-            HOUR,
         )
         .map_err(SiteError::rate_limited)?;
 
@@ -535,10 +535,10 @@ pub async fn login(
     }
     let email = body.email.trim().to_lowercase();
     WINDOWS
-        .hit(format!("login-ip:{}", address.0), LOGINS_PER_MINUTE, MINUTE)
+        .hit(Bucket::LoginAddress, address.0.clone(), LOGINS_PER_MINUTE)
         .map_err(SiteError::rate_limited)?;
     WINDOWS
-        .hit(format!("login-email:{email}"), LOGINS_PER_MINUTE, MINUTE)
+        .hit(Bucket::LoginEmail, email.clone(), LOGINS_PER_MINUTE)
         .map_err(SiteError::rate_limited)?;
     let row = match crate::routes::auth::check_login_credentials(&state, &email, body.password).await {
         Ok(row) => row,
