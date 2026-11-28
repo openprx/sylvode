@@ -40,6 +40,18 @@ async fn limit(state: &AppState, bucket: RateBucket, key: &RateKey) -> Result<Op
     }
 }
 
+/// The answer to a refused rate hit: the standard `429`, or an internal error when the counter
+/// store is unavailable.
+fn refusal(error: RateError) -> Result<Response, ApiError> {
+    match error {
+        RateError::Limited(limited) => Ok(rate::too_many_requests(limited)),
+        RateError::Store(error) => {
+            tracing::warn!(error = %error, "auth rate counter unavailable");
+            Err(ApiError::Internal)
+        }
+    }
+}
+
 /// The key of the caller's address: the peer, or the forwarded client when the peer is a
 /// configured trusted proxy (see [`rate::client_address`]).
 fn address_key(headers: &HeaderMap, peer: &Peer) -> RateKey {
@@ -312,87 +324,28 @@ pub async fn login(
     peer: Peer,
     Json(req): Json<LoginRequest>,
 ) -> Result<Response, ApiError> {
-    if let Some(refused) = limit(&state, RateBucket::AuthLoginIp, &address_key(&headers, &peer)).await? {
-        return Ok(refused);
-    }
-    // An attempt from one address at one account is limited tightly. The account as a whole is
-    // limited only by its failures, with a higher ceiling and never by successes, so a stranger
-    // who knows an e-mail cannot lock the owner out from the owner's own address.
-    if let Some(refused) = limit(
-        &state,
-        RateBucket::AuthLoginPair,
-        &account_address_key(&req.email, &headers, &peer),
-    )
-    .await?
-    {
-        return Ok(refused);
-    }
-    let account = account_key(&req.email);
-    // A pair that has signed in before is known. The account's failure cap does not stop a known
-    // pair, or one attacker address keeping the cap used up would lock the owner out.
-    let pair = account_address_key(&req.email, &headers, &peer);
-    let mut known = match rate::is_over_limit(&state.db, RateBucket::AuthLoginKnown, &pair, 1).await {
-        Ok(known) => known.is_some(),
-        Err(error) => {
-            tracing::warn!(error = %error, "auth known-pair lookup unavailable");
-            return Err(ApiError::Internal);
-        }
+    let keys = rate::LoginKeys {
+        ip: address_key(&headers, &peer),
+        pair: account_address_key(&req.email, &headers, &peer),
+        account: account_key(&req.email),
     };
-    // The exemption has a daily ceiling of failures per account: over it, known pairs are held to
-    // the account cap like unknown ones.
-    if known {
-        match rate::is_over_limit(
-            &state.db,
-            RateBucket::AuthLoginKnownFail,
-            &account,
-            RateBucket::AuthLoginKnownFail.effective_limit(),
-        )
-        .await
-        {
-            Ok(over) => known = over.is_none(),
-            Err(error) => {
-                tracing::warn!(error = %error, "auth known-pair failure counter unavailable");
-                return Err(ApiError::Internal);
-            }
-        }
-    }
-    match rate::is_over_limit(
-        &state.db,
-        RateBucket::AuthLoginAccountFail,
-        &account,
-        RateBucket::AuthLoginAccountFail.effective_limit(),
-    )
-    .await
-    {
-        Ok(Some(limited)) if !known => return Ok(rate::too_many_requests(limited)),
-        Ok(_) => {}
-        Err(error) => {
-            tracing::warn!(error = %error, "auth failed-login counter unavailable");
-            return Err(ApiError::Internal);
-        }
-    }
+    let buckets = rate::LoginBuckets::CONSOLE;
+    let known = match rate::login_admit(&state.db, buckets, &keys).await {
+        Ok(known) => known,
+        Err(error) => return refusal(error),
+    };
     let row = match check_login_credentials(&state, &req.email, req.password).await {
         Ok(row) => row,
         Err(error) => {
-            // A known pair is never refused by the account's cap, even while its failures count;
-            // they count against the daily ceiling of known pairs instead.
-            if matches!(error, ApiError::Unauthorized(_)) {
-                if let Some(refused) = limit(&state, RateBucket::AuthLoginAccountFail, &account).await?
-                    && !known
-                {
-                    return Ok(refused);
-                }
-                if known && let Some(refused) = limit(&state, RateBucket::AuthLoginKnownFail, &account).await? {
-                    return Ok(refused);
-                }
+            if matches!(error, ApiError::Unauthorized(_))
+                && let Err(refused) = rate::login_failed(&state.db, buckets, &keys, known).await
+            {
+                return refusal(refused);
             }
             return Err(error);
         }
     };
-    if let Err(error) = rate::touch_window(&state.db, RateBucket::AuthLoginKnown, &pair).await {
-        // Signing in does not depend on remembering the pair.
-        tracing::warn!(error = %error, "auth known-pair record failed");
-    }
+    rate::login_succeeded(&state.db, buckets, &keys).await;
     let session_version = row
         .try_get::<i64>("", "session_version")
         .map_err(|_| ApiError::Internal)?;

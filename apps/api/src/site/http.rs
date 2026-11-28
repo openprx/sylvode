@@ -273,28 +273,22 @@ pub(crate) enum Bucket {
     Request,
     /// Form submissions, per site, binding and client address (per hour).
     Submit,
-    /// Operator sign-in attempts, per client address (per minute).
-    LoginAddress,
-    /// Operator sign-in attempts, per e-mail (per minute).
-    LoginEmail,
 }
 
 impl Bucket {
-    const COUNT: usize = 4;
+    const COUNT: usize = 2;
 
     const fn index(self) -> usize {
         match self {
             Self::Request => 0,
             Self::Submit => 1,
-            Self::LoginAddress => 2,
-            Self::LoginEmail => 3,
         }
     }
 
     const fn window(self) -> Duration {
         match self {
             Self::Submit => HOUR,
-            Self::Request | Self::LoginAddress | Self::LoginEmail => MINUTE,
+            Self::Request => MINUTE,
         }
     }
 }
@@ -347,12 +341,7 @@ const MAX_WINDOWS: usize = 50_000;
 impl Windows {
     fn new(capacity: usize) -> Self {
         Self {
-            tables: [
-                Mutex::new(Table::new()),
-                Mutex::new(Table::new()),
-                Mutex::new(Table::new()),
-                Mutex::new(Table::new()),
-            ],
+            tables: [Mutex::new(Table::new()), Mutex::new(Table::new())],
             capacity,
         }
     }
@@ -605,19 +594,18 @@ mod tests {
     fn a_full_bucket_refuses_new_keys_without_touching_other_buckets() {
         let windows = Windows::new(2);
         for _ in 0..5 {
-            let _ = windows.hit(Bucket::LoginEmail, "a@example.com".into(), 5);
+            let _ = windows.hit(Bucket::Request, "a".into(), 5);
         }
-        assert!(windows.hit(Bucket::LoginEmail, "b@example.com".into(), 5).is_ok());
+        assert!(windows.hit(Bucket::Request, "b".into(), 5).is_ok());
         assert!(
-            windows.hit(Bucket::LoginEmail, "c@example.com".into(), 5).is_err(),
+            windows.hit(Bucket::Request, "c".into(), 5).is_err(),
             "a new key is refused when its bucket is full"
         );
         assert!(
-            windows.hit(Bucket::LoginEmail, "a@example.com".into(), 5).is_err(),
-            "the used-up login window survives"
+            windows.hit(Bucket::Request, "a".into(), 5).is_err(),
+            "the used-up window survives"
         );
         assert!(windows.hit(Bucket::Submit, "x".into(), 20).is_ok());
-        assert!(windows.hit(Bucket::Request, "1".into(), 120).is_ok());
         assert!(
             windows.hit(Bucket::Submit, "x".into(), 20).is_ok(),
             "another bucket is not starved"
