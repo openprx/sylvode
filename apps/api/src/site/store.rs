@@ -203,8 +203,8 @@ pub async fn update_slug(db: &impl ConnectionTrait, id: Uuid, slug: &str) -> Res
     })
 }
 
-/// The installation behind each of these sites: the one whose pages the site holds in the newest
-/// generation (a site holds pages of one installation, see `site_of_installation`).
+/// The installation behind each of these sites: the one whose `site_id` is the site (a site holds the
+/// pages of one installation). A revoked installation is no longer shown.
 pub async fn installations_of_sites(
     db: &impl ConnectionTrait,
     site_ids: &[Uuid],
@@ -216,10 +216,8 @@ pub async fn installations_of_sites(
         package_key: String,
     }
     let rows = Row::find_by_statement(statement(
-        "SELECT DISTINCT ON (p.site_id) p.site_id, i.id, i.package_key \
-         FROM site_pages p JOIN installations i ON i.id = p.installation_id \
-         WHERE p.site_id = ANY($1) \
-         ORDER BY p.site_id, p.generation DESC NULLS LAST, p.id",
+        "SELECT DISTINCT ON (site_id) site_id, id, package_key FROM installations \
+         WHERE site_id = ANY($1) AND status <> 'revoked' ORDER BY site_id, created_at DESC, id",
         vec![site_ids.to_vec().into()],
     ))
     .all(db)
@@ -238,14 +236,14 @@ pub async fn installations_of_sites(
         .collect())
 }
 
-/// The site that holds the pages of an installation's newest generation.
+/// The site that holds the pages of an installation (`installations.site_id`).
 pub async fn site_of_installation(db: &impl ConnectionTrait, installation_id: Uuid) -> Result<Option<Uuid>, ApiError> {
     #[derive(FromQueryResult)]
     struct Row {
         site_id: Uuid,
     }
     Ok(Row::find_by_statement(statement(
-        "SELECT site_id FROM site_pages WHERE installation_id = $1 ORDER BY generation DESC NULLS LAST, id LIMIT 1",
+        "SELECT site_id FROM installations WHERE id = $1 AND site_id IS NOT NULL",
         vec![installation_id.into()],
     ))
     .one(db)

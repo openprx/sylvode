@@ -533,3 +533,98 @@ async fn a_package_route_taken_by_a_user_page_refuses_the_approval() {
     assert!(format!("{error:?}").contains("site_route_taken"), "{error:?}");
     scratch.drop_self().await;
 }
+
+#[tokio::test]
+async fn upgrades_reuse_the_linked_site_even_after_an_upgrade_without_pages() {
+    use crate::extensions::install::artefacts::{PlacementScope, create_pages};
+    use std::collections::BTreeMap;
+
+    let scratch = scratch_or_skip!("site_pkg_pages_link_reuse");
+    let db = &scratch.db;
+    let tenant = seed_tenant(db, "a").await;
+    let installation = seed_installation(db, &tenant, "acme/desk", "active", 1).await;
+    let site = installed_site(db, &tenant, installation, &manifest_with_page("/")).await;
+    assert_eq!(store::site_of_installation(db, installation).await.unwrap(), Some(site));
+    let linked = store::installations_of_sites(db, &[site]).await.unwrap();
+    assert_eq!(linked.get(&site).map(|link| link.id), Some(installation));
+
+    let scope = PlacementScope {
+        workspace_id: tenant.workspace_id,
+        project_id: Some(tenant.project_id),
+    };
+    // Generation 2 has no pages, generation 3 has some: the same site serves them.
+    let mut empty = manifest_with_page("/");
+    empty.pages.clear();
+    create_pages(db, &empty, &BTreeMap::new(), scope, installation, 2, tenant.member_id)
+        .await
+        .unwrap();
+    exec(
+        db,
+        "UPDATE installations SET active_generation = 3 WHERE id = $1",
+        vec![installation.into()],
+    )
+    .await;
+    let layout = seed_layout(db, &tenant, site, "home", Some((installation, 3))).await;
+    let layouts = BTreeMap::from([("home".to_string(), layout)]);
+    create_pages(
+        db,
+        &manifest_with_page("/help"),
+        &layouts,
+        scope,
+        installation,
+        3,
+        tenant.member_id,
+    )
+    .await
+    .unwrap();
+    assert_eq!(routes(db, site).await, vec!["/help".to_string()]);
+    assert_eq!(store::site_of_installation(db, installation).await.unwrap(), Some(site));
+    scratch.drop_self().await;
+}
+
+#[tokio::test]
+async fn deleting_the_site_nulls_the_link_and_the_next_upgrade_creates_a_fresh_draft_site() {
+    use crate::extensions::install::artefacts::{PlacementScope, create_pages};
+    use std::collections::BTreeMap;
+
+    let scratch = scratch_or_skip!("site_pkg_pages_link_deleted");
+    let db = &scratch.db;
+    let tenant = seed_tenant(db, "a").await;
+    let installation = seed_installation(db, &tenant, "acme/desk", "active", 1).await;
+    let site = installed_site(db, &tenant, installation, &manifest_with_page("/")).await;
+    exec(db, "DELETE FROM sites WHERE id = $1", vec![site.into()]).await;
+    assert_eq!(store::site_of_installation(db, installation).await.unwrap(), None);
+
+    exec(
+        db,
+        "UPDATE installations SET active_generation = 2 WHERE id = $1",
+        vec![installation.into()],
+    )
+    .await;
+    let scope = PlacementScope {
+        workspace_id: tenant.workspace_id,
+        project_id: Some(tenant.project_id),
+    };
+    let layout = seed_layout(db, &tenant, Uuid::new_v4(), "home", Some((installation, 2))).await;
+    let layouts = BTreeMap::from([("home".to_string(), layout)]);
+    create_pages(
+        db,
+        &manifest_with_page("/"),
+        &layouts,
+        scope,
+        installation,
+        2,
+        tenant.member_id,
+    )
+    .await
+    .unwrap();
+    let fresh = store::site_of_installation(db, installation)
+        .await
+        .unwrap()
+        .expect("a new site is linked");
+    assert_ne!(fresh, site);
+    assert_eq!(routes(db, fresh).await, vec!["/".to_string()]);
+    let status = store::load_site(db, fresh).await.unwrap().map(|row| row.status);
+    assert_eq!(status.as_deref(), Some("draft"));
+    scratch.drop_self().await;
+}

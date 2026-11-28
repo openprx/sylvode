@@ -138,7 +138,6 @@ pub async fn create_pages(
     let project_id = scope
         .project_id
         .ok_or_else(|| ApiError::bad_request_coded("pages_need_project", "site pages are installed into a project"))?;
-    // The site is found by the earlier generation's pages, so it is looked up before they are deleted.
     let site_id = site_of_installation(tx, scope.workspace_id, project_id, installation_id, created_by).await?;
     // The site serves the active generation only: an upgrade replaces the earlier generations' pages.
     tx.execute(delete_old).await?;
@@ -194,9 +193,10 @@ pub async fn create_pages(
     Ok(())
 }
 
-/// The site that already holds pages of this installation, whatever its status (an upgrade replaces
-/// the earlier generation's pages there, so a published site serves the new generation at once), or a
-/// new `draft` site named after the project. A package never publishes a site.
+/// The installation's site (`installations.site_id`, read under a row lock), whatever its status: an
+/// upgrade replaces the earlier generation's pages there, so a published site serves the new
+/// generation at once. Without one (a first install, or the site was deleted) a new `draft` site named
+/// after the project is created and linked. A package never publishes a site.
 async fn site_of_installation(
     tx: &impl ConnectionTrait,
     workspace_id: Uuid,
@@ -206,8 +206,7 @@ async fn site_of_installation(
 ) -> Result<Uuid, ApiError> {
     let existing = Id::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT p.site_id AS id FROM site_pages p JOIN sites s ON s.id = p.site_id \
-         WHERE p.installation_id = $1 ORDER BY p.generation DESC, p.id LIMIT 1",
+        "SELECT site_id AS id FROM installations WHERE id = $1 AND site_id IS NOT NULL FOR UPDATE",
         vec![installation_id.into()],
     ))
     .one(tx)
@@ -217,7 +216,7 @@ async fn site_of_installation(
     }
     // Slugs are global and the project key is not: a random suffix keeps the insert from colliding.
     let slug = format!("site-{}", &Uuid::new_v4().simple().to_string()[..12]);
-    Id::find_by_statement(Statement::from_sql_and_values(
+    let site = Id::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "INSERT INTO sites (workspace_id, project_id, slug, title, created_by) \
          SELECT $1, p.id, $3, jsonb_build_object('en', left(p.name, 80)), $4 FROM projects p WHERE p.id = $2 \
@@ -227,7 +226,14 @@ async fn site_of_installation(
     .one(tx)
     .await?
     .map(|row| row.id)
-    .ok_or_else(|| ApiError::not_found("project not found"))
+    .ok_or_else(|| ApiError::not_found("project not found"))?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE installations SET site_id = $2 WHERE id = $1",
+        vec![installation_id.into(), site.into()],
+    ))
+    .await?;
+    Ok(site)
 }
 
 async fn place(
