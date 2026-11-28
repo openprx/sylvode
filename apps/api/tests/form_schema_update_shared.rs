@@ -12,7 +12,7 @@ use uuid::Uuid;
 mod fixture;
 
 fn schema(label: &str) -> Value {
-    json!({ "fields": [{ "key": "title", "label": label, "type": "text" }] })
+    json!({ "version": "sv.form.schema.v2", "fields": [{ "key": "title", "label": label, "type": "text" }] })
 }
 
 async fn count(db: &DatabaseConnection, sql: &str, form: Uuid) -> i64 {
@@ -118,7 +118,7 @@ async fn schema_update_bumps_version_records_history_and_refuses_bad_writes() {
 
     // An invalid schema is refused and leaves the version alone.
     let tx = db.begin().await.unwrap();
-    let invalid = json!({ "fields": [{ "key": "title", "type": "no-such-type" }] });
+    let invalid = json!({ "version": "sv.form.schema.v2", "fields": [{ "key": "title", "label": "Title", "type": "no-such-type" }] });
     assert!(
         update_form_schema_in_transaction(&tx, request(invalid, None))
             .await

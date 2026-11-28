@@ -3225,6 +3225,7 @@ mod tests {
             // helpers of `routes/form.rs`.
             "apps/api/src/drafts/apply.rs",
             "apps/api/src/forms/native_create.rs",
+            "apps/api/src/forms/native_update.rs",
             "apps/api/src/forms/projections.rs",
             "apps/api/src/routes/form.rs",
             "apps/api/src/routes/project.rs",
