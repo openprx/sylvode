@@ -798,10 +798,11 @@ pub async fn update_form(
     let (actor_id, _, is_bot) =
         require_form_action(&state, &claims, bot.as_ref().map(|b| &b.0), &form, "form.design").await?;
 
+    // Plain columns are written here; the schema and the version bump go through the shared write.
     let mut set_parts = Vec::new();
     let mut values = Vec::new();
     let mut changed_fields = Vec::new();
-    let mut schema_changed = false;
+    let mut version_bump = false;
     let mut new_schema = None;
     let new_title = req.title_template.clone();
     let mut idx = 1;
@@ -836,6 +837,7 @@ pub async fn update_form(
     }
     if let Some(schema) = req.schema {
         let schema = ensure_schema_field_ids(schema).map_err(ApiError::BadRequest)?;
+        // Checked before the bot gate so an invalid schema is refused, never stored as a draft.
         ensure_valid_schema(
             &schema,
             Some(SchemaScope {
@@ -844,37 +846,19 @@ pub async fn update_form(
             }),
         )?;
         changed_fields.push("schema");
-        schema_changed = true;
-        new_schema = Some(schema.clone());
-        push_set!("schema", schema.into());
+        version_bump = true;
+        new_schema = Some(schema);
     }
     if let Some(detail_layout) = req.detail_layout {
         changed_fields.push("detail_layout");
-        schema_changed = true;
+        version_bump = true;
         push_set!(
             "detail_layout",
             ensure_json_object(detail_layout, "detail_layout")?.into()
         );
     }
-    if set_parts.is_empty() {
+    if set_parts.is_empty() && new_schema.is_none() {
         return Ok(ApiResponse::success(form).into_response());
-    }
-    if schema_changed {
-        if let Some(expected) = req.expected_schema_version
-            && expected != form.schema_version
-        {
-            return Err(ApiError::VersionConflict("form_schema_version_conflict"));
-        }
-        set_parts.push("schema_version = schema_version + 1".to_string());
-    }
-    set_parts.push("updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 microsecond')".to_string());
-    values.push(form_id.into());
-    let mut sql = format!("UPDATE project_forms SET {} WHERE id = ${idx}", set_parts.join(", "));
-    if schema_changed && let Some(expected) = req.expected_schema_version {
-        idx += 1;
-        std::fmt::Write::write_fmt(&mut sql, format_args!(" AND schema_version=${idx}"))
-            .map_err(|_| ApiError::Internal)?;
-        values.push(expected.into());
     }
     let tx = state.db.begin().await?;
     // LEAD BOT-SCHEMA: a bot's schema or title template save that changes what visitors of a
@@ -925,37 +909,51 @@ pub async fn update_form(
             .into_response());
         }
     }
-    let written = tx
-        .execute(Statement::from_sql_and_values(DbBackend::Postgres, &sql, values))
-        .await?;
-    if written.rows_affected() != 1 {
-        return Err(ApiError::VersionConflict("form_schema_version_conflict"));
-    }
-    let updated_form = find_form_with_conn(&tx, form_id).await?;
+    let event_actor = if is_bot { None } else { Some(actor_id) };
     let source = json!({ "type": if is_bot { "bot" } else { "user" }, "actor_id": actor_id });
-    insert_form_event(
-        &tx,
-        &updated_form,
-        None,
-        "form.updated",
-        if is_bot { None } else { Some(actor_id) },
-        source,
-        json!({
-            "form_id": updated_form.id,
-            "key": updated_form.key,
-            "changed_fields": changed_fields
-        }),
-    )
-    .await?;
-    if schema_changed {
-        insert_schema_version(
+    if !set_parts.is_empty() {
+        set_parts.push("updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 microsecond')".to_string());
+        values.push(form_id.into());
+        let sql = format!("UPDATE project_forms SET {} WHERE id = ${idx}", set_parts.join(", "));
+        let written = tx
+            .execute(Statement::from_sql_and_values(DbBackend::Postgres, &sql, values))
+            .await?;
+        if written.rows_affected() != 1 {
+            return Err(ApiError::VersionConflict("form_schema_version_conflict"));
+        }
+    }
+    let updated_form = if version_bump {
+        crate::forms::native_update::update_form_schema_in_transaction(
+            &tx,
+            crate::forms::native_update::NativeFormSchemaUpdate {
+                form_id,
+                schema: new_schema.clone(),
+                changed_fields,
+                expected_schema_version: req.expected_schema_version,
+                actor_id: event_actor,
+                source,
+                change_summary: "schema updated".to_owned(),
+            },
+        )
+        .await?
+    } else {
+        let updated_form = find_form_with_conn(&tx, form_id).await?;
+        insert_form_event(
             &tx,
             &updated_form,
-            if is_bot { None } else { Some(actor_id) },
-            "schema updated",
+            None,
+            "form.updated",
+            event_actor,
+            source,
+            json!({
+                "form_id": updated_form.id,
+                "key": updated_form.key,
+                "changed_fields": changed_fields
+            }),
         )
         .await?;
-    }
+        updated_form
+    };
     tx.commit().await?;
 
     // Site bindings whose projection loses or changes fields: a warning, never a refusal. The save

@@ -82,7 +82,8 @@ async fn schema_update_bumps_version_records_history_and_refuses_bad_writes() {
     tx.commit().await.unwrap();
     let request = |schema: Value, expected: Option<i32>| NativeFormSchemaUpdate {
         form_id: form.id,
-        schema,
+        schema: Some(schema),
+        changed_fields: vec!["schema"],
         expected_schema_version: expected,
         actor_id: Some(owner),
         source: source.clone(),

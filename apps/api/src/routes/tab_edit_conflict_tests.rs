@@ -319,3 +319,100 @@ async fn project_resource_config_uses_atomic_original_versions() {
     .await;
     f.scratch.drop_self().await;
 }
+async fn form_state(db: &DatabaseConnection, form: Uuid) -> (i32, i64, Vec<Value>) {
+    let row = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT schema_version, (SELECT count(*) FROM form_schema_versions WHERE form_id=$1) AS versions \
+             FROM project_forms WHERE id=$1",
+            vec![form.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    let events = db
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT payload FROM form_events WHERE form_id=$1 AND event_type='form.updated' ORDER BY created_at",
+            vec![form.into()],
+        ))
+        .await
+        .unwrap()
+        .iter()
+        .map(|event| event.try_get::<Value>("", "payload").unwrap())
+        .collect();
+    (
+        row.try_get("", "schema_version").unwrap(),
+        row.try_get("", "versions").unwrap(),
+        events,
+    )
+}
+#[tokio::test]
+async fn form_update_writes_the_schema_once_and_emits_one_event_per_save() {
+    let f = fixture().await;
+    let db = &f.scratch.db;
+    let path = format!("/forms/{}", f.form);
+    let schema = |label: &str| json!({"fields":[{"key":"text","label":label,"type":"text"}]});
+    let (version0, history0, _) = form_state(db, f.form).await;
+
+    // A name-only save changes no version and writes no history row, but emits one event.
+    let (status, _) = request(f.router.clone(), path.clone(), json!({"name":"Renamed"})).await;
+    assert_eq!(status, 200);
+    let (version, history, events) = form_state(db, f.form).await;
+    assert_eq!((version, history), (version0, history0));
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["changed_fields"], json!(["name"]));
+
+    // A schema-only save bumps once, writes one history row and emits one event.
+    let (status, _) = request(
+        f.router.clone(),
+        path.clone(),
+        json!({"schema":schema("One"),"expected_schema_version":version0}),
+    )
+    .await;
+    assert_eq!(status, 200);
+    let (version, history, events) = form_state(db, f.form).await;
+    assert_eq!((version, history, events.len()), (version0 + 1, history0 + 1, 2));
+    assert_eq!(events[1]["changed_fields"], json!(["schema"]));
+
+    // A combined save bumps once, writes one history row and emits one event naming every field.
+    let (status, body) = request(
+        f.router.clone(),
+        path.clone(),
+        json!({"name":"Combined","description":"d","schema":schema("Two"),"detail_layout":{"x":1},"expected_schema_version":version0 + 1}),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["data"]["name"], "Combined");
+    assert_eq!(body["data"]["schema_version"], version0 + 2);
+    let (version, history, events) = form_state(db, f.form).await;
+    assert_eq!((version, history, events.len()), (version0 + 2, history0 + 2, 3));
+    assert_eq!(
+        events[2]["changed_fields"],
+        json!(["name", "description", "schema", "detail_layout"])
+    );
+
+    // A stale combined save is refused whole: no column, version, history row or event changes.
+    let (status, _) = request(
+        f.router.clone(),
+        path,
+        json!({"name":"Stale","schema":schema("Three"),"expected_schema_version":version0}),
+    )
+    .await;
+    assert_eq!(status, 409);
+    let (version, history, events) = form_state(db, f.form).await;
+    assert_eq!((version, history, events.len()), (version0 + 2, history0 + 2, 3));
+    let name = db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT name FROM project_forms WHERE id=$1",
+            vec![f.form.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get::<String>("", "name")
+        .unwrap();
+    assert_eq!(name, "Combined");
+    f.scratch.drop_self().await;
+}
