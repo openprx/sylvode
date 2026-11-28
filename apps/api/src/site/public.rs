@@ -570,16 +570,24 @@ pub async fn login(
         .ok_or_else(login_failed)?;
     let session_version = row.try_get::<i64>("", "session_version").map_err(|_| login_failed())?;
     let display_name = row.try_get::<String>("", "name").unwrap_or_default();
-    if store::workspace_role(&state.db, site.workspace_id, user_id)
+    // A right password without site access counts as a failure too: otherwise the account cap
+    // would tell a caller which guess was the console password (the site buckets are site-only).
+    let member = store::workspace_role(&state.db, site.workspace_id, user_id)
         .await?
-        .is_none()
-    {
+        .is_some();
+    let role = if member {
+        store::load_role(&state.db, site.id, user_id)
+            .await?
+            .and_then(|row| SiteRole::parse(&row.role))
+    } else {
+        None
+    };
+    let Some(role) = role else {
+        rate::login_failed(&state.db, LoginBuckets::SITE, &keys, known)
+            .await
+            .map_err(rate_refusal)?;
         return Err(login_failed());
-    }
-    let role = store::load_role(&state.db, site.id, user_id)
-        .await?
-        .and_then(|row| SiteRole::parse(&row.role))
-        .ok_or_else(login_failed)?;
+    };
     rate::login_succeeded(&state.db, LoginBuckets::SITE, &keys).await;
     let token = session::new_token();
     store::insert_session(
