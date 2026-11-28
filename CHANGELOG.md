@@ -52,6 +52,17 @@ name.
   connection pool; a configuration that still sets `delivery_pool` is refused at start, so remove the
   key before upgrading.
 
+### Changed
+
+- **MCP: the per-address bound on refused credentials uses the real client address.** Behind a reverse
+  proxy every request used to come from one socket address, so one client could throttle every other.
+  The new `[mcp] trusted_proxies` (default `["loopback"]`) lists the peers whose `X-Real-IP` header is
+  believed; the proxy must overwrite it (nginx: `proxy_set_header X-Real-IP $remote_addr;`). A trusted
+  peer without the header is counted only against a process-wide ceiling of 600 refusals per window.
+  IPv4-mapped IPv6 addresses count as IPv4. The window is 30 seconds, the same as `Retry-After`.
+- **MCP: a subscription re-check that cannot decide a URI now ends its stream** (the client listens
+  again) instead of keeping it, and re-checks share 32 parallel API calls across the process.
+
 ### Added
 
 - **MCP resource subscriptions.** `subscriptions/listen` honours `resourceSubscriptions` for

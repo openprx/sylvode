@@ -17,14 +17,13 @@
 //! with its final result; the client listens again and gets the smaller acknowledgment.
 
 use super::CallerKey;
-use super::decide::{RECHECK_BUDGET, decide};
-use super::limiter::RefusalLimiter;
+use super::decide::{RECHECK_BUDGET, RECHECK_PERMITS, decide};
+use super::limiter::{Client, RefusalLimiter};
 use super::uris::{KeyKind, SubKey, Subscribable, Verdict, parse_subscribable};
 use crate::client::{FIRST_OPEN_TIMEOUT, HintEvent, HintOpenError, HintStream, OpenPrClient, RECONNECT_OPEN_TIMEOUT};
 use crate::server::McpServer;
 use parking_lot::Mutex;
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Notify;
@@ -449,14 +448,14 @@ impl Hubs {
         key: CallerKey,
         client: &OpenPrClient,
         server: &Arc<McpServer>,
-        peer: Option<IpAddr>,
+        peer: Option<Client>,
         shutdown: &CancellationToken,
     ) -> Result<Access, AcquireError> {
         if let Some(access) = self.known(&key)? {
             return Ok(access);
         }
         // Past this point the credential costs the API a request.
-        if peer.is_some_and(|address| self.limiter.throttled(address)) {
+        if peer.is_some_and(|client| self.limiter.throttled(client)) {
             return Err(AcquireError::Throttled);
         }
         let gate = GateRelease {
@@ -473,7 +472,7 @@ impl Hubs {
         key: CallerKey,
         client: &OpenPrClient,
         server: &Arc<McpServer>,
-        peer: Option<IpAddr>,
+        peer: Option<Client>,
         shutdown: &CancellationToken,
     ) -> Result<Access, AcquireError> {
         // Another first listen may have finished while this one waited for the gate.
@@ -492,8 +491,8 @@ impl Hubs {
             }
             Err(HintOpenError::Unauthorized) => {
                 self.refuse(key, Refusal::Unauthorized);
-                if let Some(address) = peer {
-                    self.limiter.record(address);
+                if let Some(client) = peer {
+                    self.limiter.record(client);
                 }
                 Err(AcquireError::Unauthorized)
             }
@@ -527,8 +526,8 @@ impl Drop for GateRelease<'_> {
 }
 
 /// Decides every acknowledged URI of the hub again, once per distinct URI, and ends each stream
-/// that holds a URI the credential may no longer read. A URI that could not be decided (the API is
-/// down, or the budget ran out) keeps its stream: no answer is not a refusal.
+/// that holds a URI the credential may not be shown to still read: refused, or not decided (the API
+/// failed or the budget ran out).
 async fn recheck_once(hub: &Arc<Hub>) {
     let streams: Vec<Arc<StreamShared>> = hub.inner.lock().streams.values().cloned().collect();
     let mut seen: HashSet<Arc<str>> = HashSet::new();
@@ -545,11 +544,14 @@ async fn recheck_once(hub: &Arc<Hub>) {
     if items.is_empty() {
         return;
     }
-    let verdicts = decide(&hub.authority, &items, RECHECK_BUDGET).await;
+    let verdicts = decide(&hub.authority, &items, RECHECK_BUDGET, Some(&RECHECK_PERMITS)).await;
+    // Fail closed: only a URI the caller may read now keeps its stream. Push only speeds things up
+    // (the client re-listens and reads), so ending a stream whose URI could not be decided costs a
+    // re-listen, while keeping it would keep announcing changes to something maybe no longer readable.
     let denied: HashSet<Arc<str>> = items
         .iter()
         .zip(verdicts)
-        .filter(|(_, verdict)| *verdict == Some(Verdict::Denied))
+        .filter(|(_, verdict)| !matches!(verdict, Some(Verdict::Granted(_))))
         .map(|((uri, _), _)| Arc::clone(uri))
         .collect();
     if denied.is_empty() {
@@ -564,7 +566,7 @@ async fn recheck_once(hub: &Arc<Hub>) {
     }
     tracing::info!(
         ended,
-        "Ended listen streams: a subscribed resource is no longer readable"
+        "Ended listen streams: a subscribed resource is no longer confirmed readable"
     );
 }
 

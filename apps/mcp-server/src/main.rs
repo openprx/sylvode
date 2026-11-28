@@ -17,11 +17,11 @@ use mcp_server::cli::{self, Cli, Commands};
 use mcp_server::client::OpenPrClient;
 use mcp_server::era::{self, Era};
 use mcp_server::http_modern;
-use mcp_server::listen::{ListenAuth, ListenConfig, ListenRegistry, STALL_LIMIT, caller_key};
+use mcp_server::listen::{Client, ListenAuth, ListenConfig, ListenRegistry, STALL_LIMIT, caller_key};
 use mcp_server::oauth::{self, Caller, InboundAuth};
 use mcp_server::protocol::{self, JsonRpcRequest, JsonRpcResponse};
 use mcp_server::server::{McpServer, ToolSurface, requested_tool_mode};
-use platform::config::{McpRuntime, McpToolMode, McpTransport};
+use platform::config::{McpRuntime, McpToolMode, McpTransport, TrustedProxy};
 use serde::Deserialize;
 use serde_json::json;
 use std::{collections::HashMap, convert::Infallible, sync::Arc, time::Duration};
@@ -39,6 +39,8 @@ use uuid::Uuid;
 #[derive(Clone)]
 struct NetOptions {
     allowed_origins: Arc<Vec<String>>,
+    /// Peers whose `X-Real-IP` names the real client (`[mcp] trusted_proxies`).
+    trusted_proxies: Arc<Vec<TrustedProxy>>,
     listen: ListenRegistry,
 }
 
@@ -46,6 +48,7 @@ impl NetOptions {
     fn from_runtime(mcp: &McpRuntime) -> Self {
         Self {
             allowed_origins: Arc::new(mcp.allowed_origins.clone()),
+            trusted_proxies: Arc::new(mcp.trusted_proxies.clone()),
             listen: ListenRegistry::new(ListenConfig::new(
                 mcp.listen,
                 usize::try_from(mcp.max_listen_streams).unwrap_or(usize::MAX),
@@ -59,6 +62,7 @@ impl Default for NetOptions {
     fn default() -> Self {
         Self {
             allowed_origins: Arc::new(Vec::new()),
+            trusted_proxies: Arc::new(vec![TrustedProxy::Loopback]),
             listen: ListenRegistry::new(ListenConfig::new(false, ListenConfig::default().max_streams)),
         }
     }
@@ -69,6 +73,26 @@ impl Default for NetOptions {
 /// makes the per-address bound coarser, never bypassable.
 #[derive(Clone, Copy)]
 struct PeerAddr(std::net::IpAddr);
+
+/// Who is behind a request, for the bound on refused credentials. A socket peer that is not a
+/// trusted proxy is the client, and its headers are not believed. A trusted proxy (nginx on
+/// loopback) overwrites `X-Real-IP` with the address it accepted the connection from, so that
+/// header is the client; a trusted proxy without a usable header leaves the client unknown, which
+/// only the process-wide ceiling bounds.
+fn client_of(peer: std::net::IpAddr, headers: &HeaderMap, trusted: &[TrustedProxy]) -> Client {
+    if !trusted.iter().any(|proxy| proxy.matches(peer)) {
+        return Client::Address(peer);
+    }
+    let mut values = headers.get_all("x-real-ip").iter();
+    match (values.next(), values.next()) {
+        (Some(value), None) => value
+            .to_str()
+            .ok()
+            .and_then(|text| text.trim().parse().ok())
+            .map_or(Client::Unattributed, Client::Address),
+        _ => Client::Unattributed,
+    }
+}
 
 /// How long a client may take to send the head of a request before its connection is closed.
 const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
@@ -505,7 +529,8 @@ async fn handle_jsonrpc(
         return refusal_response(req.id, error);
     }
     if era.is_modern() && req.method == "subscriptions/listen" && req.id.is_some() {
-        return open_http_listen(&state, &caller, peer.map(|Extension(peer)| peer.0), &era, &req).await;
+        let client = peer.map(|Extension(peer)| client_of(peer.0, &headers, &state.net.trusted_proxies));
+        return open_http_listen(&state, &caller, client, &era, &req).await;
     }
     oauth::handle_rpc(
         &state.client,
@@ -552,7 +577,7 @@ fn listen_auth(state: &SseState, caller: &Caller) -> ListenAuth {
 async fn open_http_listen(
     state: &SseState,
     caller: &Caller,
-    peer: Option<std::net::IpAddr>,
+    peer: Option<Client>,
     era: &Era,
     req: &JsonRpcRequest,
 ) -> Response {

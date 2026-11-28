@@ -27,13 +27,13 @@ use parking_lot::Mutex;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Notify, mpsc};
 use tokio_util::sync::CancellationToken;
 
 pub use hub::REFUSAL_CACHE;
+pub use limiter::Client;
 pub use uris::{MAX_URI_BYTES, MAX_URIS_PER_REQUEST, SubKey, Subscribable, Verdict};
 
 /// Open listen streams one credential may hold.
@@ -269,10 +269,11 @@ impl ListenRegistry {
     }
 
     /// [`Self::open`] for a request that came from `peer`: a credential the server does not know
-    /// is not offered to the API once `peer` has had too many refused (see [`limiter`]).
+    /// is not offered to the API once `peer` (or the process) has had too many refused (see
+    /// [`limiter`]).
     pub async fn open_from(
         &self,
-        peer: Option<IpAddr>,
+        peer: Option<Client>,
         auth: ListenAuth,
         id: &Value,
         params: Option<&Value>,
@@ -337,7 +338,7 @@ impl ListenRegistry {
             .into_iter()
             .map(|(uri, parsed)| (Arc::from(uri), parsed))
             .collect();
-        let verdicts = decide::decide(server, &items, decide::ACK_BUDGET).await;
+        let verdicts = decide::decide(server, &items, decide::ACK_BUDGET, None).await;
         let mut granted: Vec<(Arc<str>, SubKey)> = items
             .into_iter()
             .zip(verdicts)
