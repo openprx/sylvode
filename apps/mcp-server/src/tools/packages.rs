@@ -20,7 +20,7 @@ the bytes with a package_upload draft and answers the draft. Nothing is stored a
 installed: a workspace owner or administrator approves the upload draft in the console, which stores the \
 package, and a person then reviews its installation separately. You build and sign the package yourself with \
 your own key (see the guide, \"Build a plugin package\"). A newer upload of yours for the same package id and \
-version replaces your older pending one; at most 3 of your uploads and 10 uploads of the workspace wait, and a pending upload expires after 7 days. One upload per bot runs at a time, at most 10 attempts a minute. Needs a bot of the whole \
+version replaces your older pending one; at most 3 of your uploads and 10 uploads of the workspace wait, and a pending upload expires after 7 days. One upload per bot runs at a time, at most 10 attempts a minute. Over HTTP a request above 2 MiB needs a free place among two in the server (HTTP 429: retry shortly). Needs a bot of the whole \
 workspace with write permission."
             .to_string(),
         input_schema: json!({
