@@ -42,18 +42,34 @@ fn unsigned_envelope_bytes(envelope: &Envelope) -> Option<Vec<u8>> {
         .ok()
 }
 
+/// The signature of `envelope` under `secret`, in the webhook format: `v1=<hex>`, an HMAC-SHA256
+/// over `<ts>.<unsigned envelope>` with the envelope's own `ts`, so the timestamp is inside the MAC.
 pub fn sign_envelope_body(envelope: &Envelope, secret: &str) -> Option<String> {
-    unsigned_envelope_bytes(envelope).and_then(|bytes| signature::sign_payload(&bytes, secret).ok())
+    let bytes = unsigned_envelope_bytes(envelope)?;
+    let ts = i64::try_from(envelope.ts).ok()?;
+    signature::sign_request(&bytes, secret, ts)
+        .map(|(_, signature)| signature)
+        .map_err(|e| tracing::warn!("sign envelope failed: {e}"))
+        .ok()
 }
 
 /// Whether the envelope carries a valid `sig` under `secret`, compared in constant time.
 ///
-/// Every leading `sha256=` is removed from `sig` before it is decoded.
+/// `sig` must be `v1=` followed by exactly one lowercase hex digest of `<ts>.<unsigned envelope>`.
+/// The age of `ts` is checked separately by [`InboundCheck`].
 pub fn verify_envelope_signature(envelope: &Envelope, secret: &str) -> bool {
-    envelope.sig.as_ref().is_some_and(|sig| {
-        unsigned_envelope_bytes(envelope).is_some_and(|bytes| {
-            signature::verify_digest_hex(&bytes, sig.trim_start_matches("sha256="), std::iter::once(secret))
-        })
+    let Some(digest) = envelope.sig.as_deref().and_then(|sig| sig.strip_prefix("v1=")) else {
+        return false;
+    };
+    unsigned_envelope_bytes(envelope).is_some_and(|bytes| {
+        signature::verify_request(
+            &bytes,
+            Some(&envelope.ts.to_string()),
+            digest,
+            std::iter::once(secret),
+            0,
+            0,
+        )
     })
 }
 
@@ -72,7 +88,7 @@ fn build_envelope(msg_type: &str, agent_id: &str, payload: Value, hmac_secret: O
     };
 
     if let Some(secret) = hmac_secret {
-        env.sig = sign_envelope_body(&env, secret).map(|s| format!("sha256={s}"));
+        env.sig = sign_envelope_body(&env, secret);
     }
 
     env
@@ -437,7 +453,7 @@ mod tests {
     fn envelope_signature_sign_and_verify() {
         let mut env = build_envelope("heartbeat", "agent-1", json!({"alive":true}), None);
         let sig = sign_envelope_body(&env, "secret").expect("sign");
-        env.sig = Some(format!("sha256={sig}"));
+        env.sig = Some(sig);
 
         assert!(verify_envelope_signature(&env, "secret"));
         assert!(!verify_envelope_signature(&env, "wrong-secret"));
@@ -461,33 +477,43 @@ mod tests {
     }
 
     #[test]
-    fn envelope_signature_is_accepted_with_any_number_of_prefixes() {
-        let (env, hex) = signed("secret");
-        assert!(verify_envelope_signature(&with_sig(env.clone(), &hex), "secret"));
-        assert!(verify_envelope_signature(
-            &with_sig(env, &format!("sha256=sha256={hex}")),
-            "secret"
-        ));
+    fn envelope_signature_has_the_v1_prefix_and_no_other() {
+        let (env, sig) = signed("secret");
+        assert!(sig.starts_with("v1="));
+        let hex = sig.trim_start_matches("v1=");
+        assert!(verify_envelope_signature(&with_sig(env.clone(), &sig), "secret"));
+        for refused in [hex.to_string(), format!("sha256={hex}"), format!("v1=v1={hex}")] {
+            assert!(
+                !verify_envelope_signature(&with_sig(env.clone(), &refused), "secret"),
+                "{refused:?} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn envelope_signature_covers_the_timestamp() {
+        let (mut env, sig) = signed("secret");
+        env.ts += 1;
+        assert!(!verify_envelope_signature(&with_sig(env, &sig), "secret"));
     }
 
     #[test]
     fn envelope_signature_in_uppercase_hex_is_refused() {
-        let (env, hex) = signed("secret");
-        assert!(!verify_envelope_signature(
-            &with_sig(env, &format!("sha256={}", hex.to_ascii_uppercase())),
-            "secret"
-        ));
+        let (env, sig) = signed("secret");
+        let upper = format!("v1={}", sig.trim_start_matches("v1=").to_ascii_uppercase());
+        assert!(!verify_envelope_signature(&with_sig(env, &upper), "secret"));
     }
 
     #[test]
     fn malformed_envelope_signatures_are_refused() {
-        let (env, hex) = signed("secret");
+        let (env, sig) = signed("secret");
+        let hex = sig.trim_start_matches("v1=");
         for sig in [
-            format!("sha256={}", &hex[..63]),
-            format!("sha256={}", &hex[..62]),
-            format!("sha256={hex}00"),
-            format!("sha256=g{}", &hex[1..]),
-            "sha256=".to_string(),
+            format!("v1={}", &hex[..63]),
+            format!("v1={}", &hex[..62]),
+            format!("v1={hex}00"),
+            format!("v1=g{}", &hex[1..]),
+            "v1=".to_string(),
             String::new(),
         ] {
             assert!(

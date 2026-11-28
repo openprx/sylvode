@@ -476,8 +476,9 @@ impl Envelope {
         self.sig = None;
         let bytes = serde_json::to_vec(&self).expect("serialize envelope");
         let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("hmac key");
+        mac.update(format!("{}.", self.ts).as_bytes());
         mac.update(&bytes);
-        self.sig = Some(format!("sha256={}", hex::encode(mac.finalize().into_bytes())));
+        self.sig = Some(format!("v1={}", hex::encode(mac.finalize().into_bytes())));
         self
     }
 }

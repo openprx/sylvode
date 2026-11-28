@@ -1338,6 +1338,10 @@ The runner contains a WebSocket tunnel client (`[features] tunnel_enabled` and
 no endpoint for it, so an enabled tunnel connects to nothing and retries with backoff; leave it
 disabled. Every task it would receive is acknowledged and answered as failed.
 
+A tunnel message with `hmac_secret` set carries `sig` in the webhook format: `v1=` and the
+HMAC-SHA256 hex of `<ts>.<the envelope without sig>`, where `ts` is the envelope's own timestamp.
+The former `sha256=` form is not accepted.
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](../../LICENSE-APACHE) or
