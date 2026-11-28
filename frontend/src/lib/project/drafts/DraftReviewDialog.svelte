@@ -124,10 +124,17 @@
 						$t(key, { values })
 					)}</span
 				>
-				<span
-					>{$t('drafts.review.by', {
-						values: { name: draft.author.name ?? draft.author.id }
-					})}</span
+				<span data-testid="draft-author"
+					>{draft.source
+						? $t('drafts.review.byPlugin', {
+								values: {
+									plugin: draft.source.package_key,
+									name: draft.author.name ?? draft.author.id
+								}
+							})
+						: $t('drafts.review.by', {
+								values: { name: draft.author.name ?? draft.author.id }
+							})}</span
 				>
 			</p>
 

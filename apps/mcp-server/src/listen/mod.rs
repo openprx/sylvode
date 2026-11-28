@@ -33,7 +33,7 @@ use tokio::sync::{Notify, mpsc};
 use tokio_util::sync::CancellationToken;
 
 pub use hub::REFUSAL_CACHE;
-pub use limiter::Client;
+pub use limiter::{Client, RefusalLimiter};
 pub use uris::{MAX_URI_BYTES, MAX_URIS_PER_REQUEST, SubKey, Subscribable, Verdict};
 
 /// Open listen streams one credential may hold.

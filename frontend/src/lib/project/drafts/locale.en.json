@@ -29,6 +29,7 @@
 		"review": {
 			"title": "Review draft",
 			"by": "Written by {name}",
+			"byPlugin": "Written by plugin {plugin}, run by {name}",
 			"approve": "Approve",
 			"approved": "Draft approved and saved.",
 			"approveFailed": "The draft could not be approved.",

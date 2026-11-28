@@ -23,13 +23,23 @@ static VERIFY_SLOTS: Semaphore = Semaphore::const_new(2);
 /// cannot hold both.
 static BOT_VERIFY_SLOTS: Semaphore = Semaphore::const_new(1);
 
+/// The bot share of the verification slots, taken before a submission's bytes are read so that a
+/// busy share refuses the request instead of queueing the package in memory. Released when dropped.
+#[derive(Debug)]
+pub struct BotSlot(#[allow(dead_code)] tokio::sync::SemaphorePermit<'static>);
+
+/// Takes the bot share without waiting; `None` when another bot submission holds it.
+pub fn try_bot_slot() -> Option<BotSlot> {
+    BOT_VERIFY_SLOTS.try_acquire().ok().map(BotSlot)
+}
+
 /// Who asks for a verification; decides which slots it may wait for.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub enum Requester {
     /// A person's upload, a draft approval, an install or boot: any slot.
     Internal,
-    /// A bot submission: only the bot share of the slots.
-    Bot,
+    /// A bot submission, holding the bot share of the slots already.
+    Bot(BotSlot),
 }
 
 /// Whose keys verify a package.
@@ -208,9 +218,11 @@ pub(super) async fn verify_blob(
     scope: KeyScope,
     requester: Requester,
 ) -> Result<Verified, ApiError> {
-    // The bot share is taken first, always in this order, so the two waits cannot deadlock.
+    // A bot submission holds the bot share before it gets here, and takes the shared slot after
+    // it, always in this order, so the two cannot deadlock; at most one bot waits for the shared
+    // slot.
     let _bot_slot = match requester {
-        Requester::Bot => Some(BOT_VERIFY_SLOTS.acquire().await.map_err(|_| ApiError::internal())?),
+        Requester::Bot(slot) => Some(slot),
         Requester::Internal => None,
     };
     let _slot = VERIFY_SLOTS.acquire().await.map_err(|_| ApiError::internal())?;
