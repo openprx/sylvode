@@ -1955,3 +1955,60 @@ fn a_password_needs_a_username_and_unknown_email_keys_are_refused() {
     assert!(reported.iter().any(|i| i.contains("email.password")), "{reported:?}");
     assert!(parse("[email]\nbogus = 1\n").is_err());
 }
+
+// ---- site.mount_path ----
+
+fn site_mount_file(mount_path: &str) -> String {
+    format!(
+        r#"
+[server]
+bind_addr = "127.0.0.1:8081"
+
+[database]
+url = "postgres://localhost/openpr"
+
+[auth]
+jwt_secret = "0123456789abcdef0123456789abcdef"
+
+[site]
+mount_path = "{mount_path}"
+"#
+    )
+}
+
+#[test]
+fn site_mount_path_defaults_to_site() {
+    let source = site_mount_file("/x").replace("mount_path = \"/x\"", "");
+    assert_eq!(parse(&source).expect("minimal file").site.mount_path, "/site");
+}
+
+#[test]
+fn site_mount_path_accepts_a_custom_path() {
+    assert_eq!(
+        parse(&site_mount_file("/portal")).expect("valid").site.mount_path,
+        "/portal"
+    );
+}
+
+#[test]
+fn site_mount_path_refuses_bad_values_naming_the_key() {
+    for bad in [
+        "/",
+        "portal",
+        "/portal/",
+        "/a/../b",
+        "/api",
+        "/api/site",
+        "/uploads",
+        "/health",
+    ] {
+        let error = parse(&site_mount_file(bad)).expect_err(bad);
+        let ConfigError::Invalid { issues, .. } = error else {
+            panic!("expected ConfigError::Invalid for {bad}, got {error}");
+        };
+        assert!(
+            issues.iter().any(|issue| issue.contains("site.mount_path")),
+            "{bad}: {issues:?}"
+        );
+    }
+}

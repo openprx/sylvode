@@ -18,6 +18,9 @@ name.
 
 ### Added
 
+- **Config: `[site] mount_path`.** The URL path the API serves the built site app at (default `/site`,
+  no trailing `/`; paths that start with a top-level API route are refused at start). Build the site
+  app with `VITE_SV_SITE_BASE` set to `mount_path` plus `/`; both must match.
 - **Project templates are built-in packages.** The six scenario templates are signed packages
   (`packages/builtin/`, `sv/contract-review` and so on, plus `sv/service-request` and `sv/service-desk`)
   that go through the installation flow. `POST /workspaces/{id}/projects` takes `template_package`

@@ -79,7 +79,7 @@
       "followup_interval_secs"
     ],
     "packages": ["builtin_public_key", "builtin_dir"],
-    "site": ["same_origin_trial", "cookie_insecure", "assets_dir"]
+    "site": ["same_origin_trial", "cookie_insecure", "assets_dir", "mount_path"]
   },
   "retired": {}
 }
