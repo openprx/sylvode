@@ -148,7 +148,7 @@ export class LayoutRuntime {
 			title:
 				action.kind === 'invoke'
 					? t('layout.invokeConfirmTitle', {
-							values: { action: action.action, package: action.package }
+							values: { action: action.export, package: action.package }
 						})
 					: author,
 			body: action.kind === 'invoke' ? author || undefined : undefined,
@@ -183,7 +183,7 @@ export class LayoutRuntime {
 	async #invoke(action: Extract<ActionSpec, { kind: 'invoke' }>): Promise<ActionState> {
 		const installationId = this.#options.installations[action.package];
 		if (!installationId) return { status: 'error', error: 'not_available' };
-		const result = await layoutApi.invokeAction(installationId, action.action, {
+		const result = await layoutApi.invokeAction(installationId, action.export, {
 			input: resolveDeep(action.input ?? {}, this.scope),
 			context: this.#options.context
 		});

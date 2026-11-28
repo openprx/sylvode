@@ -40,7 +40,7 @@ export type ActionSpec =
 	| {
 			kind: 'invoke';
 			package: string;
-			action: string;
+			export: string;
 			input?: Record<string, unknown>;
 			confirm?: TextValue;
 	  }
