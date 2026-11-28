@@ -26,6 +26,28 @@ name.
 
 ### Added
 
+- **Runner: a pool of sessions per bot.** `[[runner.tmux.sessions]]` takes `names` (1 to 8 existing
+  tmux sessions; the first is the primary) so one bot works on several tasks at once, one per session.
+  The runner picks the member for each task: the same task again, then the work item's last member
+  (`[runner.tmux.pool] affinity_ttl_secs`, default 3600), then an idle member, then the shortest queue,
+  then the primary. A member counts against its queue cap from the moment it is chosen, and a task being
+  enqueued twice goes to one member. A member whose session is absent or declined, whose CLI is gone, or
+  that has been blocked or held back by its screen for `stuck_after_secs` (300) is unhealthy; its
+  queued tasks that were never typed in move to other members after `rebalance_after_secs` (120). The
+  task-to-member map is kept in `<state_dir>/pools/` (pools of two or more members only) so a restart
+  keeps a retry on its member; restart recovery places each task on the member that typed it. The
+  runner still never creates, renames, restarts or ends a member. `sylvode-runner doctor` and
+  `sessions` list every member; the runner's report carries `member` (0 to 7) on each bot row and the
+  connection status of Sylvode (`GET` of a bot connection's status) gains `tmux_members`, one row per
+  member, which the project connection page shows. Tasks of one bot can now run, and finish, out of
+  order across members. The example runner configuration now lists `enqueue_answer_ms`,
+  `max_queued_per_session`, `[runner.http]` and `[runner.tmux.pool]`.
+- **Worker: its own delivery loop.** The worker delivers on a loop of its own, polling every
+  `[ai_tasks] poll_interval_ms` (default 1000, 100 to 60000), so no other job delays a delivery. A bot
+  has at most one lane in flight: each poll leaves out the bots that have one and picks up at most
+  `lane_batch` tasks of each other bot, in pick-up order. On shutdown the loop stops picking up and
+  the lanes end after the delivery they are making. The `delivery pool` counters are logged every
+  minute.
 - **`[auth] rate_limit_scale`.** A positive integer (default `1`) that multiplies every limit of the
   console authentication routes (sign-in, register, refresh, setup status). The Web E2E stack sets it
   to `1000` so its many sign-ins from one address are not throttled; the limits stay on.
@@ -157,6 +179,12 @@ name.
 
 ### Changed
 
+- **Runner: `[[runner.tmux.sessions]]` `name` is now `names`.** Write `names = ["sv"]`; a file that
+  still has `name` is refused at start naming the key. No alias.
+- **Worker: delivery defaults.** `[ai_tasks] delivery_concurrency` is now 8 (bots whose lanes run at
+  once) and `per_runner_concurrency` 4; `lane_batch` is the most tasks one bot's lane takes in a poll
+  (it no longer multiplies the worker's `--concurrency`). Set the old values (1 and 1) to deliver one
+  task at a time.
 - **Breaking: outbound webhook signatures carry a timestamp.** Every delivery (webhook triggers, the
   event dispatcher and the worker's AI-task dispatch) sends `X-Webhook-Timestamp` (Unix seconds) and
   `X-Webhook-Signature: v1=<hex>`, an HMAC-SHA256 over `<timestamp>.<raw body>`; the old
