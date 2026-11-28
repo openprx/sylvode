@@ -626,6 +626,7 @@ pub async fn list_drafts(
             can_bypass_form_view: role_is_form_admin(&role),
             role_subject: normalize_permission_subject_id(&role)?,
             viewer_bot: who.bot_id(),
+            review_uploads: who.bot_id().is_none() && role_is_form_admin(&role),
         },
         paging.per_page,
         paging.offset(),
@@ -646,7 +647,8 @@ pub async fn get_draft(
     let who = Principal::new(claims.clone(), bot);
     let row = store::load(&state.db, id, false).await?.ok_or_else(draft_not_found)?;
     // A package upload belongs to the workspace: the people who review it and the bot that
-    // submitted it read it, nobody else (a project-scoped bot never does).
+    // submitted it read it, nobody else: not another bot, whatever its permissions, and not a
+    // project-scoped bot.
     if row.kind == KIND_PACKAGE_UPLOAD {
         let role = member(&state, &who, row.workspace_id)
             .await
@@ -654,7 +656,7 @@ pub async fn get_draft(
         let own = who
             .bot_id()
             .is_some_and(|bot_id| row.author_kind == "bot" && row.author_id == bot_id);
-        if !(own || role_is_form_admin(&role)) {
+        if !(own || (who.bot_id().is_none() && role_is_form_admin(&role))) {
             return Err(draft_not_found());
         }
         return Ok(ApiResponse::success(body(&state.db, &row).await?));

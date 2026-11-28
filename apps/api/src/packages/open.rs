@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use super::{
     store,
-    verify::{KeyScope, verify_blob},
+    verify::{KeyScope, Requester, verify_blob},
 };
 use crate::error::ApiError;
 
@@ -106,7 +106,7 @@ pub async fn open(
     } else {
         KeyScope::Workspace(workspace_id)
     };
-    let verified = verify_blob(db, bytes, scope).await?;
+    let verified = verify_blob(db, bytes, scope, Requester::Internal).await?;
     Ok(Opened {
         package: verified.package,
         custom_code: verified.custom_code,

@@ -324,9 +324,11 @@ pub(super) struct ListFilter<'a> {
     pub(super) can_bypass_form_view: bool,
     /// The caller's role as a permission subject id.
     pub(super) role_subject: String,
-    /// The bot asking, who sees its own package upload drafts; other callers need an owner or
-    /// admin role (`can_bypass_form_view`) to see any.
+    /// The bot asking, who sees its own package upload drafts and no other bot's.
     pub(super) viewer_bot: Option<Uuid>,
+    /// A person with an owner or admin role: sees every package upload draft. Never true for a
+    /// bot, whatever permissions it holds.
+    pub(super) review_uploads: bool,
 }
 
 pub(super) async fn list(
@@ -348,7 +350,7 @@ pub(super) async fn list(
                SELECT (fp.policy -> 'actions' ->> 'form.view')::boolean FROM form_permissions fp \
                WHERE fp.form_id = {FORM_OF}::uuid AND fp.subject_type = 'role' \
                  AND fp.subject_id = $7 LIMIT 1), true)) \
-         AND (d.kind <> 'package_upload' OR $6::boolean \
+         AND (d.kind <> 'package_upload' OR $9::boolean \
               OR ($8::uuid IS NOT NULL AND d.author_kind = 'bot' AND d.author_id = $8))"
     );
     let values = || -> Vec<sea_orm::Value> {
@@ -361,6 +363,7 @@ pub(super) async fn list(
             filter.can_bypass_form_view.into(),
             filter.role_subject.clone().into(),
             filter.viewer_bot.into(),
+            filter.review_uploads.into(),
         ]
     };
     let total = Count::find_by_statement(Statement::from_sql_and_values(

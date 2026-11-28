@@ -11,7 +11,7 @@ mod keys;
 pub mod open;
 pub mod store;
 mod submit_gate;
-mod verify;
+pub(crate) mod verify;
 
 /// Takes a share lock on an active publisher key; see `keys::lock_active`.
 ///

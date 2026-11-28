@@ -12,6 +12,20 @@ name.
 
 ### Security
 
+- **MCP request bodies and requests have time limits.** A request body must arrive within 30 seconds
+  (120 seconds for a body above 2 MiB, which holds one of two process-wide large-body permits); a
+  request that runs out of time is answered `408` and frees its permit, so a client that trickles
+  bytes can no longer hold the large-body permits (`packages.upload` above about 1.5 MiB answered
+  `429` meanwhile). Every route also answers `408` when no response head is produced within 180
+  seconds; `GET /sse` and `subscriptions/listen` streams are not ended by it.
+- **A bot cannot hold both package verification slots.** One of the instance's two verification slots
+  is kept for console uploads, draft approvals, installs and start-up, so bot submissions in any
+  number of workspaces cannot block them.
+- **Package upload drafts are read by people and by the submitting bot only.** A bot with an admin
+  permission no longer lists or reads the upload drafts of other bots.
+- **Webhooks and openprx agents: redirects are not followed.** Deliveries use the shared HTTP client:
+  a `3xx` answer fails the delivery (it is not followed) and the connect timeout is 5 seconds. Register
+  the receiver's final URL. See `docs/integrations/webhooks.md`.
 - **Site operator login follows the console login model.** `POST /api/site/v1/{slug}/auth/operator/login`
   no longer has its own in-memory 5 per minute per e-mail limit. It uses the database-backed limiter
   with the console's figures on separate site buckets, so the console and a site never share a
@@ -106,6 +120,13 @@ name.
   IPv4-mapped IPv6 addresses count as IPv4. The window is 30 seconds, the same as `Retry-After`.
 - **MCP: a subscription re-check that cannot decide a URI now ends its stream** (the client listens
   again) instead of keeping it, and re-checks share 32 parallel API calls across the process.
+
+### Fixed
+
+- **Worker: an AI task whose lease has run out is not delivered.** The check right before sending now
+  also requires `lease_expires_at > now()`.
+- **MCP listen: a refused URI no longer uses up a place under the subscription caps.** URIs are
+  decided in batches of the room that is left, so a later URI can take the place of a refused one.
 
 ### Added
 

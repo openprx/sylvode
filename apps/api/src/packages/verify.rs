@@ -18,6 +18,19 @@ use crate::error::ApiError;
 /// Concurrent verifications in the process: each holds up to the zip (32 MiB) plus its inflated
 /// content (64 MiB) in memory.
 static VERIFY_SLOTS: Semaphore = Semaphore::const_new(2);
+/// Verification slots bot submissions may hold at once. One of the [`VERIFY_SLOTS`] stays free for
+/// console uploads, draft approvals, installs and boot, so bots in any number of workspaces
+/// cannot hold both.
+static BOT_VERIFY_SLOTS: Semaphore = Semaphore::const_new(1);
+
+/// Who asks for a verification; decides which slots it may wait for.
+#[derive(Debug, Clone, Copy)]
+pub enum Requester {
+    /// A person's upload, a draft approval, an install or boot: any slot.
+    Internal,
+    /// A bot submission: only the bot share of the slots.
+    Bot,
+}
 
 /// Whose keys verify a package.
 #[derive(Debug, Clone, Copy)]
@@ -193,7 +206,13 @@ pub(super) async fn verify_blob(
     db: &impl ConnectionTrait,
     bytes: Vec<u8>,
     scope: KeyScope,
+    requester: Requester,
 ) -> Result<Verified, ApiError> {
+    // The bot share is taken first, always in this order, so the two waits cannot deadlock.
+    let _bot_slot = match requester {
+        Requester::Bot => Some(BOT_VERIFY_SLOTS.acquire().await.map_err(|_| ApiError::internal())?),
+        Requester::Internal => None,
+    };
     let _slot = VERIFY_SLOTS.acquire().await.map_err(|_| ApiError::internal())?;
     let unverified = tokio::task::spawn_blocking(move || sv_package::unpack(&bytes, &Limits::default()))
         .await

@@ -334,33 +334,47 @@ impl ListenRegistry {
     }
 
     /// The requested URIs the caller may follow, in request order, each with its key: decided as
-    /// the caller within [`decide::ACK_BUDGET`], then cut to the subscription caps. Whatever is
-    /// refused, unknown, undecided or over a cap is simply left out.
+    /// the caller within [`decide::ACK_BUDGET`] in total, then cut to the subscription caps.
+    /// Whatever is refused, unknown, undecided or over a cap is simply left out.
+    ///
+    /// The candidates are decided in batches of the room that is left under the caps, so a URI
+    /// that could not be granted anyway costs no permission check, and a refused URI does not use
+    /// up a place a later URI could take. The places are still taken after the decision, under the
+    /// same caps.
     async fn decide_subscriptions(
         &self,
         guard: &mut StreamGuard,
         server: &Arc<McpServer>,
-        mut candidates: Vec<(String, Subscribable)>,
+        candidates: Vec<(String, Subscribable)>,
     ) -> Vec<(Arc<str>, SubKey)> {
-        // Cut to the room under the caps first: a URI that could not be granted anyway costs no
-        // permission check. The places are still taken after the decision, under the same caps.
-        candidates.truncate(self.subscription_room(guard));
-        if candidates.is_empty() {
-            return Vec::new();
+        let deadline = tokio::time::Instant::now() + decide::ACK_BUDGET;
+        let mut waiting = candidates.into_iter();
+        let mut granted: Vec<(Arc<str>, SubKey)> = Vec::new();
+        loop {
+            let room = self.subscription_room(guard).saturating_sub(granted.len());
+            let budget = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if room == 0 || budget.is_zero() {
+                break;
+            }
+            let items: Vec<(Arc<str>, Subscribable)> = waiting
+                .by_ref()
+                .take(room)
+                .map(|(uri, parsed)| (Arc::from(uri), parsed))
+                .collect();
+            if items.is_empty() {
+                break;
+            }
+            let verdicts = decide::decide(server, &items, budget, None).await;
+            granted.extend(
+                items
+                    .into_iter()
+                    .zip(verdicts)
+                    .filter_map(|((uri, _), verdict)| match verdict {
+                        Some(Verdict::Granted(key)) => Some((uri, key)),
+                        _ => None,
+                    }),
+            );
         }
-        let items: Vec<(Arc<str>, Subscribable)> = candidates
-            .into_iter()
-            .map(|(uri, parsed)| (Arc::from(uri), parsed))
-            .collect();
-        let verdicts = decide::decide(server, &items, decide::ACK_BUDGET, None).await;
-        let mut granted: Vec<(Arc<str>, SubKey)> = items
-            .into_iter()
-            .zip(verdicts)
-            .filter_map(|((uri, _), verdict)| match verdict {
-                Some(Verdict::Granted(key)) => Some((uri, key)),
-                _ => None,
-            })
-            .collect();
         let allowed = self.reserve_subscriptions(guard, granted.len());
         granted.truncate(allowed);
         granted

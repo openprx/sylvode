@@ -2600,6 +2600,7 @@ dependencies = [
  "clap",
  "collab-core",
  "hex",
+ "http-body",
  "http-body-util",
  "hyper-util",
  "parking_lot",
