@@ -10,6 +10,15 @@ name.
 
 ## [Unreleased]
 
+### Security
+
+- **Intranet HTTPS toolkit hardening.** `init-ca` and `rotate-ca` refuse an existing key directory
+  that is a symlink, is not owned by the invoking user or is not mode 0700, instead of writing the
+  key there. A stale lock is taken over by renaming it, so two instances cannot delete each other's
+  fresh lock. `trust-client.sh` passes only the re-encoded first certificate to `security` and
+  `certutil`. A non-private `config-hint --name` warns again after names were validated. The
+  residual for URI and e-mail names is documented in docs/install.md.
+
 ### Removed
 
 - **Flow reader floor and reader leases.** Migration `0128` drops `flow_runtime_readers` and
