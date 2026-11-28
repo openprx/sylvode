@@ -219,6 +219,19 @@ _certs=$(grep -c -e '-----BEGIN CERTIFICATE-----' "$CA_FILE")
 _der=$("$OPENSSL" x509 -in "$CA_FILE" -outform DER | wc -c)
 [ "$((_der + 0))" -le 16384 ] || die 3 "the certificate in $(safe_str "$CA_FILE") is larger than 16 KiB (DER); refusing it"
 
+# Every checked property above belongs to the first PEM object. Re-encode that one certificate into
+# a private directory and hand only the re-encoded file to the system tools, so nothing else in
+# CA_FILE (a second object, text around the certificate) can reach a trust store.
+WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sylvode-trust.XXXXXX") || die 1 "cannot create a temporary directory"
+trap 'rm -rf "$WORK_DIR"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+chmod 0700 "$WORK_DIR" || die 1 "cannot set the mode of the temporary directory"
+PEM_FILE=$WORK_DIR/ca.pem
+"$OPENSSL" x509 -in "$CA_FILE" -out "$PEM_FILE" || die 1 "cannot re-encode the certificate"
+[ "$(grep -c -e '-----BEGIN' "$PEM_FILE")" = 1 ] || die 1 "the re-encoded certificate is not a single PEM object"
+
 FP=$("$OPENSSL" x509 -in "$CA_FILE" -noout -fingerprint -sha256 | sed -n 's/^.*Fingerprint=//p' | head -n 1 | tr 'a-f' 'A-F')
 [ -n "$FP" ] || die 1 "cannot compute the SHA-256 fingerprint"
 FP16=$(printf '%s' "$FP" | tr -d ':' | tr 'A-F' 'a-f' | cut -c1-16)
@@ -555,9 +568,9 @@ mac_install() {
   mac_need_root
   _kc=$(mac_keychain)
   if [ "$TARGET" = system ]; then
-    run_or_die security add-trusted-cert -d -r trustRoot -k "$_kc" "$CA_FILE"
+    run_or_die security add-trusted-cert -d -r trustRoot -k "$_kc" "$PEM_FILE"
   else
-    run_or_die security add-trusted-cert -r trustRoot -k "$_kc" "$CA_FILE"
+    run_or_die security add-trusted-cert -r trustRoot -k "$_kc" "$PEM_FILE"
   fi
   say_done install installed "$LABEL in $_kc"
   printf 'Hints:\n'
@@ -570,9 +583,9 @@ mac_remove() {
   mac_need_root
   _kc=$(mac_keychain)
   if [ "$TARGET" = system ]; then
-    run_or_die security remove-trusted-cert -d "$CA_FILE"
+    run_or_die security remove-trusted-cert -d "$PEM_FILE"
   else
-    run_or_die security remove-trusted-cert "$CA_FILE"
+    run_or_die security remove-trusted-cert "$PEM_FILE"
   fi
   run_or_die security delete-certificate -Z "$SHA1" "$_kc"
   say_done remove removed "$LABEL from $_kc"
@@ -644,7 +657,7 @@ linux_install() {
   if [ "$TARGET" = system ]; then
     linux_system_need_root
     detect_linux
-    run_or_die "$OPENSSL" x509 -in "$CA_FILE" -out "$DEST"
+    run_or_die "$OPENSSL" x509 -in "$PEM_FILE" -out "$DEST"
     run_or_die chmod 0644 "$DEST"
     case $FAMILY in
       debian | suse) run_or_die update-ca-certificates ;;
@@ -658,7 +671,7 @@ linux_install() {
     _dirs=$(nss_dirs 1)
     printf '%s\n' "$_dirs" | while IFS= read -r _d; do
       [ -n "$_d" ] || continue
-      run_or_die certutil -A -d "sql:$_d" -n "$LABEL" -t "C,," -i "$CA_FILE"
+      run_or_die certutil -A -d "sql:$_d" -n "$LABEL" -t "C,," -i "$PEM_FILE"
       say_done install installed "$LABEL in $_d"
     done
     HINT_CA=$CA_FILE

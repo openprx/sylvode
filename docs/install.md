@@ -348,6 +348,17 @@ choose a dedicated name. Without a DNS name the CA is limited to the reserved pl
 form of RFC 5952 every time. Repeating the command with the same names changes nothing; other
 names need [rotate-ca](#add-a-name-replace-or-retire-the-ca).
 
+Residual: the constraint covers IP addresses and DNS names only, the two types browsers and
+rustls use for a server's identity. The CA key could also sign a certificate with a URI or e-mail
+name (for example `URI:spiffe://other.example/x`); a verifier that trusts the operating-system store
+and checks such names would accept it. The key stays 0400 in a 0700 directory, so guard it as
+described below. Adding `invalid` placeholders for those types is not done: not every client
+tolerates unknown critical constraint types.
+
+An existing key directory (`ca/`, or `next/` during a rotation) is reused only when it is a real
+directory, owned by the user running the script, with mode 0700; otherwise `init-ca` and
+`rotate-ca` stop with exit 3 and write nothing.
+
 Files, under `/var/lib/sylvode-tls` for root (`--dir` or `SYLVODE_TLS_DIR` change it):
 
 | Path | Mode | Content |
@@ -496,7 +507,9 @@ Never `sha256sum` the PEM file: the fingerprint is computed over the DER certifi
 
 The scripts refuse a certificate that is not a CA or that has no critical name constraint; there
 is no override. They print the permitted names first. `--yes` (`-Yes`) skips the prompt and needs
-the fingerprint. `--dry-run` shows what would run. `remove` and `check` take the same file. The
+the fingerprint. `--dry-run` shows what would run. Only the first certificate in the file is
+checked, and only that certificate, re-encoded into a private temporary directory, is passed to
+the system tools. `--dry-run` therefore prints a temporary path for it. `remove` and `check` take the same file. The
 Windows script is unsigned: take it from the tagged repository. Only the Debian family is covered
 by the acceptance tests; other Linux families are best effort.
 

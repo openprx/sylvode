@@ -596,18 +596,23 @@ add_name() {
 
 # name_item_ok ITEM: the item is canonical ("IP:..." or "DNS:...").
 name_item_ok() {
+  _ni_old=$NOWARN
   NOWARN=1
+  _ni_rc=1
   case $1 in
     IP:*)
-      _ni_v=$(canon_ip "${1#IP:}" 2>/dev/null) || return 1
-      [ "$_ni_v" = "${1#IP:}" ]
+      if _ni_v=$(canon_ip "${1#IP:}" 2>/dev/null) && [ "$_ni_v" = "${1#IP:}" ]; then
+        _ni_rc=0
+      fi
       ;;
     DNS:*)
-      _ni_v=$(canon_dns "${1#DNS:}" 2>/dev/null) || return 1
-      [ "$_ni_v" = "${1#DNS:}" ]
+      if _ni_v=$(canon_dns "${1#DNS:}" 2>/dev/null) && [ "$_ni_v" = "${1#DNS:}" ]; then
+        _ni_rc=0
+      fi
       ;;
-    *) return 1 ;;
   esac
+  NOWARN=$_ni_old
+  return "$_ni_rc"
 }
 
 # read_names FILE: sets READ_NAMES (validated, one per line); dies with 3 on a bad entry.
@@ -820,7 +825,19 @@ acquire_lock() {
       die 6 "another instance holds the lock ($_al_lk, pid $_al_pid)"
     fi
     warn "removing stale lock $_al_lk"
-    rm -rf "$_al_lk"
+    # Take the stale lock over by renaming it to a name only this process uses, so a competing
+    # instance cannot delete the lock this one is about to create. If the renamed lock is not the
+    # stale one seen above, another instance replaced it first: leave it (restore it when the
+    # name is still free) and give up.
+    _al_old=$_al_lk.stale.$$
+    rm -rf "$_al_old"
+    mv "$_al_lk" "$_al_old" 2>/dev/null || die 6 "another instance holds the lock ($_al_lk)"
+    _al_now=$(sed -n '1p' "$_al_old/pid" 2>/dev/null)
+    if [ "$_al_now" != "$_al_pid" ]; then
+      [ -e "$_al_lk" ] || mv "$_al_old" "$_al_lk" 2>/dev/null || :
+      die 6 "another instance holds the lock ($_al_lk)"
+    fi
+    rm -rf "$_al_old"
     mkdir "$_al_lk" 2>/dev/null || die 6 "another instance holds the lock ($_al_lk)"
   fi
   printf '%s\n' "$$" >"$_al_lk/pid"
@@ -994,6 +1011,12 @@ make_ca() {
   _mc_names=$4
   _mc_cn=$5
   _mc_days=$6
+  # An existing key directory is only reused when it is a real directory, owned by the invoking
+  # user and mode 0700: the new key must not be written where somebody else can replace it.
+  if [ -e "$_mc_keydir" ] || [ -L "$_mc_keydir" ]; then
+    find_match "$_mc_keydir" -prune -type d -user "$SELF_UID" -perm 0700 ||
+      die 3 "refusing the existing key directory $_mc_keydir: it must be a real directory (not a symlink) owned by uid $SELF_UID with mode 0700"
+  fi
   mk_tmp "$DIR"
   _mc_t=$TMPD
   "$OPENSSL" genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$_mc_t/ca.key" 2>/dev/null ||
@@ -1018,10 +1041,9 @@ make_ca() {
   printf '%s' "$_mc_names" >"$_mc_t/ca.names" || die 1 "step failed: writing the name list"
   chmod 0400 "$_mc_t/ca.key"
   chmod 0644 "$_mc_t/ca.crt" "$_mc_t/ca.names"
-  if [ ! -d "$_mc_keydir" ]; then
+  if [ ! -e "$_mc_keydir" ] && [ ! -L "$_mc_keydir" ]; then
     mkdir -m 0700 "$_mc_keydir" || die 1 "cannot create $_mc_keydir"
   fi
-  chmod 0700 "$_mc_keydir"
   mv -f "$_mc_t/ca.key" "$_mc_keydir/ca.key" || die 1 "cannot install the CA key"
   mv -f "$_mc_t/ca.names" "$_mc_namesf" || die 1 "cannot install the name list"
   mv -f "$_mc_t/ca.crt" "$_mc_crt" || die 1 "cannot install the CA certificate"
