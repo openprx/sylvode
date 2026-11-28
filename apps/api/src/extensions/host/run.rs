@@ -8,7 +8,7 @@ use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::Deserialize;
 use serde_json::Value;
 use uuid::Uuid;
-use wasmtime::component::{HasSelf, Linker};
+use wasmtime::component::{Component, HasSelf, Linker};
 use wasmtime::{Store, Trap};
 
 use super::bindings::{action, rule};
@@ -71,12 +71,33 @@ const fn who(principal: &Principal) -> Result<(Who, &InstallationView), HostErro
     ))
 }
 
+/// The component an invocation runs: bytes that go through the compile cache, or a component the
+/// caller compiled earlier (so the run does not depend on the cache still holding it).
+#[derive(Clone, Copy)]
+pub enum Source<'a> {
+    Bytes(&'a [u8]),
+    Compiled {
+        component: &'a Component,
+        /// The size of the component's bytes, checked against the world's limit like the bytes are.
+        size: usize,
+    },
+}
+
+impl Source<'_> {
+    const fn size(&self) -> usize {
+        match self {
+            Self::Bytes(bytes) => bytes.len(),
+            Self::Compiled { size, .. } => *size,
+        }
+    }
+}
+
 /// Runs `component` for an installation principal. Its requested ids and grants are the ones in the
 /// principal's installation view; every host call loads them again (see `dispatch::fresh_principal`).
 pub async fn invoke(
     state: &AppState,
     principal: &Principal,
-    component: &[u8],
+    component: Source<'_>,
     world: World,
     entry: &str,
     input: &str,
@@ -88,17 +109,42 @@ pub async fn invoke(
         },
         _ => GrantSet::default(),
     };
-    invoke_with(state, principal, component, world, entry, input, &grants, None).await
+    invoke_source(state, principal, component, world, entry, input, &grants, None).await
 }
 
 /// [`invoke`] with the invoking user's `session_version` given instead of read from the database,
 /// for tests of the host without a database: the calls of such a run do not load the installation
 /// again and nothing is written to the invocation log. `None` is the production path.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn invoke_with(
     state: &AppState,
     principal: &Principal,
     component: &[u8],
+    world: World,
+    entry: &str,
+    input: &str,
+    grants: &GrantSet,
+    session: Option<i64>,
+) -> Invocation {
+    invoke_source(
+        state,
+        principal,
+        Source::Bytes(component),
+        world,
+        entry,
+        input,
+        grants,
+        session,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn invoke_source(
+    state: &AppState,
+    principal: &Principal,
+    component: Source<'_>,
     world: World,
     entry: &str,
     input: &str,
@@ -322,7 +368,7 @@ async fn execute(
     state: &AppState,
     who: &Who,
     installation: &InstallationView,
-    component_bytes: &[u8],
+    source: Source<'_>,
     world: World,
     entry: &str,
     input: &str,
@@ -334,7 +380,7 @@ async fn execute(
     if !valid_entry(entry) {
         return Err(HostError::new(RefusalCode::PluginActionUnknown));
     }
-    if component_bytes.len() > limits.component {
+    if source.size() > limits.component {
         return Err(HostError::new(RefusalCode::PluginComponentTooLarge));
     }
     if input.len() > limits.input {
@@ -346,7 +392,10 @@ async fn execute(
     // Compile (or fetch) before taking any slot: a compile in progress must not hold an instance
     // or a memory reservation.
     let engine = engine()?;
-    let component = compile_cache().get(engine, component_bytes).await?;
+    let component = match source {
+        Source::Bytes(bytes) => compile_cache().get(engine, bytes).await?,
+        Source::Compiled { component, .. } => component.clone(),
+    };
     let _admission = gates().admit(world, who.installation_id)?;
     let plan = plan(grants);
     check_shape(engine, &component, world, plan)?;

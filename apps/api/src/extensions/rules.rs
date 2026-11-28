@@ -22,9 +22,10 @@ use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use serde_json::{Value, json};
 use sv_package::RuleEntry;
 use uuid::Uuid;
+use wasmtime::component::Component;
 
 use super::host::engine::{compile_cache, engine};
-use super::host::{World, invoke};
+use super::host::{Source, World, invoke};
 use super::install::live::{self, LoadError};
 use crate::catalogue::{InstallationView, Principal, RefusalCode};
 use crate::forms::rules::external::{
@@ -195,8 +196,13 @@ struct InstalledRule {
 /// the transaction is open. A rule that was not prepared (a writer that does not prepare) refuses
 /// `plugin_failed`: it never falls back to I/O. An installation that was disabled between the prepare
 /// and the apply is the same race as a disable concurrent with the write.
+///
+/// The set belongs to the `(workspace, project)` it was prepared for: a call from any other scope
+/// refuses `plugin_failed` instead of running an installation of the first one.
 #[derive(Clone, Default)]
 pub struct PreparedRules {
+    workspace_id: Uuid,
+    project_id: Uuid,
     entries: Arc<HashMap<(String, String), Prepared>>,
 }
 
@@ -208,7 +214,11 @@ enum Prepared {
 struct Ready {
     installation: InstallationView,
     approver: Option<Uuid>,
-    bytes: Arc<Vec<u8>>,
+    /// Compiled during the prepare and held here, so that the apply never compiles (and never
+    /// depends on the compile cache still holding the entry).
+    component: Component,
+    /// The size of the component's bytes, for the world's size limit.
+    size: usize,
     declared: RuleEntry,
 }
 
@@ -250,6 +260,8 @@ impl PreparedRules {
             entries.insert((package, name), entry);
         }
         Ok(Self {
+            workspace_id,
+            project_id,
             entries: Arc::new(entries),
         })
     }
@@ -307,18 +319,18 @@ async fn load_one(state: &AppState, workspace_id: Uuid, project_id: Uuid, packag
     let Ok(bytes) = open::component_bytes(db, workspace_id, &stored, &declared.component).await else {
         return Prepared::Refused(RefusalCode::PluginInvalidComponent);
     };
-    // Compile now, outside any transaction; the cache serves the run.
-    let compiled = match engine() {
-        Ok(engine) => compile_cache().get(engine, &bytes).await.is_ok(),
-        Err(_) => false,
+    // Compile now, outside any transaction, and keep the result.
+    let Ok(engine) = engine() else {
+        return failed;
     };
-    if !compiled {
+    let Ok(component) = compile_cache().get(engine, &bytes).await else {
         return Prepared::Refused(RefusalCode::PluginInvalidComponent);
-    }
+    };
     Prepared::Ready(Box::new(Ready {
         installation: loaded.view,
         approver: loaded.approver,
-        bytes,
+        component,
+        size: bytes.len(),
         declared,
     }))
 }
@@ -356,9 +368,13 @@ impl ExternalRule for InstalledRule {
             let key = (self.reference.package_key.clone(), self.reference.rule.clone());
             // Fail closed: a rule that was not prepared never loads anything here.
             let prepared = PREPARED
-                .try_with(|rules| Arc::clone(&rules.entries))
+                .try_with(Clone::clone)
                 .map_err(|_| refused(RefusalCode::PluginFailed))?;
-            let ready = match prepared.get(&key) {
+            // The set was prepared for one scope; a call from another never uses it.
+            if prepared.workspace_id != call.workspace_id || prepared.project_id != call.project_id {
+                return Err(refused(RefusalCode::PluginFailed));
+            }
+            let ready = match prepared.entries.get(&key) {
                 Some(Prepared::Ready(ready)) => ready,
                 Some(Prepared::Refused(code)) => return Err(refused(*code)),
                 None => return Err(refused(RefusalCode::PluginFailed)),
@@ -385,7 +401,10 @@ impl ExternalRule for InstalledRule {
             let outcome = invoke(
                 &self.state,
                 &principal,
-                &ready.bytes,
+                Source::Compiled {
+                    component: &ready.component,
+                    size: ready.size,
+                },
                 World::FieldRule,
                 call.stage.name(),
                 &input,

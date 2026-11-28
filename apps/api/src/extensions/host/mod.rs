@@ -35,7 +35,7 @@ use serde_json::Value;
 pub use error::HostError;
 pub use limits::World;
 pub use log::InvocationRecord;
-pub use run::verify_component;
+pub use run::{Source, verify_component};
 
 use crate::catalogue::{Grant, Principal};
 
@@ -57,6 +57,7 @@ pub struct Invocation {
 
 /// Runs `component` once.
 ///
+/// * `component` is bytes (compiled through the cache) or a component compiled earlier.
 /// * `principal` must be a plugin or an installation principal; its installation's `requested` and
 ///   `grants` are what the guest may use, and every host call loads them again.
 /// * `world` picks the export and the limits; a component built for the other world is refused
@@ -70,7 +71,7 @@ pub struct Invocation {
 pub async fn invoke(
     state: &AppState,
     principal: &Principal,
-    component: &[u8],
+    component: Source<'_>,
     world: World,
     entry: &str,
     input: &str,
