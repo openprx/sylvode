@@ -31,7 +31,7 @@ use platform::{app::AppState, config::AiTasksConfig, timestamp::Timestamp};
 use reqwest::header::CONTENT_TYPE;
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use serde_json::{Value, json};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -203,38 +203,34 @@ async fn read_capped(mut response: reqwest::Response) -> String {
 }
 
 /// How the worker delivers: the pooled client, and how many bots' lanes run at once.
-struct Deliverer {
+pub struct Deliverer {
     pool: Arc<DeliveryPool>,
     concurrency: usize,
     lane_batch: i64,
 }
 
-static DELIVERER: OnceLock<Result<Deliverer, String>> = OnceLock::new();
-
-/// The process's deliverer, built from the configuration on first use.
-fn deliverer(config: &AiTasksConfig) -> anyhow::Result<&'static Deliverer> {
-    DELIVERER
-        .get_or_init(|| {
-            let settings = PoolSettings {
-                timeout: DELIVERY_TIMEOUT,
-                connect_timeout: DELIVERY_CONNECT_TIMEOUT,
-                idle_timeout: Duration::from_secs(config.pool_idle_timeout_secs),
-                max_idle_per_host: usize::try_from(config.pool_max_idle_per_host).unwrap_or(usize::MAX),
-                tcp_keepalive: (config.tcp_keepalive_secs > 0).then(|| Duration::from_secs(config.tcp_keepalive_secs)),
-                per_target_concurrency: usize::try_from(config.per_runner_concurrency).unwrap_or(usize::MAX),
-            };
-            let pool = DeliveryPool::new(AddressPolicy::from_runtime(), settings)
-                .map_err(|err| format!("the delivery pool could not be built: {err}"))?;
-            Ok(Deliverer {
-                pool: Arc::new(pool),
-                concurrency: usize::try_from(config.delivery_concurrency)
-                    .unwrap_or(usize::MAX)
-                    .max(1),
-                lane_batch: i64::from(config.lane_batch.max(1)),
-            })
+impl Deliverer {
+    /// Builds the deliverer from the configuration. The worker calls this once at start and exits
+    /// when it fails: without a pool nothing can be delivered.
+    pub fn new(config: &AiTasksConfig) -> anyhow::Result<Self> {
+        let settings = PoolSettings {
+            timeout: DELIVERY_TIMEOUT,
+            connect_timeout: DELIVERY_CONNECT_TIMEOUT,
+            idle_timeout: Duration::from_secs(config.pool_idle_timeout_secs),
+            max_idle_per_host: usize::try_from(config.pool_max_idle_per_host).unwrap_or(usize::MAX),
+            tcp_keepalive: (config.tcp_keepalive_secs > 0).then(|| Duration::from_secs(config.tcp_keepalive_secs)),
+            per_target_concurrency: usize::try_from(config.per_runner_concurrency).unwrap_or(usize::MAX),
+        };
+        let pool = DeliveryPool::new(AddressPolicy::from_runtime(), settings)
+            .map_err(|err| anyhow::anyhow!("the delivery pool could not be built: {err}"))?;
+        Ok(Self {
+            pool: Arc::new(pool),
+            concurrency: usize::try_from(config.delivery_concurrency)
+                .unwrap_or(usize::MAX)
+                .max(1),
+            lane_batch: i64::from(config.lane_batch.max(1)),
         })
-        .as_ref()
-        .map_err(|err| anyhow::anyhow!("{err}"))
+    }
 }
 
 /// Picks up due tasks and delivers each to its bot's webhook.
@@ -243,8 +239,12 @@ fn deliverer(config: &AiTasksConfig) -> anyhow::Result<&'static Deliverer> {
 /// default configuration the tasks are delivered one after the other; see [`crate::lanes`] for
 /// `delivery_concurrency` above 1. Every task is settled on its own: a delivery or settlement that
 /// fails is logged and leaves that task to its lease, and the rest of the batch goes on.
-pub async fn process_pending_tasks(state: &AppState, concurrency: usize, config: &AiTasksConfig) -> anyhow::Result<()> {
-    let deliverer = deliverer(config)?;
+pub async fn process_pending_tasks(
+    state: &AppState,
+    concurrency: usize,
+    config: &AiTasksConfig,
+    deliverer: &Arc<Deliverer>,
+) -> anyhow::Result<()> {
     let db = &state.db;
     let limit = i64::try_from(concurrency.max(1)).unwrap_or(i64::MAX) * deliverer.lane_batch;
     fail_unconnected_tasks(state, limit).await?;
@@ -258,14 +258,16 @@ pub async fn process_pending_tasks(state: &AppState, concurrency: usize, config:
     let shape = lane_stats(&tasks, |task| task.ai_participant_id);
     let outcome = {
         let state = state.clone();
+        let deliverer = Arc::clone(deliverer);
         run_lanes(
             tasks,
             |task| task.ai_participant_id,
             deliverer.concurrency,
             move |task| {
                 let state = state.clone();
+                let deliverer = Arc::clone(&deliverer);
                 async move {
-                    settle_task(&state, &task, deliverer, picked_at).await;
+                    settle_task(&state, &task, &deliverer, picked_at).await;
                     Ok(())
                 }
             },

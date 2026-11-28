@@ -104,6 +104,9 @@ async fn main() -> anyhow::Result<()> {
         "worker started"
     );
 
+    // Built once: a worker that cannot build its delivery pool must not run and deliver nothing.
+    let deliverer = std::sync::Arc::new(ai_tasks::Deliverer::new(&config.ai_tasks)?);
+
     let shutdown = shutdown_signal();
     tokio::pin!(shutdown);
     let mut next_operation_log_cleanup = tokio::time::Instant::now();
@@ -135,7 +138,7 @@ async fn main() -> anyhow::Result<()> {
                 tracing::info!("worker shutting down");
                 break;
             }
-            result = ai_tasks::process_pending_tasks(&state, args.concurrency, &config.ai_tasks) => {
+            result = ai_tasks::process_pending_tasks(&state, args.concurrency, &config.ai_tasks, &deliverer) => {
                 if let Err(err) = result {
                     tracing::warn!(error = %err, "task polling failed");
                 }
