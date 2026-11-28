@@ -38,9 +38,11 @@
 //!   larger cap ([`BODY_CAP_FACTOR`] times both) counts response bodies until they are dropped, so
 //!   a client that keeps the socket of an ended stream open cannot exceed it; both refuse with
 //!   `429` and `Retry-After`.
-//! * **One workspace cannot flood the broadcast.** Per workspace, at most [`WORKSPACE_BURST`]
-//!   issue or draft hints pass per window of one [`HintTuning::tick`]; the rest become one
-//!   overflow signal that ends that workspace's streams with `lagged` (clients re-read).
+//! * **One writer cannot flood the broadcast.** Per [`Scope`] (an issue or draft hint: its
+//!   workspace and project; a task hint: its workspace and bot), at most [`BURST`] hints pass per
+//!   window of one [`HintTuning::tick`]; the rest become one overflow signal that ends, with
+//!   `lagged` (clients re-read), only the streams that could have received the held-back hints:
+//!   those that can read the project, or the bot's own streams.
 //!
 //! Nothing here logs a token or a payload: log fields are ids, counts and fixed reason codes.
 
@@ -92,7 +94,7 @@ pub const BODY_CAP_FACTOR: usize = 2;
 /// Hints of one workspace that pass the hub within one coalescing window (one
 /// [`HintTuning::tick`]). The rest of that window's hints are replaced by a single overflow
 /// signal, which ends that workspace's streams with `lagged` so their clients re-read.
-pub const WORKSPACE_BURST: usize = 32;
+pub const BURST: usize = 32;
 /// Parsed notifications the shared channel holds for a slow stream before it is declared lagging.
 pub const BROADCAST_CAPACITY: usize = 4_096;
 /// `Retry-After` of a refusal because a limit of open streams is reached.
@@ -233,15 +235,25 @@ pub fn parse_bot(payload: &str) -> Option<Uuid> {
     serde_json::from_str::<RawBot>(payload).ok().map(|raw| raw.b)
 }
 
+/// What a coalescing window counts hints of, and which streams an overflow of it concerns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Scope {
+    /// Issue and draft hints of one project: concerns the streams that can read the project.
+    Project { workspace: Uuid, project: Uuid },
+    /// Task hints for one bot: concerns that bot's streams (task delivery does not depend on
+    /// readable projects).
+    Bot { workspace: Uuid, bot: Uuid },
+}
+
 /// Something a stream wakes on.
 #[derive(Clone, Copy, Debug)]
 enum Signal {
     Hint(Hint),
     Access(Uuid),
     Token(Uuid),
-    /// More issue or draft hints than [`WORKSPACE_BURST`] came from this workspace within one
-    /// window: some were not forwarded, so its streams must re-read.
-    Overflow(Uuid),
+    /// More hints than [`BURST`] came from one [`Scope`] within one window: some were not
+    /// forwarded, so the streams that could have received them must re-read.
+    Overflow(Scope),
     /// The listener (re)connected or a payload could not be understood: anything may be missed.
     Reset,
 }
@@ -321,19 +333,19 @@ impl Registry {
     }
 }
 
-/// The coalescing windows of the workspaces that sent issue or draft hints recently.
+/// The coalescing windows of the scopes that sent counted hints recently.
 #[derive(Default)]
-struct Windows(HashMap<Uuid, Window>);
+struct Windows(HashMap<Scope, Window>);
 
 impl Windows {
-    /// Counts one hint of `workspace`. `None`: forward it. `Some((first, started))`: it is held
+    /// Counts one hint of `scope`. `None`: forward it. `Some((first, started))`: it is held
     /// back; `first` is true for the first held-back hint of the window, which `started`.
-    fn admit(&mut self, workspace: Uuid, now: Instant, window: Duration) -> Option<(bool, Instant)> {
+    fn admit(&mut self, scope: Scope, now: Instant, window: Duration) -> Option<(bool, Instant)> {
         if self.0.len() > 1_024 {
             self.0
                 .retain(|_, w| now.duration_since(w.started) < window || w.overflowed);
         }
-        let entry = self.0.entry(workspace).or_insert(Window {
+        let entry = self.0.entry(scope).or_insert(Window {
             started: now,
             passed: 0,
             overflowed: false,
@@ -345,7 +357,7 @@ impl Windows {
                 overflowed: false,
             };
         }
-        if entry.passed < WORKSPACE_BURST {
+        if entry.passed < BURST {
             entry.passed += 1;
             return None;
         }
@@ -355,7 +367,7 @@ impl Windows {
     }
 }
 
-/// One workspace's hints in the current coalescing window.
+/// One scope's hints in the current coalescing window.
 struct Window {
     started: Instant,
     passed: usize,
@@ -407,7 +419,7 @@ pub struct HintHub {
     registry: Mutex<Registry>,
     /// Response bodies that are still open; capped at [`BODY_CAP_FACTOR`] times the stream limits.
     bodies: Mutex<Registry>,
-    /// Per-workspace coalescing windows of issue and draft hints.
+    /// Per-scope coalescing windows of issue, draft and task hints.
     windows: Mutex<Windows>,
     /// Lookups shared by the open streams of one bot; an entry lives while the bot has a stream.
     shared: Mutex<HashMap<Uuid, Arc<BotShared>>>,
@@ -654,21 +666,25 @@ impl HintHub {
         }
     }
 
-    /// Forwards a row hint, or holds it back when its workspace is over its burst for this window.
+    /// Forwards a row hint, or holds it back when its scope is over its burst for this window.
     ///
-    /// Only issue and draft hints are counted: they are the ones a bulk write fans out per row.
-    /// The first [`WORKSPACE_BURST`] hints of a workspace in a window of one [`HintTuning::tick`]
-    /// pass at once; later ones are dropped and replaced by one [`Signal::Overflow`] sent when the
-    /// window ends. So a bulk write in one workspace puts at most `WORKSPACE_BURST + 1` entries
-    /// per window into the shared broadcast and cannot push other workspaces' hints out of it.
+    /// Issue, draft and task hints are counted: they are the ones a bulk write fans out per row.
+    /// The first [`BURST`] hints of a [`Scope`] in a window of one [`HintTuning::tick`] pass at
+    /// once; later ones are dropped and replaced by one [`Signal::Overflow`] sent when the window
+    /// ends. So a bulk write in one project (or of tasks for one bot) puts at most `BURST + 1`
+    /// entries per window into the shared broadcast. Tool hints are not counted: they are not
+    /// written per row.
     fn dispatch_hint(self: &Arc<Self>, hint: Hint) {
-        let workspace = match hint {
-            Hint::Issue { workspace, .. } | Hint::Draft { workspace, .. } => workspace,
-            Hint::Task { .. } | Hint::Tools { .. } => return self.signal(Signal::Hint(hint)),
+        let scope = match hint {
+            Hint::Issue { workspace, project, .. } | Hint::Draft { workspace, project, .. } => {
+                Scope::Project { workspace, project }
+            }
+            Hint::Task { workspace, bot, .. } => Scope::Bot { workspace, bot },
+            Hint::Tools { .. } => return self.signal(Signal::Hint(hint)),
         };
         let window = self.tuning.tick;
         let now = Instant::now();
-        let first_overflow = self.windows.lock().admit(workspace, now, window);
+        let first_overflow = self.windows.lock().admit(scope, now, window);
         match first_overflow {
             None => self.signal(Signal::Hint(hint)),
             // Later hints of an overflowing window are covered by the overflow signal.
@@ -677,8 +693,8 @@ impl HintHub {
                 let hub = Arc::clone(self);
                 tokio::spawn(async move {
                     tokio::time::sleep_until(started + window).await;
-                    hub.windows.lock().0.remove(&workspace);
-                    hub.signal(Signal::Overflow(workspace));
+                    hub.windows.lock().0.remove(&scope);
+                    hub.signal(Signal::Overflow(scope));
                 });
             }
         }
@@ -974,7 +990,7 @@ impl HintStream {
             Err(broadcast::error::RecvError::Lagged(_)) | Ok(Signal::Reset) => Err(End::Lagged),
             Err(broadcast::error::RecvError::Closed) => Err(End::Shutdown),
             Ok(Signal::Hint(hint)) => self.deliver(hint).await,
-            Ok(Signal::Overflow(workspace)) if workspace == self.workspace_id => Err(End::Lagged),
+            Ok(Signal::Overflow(scope)) => self.on_overflow(scope).await,
             Ok(Signal::Access(bot)) if bot == self.bot_id => {
                 // A permission change is an access change too: check the token (read) first.
                 self.verify_token().await?;
@@ -982,7 +998,26 @@ impl HintStream {
                 self.send(frame("access_changed", &serde_json::json!({})))
             }
             Ok(Signal::Token(bot)) if bot == self.bot_id => self.verify_token().await,
-            Ok(Signal::Overflow(_) | Signal::Access(_) | Signal::Token(_)) => Ok(()),
+            Ok(Signal::Access(_) | Signal::Token(_)) => Ok(()),
+        }
+    }
+
+    /// Ends the stream with `lagged` when it could have received the hints the overflow held
+    /// back. Readability is judged like a hint's: on a set no older than the cache bound.
+    async fn on_overflow(&mut self, scope: Scope) -> Result<(), End> {
+        match scope {
+            Scope::Bot { workspace, bot } if workspace == self.workspace_id && bot == self.bot_id => Err(End::Lagged),
+            Scope::Project { workspace, project } if workspace == self.workspace_id => {
+                if self.readable.fetched.elapsed() > self.tuning.readable_ttl {
+                    self.refresh_readable_within(self.tuning.readable_ttl).await?;
+                }
+                if self.readable.filter.allows(project) {
+                    Err(End::Lagged)
+                } else {
+                    Ok(())
+                }
+            }
+            _ => Ok(()),
         }
     }
 
