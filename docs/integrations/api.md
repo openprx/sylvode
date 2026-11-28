@@ -186,6 +186,27 @@ List endpoints that page take `page` (from 1) and `per_page` and answer:
 Defaults and maximums are given per endpoint below. Some list endpoints return a plain array or
 their own shape; the tables say so.
 
+## OpenAPI description
+
+`GET /api/v1/openapi.json` returns an OpenAPI 3.1 document of the routes of the running server. It
+is built from the operation catalogue, so it lists exactly the routes the server serves and is
+always in step with the build; there is no separate file to keep current. Sign in with a user
+session or a bot token, as for `GET /api/v1/catalogue`.
+
+Each catalogue operation is one OpenAPI operation:
+
+- `operationId` is the catalogue operation key, the tag is the area, and path parameters are
+  declared from the path template.
+- `security` lists the channels that can authenticate the route: `sessionCookie` and `bearerJwt`
+  (user session), `botToken`, and `oauth2` (delegated access). A public route and a public site
+  route have an empty list.
+- `x-sylvode-exposure` names the channels the route is open to (`console`, `bot`, `oauth`,
+  `plugin`, `site`); `x-sylvode-risk`, `x-sylvode-scope`, `x-sylvode-capability` and
+  `x-sylvode-stability` carry the catalogue classification.
+- Request and response bodies are generic JSON objects inside the common response envelope. The
+  document describes which operations exist and who may call them, not the field-level shape of
+  their bodies.
+
 ## Health
 
 | Method | Path | Notes |
