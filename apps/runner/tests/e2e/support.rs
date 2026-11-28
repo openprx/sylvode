@@ -244,16 +244,49 @@ impl Drop for Server {
     }
 }
 
-pub fn sign(body: &str, secret: &str) -> String {
+/// The timestamp header value and the `v1=<hex>` signature of `body` as signed at `unix` seconds:
+/// HMAC-SHA256 over `<timestamp>.<body>`.
+pub fn sign_at(body: &str, secret: &str, unix: u64) -> (String, String) {
+    let timestamp = unix.to_string();
     let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("hmac key");
+    mac.update(timestamp.as_bytes());
+    mac.update(b".");
     mac.update(body.as_bytes());
-    format!("sha256={}", hex::encode(mac.finalize().into_bytes()))
+    (timestamp, format!("v1={}", hex::encode(mac.finalize().into_bytes())))
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock after the epoch")
+        .as_secs()
+}
+
+/// Posts `body` signed with `secret` at `unix` seconds.
+pub async fn post_signed_at(url: &str, body: &str, secret: &str, unix: u64) -> (u16, Value) {
+    let (timestamp, signature) = sign_at(body, secret, unix);
+    post_with(
+        url,
+        body,
+        &[("x-webhook-timestamp", &timestamp), ("x-webhook-signature", &signature)],
+    )
+    .await
+}
+
+/// Posts `body` signed with `secret` now.
+pub async fn post_signed_by(url: &str, body: &str, secret: &str) -> (u16, Value) {
+    post_signed_at(url, body, secret, unix_now()).await
+}
+
+/// The current time, as a signing time for [`post_signed_at`].
+pub fn now_secs() -> u64 {
+    unix_now()
 }
 
 /// Posts `body` to the `/webhook` URL `url` signed with [`SECRET`] and returns the status and the
 /// JSON answer.
 pub async fn post_signed(url: &str, body: &str) -> (u16, Value) {
-    post_with(url, body, &[("x-webhook-signature", &sign(body, SECRET))]).await
+    post_signed_by(url, body, SECRET).await
 }
 
 pub async fn post_with(url: &str, body: &str, headers: &[(&str, &str)]) -> (u16, Value) {

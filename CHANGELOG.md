@@ -26,6 +26,11 @@ name.
 
 ### Added
 
+- **Rate limits on the sign-in routes.** Per client address and minute: `POST /api/v1/auth/login` 30,
+  `POST /api/v1/auth/register` 10, `POST /api/v1/auth/refresh` 60 and
+  `GET /api/v1/auth/setup-status` 30; `login` is also limited to 10 attempts per account (e-mail) and
+  minute. Over a limit the answer is `429` with `Retry-After`. The client address is the connection
+  peer, or the forwarded client when the peer is in `trusted_proxies`; the limits are fixed.
 - **Sites: console fields and rules.** A site answers `url` and `url_mode` (`separate`: its own
   `allowed_origin`; `same_origin`: served by the API from `[site] assets_dir`, `public_url` + `mount_path`
   + `/?site=<slug>`; both null when nothing serves it), `published_at` (set when the site goes from
@@ -146,6 +151,18 @@ name.
 
 ### Changed
 
+- **Breaking: outbound webhook signatures carry a timestamp.** Every delivery (webhook triggers, the
+  event dispatcher and the worker's AI-task dispatch) sends `X-Webhook-Timestamp` (Unix seconds) and
+  `X-Webhook-Signature: v1=<hex>`, an HMAC-SHA256 over `<timestamp>.<raw body>`; the old
+  `sha256=<hex>` over the body alone is gone. A receiver must verify the new construction and refuse
+  a timestamp more than 300 seconds from its clock (see
+  [Verifying the signature](docs/integrations/webhooks.md#verifying-the-signature)). The webhook
+  receiver (`sylvode-runner`) verifies it, refuses a missing or stale timestamp (window
+  `max_delivery_age_secs`), reads `X-Sylvode-Timestamp` or `X-Webhook-Timestamp`, and signs its
+  `webhook` agent forwards the same way. Update any other receiver before upgrading.
+- **`register` checks the caller before it hashes.** Once the instance has people, a request without an
+  admin session is refused with 403 before the password is hashed, so an anonymous request no longer
+  costs a password hash.
 - **Breaking: Flow has one route surface, `/api/v2/flow/`.** Every `/api/v1/flow/...`,
   `/api/v1/workspaces/{workspace_id}/flow/...` and `/api/v1/collab/{tickets,ws}` route is removed,
   together with the `/api/v2/flow/{*path}` adapter that forwarded to them. Only

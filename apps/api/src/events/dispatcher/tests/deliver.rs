@@ -624,8 +624,23 @@ async fn flow_delivery_v08_reads_the_current_endpoint_and_rotated_secret_only_at
                 .then(|| value.trim())
         })
         .expect("signature header exists");
-    let expected = crate::webhook_trigger::sign_payload("rotated-secret", body).expect("rotated payload signs");
-    assert_eq!(signature, format!("sha256={expected}"));
+    let timestamp = headers
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case(crate::webhook_trigger::WEBHOOK_TIMESTAMP_HEADER)
+                .then(|| value.trim())
+        })
+        .expect("timestamp header exists");
+    let check = crate::inbound::auth::check_signature(
+        "rotated-secret",
+        Some(timestamp),
+        Some(signature),
+        body.as_bytes(),
+        platform::timestamp::Timestamp::now().unix_timestamp(),
+        crate::webhook_trigger::WEBHOOK_SIGNATURE_TOLERANCE_SECS,
+    );
+    assert_eq!(check, crate::inbound::auth::SignatureCheck::Valid);
     let user_agent = headers
         .lines()
         .find_map(|line| {

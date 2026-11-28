@@ -14,7 +14,7 @@ use super::{
 };
 use crate::error::ApiError;
 use crate::outbound::{OutboundTarget, delivery_client, resolve_outbound_target};
-use crate::webhook_trigger::{WEBHOOK_SIGNATURE_HEADER, WEBHOOK_USER_AGENT, sign_payload};
+use crate::webhook_trigger::{WEBHOOK_SIGNATURE_HEADER, WEBHOOK_TIMESTAMP_HEADER, WEBHOOK_USER_AGENT, sign_payload};
 
 // ---------------------------------------------------------------------------------------------
 // Sending (`events-v1.md` "满额封存与 sealed 状态" lease-claim SQL, "投递报文与 delivery_id 的位置")
@@ -167,14 +167,7 @@ pub(super) async fn attempt_delivery(
         retry_or_fail_delivery(&state.db, delivery, lease_token, "payload_encode_failed").await;
         return false;
     };
-    let signature = match sign_payload(&webhook.secret, &raw_body) {
-        Ok(sig) => sig,
-        Err(err) => {
-            tracing::warn!(delivery_id = %delivery.id, error = %err, "dispatcher: signing failed");
-            retry_or_fail_delivery(&state.db, delivery, lease_token, "signing_failed").await;
-            return false;
-        }
-    };
+    let signature = sign_payload(&webhook.secret, &raw_body);
 
     // A name that was resolved and checked is connected to at exactly those addresses, so the
     // shared client is used only when there is nothing to pin.
@@ -200,7 +193,8 @@ pub(super) async fn attempt_delivery(
         .post(target.url)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
         .header(reqwest::header::USER_AGENT, WEBHOOK_USER_AGENT)
-        .header(WEBHOOK_SIGNATURE_HEADER, format!("sha256={signature}"))
+        .header(WEBHOOK_SIGNATURE_HEADER, signature.signature)
+        .header(WEBHOOK_TIMESTAMP_HEADER, signature.timestamp)
         .header(DELIVERY_ID_HEADER, delivery.id.to_string())
         .body(raw_body)
         .send()

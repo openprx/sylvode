@@ -17,10 +17,20 @@ const RUNNER: &str = env!("CARGO_BIN_EXE_sylvode-runner");
 const SECRET: &str = "integration-secret";
 const BODY: &str = r#"{"event":"issue.created","data":{"title":"signature test"}}"#;
 
-fn sign(secret: &str) -> String {
+/// The `v1=<hex>` signature over `<timestamp>.<body>`.
+fn sign_at(secret: &str, timestamp: &str) -> String {
     let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+    mac.update(timestamp.as_bytes());
+    mac.update(b".");
     mac.update(BODY.as_bytes());
-    format!("sha256={}", hex::encode(mac.finalize().into_bytes()))
+    format!("v1={}", hex::encode(mac.finalize().into_bytes()))
+}
+
+fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
 }
 
 /// A running server. Dropping it kills and reaps the process, then removes its temp directory,
@@ -127,18 +137,61 @@ async fn post(server: &Server, headers: &[(&str, &str)]) -> (u16, String) {
 type Case = (&'static str, Vec<(&'static str, String)>, u16);
 
 /// Every request below and the status the service must answer it with.
-fn cases(good: &str, bad: &str) -> Vec<Case> {
+fn cases(good: &str, bad: &str, ts: &str) -> Vec<Case> {
+    let (sylvode_ts, webhook_ts) = (
+        ("x-sylvode-timestamp", ts.to_owned()),
+        ("x-webhook-timestamp", ts.to_owned()),
+    );
     vec![
-        ("sylvode good", vec![("x-sylvode-signature", good.to_owned())], 200),
-        ("sylvode bad", vec![("x-sylvode-signature", bad.to_owned())], 401),
-        ("webhook good", vec![("x-webhook-signature", good.to_owned())], 200),
-        ("webhook bad", vec![("x-webhook-signature", bad.to_owned())], 401),
+        (
+            "sylvode good",
+            vec![("x-sylvode-signature", good.to_owned()), sylvode_ts.clone()],
+            200,
+        ),
+        (
+            "sylvode bad",
+            vec![("x-sylvode-signature", bad.to_owned()), sylvode_ts.clone()],
+            401,
+        ),
+        (
+            "webhook good",
+            vec![("x-webhook-signature", good.to_owned()), webhook_ts.clone()],
+            200,
+        ),
+        (
+            "webhook bad",
+            vec![("x-webhook-signature", bad.to_owned()), webhook_ts.clone()],
+            401,
+        ),
+        (
+            "good signature, no timestamp",
+            vec![("x-webhook-signature", good.to_owned())],
+            401,
+        ),
+        (
+            "old sha256 prefix",
+            vec![
+                ("x-webhook-signature", good.replace("v1=", "sha256=")),
+                webhook_ts.clone(),
+            ],
+            401,
+        ),
+        (
+            "good signature, stale timestamp",
+            vec![
+                ("x-webhook-signature", sign_at(SECRET, "1000")),
+                ("x-webhook-timestamp", "1000".to_owned()),
+            ],
+            401,
+        ),
         ("no signature", vec![], 401),
         (
             "all agree",
             vec![
                 ("x-sylvode-signature", good.to_owned()),
                 ("x-webhook-signature", good.to_owned()),
+                sylvode_ts.clone(),
+                webhook_ts.clone(),
             ],
             200,
         ),
@@ -147,6 +200,7 @@ fn cases(good: &str, bad: &str) -> Vec<Case> {
             vec![
                 ("x-sylvode-signature", good.to_owned()),
                 ("x-webhook-signature", bad.to_owned()),
+                webhook_ts.clone(),
             ],
             401,
         ),
@@ -155,6 +209,7 @@ fn cases(good: &str, bad: &str) -> Vec<Case> {
             vec![
                 ("x-webhook-signature", good.to_owned()),
                 ("x-sylvode-signature", bad.to_owned()),
+                webhook_ts,
             ],
             401,
         ),
@@ -163,10 +218,11 @@ fn cases(good: &str, bad: &str) -> Vec<Case> {
 
 #[tokio::test]
 async fn every_header_case_is_answered_as_expected_and_nothing_is_written_to_stderr() {
-    let (good, bad) = (sign(SECRET), sign("not-the-secret"));
+    let ts = now().to_string();
+    let (good, bad) = (sign_at(SECRET, &ts), sign_at("not-the-secret", &ts));
     assert_ne!(good, bad);
     let server = start(RUNNER);
-    for (label, headers, expected) in cases(&good, &bad) {
+    for (label, headers, expected) in cases(&good, &bad, &ts) {
         let borrowed: Vec<(&str, &str)> = headers.iter().map(|(n, v)| (*n, v.as_str())).collect();
         let (status, _) = post(&server, &borrowed).await;
         assert_eq!(status, expected, "{label}");

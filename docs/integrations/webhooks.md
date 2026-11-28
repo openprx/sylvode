@@ -140,7 +140,8 @@ Request headers:
 | `User-Agent` | `Sylvode-Webhook/1.0` |
 | `X-Webhook-Event` | The event name. |
 | `X-Webhook-Delivery` | The delivery id (the body's `id`). |
-| `X-Webhook-Signature` | `sha256=<hex>`: HMAC-SHA256 of the raw request body with the webhook secret as key. |
+| `X-Webhook-Timestamp` | The time the request was signed, in decimal Unix seconds. |
+| `X-Webhook-Signature` | `v1=<hex>`: HMAC-SHA256, with the webhook secret as key, over the timestamp, a dot and the raw request body. |
 
 Delivery rules:
 
@@ -156,25 +157,38 @@ Delivery rules:
   measured). The webhook's `last_triggered_at` is updated after each attempt.
 
 Bot tasks that the worker hands to a bot (assignments, mentions, vote requests, alert tasks) are
-also posted to the bot's webhook, with the same `User-Agent` and `X-Webhook-Signature`. Their
+also posted to the bot's webhook, with the same `User-Agent`, `X-Webhook-Timestamp` and `X-Webhook-Signature`. Their
 payload and retry rules are described in [Bots and agent work](../guide/agents.md).
 
 ### Verifying the signature
 
-Compute HMAC-SHA256 over the exact bytes of the body, before any JSON parsing, and compare it with
-the header in constant time:
+Compute HMAC-SHA256 over the timestamp header value, a dot and the exact bytes of the body (before
+any JSON parsing), compare it with the header in constant time, and refuse a timestamp that is
+more than 5 minutes (300 seconds) from your clock, in either direction:
 
 ```python
 import hashlib
 import hmac
+import time
 
-def verify(secret: str, body: bytes, header: str) -> bool:
-    expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+TOLERANCE_SECS = 300
+
+def verify(secret: str, body: bytes, timestamp: str, header: str) -> bool:
+    try:
+        sent_at = int(timestamp)
+    except ValueError:
+        return False
+    if abs(time.time() - sent_at) > TOLERANCE_SECS:
+        return False
+    message = timestamp.encode() + b"." + body
+    expected = "v1=" + hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, header)
 ```
 
-The body carries no signed timestamp, so use `X-Webhook-Delivery` to discard a delivery seen
-before.
+The timestamp is part of the signed text, so a captured delivery cannot be replayed with a fresh
+timestamp, and one replayed unchanged is refused once it is older than the window. Inside the
+window a replay is still possible, so also use `X-Webhook-Delivery` to discard a delivery seen
+before. A retried delivery is signed again, with a new timestamp.
 
 ## Form and Flow events
 
@@ -230,7 +244,8 @@ Request headers:
 |---|---|
 | `Content-Type` | `application/json` |
 | `User-Agent` | `Sylvode-Webhook/1.0` |
-| `X-Webhook-Signature` | `sha256=<hex>`: HMAC-SHA256 of the raw request body with the webhook secret, as for the other events. |
+| `X-Webhook-Timestamp` | The time the request was signed, in decimal Unix seconds, as for the other events. |
+| `X-Webhook-Signature` | `v1=<hex>` over the timestamp and the raw request body, as for the other events (see [Verifying the signature](#verifying-the-signature)). |
 | `X-Sylvode-Delivery-Id` | The delivery id (`delivery.id`). |
 
 A 2xx answer counts as success. Anything else, and a transport error, is retried: after the first

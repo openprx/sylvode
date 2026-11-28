@@ -126,6 +126,7 @@ async fn call_register(state: &AppState, email: &str) -> Value {
         register(
             State(state.clone()),
             HeaderMap::new(),
+            None,
             Json(register_request(email, "password1", "Ada")),
         )
         .await,
@@ -215,6 +216,8 @@ async fn deactivation_and_password_reset_reject_existing_refresh_tokens() {
     let relogin_body = into_json(
         login(
             State(state.clone()),
+            HeaderMap::new(),
+            None,
             Json(
                 serde_json::from_value::<LoginRequest>(json!({"email": "ada@example.com", "password": "password2"}))
                     .expect("login"),
@@ -246,6 +249,8 @@ async fn deactivation_and_password_reset_reject_existing_refresh_tokens() {
     let login_disabled = into_json(
         login(
             State(state.clone()),
+            HeaderMap::new(),
+            None,
             Json(
                 serde_json::from_value::<LoginRequest>(json!({"email": "ada@example.com", "password": "password2"}))
                     .expect("login"),
@@ -348,7 +353,7 @@ async fn workspace_user_search_stays_inside_the_workspace_unless_the_caller_is_a
 
 async fn refresh_with(state: &AppState, token: &str) -> Value {
     let request: RefreshRequest = serde_json::from_value(json!({"refresh_token": token})).expect("refresh request");
-    into_json(refresh(State(state.clone()), HeaderMap::new(), Json(request)).await).await
+    into_json(refresh(State(state.clone()), HeaderMap::new(), None, Json(request)).await).await
 }
 
 async fn search(state: &AppState, user_id: Uuid, workspace_id: Uuid, term: Option<String>) -> Value {
@@ -376,4 +381,49 @@ async fn search(state: &AppState, user_id: Uuid, workspace_id: Uuid, term: Optio
 
 async fn flatten(joined: impl Future<Output = Result<Value, tokio::task::JoinError>>) -> Value {
     joined.await.expect("register task")
+}
+
+#[tokio::test]
+async fn login_is_limited_per_account_with_retry_after() {
+    let Some(scratch) = scratch("login_limit").await else {
+        eprintln!("skipped: {TEST_DATABASE_URL_ENV} is not set");
+        return;
+    };
+    let state = state_for(scratch.db.clone());
+    let attempt = |email: &'static str| {
+        let state = state.clone();
+        async move {
+            let request = serde_json::from_value::<LoginRequest>(json!({"email": email, "password": "wrong-password"}))
+                .expect("login");
+            login(State(state), HeaderMap::new(), None, Json(request))
+                .await
+                .unwrap_or_else(IntoResponse::into_response)
+        }
+    };
+    // The account bucket allows 10 attempts a minute; the wrong password is refused each time.
+    for _ in 0..10 {
+        let response = attempt("ada@example.com").await;
+        assert_eq!(body_json(response).await["code"], 401);
+    }
+    let limited = attempt("ada@example.com").await;
+    assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(limited.headers().contains_key(axum::http::header::RETRY_AFTER));
+    // Another account on the same address is still inside the address limit and is not affected.
+    let other = attempt("bob@example.com").await;
+    assert_eq!(body_json(other).await["code"], 401);
+    scratch.drop_self().await;
+}
+
+#[tokio::test]
+async fn register_without_an_admin_session_is_refused_once_the_instance_has_people() {
+    let Some(scratch) = scratch("register_gate").await else {
+        eprintln!("skipped: {TEST_DATABASE_URL_ENV} is not set");
+        return;
+    };
+    let state = state_for(scratch.db.clone());
+    let first = call_register(&state, "first@example.com").await;
+    assert_eq!(first["code"], 0, "{first}");
+    let second = call_register(&state, "second@example.com").await;
+    assert_eq!(second["code"], 403, "{second}");
+    scratch.drop_self().await;
 }

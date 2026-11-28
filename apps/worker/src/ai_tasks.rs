@@ -26,7 +26,9 @@ use api::services::ai_task_service::{
     AttemptEnd, TASK_PROTOCOL, WorkerEndReason, end_processing_attempt, end_stalled_attempts,
     fail_tasks_without_connection, is_reason_code, notify_ai_task_failed, runner_bot_block, trigger_kind_for_task,
 };
-use api::webhook_trigger::{WEBHOOK_SIGNATURE_HEADER, WEBHOOK_USER_AGENT, sign_payload};
+use api::webhook_trigger::{
+    WEBHOOK_SIGNATURE_HEADER, WEBHOOK_TIMESTAMP_HEADER, WEBHOOK_USER_AGENT, WebhookSignature, sign_payload,
+};
 use platform::{app::AppState, config::AiTasksConfig, timestamp::Timestamp};
 use reqwest::header::CONTENT_TYPE;
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
@@ -627,14 +629,15 @@ async fn pickup_pending_tasks(
 fn dispatch_request(
     client: &reqwest::Client,
     target: reqwest::Url,
-    signature: &str,
+    signature: &WebhookSignature,
     raw_body: String,
 ) -> reqwest::RequestBuilder {
     client
         .post(target)
         .header(CONTENT_TYPE, "application/json")
         .header(reqwest::header::USER_AGENT, WEBHOOK_USER_AGENT)
-        .header(WEBHOOK_SIGNATURE_HEADER, format!("sha256={signature}"))
+        .header(WEBHOOK_SIGNATURE_HEADER, &signature.signature)
+        .header(WEBHOOK_TIMESTAMP_HEADER, &signature.timestamp)
         .body(raw_body)
 }
 
@@ -696,8 +699,7 @@ async fn send_delivery(
     // having to trust this path. The pool checks the address of every connection it opens, and
     // holds the target's concurrency permit until the answer is read.
     let raw_body = serde_json::to_string(body)?;
-    let signature = sign_payload(&webhook.secret, &raw_body)
-        .map_err(|err| anyhow::anyhow!("webhook {} signing failed: {err}", webhook.webhook_id))?;
+    let signature = sign_payload(&webhook.secret, &raw_body);
     let pooled = pool
         .send(&webhook.url, |client, url| {
             dispatch_request(client, url, &signature, raw_body)
@@ -878,7 +880,8 @@ mod tests {
     fn the_ai_task_delivery_carries_the_webhook_user_agent() {
         let client = reqwest::Client::new();
         let target = reqwest::Url::parse("https://runner.example/hook").expect("valid url");
-        let request = dispatch_request(&client, target, "abc", "{}".to_string())
+        let signature = api::webhook_trigger::sign_payload_at("secret", "{}", 1_700_000_000);
+        let request = dispatch_request(&client, target, &signature, "{}".to_string())
             .build()
             .expect("the request builds");
 
@@ -894,7 +897,14 @@ mod tests {
                 .headers()
                 .get("X-Webhook-Signature")
                 .map(reqwest::header::HeaderValue::as_bytes),
-            Some(b"sha256=abc".as_slice())
+            Some(signature.signature.as_bytes())
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get("X-Webhook-Timestamp")
+                .map(reqwest::header::HeaderValue::as_bytes),
+            Some(b"1700000000".as_slice())
         );
     }
 
@@ -2107,7 +2117,14 @@ mod delivery_transport_tests {
         assert_eq!(response.status().as_u16(), 200);
         let request = heads.lock().first().cloned().expect("one request");
         assert!(request.starts_with("post /hook http/1.1"), "{request}");
-        assert!(request.contains("sha256="), "the body is signed");
+        assert!(
+            request.contains("x-webhook-signature: v1="),
+            "the body is signed: {request}"
+        );
+        assert!(
+            request.contains("x-webhook-timestamp: "),
+            "the signature has its timestamp: {request}"
+        );
         let unlisted = DeliveryPool::new(AddressPolicy::new("", false), settings()).expect("pool");
         let refused = send_delivery(&unlisted, &webhook(format!("http://127.0.0.1:{port}/hook")), &body).await;
         let message = refused.expect_err("loopback is refused").to_string();

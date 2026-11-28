@@ -478,12 +478,12 @@ async fn dispatch_openprx(
     Dispatched::refused("openprx config needs either signal_api or command")
 }
 
-fn outbound_signature_header_value(payload: &Value, secret: Option<&str>) -> Option<String> {
+/// The timestamp and signature header values of a forwarded body, signed now.
+fn outbound_signature_header_values(payload: &Value, secret: Option<&str>) -> Option<(String, String)> {
     secret.and_then(|secret| {
         serde_json::to_vec(payload)
             .ok()
-            .and_then(|bytes| crate::signature::sign_payload(&bytes, secret).ok())
-            .map(|sig| format!("sha256={sig}"))
+            .and_then(|bytes| crate::signature::sign_request(&bytes, secret, crate::replay::unix_now()).ok())
     })
 }
 
@@ -505,8 +505,10 @@ async fn dispatch_webhook(
         .post(&cfg.url)
         .timeout(Duration::from_secs(config.runtime.http_timeout_secs))
         .json(payload);
-    if let Some(signature_value) = outbound_signature_header_value(payload, cfg.secret.as_deref()) {
-        request = request.header(crate::signature::OUTBOUND_SIGNATURE_HEADER, signature_value);
+    if let Some((timestamp, signature_value)) = outbound_signature_header_values(payload, cfg.secret.as_deref()) {
+        request = request
+            .header(crate::signature::OUTBOUND_TIMESTAMP_HEADER, timestamp)
+            .header(crate::signature::OUTBOUND_SIGNATURE_HEADER, signature_value);
     }
 
     match request.send().await {
@@ -712,7 +714,7 @@ fn render_template_tracked(template: &str, values: &[(&str, &str)]) -> Rendered 
 // `serde_json::Value` indexing returns `Null` for a missing key; it does not panic.
 #[allow(clippy::literal_string_with_formatting_args, clippy::indexing_slicing)]
 mod tests {
-    use super::{dispatch, extract_issue_id, format_message, outbound_signature_header_value};
+    use super::{dispatch, extract_issue_id, format_message, outbound_signature_header_values};
     use crate::background::Background;
     use crate::config::Config;
     use serde_json::json;
@@ -735,14 +737,14 @@ webhook_secrets = []
     #[test]
     fn builds_outbound_signature_header_when_secret_exists() {
         let payload = json!({"event":"issue.created","value":1});
-        let header = outbound_signature_header_value(&payload, Some("top-secret"));
+        let (timestamp, header) = outbound_signature_header_values(&payload, Some("top-secret")).expect("signed");
 
-        assert!(header.as_deref().unwrap_or_default().starts_with("sha256="));
-
-        let expected_sig =
-            crate::signature::sign_payload(serde_json::to_vec(&payload).unwrap().as_slice(), "top-secret")
-                .expect("sign should succeed");
-        assert_eq!(header, Some(format!("sha256={expected_sig}")));
+        assert!(header.starts_with("v1="));
+        let unix = timestamp.parse::<i64>().expect("unix seconds");
+        let expected = crate::signature::sign_request(&serde_json::to_vec(&payload).unwrap(), "top-secret", unix)
+            .expect("sign should succeed");
+        assert_eq!((timestamp, header), expected);
+        assert_eq!(outbound_signature_header_values(&payload, None), None);
     }
 
     /// A `webhook` agent signs the body it forwards with its `secret`, and sends no signature
@@ -767,12 +769,19 @@ webhook_secrets = []
                 .get("x-webhook-signature")
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_owned);
-            match secret {
-                Some(secret) => {
-                    let expected = crate::signature::sign_payload(&forwarded.raw, secret).expect("sign");
-                    assert_eq!(header, Some(format!("sha256={expected}")));
-                }
-                None => assert_eq!(header, None),
+            let timestamp = forwarded
+                .headers
+                .get("x-webhook-timestamp")
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned);
+            if let Some(secret) = secret {
+                let timestamp = timestamp.expect("a signed forward carries its timestamp");
+                let unix = timestamp.parse::<i64>().expect("unix seconds");
+                let (_, expected) = crate::signature::sign_request(&forwarded.raw, secret, unix).expect("sign");
+                assert_eq!(header, Some(expected));
+            } else {
+                assert_eq!(header, None);
+                assert_eq!(timestamp, None);
             }
         }
     }
