@@ -840,7 +840,7 @@ acquire_lock() {
     rm -rf "$_al_old"
     mkdir "$_al_lk" 2>/dev/null || die 6 "another instance holds the lock ($_al_lk)"
   fi
-  printf '%s\n' "$$" >"$_al_lk/pid"
+  printf '%s\n' "$$" >"$_al_lk/pid" || die 6 "cannot record the pid in the lock ($_al_lk)"
   LOCK_HELD=1
 }
 
