@@ -1267,7 +1267,7 @@ fn every_id_of_a_flow_command_payload_is_accounted_for() {
 
 /// How many `Value` fields are still open for reading; closing one lowers it, opening a new one
 /// needs a conscious edit.
-const KNOWN_OPEN: usize = 47;
+const KNOWN_OPEN: usize = 32;
 
 /// Nothing stays open without a written reason: an open entry is an untyped `Value` field with
 /// `UNREAD_VALUE`, and no other kind of field is open.
