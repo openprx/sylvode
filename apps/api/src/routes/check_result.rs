@@ -995,6 +995,7 @@ async fn apply_work_item_update_effect<C: ConnectionTrait>(
         let assignee_id = optional_uuid_arg(args, "assignee_id")?;
         // As the issue routes do: an assignee is a member of the project's workspace.
         if let Some(assignee_id) = assignee_id {
+            crate::oauth::delegated::refuse_agent_dispatch(db, &[assignee_id]).await?;
             let member = db
                 .query_one(Statement::from_sql_and_values(
                     DbBackend::Postgres,

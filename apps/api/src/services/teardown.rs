@@ -40,49 +40,65 @@ struct ScopeId {
     scope_id: Uuid,
 }
 
-/// The scope ids layouts of a project can sit in: the project itself and its forms. Read before
-/// the project is deleted (the forms go with it).
+/// The scopes layouts of a project can sit in, read before the project is deleted (its forms and
+/// sites go with it).
+pub struct ProjectLayoutScopes {
+    workspace_id: Uuid,
+    ids: Vec<Uuid>,
+}
+
+/// The workspace, the project, its forms and its sites.
 ///
 /// # Errors
 /// A database failure.
-pub async fn project_layout_scopes(tx: &DatabaseTransaction, project_id: Uuid) -> Result<Vec<Uuid>, ApiError> {
+pub async fn project_layout_scopes(
+    tx: &DatabaseTransaction,
+    project_id: Uuid,
+) -> Result<Option<ProjectLayoutScopes>, ApiError> {
     #[derive(FromQueryResult)]
-    struct FormId {
+    struct Scope {
+        workspace_id: Uuid,
         id: Uuid,
     }
-    let mut ids: Vec<Uuid> = FormId::find_by_statement(Statement::from_sql_and_values(
+    let rows = Scope::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT id FROM project_forms WHERE project_id = $1",
+        "SELECT workspace_id, id FROM project_forms WHERE project_id = $1 \
+         UNION ALL SELECT workspace_id, id FROM sites WHERE project_id = $1 \
+         UNION ALL SELECT workspace_id, id FROM projects WHERE id = $1",
         vec![project_id.into()],
     ))
     .all(tx)
-    .await?
-    .into_iter()
-    .map(|row| row.id)
-    .collect();
-    ids.push(project_id);
-    Ok(ids)
+    .await?;
+    let Some(workspace_id) = rows.first().map(|row| row.workspace_id) else {
+        return Ok(None);
+    };
+    Ok(Some(ProjectLayoutScopes {
+        workspace_id,
+        ids: rows.into_iter().map(|row| row.id).collect(),
+    }))
 }
 
-/// Deletes the layouts and placements of deleted project and form scopes.
+/// Deletes the layouts and placements of deleted project, form and site scopes.
 ///
-/// Their scope ids have no foreign key. Runs after the project row is gone, so the pages of its sites no longer hold a
-/// layout; a layout some page still uses is left alone.
+/// Their scope ids have no foreign key. Runs after the project row is gone, so the pages of its
+/// sites no longer hold a layout; a layout some page still uses is left alone.
 ///
 /// # Errors
 /// A database failure.
-pub async fn delete_layouts_of_scopes(tx: &DatabaseTransaction, scopes: &[Uuid]) -> Result<(), ApiError> {
+pub async fn delete_layouts_of_scopes(tx: &DatabaseTransaction, scopes: &ProjectLayoutScopes) -> Result<(), ApiError> {
+    let args = || -> Vec<sea_orm::Value> { vec![scopes.workspace_id.into(), scopes.ids.clone().into()] };
     run(
         tx,
-        "DELETE FROM layout_placements WHERE scope_kind IN ('project','form') AND scope_id = ANY($1)",
-        vec![scopes.to_vec().into()],
+        "DELETE FROM layout_placements WHERE workspace_id = $1 AND scope_kind IN ('project','form') \
+         AND scope_id = ANY($2)",
+        args(),
     )
     .await?;
     run(
         tx,
-        "DELETE FROM layouts l WHERE l.scope_kind IN ('project','form') AND l.scope_id = ANY($1) \
-         AND NOT EXISTS (SELECT 1 FROM site_pages sp WHERE sp.layout_id = l.id)",
-        vec![scopes.to_vec().into()],
+        "DELETE FROM layouts l WHERE l.workspace_id = $1 AND l.scope_kind IN ('project','form','site') \
+         AND l.scope_id = ANY($2) AND NOT EXISTS (SELECT 1 FROM site_pages sp WHERE sp.layout_id = l.id)",
+        args(),
     )
     .await?;
     Ok(())

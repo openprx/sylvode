@@ -3608,7 +3608,10 @@ pub async fn recalculate_form_record(
         DbBackend::Postgres,
         r"
             UPDATE form_records
-            SET title = $1, values = $2, source = $3, schema_version = $4, updated_by = $5, updated_at = now()
+            SET title = $1, values = $2, schema_version = $4, updated_by = $5, updated_at = now(),
+                source = CASE WHEN source ? 'signature_media'
+                    THEN $3::jsonb || jsonb_build_object('signature_media', source->'signature_media')
+                    ELSE $3::jsonb END
             WHERE id = $6
         ",
         vec![
@@ -4021,7 +4024,9 @@ async fn update_record_for_form_internal(
             vec![record_id.into()],
         ))
         .await?
-        .and_then(|row| row.try_get::<Option<Value>>("", "media").ok().flatten());
+        .map(|row| row.try_get::<Option<Value>>("", "media"))
+        .transpose()?
+        .flatten();
     let source = with_stored_signature_media(source, stored_media);
     let source = append_signature_audit_source(source, signature_audit_entries)?;
     run_field_validator_hooks(
@@ -5439,7 +5444,10 @@ async fn recalculate_record_values(
         DbBackend::Postgres,
         r"
             UPDATE form_records
-            SET title = $1, values = $2, source = $3, schema_version = $4, updated_by = $5, updated_at = now()
+            SET title = $1, values = $2, schema_version = $4, updated_by = $5, updated_at = now(),
+                source = CASE WHEN source ? 'signature_media'
+                    THEN $3::jsonb || jsonb_build_object('signature_media', source->'signature_media')
+                    ELSE $3::jsonb END
             WHERE id = $6
         ",
         vec![

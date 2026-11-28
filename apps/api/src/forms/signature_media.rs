@@ -102,6 +102,7 @@ async fn materialize_signature_values_with_existing_storage(
             continue;
         };
         let Some(bytes) = decode_signature_data_url(value)? else {
+            ensure_stored_signature_url(value, existing_values.and_then(|values| values.get(&field.key)))?;
             continue;
         };
         let object_storage = match &storage {
@@ -162,6 +163,24 @@ async fn materialize_signature_values_with_existing_storage(
         values: Value::Object(object),
         audit_entries,
     })
+}
+
+/// A signature value that names a stored signature file must be the file the field already holds.
+///
+/// Only the server mints those names, when it materializes a drawn signature. A client that
+/// could write another record's file name into a signature field would make the retention cleanup
+/// of its own record delete that file.
+fn ensure_stored_signature_url(value: &str, stored: Option<&Value>) -> Result<(), ApiError> {
+    let trimmed = value.trim();
+    let names_stored_file =
+        trimmed.starts_with("/api/v1/uploads/signatures/") || trimmed.starts_with("/uploads/signatures/");
+    if names_stored_file && stored.and_then(Value::as_str) != Some(value) {
+        return Err(ApiError::bad_request_coded(
+            "signature_value_invalid",
+            "a signature is drawn; it cannot name a stored signature file",
+        ));
+    }
+    Ok(())
 }
 
 fn decode_signature_data_url(value: &str) -> Result<Option<Vec<u8>>, ApiError> {
@@ -799,7 +818,8 @@ pub async fn cleanup_expired_signature_values_with_storage(
         let Some(value) = object.get(&field.key).and_then(Value::as_str) else {
             continue;
         };
-        let Some(object_key) = signature_object_key_from_url(value) else {
+        let Some(object_key) = signature_object_key_from_url(value).filter(|key| key_is_of_field(key, &field.key))
+        else {
             continue;
         };
         if now < retained_since + Duration::days(retention_days) {
@@ -884,12 +904,12 @@ pub async fn cleanup_expired_replaced_signature_audit_entries_with_storage(
         else {
             continue;
         };
-        // The record's `source` is client-writable, so an entry here may not be one the server
-        // wrote: only a key of the shape the server itself stores is ever deleted.
+        // The trail is server-owned, but a key is still only deleted when it has the shape the
+        // server stores for this field (`signatures/signature-<field_key>-<uuid>.png`).
         let Some(previous_object_key) = entry_object
             .get("previous_object_key")
             .and_then(Value::as_str)
-            .filter(|key| is_signature_object_key(key))
+            .filter(|key| is_signature_object_key(key) && key_is_of_field(key, &field_key))
             .map(str::to_string)
         else {
             continue;
@@ -959,6 +979,13 @@ fn parse_signature_audit_timestamp(value: &str) -> Option<Timestamp> {
 /// Whether `key` has the shape of a stored signature object: `signatures/<safe file name>`.
 fn is_signature_object_key(key: &str) -> bool {
     key.strip_prefix("signatures/").is_some_and(is_safe_signature_file_name)
+}
+
+/// Whether a stored signature object key was minted for the field `field_key`.
+fn key_is_of_field(key: &str, field_key: &str) -> bool {
+    key.strip_prefix("signatures/signature-")
+        .and_then(|rest| rest.strip_prefix(field_key))
+        .is_some_and(|rest| rest.starts_with('-'))
 }
 
 fn is_safe_signature_file_name(file_name: &str) -> bool {

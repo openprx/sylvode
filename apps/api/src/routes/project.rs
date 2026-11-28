@@ -866,7 +866,9 @@ async fn delete_project_row(
         vec![project_id.into()],
     ))
     .await?;
-    crate::services::teardown::delete_layouts_of_scopes(tx, &layout_scopes).await?;
+    if let Some(scopes) = &layout_scopes {
+        crate::services::teardown::delete_layouts_of_scopes(tx, scopes).await?;
+    }
     Ok(released)
 }
 

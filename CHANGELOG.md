@@ -37,10 +37,13 @@ name.
 ### Security
 
 - **`source.signature_media` of a record is server-owned.** A client's copy is dropped on record
-  create and update, so a forged entry can no longer make the retention cleanup delete another
-  record's signature file.
+  create and update, and a signature field can no longer be set to the name of a stored signature
+  file it does not already hold (`signature_value_invalid`); the retention cleanups delete only a
+  file named for the field they act on. A forged entry or value can no longer make the cleanup
+  delete another record's signature file. Recalculation keeps the stored trail too.
 - A check-result approved effect that sets a work item's `assignee_id` now requires the assignee
-  to be a member of the project's workspace, as the issue routes do.
+  to be a member of the project's workspace and not an agent for a delegated caller, as the issue
+  routes do.
 - **MCP request bodies and requests have time limits.** A request body must arrive within 30 seconds
   (120 seconds for a body above 2 MiB, which holds one of two process-wide large-body permits); a
   request that runs out of time is answered `408` and frees its permit, so a client that trickles
