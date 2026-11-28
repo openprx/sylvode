@@ -12,6 +12,7 @@
 	import StatusChip from '#lib/ui/status-chip/StatusChip.svelte';
 	import TextField from '#lib/ui/text-field/TextField.svelte';
 	import { marketApi, marketDetailApi, type PackageDetail, type PackageSummary } from './api';
+	import CatalogueBrowser from './CatalogueBrowser.svelte';
 	import InstallationsPage from './InstallationsPage.svelte';
 	import { KINDS, pickText, type Kind } from './logic';
 	import PackageDetailView from './PackageDetail.svelte';
@@ -23,7 +24,7 @@
 	 */
 	let { workspaceId }: { workspaceId: string } = $props();
 
-	type Tab = 'discover' | 'installed';
+	type Tab = 'discover' | 'installed' | 'developers';
 	let tab = $state<Tab>('discover');
 	let kind = $state<Kind | 'all'>('all');
 	let query = $state('');
@@ -103,7 +104,8 @@
 	]);
 	const tabOptions = $derived([
 		{ value: 'discover' as const, label: $t('market.tabDiscover') },
-		{ value: 'installed' as const, label: $t('market.tabInstalled') }
+		{ value: 'installed' as const, label: $t('market.tabInstalled') },
+		{ value: 'developers' as const, label: $t('market.tabDevelopers') }
 	]);
 	const sorted = $derived([...packages].sort((a, b) => a.package_key.localeCompare(b.package_key)));
 </script>
@@ -122,7 +124,7 @@
 			tab = value;
 			if (value === 'discover') installDigest = null;
 		}}
-		width={280}
+		width={420}
 	/>
 
 	{#if tab === 'discover'}
@@ -184,6 +186,8 @@
 				{/each}
 			</ul>
 		{/if}
+	{:else if tab === 'developers'}
+		<CatalogueBrowser />
 	{:else}
 		{#key installDigest}
 			<InstallationsPage {workspaceId} embedded {installDigest} />

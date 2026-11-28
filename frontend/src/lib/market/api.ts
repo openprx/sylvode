@@ -122,6 +122,39 @@ export interface InvocationRow {
 	created_at: string;
 }
 
+/** One audited write call of a plugin (`GET /installations/{id}/calls`): ids and outcome only. */
+export interface CallRow {
+	id: number;
+	invocation_id: string;
+	call_index: number;
+	capability: string;
+	op: string;
+	method: string;
+	risk: Risk;
+	outcome: string;
+	error_code: string | null;
+	duration_ms: number;
+	created_at: string;
+}
+
+export interface CatalogueOperation {
+	op: string;
+	method: string;
+	path: string;
+	scope: string;
+	comment: string | null;
+	stability: string;
+}
+
+export interface CatalogueCapability {
+	id: string;
+	area: string;
+	resource: string;
+	verb: string;
+	risk: Risk;
+	operations: CatalogueOperation[];
+}
+
 export type BindChoice = { form_id: string } | { create: true };
 
 export const marketApi = {
@@ -186,6 +219,16 @@ export const marketApi = {
 	},
 	invocations(installationId: string): Promise<ApiResult<{ items: InvocationRow[] }>> {
 		return apiClient.get(`/api/v1/installations/${enc(installationId)}/invocations`);
+	},
+	calls(installationId: string, limit = 50): Promise<ApiResult<{ items: CallRow[] }>> {
+		return apiClient.get(`/api/v1/installations/${enc(installationId)}/calls?limit=${limit}`);
+	}
+};
+
+export const catalogueApi = {
+	/** The capability ids a plugin can be granted, each with its operations. */
+	plugin(): Promise<ApiResult<{ version: string; capabilities: CatalogueCapability[] }>> {
+		return apiClient.get('/api/v1/catalogue?exposure=plugin');
 	}
 };
 

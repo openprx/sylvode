@@ -183,6 +183,121 @@
 		},
 		"pageNoMenu": "不在菜单中",
 		"sitePagesNote": "安装到项目会创建一个草稿站点。在有人发布之前，任何内容都不会公开。之后的升级会直接更新这个站点，已发布的站点也一样。",
-		"openSite": "打开站点"
+		"openSite": "打开站点",
+		"areaOps": "{count} 个操作",
+		"riskTier": {
+			"read": "只读",
+			"write": "修改数据",
+			"destructive": "删除数据或管理"
+		},
+		"destructiveTitle": "允许删除数据？",
+		"destructiveBody": "“{name}”允许此插件删除或清除数据。只有信任该插件时才授予。每次此类调用都会写入调用记录。",
+		"destructiveGrant": "授予",
+		"logInvocations": "调用",
+		"callsTitle": "最近修改数据的调用",
+		"callsEmpty": "还没有修改数据的调用。",
+		"callsColOp": "操作",
+		"callsNote": "只列出修改或删除数据的调用，含结果代码，不含数据。",
+		"tabDevelopers": "开发者",
+		"catTitle": "插件接口目录",
+		"catLead": "插件可通过宿主调用的操作，按领域分组。插件申请一个能力 ID，每个 ID 开放其下列出的操作。",
+		"catSearch": "搜索 ID、操作和路径",
+		"catArea": "领域",
+		"catAreaAll": "全部领域",
+		"catLoading": "正在加载目录。",
+		"catFailed": "无法加载目录。",
+		"catEmpty": "没有匹配项。",
+		"catCounts": "{ids} 个能力 ID 共 {ops} 个操作",
+		"catScope": "范围：{scope}",
+		"areas": {
+			"account": {
+				"name": "账户",
+				"desc": "当前用户自己的资料和偏好。"
+			},
+			"alerts": {
+				"name": "告警",
+				"desc": "告警规则、收到的告警及其分派。"
+			},
+			"catalogue": {
+				"name": "接口目录",
+				"desc": "插件可调用的操作清单。"
+			},
+			"drafts": {
+				"name": "草稿",
+				"desc": "等待人工审阅和接受的草稿。"
+			},
+			"extensions": {
+				"name": "扩展",
+				"desc": "已安装的包、授权和调用记录。"
+			},
+			"flow": {
+				"name": "Flow",
+				"desc": "Flow 页面、对象、链接和分享。"
+			},
+			"forms": {
+				"name": "表单",
+				"desc": "表单、字段、视图和记录。"
+			},
+			"governance": {
+				"name": "治理",
+				"desc": "提案、投票、策略和审批。"
+			},
+			"integrations": {
+				"name": "集成",
+				"desc": "Webhook、连接和外部服务。"
+			},
+			"layouts": {
+				"name": "布局",
+				"desc": "页面布局、组件及其放置位置。"
+			},
+			"legacy_plugins": {
+				"name": "旧版插件",
+				"desc": "为兼容保留的旧插件记录。"
+			},
+			"nav": {
+				"name": "导航",
+				"desc": "菜单和导航项。"
+			},
+			"packages": {
+				"name": "包",
+				"desc": "包目录和已上传的包。"
+			},
+			"planning": {
+				"name": "计划",
+				"desc": "迭代、里程碑和排期。"
+			},
+			"projects": {
+				"name": "项目",
+				"desc": "项目、设置、成员和机器人连接。"
+			},
+			"site": {
+				"name": "站点页面",
+				"desc": "已发布站点中访客看到的页面。"
+			},
+			"sites": {
+				"name": "站点",
+				"desc": "站点、页面和发布。"
+			},
+			"system": {
+				"name": "系统",
+				"desc": "实例状态和设置。"
+			},
+			"tasks": {
+				"name": "任务",
+				"desc": "投递给机器人和执行器的任务。"
+			},
+			"uploads": {
+				"name": "上传",
+				"desc": "上传到工作区的文件。"
+			},
+			"work_items": {
+				"name": "工作项",
+				"desc": "项目的事项和任务及其评论。"
+			},
+			"workspace": {
+				"name": "工作区",
+				"desc": "工作区本身、成员和设置。"
+			}
+		}
 	}
 }

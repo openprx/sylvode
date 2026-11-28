@@ -26,6 +26,7 @@ RUSTFLAGS="--remap-path-prefix=$root=/src --remap-path-prefix=${CARGO_HOME:-$HOM
 components=(
   "sv_sample_service_desk_action:service-desk-action"
   "sv_sample_service_desk_rule:service-desk-rule"
+  "sv_sample_api_probe_action:api-probe-action"
   "sv_bad_endless_loop:bad-endless-loop"
   "sv_bad_memory_growth:bad-memory-growth"
   "sv_bad_host_calls:bad-host-calls"

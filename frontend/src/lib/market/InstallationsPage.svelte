@@ -20,14 +20,16 @@
 		grantsFor,
 		marketApi,
 		marketDetailApi,
+		catalogueApi,
 		type BindChoice,
+		type CallRow,
 		type InstallPreview,
 		type Installation,
 		type InvocationRow,
 		type PackageDetail,
 		type PackageSummary
 	} from './api';
-	import { dataAccess, publicPages, riskTone } from './logic';
+	import { dataAccess, groupRequests, opCounts, publicPages, riskTone } from './logic';
 
 	let {
 		workspaceId,
@@ -70,6 +72,10 @@
 	let logOpen = $state(false);
 	let logFor = $state<Installation | null>(null);
 	let log = $state<InvocationRow[]>([]);
+	let calls = $state<CallRow[]>([]);
+
+	/** Operations behind each plugin-exposed capability id; `null` until the catalogue answered. */
+	let counts = $state.raw<Map<string, number> | null>(null);
 
 	onMount(async () => {
 		await load();
@@ -151,6 +157,7 @@
 			return;
 		}
 		checked = response.data;
+		void ensureCatalogue();
 	}
 
 	async function submitRequest() {
@@ -170,11 +177,19 @@
 		await load();
 	}
 
+	/** The operation counts of a review; a catalogue that does not load only drops the counts. */
+	async function ensureCatalogue() {
+		if (counts) return;
+		const response = await catalogueApi.plugin();
+		if (response.code === 0 && response.data) counts = opCounts(response.data.capabilities);
+	}
+
 	async function openReview(installation: Installation) {
 		reviewing = installation;
 		review = null;
 		reviewDetail = null;
 		reviewOpen = true;
+		void ensureCatalogue();
 		const response = await marketApi.review(installation.id);
 		if (response.code !== 0 || !response.data) {
 			toast.error(describeResult(response, get(t)('market.actionFailed')));
@@ -187,7 +202,21 @@
 		reviewDetail = found.code === 0 ? found.data : null;
 	}
 
-	function toggle(index: number, on: boolean) {
+	/** Ticking a destructive id asks first: it is granted only with the explicit confirm. */
+	async function toggle(index: number, on: boolean) {
+		const request = review?.requests[index];
+		if (on && request?.risk === 'destructive') {
+			const confirmed = await confirmAction({
+				tone: 'destructive',
+				title: get(t)('market.destructiveTitle'),
+				body: get(t)('market.destructiveBody', { values: { name: words(request.capability) } }),
+				confirmLabel: get(t)('market.destructiveGrant')
+			});
+			if (!confirmed) {
+				ticked = [...ticked];
+				return;
+			}
+		}
 		ticked = ticked.map((value, at) => (at === index ? on : value));
 	}
 
@@ -264,9 +293,14 @@
 	async function openLog(installation: Installation) {
 		logFor = installation;
 		log = [];
+		calls = [];
 		logOpen = true;
-		const response = await marketApi.invocations(installation.id);
+		const [response, written] = await Promise.all([
+			marketApi.invocations(installation.id),
+			marketApi.calls(installation.id)
+		]);
 		log = response.data?.items ?? [];
+		calls = written.data?.items ?? [];
 	}
 
 	function tone(status: Installation['status']): 'neutral' | 'success' | 'warning' | 'danger' {
@@ -287,6 +321,18 @@
 		const key = `market.tier.${tier}`;
 		const text = get(t)(key);
 		return text === key ? tier : text;
+	}
+
+	function areaName(area: string): string {
+		const key = `market.areas.${area}.name`;
+		const text = get(t)(key);
+		return text === key ? area : text;
+	}
+
+	function areaDescription(area: string): string {
+		const key = `market.areas.${area}.desc`;
+		const text = get(t)(key);
+		return text === key ? '' : text;
 	}
 
 	function createdList(values: string[]): string {
@@ -538,6 +584,7 @@
 	title={$t('market.logTitle', { values: { name: logFor?.package_key ?? '' } })}
 	maxWidthClass="max-w-2xl"
 >
+	<div class="mb-2 text-sm font-medium text-fg">{$t('market.logInvocations')}</div>
 	{#if log.length === 0}
 		<p class="text-sm text-fg-muted">{$t('market.logEmpty')}</p>
 	{:else}
@@ -563,6 +610,39 @@
 		</table>
 	{/if}
 	<p class="mt-3 text-xs text-fg-muted">{$t('market.logNote')}</p>
+
+	<div class="mb-2 mt-6 text-sm font-medium text-fg">{$t('market.callsTitle')}</div>
+	{#if calls.length === 0}
+		<p class="text-sm text-fg-muted" data-market-calls-empty>{$t('market.callsEmpty')}</p>
+	{:else}
+		<table class="min-w-full divide-y divide-line text-sm" data-market-calls>
+			<thead>
+				<tr class="text-left text-xs text-fg-muted">
+					<th class="py-2 pr-3">{$t('market.logColWhen')}</th>
+					<th class="py-2 pr-3">{$t('market.callsColOp')}</th>
+					<th class="py-2 pr-3">{$t('market.logColOutcome')}</th>
+					<th class="py-2">{$t('market.logColDuration')}</th>
+				</tr>
+			</thead>
+			<tbody class="divide-y divide-line">
+				{#each calls as call (call.id)}
+					<tr>
+						<td class="py-2 pr-3 text-fg-muted">{new Date(call.created_at).toLocaleString()}</td>
+						<td class="py-2 pr-3 text-fg">
+							<div>{call.op}</div>
+							<div class="text-xs text-fg-muted">
+								<StatusChip tone={riskTone(call.risk)}>{$t(`market.risk.${call.risk}`)}</StatusChip>
+								{call.method}
+							</div>
+						</td>
+						<td class="py-2 pr-3 text-fg">{call.error_code ?? call.outcome}</td>
+						<td class="py-2 text-fg-muted">{call.duration_ms} ms</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	{/if}
+	<p class="mt-3 text-xs text-fg-muted">{$t('market.callsNote')}</p>
 </Modal>
 
 {#snippet previewBody(preview: InstallPreview, selectable: boolean, info: PackageDetail | null)}
@@ -607,43 +687,69 @@
 			{#if preview.requests.length === 0}
 				<p class="mt-1 text-sm text-fg-muted">{$t('market.asksNothing')}</p>
 			{:else}
-				<ul class="mt-2 space-y-2">
-					{#each preview.requests as request, index (index)}
-						<li class="flex items-start gap-3 rounded-card border border-line p-3">
-							{#if selectable}
-								<Checkbox
-									checked={ticked[index] === true}
-									onchange={(event) => toggle(index, event.currentTarget.checked)}
-									aria-label={words(request.capability)}
-								/>
-							{/if}
-							<div class="text-sm">
-								<div class="text-fg">
-									{words(request.capability)}
-									{#if request.new && preview.existing.installation_id}
-										<StatusChip tone="warning">{$t('market.newRequest')}</StatusChip>
+				<div class="mt-2 space-y-4" data-market-areas>
+					{#each groupRequests(preview.requests, counts) as group (group.area)}
+						<section class="rounded-card border border-line" data-market-area={group.area}>
+							<header class="border-b border-line bg-nav px-3 py-2">
+								<div class="flex flex-wrap items-baseline justify-between gap-2">
+									<span class="text-sm font-medium text-fg">{areaName(group.area)}</span>
+									{#if group.ops !== null}
+										<span class="text-xs text-fg-muted"
+											>{$t('market.areaOps', { values: { count: group.ops } })}</span
+										>
 									{/if}
 								</div>
-								<div class="text-xs text-fg-muted">
-									<StatusChip tone={riskTone(request.risk)}
-										>{$t(`market.risk.${request.risk}`)}</StatusChip
-									>
-									{#if request.selector.form}
-										· {$t('market.onForm', { values: { form: request.selector.form } })}
-									{:else if request.form_bind}
-										· {$t('market.bindNote')}
-									{:else}
-										· {$t(
-											(preview.installation?.scope.kind ?? scopeKind) === 'project'
-												? 'market.wholeProject'
-												: 'market.wholeWorkspace'
-										)}
-									{/if}
+								{#if areaDescription(group.area)}
+									<p class="mt-0.5 text-xs text-fg-muted">{areaDescription(group.area)}</p>
+								{/if}
+							</header>
+							{#each group.tiers as tier (tier.tier)}
+								<div class="px-3 py-2" data-market-tier={tier.tier}>
+									<div class="mb-1 text-xs font-medium uppercase tracking-wider text-fg-muted">
+										{$t(`market.riskTier.${tier.tier}`)}
+									</div>
+									<ul class="space-y-2">
+										{#each tier.items as { index, request } (index)}
+											<li class="flex items-start gap-3 rounded-card border border-line p-3">
+												{#if selectable}
+													<Checkbox
+														checked={ticked[index] === true}
+														onchange={(event) => void toggle(index, event.currentTarget.checked)}
+														aria-label={words(request.capability)}
+													/>
+												{/if}
+												<div class="text-sm">
+													<div class="text-fg">
+														{words(request.capability)}
+														{#if request.new && preview.existing.installation_id}
+															<StatusChip tone="warning">{$t('market.newRequest')}</StatusChip>
+														{/if}
+													</div>
+													<div class="text-xs text-fg-muted">
+														<StatusChip tone={riskTone(request.risk)}
+															>{$t(`market.risk.${request.risk}`)}</StatusChip
+														>
+														{#if request.selector.form}
+															· {$t('market.onForm', { values: { form: request.selector.form } })}
+														{:else if request.form_bind}
+															· {$t('market.bindNote')}
+														{:else}
+															· {$t(
+																(preview.installation?.scope.kind ?? scopeKind) === 'project'
+																	? 'market.wholeProject'
+																	: 'market.wholeWorkspace'
+															)}
+														{/if}
+													</div>
+												</div>
+											</li>
+										{/each}
+									</ul>
 								</div>
-							</div>
-						</li>
+							{/each}
+						</section>
 					{/each}
-				</ul>
+				</div>
 				{#if selectable}
 					<p class="mt-2 text-xs text-fg-muted">{$t('market.approveSubset')}</p>
 				{/if}
