@@ -2,7 +2,7 @@
 //! transaction, with the approver as the author and the approver's rights.
 
 use platform::auth::JwtClaims;
-use sea_orm::{ConnectionTrait, DatabaseTransaction, DbBackend, Statement};
+use sea_orm::DatabaseTransaction;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -14,10 +14,10 @@ use crate::{
     error::ApiError,
     forms::{
         native_create::{NativeFormCreateRequest, create_form_in_transaction},
+        native_update::{NativeFormSchemaUpdate, update_form_schema_in_transaction},
         permissions::form_action_allowed,
     },
     layouts::{access::Principal, access::require_write, apply::save_layout_draft},
-    routes::form::{find_form_with_conn, insert_form_event_with_idempotency, insert_schema_version},
 };
 use platform::app::AppState;
 
@@ -42,28 +42,18 @@ pub(super) async fn save(
             if !form_action_allowed(state, form_id, role, "form.design").await? {
                 return Err(ApiError::forbidden("form permission denied: form.design"));
             }
-            tx.execute(Statement::from_sql_and_values(
-                DbBackend::Postgres,
-                "UPDATE project_forms \
-                 SET schema = $1, schema_version = schema_version + 1, \
-                     updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 microsecond') \
-                 WHERE id = $2",
-                vec![prepared.spec.clone().into(), form_id.into()],
-            ))
-            .await?;
-            let form = find_form_with_conn(tx, form_id).await?;
-            insert_form_event_with_idempotency(
+            let form = update_form_schema_in_transaction(
                 tx,
-                &form,
-                None,
-                "form.updated",
-                Some(approver),
-                source,
-                json!({ "form_id": form.id, "key": form.key, "changed_fields": ["schema"] }),
-                None,
+                NativeFormSchemaUpdate {
+                    form_id,
+                    schema: prepared.spec.clone(),
+                    expected_schema_version: None,
+                    actor_id: Some(approver),
+                    source,
+                    change_summary: "schema from an approved draft".to_owned(),
+                },
             )
             .await?;
-            insert_schema_version(tx, &form, Some(approver), "schema from an approved draft").await?;
             Ok(json!({ "form_id": form.id, "schema_version": form.schema_version }))
         }
         Plan::CreateForm { key, name } => {
