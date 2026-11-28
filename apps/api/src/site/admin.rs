@@ -794,32 +794,67 @@ fn is_binding_key(key: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'_')
 }
 
-/// `PUT /api/v1/sites/{id}/bindings/{key}`: the form must belong to the site's project; the
-/// projection is checked against its schema.
+/// The checks both binding writes share: the key, the form (in the site's project, not archived, and
+/// `form.view` for the caller) and the projection against the form's schema. Returns the form id and
+/// the stored projection.
+async fn checked_binding(
+    state: &AppState,
+    claims: &JwtClaims,
+    site: &SiteRow,
+    key: &str,
+    req: &BindingRequest,
+) -> Result<(Uuid, Value), ApiError> {
+    if !is_binding_key(key) {
+        return Err(invalid(
+            "binding_key_invalid",
+            "a binding key is 1-40 lowercase letters, digits or `_`",
+        ));
+    }
+    let form = crate::routes::form::find_form(state, req.form_id)
+        .await
+        .ok()
+        .filter(|form| form.project_id == site.project_id && form.archived_at.is_none())
+        .ok_or_else(|| ApiError::not_found("form not found"))?;
+    // Defence in depth: the caller may bind only a form they may view.
+    crate::routes::form::require_form_action(state, claims, None, &form, "form.view").await?;
+    let projection = Projection::parse(&req.projection, &form.schema)?;
+    let stored = serde_json::to_value(&projection).map_err(|_| ApiError::internal())?;
+    Ok((form.id, stored))
+}
+
+/// `POST /api/v1/sites/{id}/bindings/{key}`: creates a binding; `409 binding_exists` when the key is
+/// taken (a change of an existing binding is the `PUT`). The form must belong to the site's project;
+/// the projection is checked against its schema.
+pub async fn create_binding(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    Path((id, key)): Path<(Uuid, String)>,
+    Json(req): Json<BindingRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let who = Who::new(claims.clone(), None);
+    let site = admin_site(&state, &who, id).await?;
+    let (form_id, stored) = checked_binding(&state, &claims, &site, &key, &req).await?;
+    let row = store::insert_binding(&state.db, site.id, &key, form_id, &stored)
+        .await?
+        .ok_or_else(|| ApiError::conflict_coded("binding_exists", "a binding with this key already exists", None))?;
+    Ok(ApiResponse::success(binding_body(&row)))
+}
+
+/// `PUT /api/v1/sites/{id}/bindings/{key}`: replaces an existing binding (`404` when there is none; a
+/// new one is the `POST`). The form must belong to the site's project; the projection is checked
+/// against its schema.
 pub async fn put_binding(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
     Path((id, key)): Path<(Uuid, String)>,
     Json(req): Json<BindingRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let who = Who::new(claims, None);
+    let who = Who::new(claims.clone(), None);
     let site = admin_site(&state, &who, id).await?;
-    if !is_binding_key(&key) {
-        return Err(invalid(
-            "binding_key_invalid",
-            "a binding key is 1-40 lowercase letters, digits or `_`",
-        ));
-    }
-    let form = crate::routes::form::find_form(&state, req.form_id)
-        .await
-        .ok()
-        .filter(|form| form.project_id == site.project_id && form.archived_at.is_none())
-        .ok_or_else(|| ApiError::not_found("form not found"))?;
-    let projection = Projection::parse(&req.projection, &form.schema)?;
-    let stored = serde_json::to_value(&projection).map_err(|_| ApiError::internal())?;
-    let row = store::upsert_binding(&state.db, site.id, &key, form.id, &stored)
+    let (form_id, stored) = checked_binding(&state, &claims, &site, &key, &req).await?;
+    let row = store::replace_binding(&state.db, site.id, &key, form_id, &stored)
         .await?
-        .ok_or_else(ApiError::internal)?;
+        .ok_or_else(|| ApiError::not_found("binding not found"))?;
     Ok(ApiResponse::success(binding_body(&row)))
 }
 

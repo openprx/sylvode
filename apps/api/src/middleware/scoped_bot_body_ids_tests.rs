@@ -462,23 +462,65 @@ const ACCOUNTED: &[(&str, &str, Account)] = &[
     ("UpdateChildRecordRequest", "values", Open(UNREAD_VALUE)),
     ("UpdateRecordRequest", "source", Open(UNREAD_VALUE)),
     ("UpdateRecordRequest", "values", Open(UNREAD_VALUE)),
-    ("UpdateViewRequest", "config", Open(UNREAD_VALUE)),
-    ("UpdateFormRequest", "detail_layout", Open(UNREAD_VALUE)),
-    ("UpdateFormRequest", "schema", Open(UNREAD_VALUE)),
-    ("UpdateLayoutRequest", "spec", Open(UNREAD_VALUE)),
+    (
+        "UpdateViewRequest",
+        "config",
+        Exempt(
+            "normalize_view_config only normalizes visibility; the config is applied as a filter and sort ANDed with form_id = the route's form and the reader's read guard (record_query_config_from_view), and resolves no object id",
+        ),
+    ),
+    (
+        "UpdateFormRequest",
+        "detail_layout",
+        Exempt(
+            "in-project: relation targets are found by form key within the form's own workspace and project (forms/reader_context.rs node)",
+        ),
+    ),
+    (
+        "UpdateFormRequest",
+        "schema",
+        Exempt(
+            "in-project: relation targets are found by form key within the form's own workspace and project (forms/reader_context.rs node)",
+        ),
+    ),
+    (
+        "UpdateLayoutRequest",
+        "spec",
+        Exempt(
+            "validated and stored only: no data source or action is resolved on the server (the analysis lists form keys and capabilities as text); reads run later with the viewer's own principal",
+        ),
+    ),
     ("UpdateProjectResourceRequest", "locator", Open(UNREAD_VALUE)),
     ("UpdateProjectResourceRequest", "permission_policy", Open(UNREAD_VALUE)),
     ("UpdateImpactReviewRequest", "data_sources", Open(UNREAD_VALUE)),
     ("UpdateImpactReviewRequest", "goal_achievements", Open(UNREAD_VALUE)),
     ("UpdateImpactReviewRequest", "metrics", Open(UNREAD_VALUE)),
-    ("PageRequest", "layout_spec", Open(UNREAD_VALUE)),
-    ("PageRequest", "nav", Open(UNREAD_VALUE)),
+    (
+        "PageRequest",
+        "layout_spec",
+        Exempt(
+            "in-project: in a site context every data source must name a site binding (sv-layout validate site_binding), and bindings are confined to the site's project",
+        ),
+    ),
+    (
+        "PageRequest",
+        "nav",
+        Exempt(
+            "in-project: nav targets are located within the page's own workspace and project, and filtered by the viewer's visible set (nav/resolve.rs, nav/handlers.rs visible_ids)",
+        ),
+    ),
     (
         "UpdateSiteRequest",
         "title",
         Exempt("the site title text, never resolved as an object"),
     ),
-    ("CreateDraftRequest", "spec", Open(UNREAD_VALUE)),
+    (
+        "CreateDraftRequest",
+        "spec",
+        Exempt(
+            "judged again on approval (drafts/prepare.rs recompute) against the draft's own workspace and project, and saved by a human owner or admin with their rights (drafts/apply.rs); a form schema is in-project, a layout spec is never resolved",
+        ),
+    ),
     (
         "CreateDraftRequest",
         "target",
@@ -506,15 +548,45 @@ const ACCOUNTED: &[(&str, &str, Account)] = &[
     ("CreateRecordRequest", "values", Open(UNREAD_VALUE)),
     ("ValidateRecordRequest", "schema", Open(UNREAD_VALUE)),
     ("ValidateRecordRequest", "values", Open(UNREAD_VALUE)),
-    ("CreateViewRequest", "config", Open(UNREAD_VALUE)),
-    ("ValidateRequest", "spec", Open(UNREAD_VALUE)),
-    ("CreateLayoutRequest", "spec", Open(UNREAD_VALUE)),
+    (
+        "CreateViewRequest",
+        "config",
+        Exempt(
+            "as for UpdateViewRequest.config: stored per form, applied only as a filter and sort on the route's own form",
+        ),
+    ),
+    (
+        "ValidateRequest",
+        "spec",
+        Exempt("as for UpdateLayoutRequest.spec: the validator endpoint only reports errors and the analysis"),
+    ),
+    (
+        "CreateLayoutRequest",
+        "spec",
+        Exempt("as for UpdateLayoutRequest.spec: validated and stored, never resolved on the server"),
+    ),
     ("InvokePluginRequest", "input", Open(UNREAD_VALUE)),
     ("CreateAiTaskRequest", "payload", Open(UNREAD_VALUE)),
     ("CreateCheckResultRequest", "result", Open(UNREAD_VALUE)),
-    ("CreateFormRequest", "detail_layout", Open(UNREAD_VALUE)),
-    ("CreateFormRequest", "schema", Open(UNREAD_VALUE)),
-    ("InstallPluginRequest", "manifest", Open(UNREAD_VALUE)),
+    (
+        "CreateFormRequest",
+        "detail_layout",
+        Exempt(
+            "in-project: relation targets are found by form key within the form's own workspace and project (forms/reader_context.rs node)",
+        ),
+    ),
+    (
+        "CreateFormRequest",
+        "schema",
+        Exempt(
+            "in-project: relation targets are found by form key within the form's own workspace and project (forms/reader_context.rs node)",
+        ),
+    ),
+    (
+        "InstallPluginRequest",
+        "manifest",
+        Exempt("in-project: hooks load only the plugin's own project (plugins/hooks.rs load_active_plugins)"),
+    ),
     ("CreateProjectResourceRequest", "locator", Open(UNREAD_VALUE)),
     ("CreateProjectResourceRequest", "permission_policy", Open(UNREAD_VALUE)),
     (
@@ -527,10 +599,22 @@ const ACCOUNTED: &[(&str, &str, Account)] = &[
         "display",
         Exempt("display text stored with the reference; the target is the checked target_id"),
     ),
-    ("scope::CreateInput", "initial_fields", Open(UNREAD_VALUE)),
+    (
+        "scope::CreateInput",
+        "initial_fields",
+        Exempt(
+            "field definitions only (label, type, config checked by validate_written_field_config); no object id in them is resolved. Relation values live in record properties and are confined to the collection's scope and the user's view right (flow/collections.rs validate_properties_against_fields, scope_collections.rs validate_relation_access)",
+        ),
+    ),
     ("scope::CreateInput", "initial_view", Open(UNREAD_VALUE)),
     ("UpdateProjectRequest", "type_settings", Open(UNREAD_VALUE)),
-    ("PutConfig", "doc", Open(UNREAD_VALUE)),
+    (
+        "PutConfig",
+        "doc",
+        Exempt(
+            "in-project: nav targets are located within the config's scope and filtered by the viewer's visible set; for a bot by readable_projects (nav/handlers.rs visible_ids)",
+        ),
+    ),
     ("UpdateProposalTemplateRequest", "content", Open(UNREAD_VALUE)),
     // Layout and placement creation: the handler resolves the scope and requires write in its project.
     (

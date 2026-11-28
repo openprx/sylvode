@@ -94,7 +94,8 @@ pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
         )
         .route(
             "/api/v1/sites/{id}/bindings/{key}",
-            put(site::admin::put_binding)
+            post(site::admin::create_binding)
+                .put(site::admin::put_binding)
                 .delete(site::admin::delete_binding)
                 .route_layer(axum_middleware::from_fn_with_state(
                     auth_state.clone(),

@@ -343,6 +343,7 @@ fn stream_loop(tuning: HintTuning, broadcast_capacity: usize) -> Loop {
             filter: ProjectFilter::All,
             fetched: Instant::now(),
         },
+        announced: ProjectFilter::All,
         expiry: None,
         db_failing_since: None,
         full_since: None,

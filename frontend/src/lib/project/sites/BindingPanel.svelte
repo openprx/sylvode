@@ -119,10 +119,11 @@
 
 		const projection = projectionOf(draft, fields);
 		busy = true;
-		const result = await sitesApi.putBinding(siteId, draft.key, {
-			form_id: draft.formId,
-			projection
-		});
+		const body = { form_id: draft.formId, projection };
+		// Add creates (a taken key answers `binding_exists`); edit replaces.
+		const result = binding
+			? await sitesApi.putBinding(siteId, draft.key, body)
+			: await sitesApi.createBinding(siteId, draft.key, body);
 		busy = false;
 		if (result.code === 0) {
 			onsaved();
@@ -132,6 +133,8 @@
 			issues = placeIssues(result.details, projection);
 			if (issues.length === 0) formError = errorText(result, $t);
 		} else if (result.error_code === 'binding_key_invalid') keyError = errorText(result, $t);
+		else if (result.error_code === 'binding_exists')
+			keyError = $t('sites.errors.binding_key_taken');
 		else if (result.error_code === 'not_found') formProblem = $t('sites.bindings.formNotUsable');
 		else formError = errorText(result, $t);
 	}
