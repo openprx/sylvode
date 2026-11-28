@@ -31,27 +31,40 @@ pub struct Installed {
 }
 
 #[derive(FromQueryResult)]
-struct Digest {
+struct Candidate {
     digest: String,
+    version: String,
 }
 
 fn not_a_template(message: &str) -> ApiError {
     ApiError::bad_request_coded("template_package_invalid", message)
 }
 
-/// The digest of the newest built-in package with this key that can still be installed.
+/// The digest of the highest version among candidates listed newest first: a version that is not
+/// semver ranks below every one that is, and equal versions keep the earlier (newer) row.
+fn highest_version(candidates: Vec<Candidate>) -> Option<String> {
+    let mut best: Option<(Option<semver::Version>, String)> = None;
+    for candidate in candidates {
+        let version = semver::Version::parse(&candidate.version).ok();
+        if best.as_ref().is_none_or(|(held, _)| version > *held) {
+            best = Some((version, candidate.digest));
+        }
+    }
+    best.map(|(_, digest)| digest)
+}
+
+/// The digest of the highest-versioned built-in package with this key that can still be installed.
 async fn newest_builtin_digest(state: &AppState, package_key: &str) -> Result<String, ApiError> {
-    Digest::find_by_statement(Statement::from_sql_and_values(
+    let candidates = Candidate::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT p.digest FROM packages p JOIN publisher_keys k ON k.id = p.publisher_key_id \
+        "SELECT p.digest, p.version FROM packages p JOIN publisher_keys k ON k.id = p.publisher_key_id \
          WHERE p.tier = 'builtin' AND p.package_key = $1 AND p.installable AND k.status = 'active' \
-         ORDER BY p.created_at DESC, p.id LIMIT 1",
+         ORDER BY p.created_at DESC, p.id",
         vec![package_key.to_owned().into()],
     ))
-    .one(&state.db)
-    .await?
-    .map(|row| row.digest)
-    .ok_or_else(|| ApiError::not_found("template package not found"))
+    .all(&state.db)
+    .await?;
+    highest_version(candidates).ok_or_else(|| ApiError::not_found("template package not found"))
 }
 
 /// The bind map that creates every form of the package.
@@ -447,6 +460,34 @@ mod tests {
 
     use super::super::validate::{Check, check_components, check_layout_slots, check_requests, parse_template};
     use crate::packages::open::Opened;
+
+    fn candidate(digest: &str, version: &str) -> super::Candidate {
+        super::Candidate {
+            digest: digest.to_owned(),
+            version: version.to_owned(),
+        }
+    }
+
+    #[test]
+    fn highest_version_is_semver_not_creation_order() {
+        let pick = |rows: Vec<super::Candidate>| super::highest_version(rows);
+        // Newest row first; the older row carries the higher version.
+        assert_eq!(
+            pick(vec![candidate("new", "1.9.0"), candidate("old", "1.10.0")]).as_deref(),
+            Some("old")
+        );
+        // An unparseable version ranks below every parseable one.
+        assert_eq!(
+            pick(vec![candidate("junk", "latest"), candidate("ok", "0.0.1")]).as_deref(),
+            Some("ok")
+        );
+        // A tie keeps the newer row.
+        assert_eq!(
+            pick(vec![candidate("a", "2.0.0"), candidate("b", "2.0.0")]).as_deref(),
+            Some("a")
+        );
+        assert_eq!(pick(vec![]), None);
+    }
 
     fn builtin_dir() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/builtin")
