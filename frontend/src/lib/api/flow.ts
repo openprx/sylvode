@@ -1286,30 +1286,17 @@ function portableGraphPackagePath(objectId: string): string {
 }
 
 export interface FlowCapabilities {
-	portable_page_packages_supported?: boolean;
-	portable_graph_packages_supported?: boolean;
-	/** Missing or false is unsupported; independent projection protocol requires reader5. */
-	block_shares_supported?: boolean;
-	block_share_source_revoke_supported?: boolean;
-	block_transfers_supported?: boolean;
-	api_version: number;
-	schema_version: number;
+	block_transfers_enabled: boolean;
+	portable_page_packages_enabled: boolean;
+	portable_graph_packages_enabled: boolean;
 	scope_native_legacy: boolean;
 	personal_provisioning: boolean;
 	personal_writes: boolean;
-	/** Missing personal package capability flags are false; legacy services remain separate. */
-	personal_package_imports?: boolean;
-	personal_scope_package_exports?: boolean;
-	personal_package_history_imports?: boolean;
-	personal_package_history_exports?: boolean;
-	personal_package_object_types?: Array<'page' | 'navigator'>;
-	personal_package_export_selections?: Array<'object' | 'scope'>;
-	personal_package_import_history_mode?: 'replay_to_head';
-	personal_package_snapshot_history?: 'retained';
-	personal_package_typed_raw?: false;
 	external_mounts: boolean;
-	mount_permission_updates_supported?: boolean;
-	minimum_reader_version: number;
+	personal_package_imports: boolean;
+	personal_scope_package_exports: boolean;
+	personal_forms_conversion: boolean;
+	cross_workspace_forms_conversion: boolean;
 }
 export interface FlowScopeHome {
 	scope: {

@@ -1108,9 +1108,6 @@ pub(crate) async fn reconcile_accepted(
     blocks: &[PreparedBlock],
     allowance: RegistrationAllowance,
 ) -> Result<(), ApiError> {
-    if super::scope::capabilities(tx).await?.minimum_reader_version < 5 {
-        return Ok(());
-    }
     let identity = super::scope::identity(tx, object).await?;
     if identity.object_type != "page" {
         return Ok(());
@@ -1135,9 +1132,6 @@ pub(crate) async fn carry_tree_block_identities(
     page: Uuid,
     blocks: &[PreparedBlock],
 ) -> Result<(), ApiError> {
-    if super::scope::capabilities(tx).await?.minimum_reader_version < 5 {
-        return Ok(());
-    }
     let scope = super::scope::identity(tx, page).await?.scope_id;
     let mut moved_any = false;
     for block in blocks {
@@ -1452,7 +1446,6 @@ mod tests {
     async fn registry_reconcile_restore_moved_alias_and_rollback() {
         let scratch = scratch_or_skip!(&format!("block_registry_{}", Uuid::new_v4().simple()));
         let db = &scratch.db;
-        register_running_readers(db).await;
         let actor = Uuid::new_v4();
         let scope = Uuid::new_v4();
         let page = Uuid::new_v4();
@@ -1590,7 +1583,6 @@ mod tests {
     }
 
     use super::fixtures::{block, blocks, page};
-    use crate::flow::scope_runtime::fixture::register_running_readers;
     use sea_orm::DatabaseConnection;
     use std::collections::{BTreeSet, HashMap};
     use std::time::{Duration, Instant};
@@ -1976,7 +1968,6 @@ mod tests {
 
     pub(super) async fn scratch_with_leases(label: &str) -> Option<crate::routes::context::tenant_fixture::Scratch> {
         let scratch = crate::routes::context::tenant_fixture::scratch(label).await?;
-        register_running_readers(&scratch.db).await;
         Some(scratch)
     }
 
@@ -2450,15 +2441,9 @@ mod tests {
             return;
         };
         let db = &scratch.db;
-        db.execute_unprepared("UPDATE flow_runtime_capabilities SET minimum_reader_version=4 WHERE singleton")
-            .await
-            .unwrap();
         let (_, _, page_a) = page(db).await;
         let (_, scope_b, page_b) = page(db).await;
         let registered = blocks(5_000, 1);
-        db.execute_unprepared("UPDATE flow_runtime_capabilities SET minimum_reader_version=5 WHERE singleton")
-            .await
-            .unwrap();
         let mut timings = Vec::new();
         for expected in [3_000, 1_000, 0] {
             let tx = begin_for_timing_mode(db).await;

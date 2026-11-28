@@ -1534,8 +1534,6 @@ mod tests {
 
     async fn fixture(label: &str) -> Option<(crate::routes::context::tenant_fixture::Scratch, AppState, Uuid, Uuid)> {
         let scratch = scratch(label).await?;
-        // A scratch database models a running api and worker.
-        crate::flow::scope_runtime::fixture::register_running_readers(&scratch.db).await;
         let tenant = seed_tenant(&scratch.db, label).await;
         exec(
             &scratch.db,

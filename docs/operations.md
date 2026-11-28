@@ -220,7 +220,6 @@ authorised per user.
 
 | Column | Default | What it allows |
 |---|---|---|
-| `minimum_reader_version` | `5` | The reader version every running component must register (see [Flow reader leases](#flow-reader-leases)). Rich Pages need at least 4; block transfers need exactly 5; portable packages need at least 5. Do not set it above 5, and do not lower it on a database that has run at 5. |
 | `personal_provisioning` | on | Creating a user's personal Flow space on first visit. |
 | `personal_writes` | on | Any write in a personal space. Requires `personal_provisioning`. |
 | `external_mounts` | on | Mounting personal content into a workspace and changing a mount's level. Requires `personal_writes`. |
@@ -256,25 +255,6 @@ existing mounts grant; remove those mounts to withdraw it.
 
 The defaults were applied to the singleton row once, when the migrations that introduced them ran;
 no later start changes the row, so the values you set stay.
-
-### Flow reader leases
-
-The `api` registers an `api` lease, and the `worker` a `worker` and a `maintenance` lease, in
-`flow_runtime_readers`. Each process renews its leases every 10 seconds for 30 seconds. Page
-creation and editing (in workspaces and personal spaces, through the web UI, the REST API, MCP or
-the command line), every write in a personal space, block transfers and package export and import
-are refused with `feature_disabled` and `details.reason = "scope_runtime_not_ready"` unless all
-three components hold a live lease at or above `minimum_reader_version` and no live lease is below
-it. Reading, workspace comments and objects other than Pages are not affected.
-
-The worker is therefore required for editing Pages. A stopped process keeps its lease for up to 30
-seconds, so a restart does not interrupt writes; if the worker stays down longer, Page writes are
-refused until it is back. To see the live leases:
-
-```sql
-SELECT component, reader_version, lease_expires_at FROM flow_runtime_readers
- WHERE lease_expires_at > now() ORDER BY component;
-```
 
 ### Incremental write window
 

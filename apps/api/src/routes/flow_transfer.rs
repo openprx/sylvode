@@ -20,7 +20,7 @@ async fn actor(
     let actor = super::flow_v2::user(claims, bot)?;
     if !crate::flow::scope::capabilities(&state.db)
         .await?
-        .block_transfers_supported
+        .block_transfers_enabled
     {
         return Err(ApiError::unsupported_protocol("Page transfers are disabled"));
     }

@@ -21,4 +21,5 @@ until the owning batch adds the real migration. 0128 and 0129 are reserved by an
 - 0145 site_published_at (landed: `sites.published_at`)
 - 0146 drop_flow_capability_rollouts (landed; 0126 is an existing file)
 - 0147 installation_site (`installations.site_id`, the site holding an installation's pages)
+- 0128 retire_reader_floor (landed: drops `flow_runtime_readers` and `flow_runtime_capabilities.minimum_reader_version`; sorts below 0144-0147, the runner applies unrecorded files in name order)
 - 0148 change_hints_work_item_insert (work_items AFTER INSERT hint trigger)

@@ -2,7 +2,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import * as productMode from '../../src/lib/flow/product-mode';
 
 // Collections are part of the Flow interface: nothing hides them behind a switch or a placeholder.
 
@@ -25,10 +24,6 @@ test('no switch, placeholder or page-only text is left in the source', () => {
 			offenders.push(file);
 	}
 	assert.deepEqual(offenders, []);
-});
-
-test('the product mode module keeps only the reader compatibility constant', () => {
-	assert.deepEqual(Object.keys(productMode), ['FLOW_PROCESS_READER_COMPATIBILITY']);
 });
 
 test('the navigator reads pages and collections, and the trash shows both', () => {

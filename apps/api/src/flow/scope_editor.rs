@@ -20,7 +20,7 @@ pub async fn require_write<C: ConnectionTrait>(db: &C, identity: &scope::ObjectI
             json!({"reason":"scope_native_legacy_disabled"}),
         ));
     }
-    scope::require_reader_ready(db).await
+    Ok(())
 }
 async fn document<C: ConnectionTrait>(db: &C, object: Uuid) -> Result<(Uuid, i64, Vec<u8>), ApiError> {
     let row = db
@@ -159,7 +159,6 @@ pub async fn decorate(db: &DatabaseConnection, object: Uuid, user: Uuid, view: &
     });
     view["body_asset_authentication"] = json!("user_session");
     view["child_page_authentication"] = json!("user_session");
-    view["body_assets_supported"] = json!(scope::capabilities(db).await?.minimum_reader_version >= 4);
     view["rendered_export_asset_mode"] = json!("authenticated_current_references_no_bytes");
     view["historical_asset_reads_supported"] = json!(false);
     view["editor_structure_state"] = json!(if engine

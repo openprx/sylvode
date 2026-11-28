@@ -1,4 +1,4 @@
-# Sylvode Flow MCP v0.5 surface snapshot
+# Sylvode Flow MCP surface snapshot
 
 Source: `contracts/mcp-surface-v1.md` at Sylvode Flow commit
 `760df14bcf59d7d123dc16dd1c6440b90acf1c23`.
@@ -23,5 +23,3 @@ the authoritative contract changes, then run the ignored contract-drift test in
 | `objects.relations` | 0.5 |
 | `objects.search` | 0.5 |
 | `collab.projection_lag` | 0.5 |
-
-Expected registry totals if no unrelated tool change: v0.4 `107`, v0.5 `119`.

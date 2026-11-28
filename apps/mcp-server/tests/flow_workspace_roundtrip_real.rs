@@ -75,8 +75,6 @@ impl Scratch {
         for path in migrations {
             db.execute_unprepared(&std::fs::read_to_string(path)?).await?;
         }
-        // A scratch database models a running api and worker.
-        register_running_readers(&db).await?;
         Ok(Some(Self { db, name, admin_url }))
     }
 
@@ -89,18 +87,6 @@ impl Scratch {
                 .await;
         }
     }
-}
-
-/// Live leases for api, worker and maintenance, as a running api and worker would hold. They are
-/// registered through the production `renew_for`, with a day-long duration, because no process
-/// renews them in a scratch database.
-async fn register_running_readers(db: &DatabaseConnection) -> Result<(), Box<dyn Error>> {
-    for component in ["api", "worker", "maintenance"] {
-        api::flow::scope_runtime::renew_for(db, Uuid::new_v4(), component, 86_400.0)
-            .await
-            .map_err(|err| format!("could not register a fixture reader lease for {component}: {err:?}"))?;
-    }
-    Ok(())
 }
 
 fn state_for(db: DatabaseConnection) -> AppState {

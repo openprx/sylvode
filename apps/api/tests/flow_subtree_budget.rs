@@ -43,7 +43,7 @@
 //! OPENPR_TEST_DATABASE_URL=postgres://flowtest:flowtest@127.0.0.1:25434/openpr \
 //! OPENPR_FLOW_DEDICATED_PG_CONTAINER=flow-load-pg \
 //! OPENPR_FLOW_SUBTREE_BUDGET_OUT=/tmp/subtree-budget.json \
-//!   cargo test -p api --all-features --test flow_v05_subtree_budget \
+//!   cargo test -p api --all-features --test flow_subtree_budget \
 //!     move_subtree_nodes_max_cost_curve -- --exact --ignored --nocapture
 //! ```
 

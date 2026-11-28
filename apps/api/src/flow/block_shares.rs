@@ -209,9 +209,6 @@ async fn publish(
     if identity.object_type != "page" || !proof.resource_active {
         return Err(ApiError::not_found("source Page unavailable"));
     }
-    if scope::capabilities(db).await?.minimum_reader_version < 5 {
-        return Err(ApiError::policy_rejected("block sharing requires process reader5"));
-    }
     let body = serde_json::json!({"operation":if existing.is_some(){"block_share_republish"}else{"block_share_create"},"share_id":existing,"expected_frontier":input.expected_frontier,"source":source,"root_block_cid":input.root_block_cid,"selection":input.selection,"audiences":input.audiences});
     if let Some(result) = super::scope_commands::replay(db, identity.scope_id, actor, key, &body).await? {
         let completed: SourceView = serde_json::from_value(result).map_err(|_| ApiError::internal())?;
@@ -685,9 +682,6 @@ pub async fn read(db: &sea_orm::DatabaseConnection, actor: Uuid, share_id: Uuid)
         collab::authz::{self, PermissionLevel},
         scope,
     };
-    if scope::capabilities(db).await?.minimum_reader_version < 5 {
-        return Err(unavailable());
-    }
     require_user_session_principal(db, actor).await?;
     let observed = share_row(db, share_id).await?;
     require_user_session_principal(db, observed.publisher_user_id).await?;
@@ -834,12 +828,11 @@ mod sql_tests {
     async fn source_create_receipt_and_recipient_projection_are_independent_of_private_page() {
         let scratch = scratch_or_skip!(&format!("block_share_{}", Uuid::new_v4().simple()));
         let db = &scratch.db;
-        for component in ["api", "worker", "maintenance"] {
-            super::super::scope_runtime::renew(db, Uuid::new_v4(), component)
-                .await
-                .unwrap();
-        }
-        db.execute_unprepared("UPDATE flow_runtime_capabilities SET minimum_reader_version=5,personal_provisioning=true,personal_writes=true WHERE singleton").await.unwrap();
+        db.execute_unprepared(
+            "UPDATE flow_runtime_capabilities SET personal_provisioning=true,personal_writes=true WHERE singleton",
+        )
+        .await
+        .unwrap();
         let owner = Uuid::new_v4();
         let recipient = Uuid::new_v4();
         for actor in [owner, recipient] {
@@ -2234,9 +2227,6 @@ pub async fn discover_page(
     project: Option<Uuid>,
     cursor: Option<Uuid>,
 ) -> Result<Vec<DiscoveryEntry>, ApiError> {
-    if super::scope::capabilities(db).await?.minimum_reader_version < 5 {
-        return Err(unavailable());
-    }
     if db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -2357,9 +2347,6 @@ pub async fn list_source_page(
     cursor: Option<Uuid>,
 ) -> Result<Vec<SourceView>, ApiError> {
     let proof = super::scope::authorize(db, source, actor, super::collab::authz::PermissionLevel::FullAccess).await?;
-    if super::scope::capabilities(db).await?.minimum_reader_version < 5 {
-        return Err(unavailable());
-    }
     let tx = db.begin().await?;
     super::scope::fence(&tx, &proof).await?;
     tx.query_one(Statement::from_sql_and_values(
@@ -2421,9 +2408,6 @@ async fn stop_delegation(
     revoke: bool,
 ) -> Result<SourceView, ApiError> {
     let proof = super::scope::authorize(db, source, actor, super::collab::authz::PermissionLevel::FullAccess).await?;
-    if super::scope::capabilities(db).await?.minimum_reader_version < 5 {
-        return Err(unavailable());
-    }
     let identity = super::scope::identity(db, source).await?;
     let operation = if revoke {
         "block_share_revoke"
@@ -2519,9 +2503,6 @@ pub async fn remove_placement(
     placement: Uuid,
     key: &str,
 ) -> Result<RemovedPlacement, ApiError> {
-    if super::scope::capabilities(db).await?.minimum_reader_version < 5 {
-        return Err(unavailable());
-    }
     let target = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -2607,9 +2588,6 @@ pub async fn list_target_placements(
     project: Option<Uuid>,
     cursor: Option<Uuid>,
 ) -> Result<Vec<TargetPlacementView>, ApiError> {
-    if super::scope::capabilities(db).await?.minimum_reader_version < 5 {
-        return Err(unavailable());
-    }
     require_user_session_principal(db, actor).await?;
     let tx = db.begin().await?;
     tx.execute(Statement::from_sql_and_values(

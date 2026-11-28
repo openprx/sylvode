@@ -23,7 +23,7 @@ use crate::response::{ApiResponse, OperationResponseMeta};
 /// The distinction this type draws is **"can the underlying error change?"**, which is not the
 /// same question as "have I retried enough times?" — conflating those two was the defect.
 ///
-/// Typed refusals decided by the staging logic itself (a missing reader lease, a policy refusal on
+/// Typed refusals decided by the staging logic itself (a policy refusal on
 /// a child reference) leave the loop the same way: the head is fixed under the row lock, so they
 /// repeat on every attempt. Only non-deterministic database errors, internal errors and
 /// `server_draining` keep the retry path.

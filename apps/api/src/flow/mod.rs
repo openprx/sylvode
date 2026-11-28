@@ -67,7 +67,6 @@ pub mod scope_package;
 pub mod scope_purge;
 pub mod scope_record_context;
 pub mod scope_relations;
-pub mod scope_runtime;
 pub mod scope_shares;
 pub mod scope_social;
 pub mod scope_write;

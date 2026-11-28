@@ -120,7 +120,7 @@ async fn require_scope_export<C: ConnectionTrait>(db: &C) -> Result<(), ApiError
             json!({"reason":"personal_scope_package_exports_disabled"}),
         ));
     }
-    scope::require_reader_ready(db).await
+    Ok(())
 }
 async fn create_inner(
     db: &DatabaseConnection,

@@ -572,12 +572,6 @@ fn capability_flag(row: &serde_json::Value, column: &str) -> bool {
         .unwrap_or_else(|| panic!("{column} is a boolean capability column: {row}"))
 }
 
-fn reader_floor(row: &serde_json::Value) -> i64 {
-    row.get("minimum_reader_version")
-        .and_then(serde_json::Value::as_i64)
-        .expect("minimum_reader_version is an integer")
-}
-
 const DEFAULT_ON: [&str; 7] = [
     "personal_provisioning",
     "personal_writes",
@@ -597,8 +591,8 @@ const DEFAULT_ON_SINCE_0115: [&str; 4] = [
 ];
 
 /// What an ordinary user of a running installation does first: open the personal Flow home
-/// and create a rich Page (the editor sends model5). The leases stand in for the api and
-/// worker processes, which register them on start; no capability is touched by hand.
+/// and create a rich Page (the editor sends model5).
+/// No capability is touched by hand.
 async fn ordinary_user_creates_a_personal_page(db: &DatabaseConnection) -> Result<(), api::error::ApiError> {
     let user = uuid::Uuid::new_v4();
     db.execute(Statement::from_sql_and_values(
@@ -632,14 +626,6 @@ async fn ordinary_user_creates_a_personal_page(db: &DatabaseConnection) -> Resul
     Ok(())
 }
 
-async fn register_running_readers(db: &DatabaseConnection) {
-    for component in ["api", "worker", "maintenance"] {
-        api::flow::scope_runtime::renew(db, uuid::Uuid::new_v4(), component)
-            .await
-            .expect("the reader lease is registered");
-    }
-}
-
 /// A fresh installation has personal Flow and the shipped Flow surfaces on without any
 /// manual SQL, and an ordinary user can open their personal home and write a Page in it.
 #[tokio::test]
@@ -656,22 +642,6 @@ async fn a_fresh_database_migrates_with_flow_capabilities_on() {
     for column in DEFAULT_ON_SINCE_0115 {
         assert!(capability_flag(&row, column), "{column} is on by default: {row}");
     }
-    assert_eq!(
-        reader_floor(&row),
-        i64::from(api::flow::scope_runtime::READER_VERSION),
-        "the reader floor matches what the shipped components register"
-    );
-
-    // Before any component has registered, writes fail closed instead of erroring or
-    // degrading; the same request succeeds once the api and worker leases exist.
-    let blocked = ordinary_user_creates_a_personal_page(&scratch.db)
-        .await
-        .expect_err("no reader lease is registered yet");
-    assert!(
-        format!("{blocked:?}").contains("scope_runtime_not_ready"),
-        "missing leases are reported as a runtime that is not ready: {blocked:?}"
-    );
-    register_running_readers(&scratch.db).await;
     ordinary_user_creates_a_personal_page(&scratch.db)
         .await
         .expect("an ordinary user can use personal Flow on a fresh database");
@@ -680,8 +650,8 @@ async fn a_fresh_database_migrates_with_flow_capabilities_on() {
         .await
         .expect("capabilities are readable");
     assert!(caps.personal_provisioning && caps.personal_writes && caps.external_mounts);
-    assert!(caps.block_transfers_supported, "block transfers are advertised");
-    assert!(caps.portable_page_packages_supported && caps.portable_graph_packages_supported);
+    assert!(caps.block_transfers_enabled, "block transfers are enabled");
+    assert!(caps.portable_page_packages_enabled && caps.portable_graph_packages_enabled);
 
     scratch.drop_self().await;
 }
@@ -1130,7 +1100,6 @@ async fn the_registration_progress_migration_keeps_existing_checkpoints_complete
     run_migrations(&scratch.db)
         .await
         .expect("a fresh database migrates cleanly");
-    register_running_readers(&scratch.db).await;
     ordinary_user_creates_a_personal_page(&scratch.db)
         .await
         .expect("a Page registers a checkpoint");

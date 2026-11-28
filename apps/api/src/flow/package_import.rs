@@ -2194,8 +2194,6 @@ mod tests {
             eprintln!("SKIPPED (no database): set OPENPR_TEST_DATABASE_URL to run this test");
             return;
         };
-        // A scratch database models a running api and worker.
-        crate::flow::scope_runtime::fixture::register_running_readers(&scratch.db).await;
         let state = state_for(scratch.db.clone());
         let (source_workspace, source_owner) = enabled_workspace(&state, "package_source").await;
         let (target_workspace, target_owner) = enabled_workspace(&state, "package_target").await;
@@ -2397,8 +2395,6 @@ mod tests {
             eprintln!("SKIPPED (no database): set OPENPR_TEST_DATABASE_URL to run this test");
             return;
         };
-        // A scratch database models a running api and worker.
-        crate::flow::scope_runtime::fixture::register_running_readers(&scratch.db).await;
         let state = state_for(scratch.db.clone());
         let (source_workspace, source_owner) = enabled_workspace(&state, "rollback_source").await;
         let (target_workspace, target_owner) = enabled_workspace(&state, "rollback_target").await;
@@ -2498,7 +2494,6 @@ mod tests {
             eprintln!("SKIPPED (no database): set OPENPR_TEST_DATABASE_URL to run this test");
             return;
         };
-        crate::flow::scope_runtime::fixture::register_running_readers(&scratch.db).await;
         let state = state_for(scratch.db.clone());
         let (workspace, owner) = enabled_workspace(&state, "package_limit").await;
         let (snapshot, tail, frontier) = oversized_page_upload();
@@ -2540,7 +2535,6 @@ mod tests {
             eprintln!("SKIPPED (no database): set OPENPR_TEST_DATABASE_URL to run this test");
             return;
         };
-        crate::flow::scope_runtime::fixture::register_running_readers(&scratch.db).await;
         let state = state_for(scratch.db.clone());
         let (workspace, owner) = enabled_workspace(&state, "package_platform").await;
         let clean = std::fs::read(concat!(

@@ -9,7 +9,6 @@
 	let { objectId }: { objectId: string } = $props();
 	const uid = $props.id();
 	let enabled = $state(false);
-	let updatesEnabled = $state(false);
 	let changing = $state<FlowMount | null>(null);
 	let nextLevel = $state<FlowMount['level']>('view');
 	let updateIntent: { signature: string; key: string } | null = null;
@@ -51,7 +50,6 @@
 				return;
 			}
 			enabled = capabilities.data?.external_mounts === true;
-			updatesEnabled = capabilities.data?.mount_permission_updates_supported === true;
 			if (!enabled) return;
 			const [placements, destinations] = await Promise.all([
 				flowApi.listMounts(objectId),
@@ -151,7 +149,7 @@
 
 	async function updateAccess(event: SubmitEvent) {
 		event.preventDefault();
-		if (!changing || !updatesEnabled || busy || nextLevel === changing.level) return;
+		if (!changing || !enabled || busy || nextLevel === changing.level) return;
 		const current = generation;
 		const mount = changing;
 		const signature = JSON.stringify([mount.id, mount.level, nextLevel]);
@@ -252,7 +250,7 @@
 							})}>{$t('flow.mounts.openDestination')}</a
 						>
 					{/if}
-					{#if updatesEnabled && mount.status === 'active'}
+					{#if enabled && mount.status === 'active'}
 						{#if changing?.id === mount.id}
 							<form class="space-y-2" aria-busy={busy} onsubmit={updateAccess}>
 								<label class="block" for={`${uid}-new-access`}>{$t('flow.mounts.newAccess')}</label>

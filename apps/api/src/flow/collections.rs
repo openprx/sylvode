@@ -132,27 +132,6 @@ impl CollectionCommandType {
     }
 }
 
-#[must_use]
-pub fn v0_6_command_cardinality_registry() -> Vec<(&'static str, ExistingDocumentCardinality)> {
-    [
-        CollectionCommandType::FieldCreate,
-        CollectionCommandType::FieldUpdate,
-        CollectionCommandType::FieldArchive,
-        CollectionCommandType::FieldReorder,
-        CollectionCommandType::ViewCreate,
-        CollectionCommandType::ViewUpdate,
-        CollectionCommandType::ViewReorder,
-        CollectionCommandType::RecordCreate,
-        CollectionCommandType::RecordPatch,
-        CollectionCommandType::RecordArchive,
-        CollectionCommandType::RecordQuery,
-        CollectionCommandType::CreateCollectionEmbed,
-    ]
-    .into_iter()
-    .map(|kind| (kind.wire_name(), kind.existing_document_cardinality()))
-    .collect()
-}
-
 pub async fn insert_collection_projection<C: ConnectionTrait>(
     conn: &C,
     collection_id: Uuid,
@@ -3080,37 +3059,6 @@ pub(crate) async fn execute_embed_with_fault(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    #[test]
-    fn flow_collection_cardinality_registry_is_complete_and_exact() {
-        let registry = v0_6_command_cardinality_registry();
-        assert_eq!(registry.len(), 12);
-        assert_eq!(
-            registry,
-            vec![
-                ("field_create", ExistingDocumentCardinality::One),
-                ("field_update", ExistingDocumentCardinality::One),
-                ("field_archive", ExistingDocumentCardinality::One),
-                ("field_reorder", ExistingDocumentCardinality::One),
-                ("view_create", ExistingDocumentCardinality::One),
-                ("view_update", ExistingDocumentCardinality::One),
-                ("view_reorder", ExistingDocumentCardinality::One),
-                ("record_create", ExistingDocumentCardinality::Zero),
-                ("record_patch", ExistingDocumentCardinality::One),
-                ("record_archive", ExistingDocumentCardinality::Zero),
-                ("record_query", ExistingDocumentCardinality::Zero),
-                ("create_collection_embed", ExistingDocumentCardinality::One),
-            ]
-        );
-        assert!(
-            registry
-                .iter()
-                .all(|(_, cardinality)| !matches!(cardinality, ExistingDocumentCardinality::BoundedMany(_))),
-            "this package ships no cross-record batch command"
-        );
-    }
-
     fn normalized_non_comment_source(source: &str) -> String {
         source
             .lines()
@@ -3382,8 +3330,6 @@ mod database_tests {
                 .await
                 .unwrap_or_else(|err| panic!("applying {} failed: {err}", path.display()));
         }
-        // A scratch database models a running api and worker.
-        crate::flow::scope_runtime::fixture::register_running_readers(&db).await;
         Some(Scratch { db, name, admin_url })
     }
 
@@ -3746,7 +3692,7 @@ mod database_tests {
     }
 
     #[tokio::test]
-    async fn collection_commands_emit_the_frozen_v0_6_semantic_event_family() {
+    async fn collection_commands_emit_the_frozen_semantic_event_family() {
         #[derive(FromQueryResult)]
         struct EventRow {
             event_type: String,

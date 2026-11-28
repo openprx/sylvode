@@ -216,20 +216,13 @@ TOML
   fi
 
   # The personal-scope and mount specs need the Flow capabilities, which are on by default
-  # (migration 0106), and all three real readers registered. Nothing is changed by hand: this
-  # waits for the leases and fails if a fresh database did not come up with the defaults.
+  # (migration 0106). Nothing is changed by hand: this fails if a fresh database did not come up
+  # with the defaults.
   local rollout_ready
-  for _ in $(seq 1 100); do
-    rollout_ready=$(psql "$database_url" -X -Atq -v ON_ERROR_STOP=1 -c "
-      SELECT 1 FROM flow_runtime_capabilities
-       WHERE singleton AND minimum_reader_version=5 AND personal_provisioning AND personal_writes
-         AND external_mounts
-         AND (SELECT count(DISTINCT component) = 3 AND min(reader_version) >= 5
-                FROM flow_runtime_readers WHERE lease_expires_at > now())")
-    [[ $rollout_ready == 1 ]] && break
-    sleep 0.2
-  done
-  [[ $rollout_ready == 1 ]] || die "Flow default capabilities or the API, maintenance and worker reader-5 leases are missing"
+  rollout_ready=$(psql "$database_url" -X -Atq -v ON_ERROR_STOP=1 -c "
+    SELECT 1 FROM flow_runtime_capabilities
+     WHERE singleton AND personal_provisioning AND personal_writes AND external_mounts")
+  [[ $rollout_ready == 1 ]] || die "Flow default capabilities are missing"
 
   E2E_PROXY_BUILD_DIR="$BUILD_DIR" E2E_PROXY_API_ORIGIN="$api_origin" E2E_PROXY_PORT="$WEB_PORT" \
     bun "$ROOT_DIR/scripts/lib/e2e-web-proxy.ts" >"$STACK_DIR/proxy.log" 2>&1 &

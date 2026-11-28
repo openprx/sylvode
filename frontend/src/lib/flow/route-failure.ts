@@ -30,8 +30,6 @@ export function routeFailureCopy(data: FlowRouteFailure & { workspaceId?: string
 	title: string;
 	body: string;
 } {
-	if (data.error === 'upgrade')
-		return { title: 'flow.route.upgradeTitle', body: 'flow.personal.upgrade' };
 	if (data.errorCode === 'unauthenticated')
 		return { title: 'flow.route.authTitle', body: 'flow.errors.unauthenticated' };
 	if (data.errorCode === 'forbidden')
@@ -46,8 +44,6 @@ export function routeFailureCopy(data: FlowRouteFailure & { workspaceId?: string
 			(!data.errorReason || ['flow_disabled', 'workspace_flow_disabled'].includes(data.errorReason))
 		)
 			return { title: 'flow.route.disabledTitle', body: 'flow.route.disabledBody' };
-		if (data.errorReason === 'scope_runtime_not_ready')
-			return { title: 'flow.personal.unavailable', body: 'flow.route.runtimeBody' };
 		if (!data.workspaceId || data.errorReason === 'personal_creation_disabled')
 			return { title: 'flow.personal.unavailable', body: 'flow.route.personalBody' };
 	}

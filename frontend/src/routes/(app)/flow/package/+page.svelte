@@ -42,16 +42,16 @@
 				{scopeId}
 				workspaceLabel={$t('flow.personal.personalFlow')}
 				projects={[]}
-				allowHistory={readiness.historyExports}
+				allowHistory
 			/>
 		{:else if !loading}<p class="text-sm text-fg-muted">
 				{$t('flow.personal.packageExportUnavailable')}
 			</p>{/if}
 		{#if readiness.imports}
-			{#if readiness.historyImports}<p class="text-sm text-fg-muted">
-					{$t('flow.personal.packageHistoryReplay')}
-				</p>{/if}
-			<PackageImportWizard {scopeId} projects={[]} allowHistory={readiness.historyImports} />
+			<p class="text-sm text-fg-muted">
+				{$t('flow.personal.packageHistoryReplay')}
+			</p>
+			<PackageImportWizard {scopeId} projects={[]} allowHistory />
 		{:else if !loading}<p class="text-sm text-fg-muted">
 				{$t('flow.personal.packageImportUnavailable')}
 			</p>{/if}

@@ -178,9 +178,6 @@ async fn accept_inner(
         } else {
             scope::require_personal_write(&tx).await?;
         }
-        if minimum >= 4 {
-            scope::require_editor_model_readers(&tx, minimum).await?;
-        }
         if let Some(permit) = shared.as_ref() {
             permit.fence(&tx, &proof).await?;
         } else {

@@ -2834,8 +2834,6 @@ pub async fn preview_scope_conversion(
     }
     if identity.workspace_id.is_none() {
         super::scope::require_personal_write(&state.db).await?;
-    } else {
-        super::scope::require_reader_ready(&state.db).await?;
     }
     if input.idempotency_key.trim().is_empty() || input.idempotency_key.len() > 128 || !input.mapping.is_object() {
         return Err(ApiError::invalid_update(
@@ -3031,8 +3029,6 @@ async fn scoped_conversion_actor(
         }
         if identity.workspace_id.is_none() {
             super::scope::require_personal_write(&state.db).await?;
-        } else {
-            super::scope::require_reader_ready(&state.db).await?;
         }
         if !proof.resource_active {
             return Err(ApiError::policy_rejected("conversion source must be active"));

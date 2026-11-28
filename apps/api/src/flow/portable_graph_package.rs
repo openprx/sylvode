@@ -214,14 +214,14 @@ fn replay_mark_edits(page: &Page) -> u64 {
 }
 
 async fn enabled<C: ConnectionTrait>(db: &C) -> Result<(), ApiError> {
-    if !scope::capabilities(db).await?.portable_graph_packages_supported {
+    if !scope::capabilities(db).await?.portable_graph_packages_enabled {
         return Err(ApiError::typed_with_details(
             crate::error::ApiErrorKind::FeatureDisabled,
             "Portable graph packages are disabled",
             json!({"reason":"portable_graph_packages_disabled"}),
         ));
     }
-    scope::require_reader_ready(db).await
+    Ok(())
 }
 
 async fn ensure_admin<C: ConnectionTrait>(db: &C, workspace: Uuid, actor: Uuid) -> Result<(), ApiError> {

@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use collab_core::{CollabEngine, LoroCollabEngine};
 
-const CORPUS: &str = include_str!("../../../testing/fixtures/flow-wire-v08/corpus.json");
+const CORPUS: &str = include_str!("../../../testing/fixtures/flow-wire/corpus.json");
 
 #[test]
 fn locked_update_corpus_rejects_damage_and_converges_duplicates_and_reordering() {

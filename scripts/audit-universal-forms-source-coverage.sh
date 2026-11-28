@@ -291,7 +291,7 @@ contains "MCP exposes events.tail" "apps/mcp-server/src/tools/forms.rs" "events.
 contains "MCP exposes plugin install" "apps/mcp-server/src/tools/plugins.rs" "plugins.install"
 contains "MCP exposes plugin invoke" "apps/mcp-server/src/tools/plugins.rs" "plugins.invoke"
 contains "MCP registry pins current tool count" "apps/mcp-server/src/tools/mod.rs" "tools.len(),"
-contains "MCP registry embeds its versioned surface snapshot" "apps/mcp-server/src/tools/mod.rs" 'include_str!("mcp-surface-v05.snapshot.md")'
+contains "MCP registry embeds its surface snapshot" "apps/mcp-server/src/tools/mod.rs" 'include_str!("mcp-surface.snapshot.md")'
 contains "MCP skill validation derives the expected registry count" "skills/sylvode-mcp/scripts/validate-mcp.sh" "expected-tool-count.py"
 contains "MCP regression derives the expected registry count" "skills/sylvode-mcp/scripts/mcp-regression.py" "expected-tool-count.py"
 contains "API agent policy enables form schema version MCP tools" "apps/api/src/routes/context.rs" "form_schema_versions.list"

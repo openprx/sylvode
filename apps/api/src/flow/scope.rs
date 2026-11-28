@@ -3,10 +3,6 @@
 //! Legacy authority delegates to the original workspace fence; personal authority uses its own
 //! row. No code in this module manufactures a workspace or a workspace membership.
 #[derive(FromQueryResult)]
-struct ReaderReadiness {
-    ready: bool,
-}
-#[derive(FromQueryResult)]
 struct ActiveScopeUser {
     id: Uuid,
 }
@@ -51,41 +47,30 @@ pub struct ScopeRoot {
     pub object_id: Uuid,
     pub project_id: Option<Uuid>,
 }
-// Versioned wire flags are independently switchable and must remain individual booleans.
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "independent published rollout capability flags"
-)]
+// Operator switches are independent published booleans.
+#[expect(clippy::struct_excessive_bools, reason = "independent operator capability switches")]
 #[derive(Debug, Clone, Serialize, FromQueryResult)]
 pub struct Capabilities {
-    pub api_version: i32,
-    pub schema_version: i32,
-    pub minimum_reader_version: i32,
-    pub block_shares_supported: bool,
-    pub block_share_source_revoke_supported: bool,
-    pub block_transfers_supported: bool,
-    pub portable_page_packages_supported: bool,
-    pub portable_graph_packages_supported: bool,
-    pub mount_permission_updates_supported: bool,
+    pub block_transfers_enabled: bool,
+    pub portable_page_packages_enabled: bool,
+    pub portable_graph_packages_enabled: bool,
     pub scope_native_legacy: bool,
     pub personal_provisioning: bool,
     pub personal_writes: bool,
     pub external_mounts: bool,
     pub personal_package_imports: bool,
     pub personal_scope_package_exports: bool,
-    pub personal_package_history_imports: bool,
-    pub personal_package_history_exports: bool,
-    pub personal_package_object_types: Vec<String>,
-    pub personal_package_export_selections: Vec<String>,
-    pub personal_package_import_history_mode: String,
-    pub personal_package_snapshot_history: String,
-    pub personal_package_typed_raw: bool,
     pub personal_forms_conversion: bool,
     pub cross_workspace_forms_conversion: bool,
 }
 pub async fn capabilities<C: ConnectionTrait>(db: &C) -> Result<Capabilities, ApiError> {
-    Capabilities::find_by_statement(Statement::from_string(DbBackend::Postgres,
-  "SELECT 2::int AS api_version,1::int AS schema_version,minimum_reader_version,(minimum_reader_version>=5) AS block_shares_supported,(minimum_reader_version>=5) AS block_share_source_revoke_supported,(minimum_reader_version=5 AND COALESCE((to_jsonb(flow_runtime_capabilities)->>'block_transfers_enabled')::bool,false) AND NOT EXISTS(SELECT 1 FROM flow_runtime_readers WHERE lease_expires_at>now() AND reader_version<5) AND (SELECT count(DISTINCT component)=3 FROM flow_runtime_readers WHERE lease_expires_at>now() AND reader_version>=5 AND component IN ('api','worker','maintenance'))) AS block_transfers_supported,(minimum_reader_version>=5 AND COALESCE((to_jsonb(flow_runtime_capabilities)->>'portable_page_packages_enabled')::bool,false) AND NOT EXISTS(SELECT 1 FROM flow_runtime_readers WHERE lease_expires_at>now() AND reader_version<minimum_reader_version) AND (SELECT count(DISTINCT component)=3 FROM flow_runtime_readers WHERE lease_expires_at>now() AND reader_version>=minimum_reader_version AND component IN ('api','worker','maintenance'))) AS portable_page_packages_supported,(minimum_reader_version>=5 AND COALESCE((to_jsonb(flow_runtime_capabilities)->>'portable_graph_packages_enabled')::bool,false) AND NOT EXISTS(SELECT 1 FROM flow_runtime_readers WHERE lease_expires_at>now() AND reader_version<minimum_reader_version) AND (SELECT count(DISTINCT component)=3 FROM flow_runtime_readers WHERE lease_expires_at>now() AND reader_version>=minimum_reader_version AND component IN ('api','worker','maintenance'))) AS portable_graph_packages_supported, external_mounts AS mount_permission_updates_supported,scope_native_legacy,personal_provisioning,personal_writes,external_mounts,personal_package_imports,personal_scope_package_exports,true AS personal_package_history_imports,true AS personal_package_history_exports,ARRAY['page','navigator']::text[] AS personal_package_object_types,ARRAY['object','scope']::text[] AS personal_package_export_selections,'replay_to_head'::text AS personal_package_import_history_mode,'retained'::text AS personal_package_snapshot_history,false AS personal_package_typed_raw,personal_forms_conversion,cross_workspace_forms_conversion FROM flow_runtime_capabilities WHERE singleton".to_string())).one(db).await?.ok_or_else(ApiError::internal)
+    Capabilities::find_by_statement(Statement::from_string(
+        DbBackend::Postgres,
+        "SELECT block_transfers_enabled,portable_page_packages_enabled,portable_graph_packages_enabled,scope_native_legacy,personal_provisioning,personal_writes,external_mounts,personal_package_imports,personal_scope_package_exports,personal_forms_conversion,cross_workspace_forms_conversion FROM flow_runtime_capabilities WHERE singleton".to_string(),
+    ))
+    .one(db)
+    .await?
+    .ok_or_else(ApiError::internal)
 }
 pub async fn get<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<FlowScope, ApiError> {
     FlowScope::find_by_statement(Statement::from_sql_and_values(
@@ -140,37 +125,12 @@ fn disabled(reason: &str) -> ApiError {
         json!({"reason":reason}),
     )
 }
-/// Evaluates the compatibility barrier inside independent write transactions.
-///
-/// Operators must
-/// register/renew every participating process before enabling. Existing reads never depend on
-/// creation flags, so containment cannot orphan already accepted content.
+/// Refuses a personal-scope write while the operator switch for personal writes is off. Existing
+/// reads never depend on creation flags, so containment cannot orphan already accepted content.
 pub async fn require_personal_write<C: ConnectionTrait>(db: &C) -> Result<(), ApiError> {
     let caps = capabilities(db).await?;
     if !caps.personal_writes {
         return Err(disabled("personal_creation_disabled"));
-    }
-    require_reader_ready(db).await
-}
-/// Rich Page storage requires process-reader v3 independently of editor/client model4.
-pub async fn require_editor_reader_ready<C: ConnectionTrait>(db: &C) -> Result<(), ApiError> {
-    require_editor_model_readers(db, 4).await
-}
-pub async fn require_editor_model_readers<C: ConnectionTrait>(db: &C, model: u32) -> Result<(), ApiError> {
-    let minimum = if model >= 5 { 4 } else { 3 };
-    if capabilities(db).await?.minimum_reader_version < minimum {
-        return Err(disabled("rich_editor_readers_not_ready"));
-    }
-    require_reader_ready(db).await
-}
-
-pub async fn require_reader_ready<C: ConnectionTrait>(db: &C) -> Result<(), ApiError> {
-    let caps = capabilities(db).await?;
-
-    let ready=ReaderReadiness::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,
- "SELECT NOT EXISTS(SELECT 1 FROM flow_runtime_readers WHERE lease_expires_at>now() AND reader_version<$1) AND (SELECT count(DISTINCT component)=3 FROM flow_runtime_readers WHERE lease_expires_at>now() AND reader_version>=$1 AND component IN ('api','worker','maintenance')) AS ready",vec![caps.minimum_reader_version.into()])).one(db).await?.is_some_and(|r|r.ready);
-    if !ready {
-        return Err(disabled("scope_runtime_not_ready"));
     }
     Ok(())
 }
@@ -522,7 +482,7 @@ pub async fn object_view<C: ConnectionTrait>(db: &C, object: Uuid, user: Uuid) -
         && if row.workspace_id.is_none() {
             caps.personal_forms_conversion && require_personal_write(db).await.is_ok()
         } else {
-            caps.cross_workspace_forms_conversion && require_reader_ready(db).await.is_ok()
+            caps.cross_workspace_forms_conversion
         };
     *value.field_mut("supported_forms_conversion")? = json!(forms_ready || scoped_forms_ready);
     *value.field_mut("forms_conversion_destination_mode")? = json!(if scoped_forms_ready {
@@ -721,9 +681,6 @@ pub async fn create_personal(db: &DatabaseConnection, user: Uuid, input: CreateI
     }
     let tx = db.begin().await?;
     require_personal_write(&tx).await?;
-    if input.editor_model >= 4 {
-        require_editor_model_readers(&tx, input.editor_model).await?;
-    }
     fence(&tx, &proof).await?;
     if let Some(result) =
         super::scope_commands::lock_and_replay(&tx, input.scope_id, user, &input.idempotency_key, &body).await?
