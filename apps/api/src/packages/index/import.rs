@@ -439,7 +439,8 @@ async fn perform(
             }
         }
     }
-    let prepared = PreparedUpload::verify(&tx, workspace_id, bytes).await?;
+    let prepared =
+        PreparedUpload::verify(&tx, workspace_id, bytes, crate::packages::verify::Requester::Internal).await?;
     let info = prepared.info();
     if info.package_key != plugin.id {
         return Err(mismatch("id"));
