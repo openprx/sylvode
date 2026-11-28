@@ -1,0 +1,130 @@
+{
+	"sites": {
+		"title": "站点",
+		"thing": "站点",
+		"object": "站点",
+		"cancel": "取消",
+		"retry": "重试",
+		"backToList": "返回站点列表",
+		"disabledTip": "此站点已停用，对所有人（包括操作员）都显示“未找到”。重新发布即可恢复。",
+		"status": {
+			"draft": "草稿",
+			"published": "已发布",
+			"disabled": "已停用"
+		},
+		"list": {
+			"new": "新建站点",
+			"browseTemplates": "浏览模板",
+			"empty": "还没有站点。站点把选定的页面和表单展示给工作区之外的人。",
+			"never": "从未发布",
+			"notServed": "此服务器不提供站点访问",
+			"manual": "在此创建",
+			"package": "包 {key}",
+			"col": {
+				"title": "标题",
+				"status": "状态",
+				"address": "地址",
+				"source": "来源",
+				"published": "最近发布"
+			}
+		},
+		"create": {
+			"title": "新建站点",
+			"kind": "创建方式",
+			"blank": "空白站点",
+			"template": "从模板创建",
+			"titleEn": "标题",
+			"titleZh": "中文标题（可选）",
+			"slug": "地址名称",
+			"slugHelper": "2-40 个小写字母、数字或连字符，是站点地址的一部分。",
+			"submit": "创建站点",
+			"templateNote": "模板从市场安装，并在本项目中创建一个草稿站点。在有人发布之前，内容都不会公开。",
+			"openMarket": "打开市场"
+		},
+		"actions": {
+			"publish": "发布",
+			"unpublish": "取消发布",
+			"open": "打开站点",
+			"disable": "停用站点",
+			"delete": "删除站点"
+		},
+		"draftTip": {
+			"text": "草稿：只有拥有站点角色并在站点上登录的人才能看到。",
+			"grant": "授予我编辑权限",
+			"granted": "你现在是此站点的编辑。"
+		},
+		"tabs": {
+			"label": "站点分区",
+			"settings": "设置"
+		},
+		"publish": {
+			"title": "发布 {title}？",
+			"thing": "将公开的内容",
+			"lead": "发布后，工作区之外的人可以打开此站点。以下内容将公开：",
+			"visitorPages": "{count, plural, =0 {没有访客页面} other {# 个访客页面}}",
+			"binding": "表单绑定 {key}：访客可提交 {submit} 个字段，可读取 {read} 个字段",
+			"summaryFailed": "无法加载将公开内容的清单，仍可继续发布。",
+			"agents": "智能体不能直接修改已发布的站点，它们的修改会在草稿中等待审核。",
+			"confirm": "发布站点",
+			"done": "{title} 已发布。",
+			"warn": {
+				"no_visitor_page": "站点没有访客页面，访客将看不到任何内容。",
+				"no_home_page": "没有访客页面位于“/”，站点首页是空的。",
+				"missing_binding": "页面 {route} 使用了绑定“{key}”，但此站点没有这个绑定。",
+				"no_url": "此服务器不提供站点访问，因此没有可打开的地址。"
+			}
+		},
+		"unpublish": {
+			"title": "取消发布 {title}？",
+			"body": "访客会看到“未找到”。拥有站点角色的人仍可登录并预览。",
+			"confirm": "取消发布站点",
+			"done": "站点已取消发布。"
+		},
+		"disable": {
+			"title": "停用 {title}？",
+			"body": "站点对所有人（包括操作员）都显示“未找到”。页面、绑定和记录都会保留，重新发布即可恢复。",
+			"confirm": "停用站点",
+			"done": "站点已停用。"
+		},
+		"delete": {
+			"title": "删除 {title}？",
+			"body": "它的页面、绑定、角色、访客会话和操作员会话都会被移除。表单记录仍保留在各自的表单中。此操作无法撤销。",
+			"confirm": "删除站点",
+			"unpublishFirst": "请先取消发布",
+			"done": "站点已删除。"
+		},
+		"settings": {
+			"titleHeading": "标题",
+			"titleReadOnly": "所有者、管理员和站点编辑可以修改标题。",
+			"addressHeading": "地址",
+			"slugDraftOnly": "只有站点处于草稿状态时才能修改地址名称。",
+			"slugAdminOnly": "所有者和管理员可以修改地址名称。",
+			"siteAddress": "站点地址",
+			"copy": "复制",
+			"copied": "地址已复制。",
+			"copyFailed": "无法复制地址。",
+			"deployHeading": "独立部署地址",
+			"deployLead": "站点通常部署在自己的独立来源上，为这一个站点单独构建。",
+			"sameOriginNote": "试用模式：在设置独立地址之前，由本服务器在自己的来源上提供站点，所有站点共用。可用来试用站点，不适合正式运行。",
+			"origin": "独立部署地址",
+			"originHelper": "一个精确的 https 来源，例如 https://help.example.com。留空则由本服务器提供站点（试用）。",
+			"ancestors": "允许嵌入的来源",
+			"ancestorsHelper": "允许在框架中嵌入此站点的来源。每行一个 https 来源，最多 8 个。",
+			"adminOnly": "所有者和管理员可以修改部署设置。",
+			"save": "保存",
+			"saveSlug": "重命名",
+			"saved": "已保存。"
+		},
+		"errors": {
+			"slug_invalid": "请使用 2-40 个小写字母、数字或连字符。",
+			"slug_taken": "该地址已被占用。",
+			"title_invalid": "请输入不超过 200 个字符的标题。",
+			"site_not_draft": "只有站点处于草稿状态时才能修改地址名称。",
+			"site_published": "删除前请先取消发布。",
+			"allowed_origin_invalid": "请输入一个精确的 https 来源，不带路径，例如 https://help.example.com。",
+			"frame_ancestors_invalid": "最多输入 8 个精确的 https 来源，每行一个。",
+			"update_empty": "没有需要保存的内容。",
+			"user_not_member": "此人不是工作区的有效成员。"
+		}
+	}
+}
