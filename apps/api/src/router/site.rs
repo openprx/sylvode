@@ -136,11 +136,14 @@ pub(super) fn public_routes(auth_state: &AppState) -> Router<AppState> {
         )
         .route("/api/site/v1/{slug}/auth/operator/login", post(site::public::login))
         .route("/api/site/v1/{slug}/auth/logout", post(site::public::logout))
-        .layer(axum_middleware::from_fn_with_state(
+        // `route_layer`, not `layer`: a router-wide layer also wraps this router's fallback, and
+        // the merge in `mod.rs` would then send every unmatched console path through the site
+        // guard (refused `site_credentials_refused` instead of the standard 404).
+        .route_layer(axum_middleware::from_fn_with_state(
             auth_state.clone(),
             site::http::guard,
         ))
-        .layer(axum_middleware::from_fn(catalogue::guard::guard))
-        .layer(DefaultBodyLimit::max(site::http::MAX_BODY_BYTES))
-        .layer(TraceLayer::new_for_http().make_span_with(api::routes::collab::trace_span))
+        .route_layer(axum_middleware::from_fn(catalogue::guard::guard))
+        .route_layer(DefaultBodyLimit::max(site::http::MAX_BODY_BYTES))
+        .route_layer(TraceLayer::new_for_http().make_span_with(api::routes::collab::trace_span))
 }

@@ -103,7 +103,71 @@ pub fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform
 
 #[cfg(test)]
 mod tests {
-    use super::ROUTER_SOURCES;
+    use axum::{
+        body::Body,
+        http::{Method, Request, StatusCode, header},
+    };
+    use tower::ServiceExt;
+
+    use platform::{
+        app::{AppState, FlowPermissionCacheSlot},
+        config::{AppConfig, Secret},
+    };
+    use sea_orm::DatabaseConnection;
+
+    use super::{ROUTER_SOURCES, build_router};
+
+    /// A state without a database: the requests below never reach one.
+    fn disconnected_state() -> AppState {
+        AppState {
+            cfg: AppConfig {
+                app_name: "router-test".to_string(),
+                bind_addr: "127.0.0.1:0".to_string(),
+                database_url: Secret::new("postgres://unused/unused"),
+                jwt_secret: Secret::new("a-router-test-signing-secret-of-some-length"),
+                jwt_access_ttl_seconds: 900,
+                jwt_refresh_ttl_seconds: 3600,
+                allow_insecure_cookies: false,
+                collab_allowed_origins: Vec::new(),
+            },
+            db: DatabaseConnection::Disconnected,
+            flow_permission_cache: FlowPermissionCacheSlot::default(),
+        }
+    }
+
+    /// The site guard runs only under `/api/site/v1/{slug}/...`: an unknown console path with a
+    /// bearer token is the standard 404, never `site_credentials_refused`.
+    #[tokio::test]
+    async fn an_unknown_console_path_is_not_answered_by_the_site_guard() {
+        let router = build_router(disconnected_state());
+        for (method, path) in [
+            (
+                Method::POST,
+                "/api/v1/forms/00000000-0000-0000-0000-000000000001/archive",
+            ),
+            (Method::GET, "/api/v1/no-such-route"),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method.clone())
+                        .uri(path)
+                        .header(header::AUTHORIZATION, "Bearer not-a-token")
+                        .body(Body::empty())
+                        .expect("request builds"),
+                )
+                .await
+                .expect("router answers");
+            let status = response.status();
+            let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+                .await
+                .expect("body reads");
+            let text = String::from_utf8_lossy(&body);
+            assert!(!text.contains("site_credentials_refused"), "{method} {path}: {text}");
+            assert_eq!(status, StatusCode::NOT_FOUND, "{method} {path}: {text}");
+        }
+    }
 
     /// A router file left out of [`ROUTER_SOURCES`] would escape every source-level route check.
     #[test]
