@@ -1289,3 +1289,39 @@ fn a_bot_slot_formats_and_parses_and_never_folds_onto_a_project_slot() {
     let slot = Slot::bot(BOT, "claude").expect("bot slot");
     assert_ne!(slot.as_str().to_ascii_uppercase(), slot.as_str());
 }
+
+/// Member 0 of a bot's pool has today's text; member n from 1 to 7 appends `-n`. Every member
+/// parses back, keeps the bot and the CLI, and a malformed member suffix is refused.
+#[test]
+fn a_pool_member_slot_formats_and_parses() {
+    for cli in ["claude", "codex"] {
+        let primary = Slot::bot(BOT, cli).expect("primary");
+        assert_eq!(primary.as_str(), format!("bot-{BOT}-{cli}"), "member 0 is today's text");
+        assert_eq!(Slot::bot_member(BOT, cli, 0), Ok(primary.clone()));
+        assert_eq!(primary.member(), 0);
+        for member in 1..8u8 {
+            let slot = Slot::bot_member(BOT, cli, member).expect("member slot");
+            assert_eq!(slot.as_str(), format!("bot-{BOT}-{cli}-{member}"));
+            assert_eq!((slot.bot_id(), slot.cli(), slot.member()), (Some(BOT), cli, member));
+            assert!(slot.is_bot() && slot.key().is_none());
+            assert_eq!(Slot::parse(slot.as_str()), Ok(slot));
+            assert!(TmuxName::derived(&Slot::bot_member(BOT, cli, member).expect("member")).is_none());
+        }
+    }
+    assert!(Slot::bot_member(BOT, "claude", 8).is_err());
+    assert_eq!(Slot::project("SV", "claude").expect("project").member(), 0);
+    for bad in ["0", "8", "9", "01", "10", "-1", "", "x", "1-2"] {
+        let text = format!("bot-{BOT}-claude-{bad}");
+        assert!(Slot::parse(&text).is_err(), "{text:?}");
+    }
+    assert!(Slot::parse(&format!("bot-{BOT}-claude-")).is_err());
+    // A hook for a member's session is for its own CLI only.
+    assert!(crate::runner::session::hook_is_for_session(
+        &format!("bot-{BOT}-codex-3"),
+        "codex"
+    ));
+    assert!(!crate::runner::session::hook_is_for_session(
+        &format!("bot-{BOT}-codex-3"),
+        "claude"
+    ));
+}

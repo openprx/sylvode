@@ -230,19 +230,22 @@ pub const SESSION_CLIS: [&str; 3] = ["claude", "codex", "opencode"];
 ///
 /// - [`Slot::Project`] is `<KEY>-<cli>`: the project key (`^[A-Z0-9]{1,32}$`), one hyphen and the
 ///   CLI type in lower case. The runner derives it and may create its tmux session.
-/// - [`Slot::Bot`] is `bot-<uuid>-<cli>`: the bot's id (lower case, hyphenated) and the CLI type.
+/// - [`Slot::Bot`] is `bot-<uuid>-<cli>` for member 0 and `bot-<uuid>-<cli>-<n>` for pool member
+///   `n` (1 to 7): the bot's id (lower case, hyphenated) and the CLI type.
 ///   It names an operator-owned session and serves every project of the bot. Its first part is
 ///   lower case, so it never parses as a project slot and never folds onto `sessions/<KEY>/` on a
 ///   case-insensitive file system (keys are upper case).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Slot {
     Project { text: String, key_len: usize },
-    Bot { text: String },
+    Bot { text: String, member: u8 },
 }
 
 /// The length of a hyphenated UUID.
 const UUID_LEN: usize = 36;
 const BOT_PREFIX: &str = "bot-";
+/// The most members one bot's pool can have; member numbers run from 0 to one below this.
+pub const MAX_POOL_MEMBERS: u8 = 8;
 
 impl Slot {
     /// The slot of project `key` for `cli`.
@@ -269,12 +272,28 @@ impl Slot {
     ///
     /// [`TmuxError::Invalid`] for a bot id that is not a UUID or a CLI type that does not fit.
     pub fn bot(bot: &str, cli: &str) -> Result<Self, TmuxError> {
+        Self::bot_member(bot, cli, 0)
+    }
+
+    /// Member `member` (0 to 7) of the pool of bot `bot` for `cli`. Member 0 is [`Slot::bot`].
+    ///
+    /// # Errors
+    ///
+    /// [`TmuxError::Invalid`] for a bot id that is not a UUID, a CLI type that does not fit or a
+    /// member number of 8 or more.
+    pub fn bot_member(bot: &str, cli: &str, member: u8) -> Result<Self, TmuxError> {
         let id =
             uuid::Uuid::parse_str(bot.trim()).map_err(|_| TmuxError::Invalid("bot id must be a UUID".to_string()))?;
         check_cli(cli)?;
-        Ok(Self::Bot {
-            text: format!("{BOT_PREFIX}{}-{cli}", id.hyphenated()),
-        })
+        if member >= MAX_POOL_MEMBERS {
+            return Err(TmuxError::Invalid("pool member must be 0 to 7".to_string()));
+        }
+        let text = if member == 0 {
+            format!("{BOT_PREFIX}{}-{cli}", id.hyphenated())
+        } else {
+            format!("{BOT_PREFIX}{}-{cli}-{member}", id.hyphenated())
+        };
+        Ok(Self::Bot { text, member })
     }
 
     /// A slot read back, for example from a hook message or a directory name: either form.
@@ -293,7 +312,18 @@ impl Slot {
             if !canonical {
                 return Err(TmuxError::Invalid("slot name holds no canonical bot id".to_string()));
             }
-            return Self::bot(id, cli);
+            // A pool member is `<cli>-<n>` with n from 1 to 7 and no leading zero.
+            let (cli, member) = match cli.split_once('-') {
+                None => (cli, 0),
+                Some((cli, digits)) => {
+                    let member = match digits.as_bytes() {
+                        [digit @ b'1'..=b'7'] => digit - b'0',
+                        _ => return Err(TmuxError::Invalid("slot name holds no valid pool member".to_string())),
+                    };
+                    (cli, member)
+                }
+            };
+            return Self::bot_member(id, cli, member);
         }
         let (key, cli) = name
             .split_once('-')
@@ -303,7 +333,7 @@ impl Slot {
 
     pub fn as_str(&self) -> &str {
         match self {
-            Self::Project { text, .. } | Self::Bot { text } => text,
+            Self::Project { text, .. } | Self::Bot { text, .. } => text,
         }
     }
 
@@ -319,7 +349,7 @@ impl Slot {
     pub fn bot_id(&self) -> Option<&str> {
         match self {
             Self::Project { .. } => None,
-            Self::Bot { text } => text.get(BOT_PREFIX.len()..BOT_PREFIX.len() + UUID_LEN),
+            Self::Bot { text, .. } => text.get(BOT_PREFIX.len()..BOT_PREFIX.len() + UUID_LEN),
         }
     }
 
@@ -327,7 +357,22 @@ impl Slot {
     pub fn cli(&self) -> &str {
         match self {
             Self::Project { text, key_len } => text.get(key_len + 1..).unwrap_or_default(),
-            Self::Bot { text } => text.get(BOT_PREFIX.len() + UUID_LEN + 1..).unwrap_or_default(),
+            Self::Bot { text, member } => {
+                let tail = text.get(BOT_PREFIX.len() + UUID_LEN + 1..).unwrap_or_default();
+                if *member == 0 {
+                    tail
+                } else {
+                    tail.get(..tail.len().saturating_sub(2)).unwrap_or_default()
+                }
+            }
+        }
+    }
+
+    /// The pool member: 0 for the bot's primary session and for every project slot.
+    pub const fn member(&self) -> u8 {
+        match self {
+            Self::Project { .. } => 0,
+            Self::Bot { member, .. } => *member,
         }
     }
 
