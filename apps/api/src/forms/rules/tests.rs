@@ -368,3 +368,34 @@ fn cel_defaults_are_evaluated_at_create() {
     assert!(values["when"].as_str().is_some_and(|text| text.ends_with('Z')));
     assert_eq!(defaulted.len(), 2);
 }
+
+#[tokio::test]
+async fn recalculation_carries_an_unchanged_derived_value_that_breaks_a_tightened_rule() {
+    let tightened = schema(json!([
+        {"field_id": "fld_qty_0001", "key": "qty", "type": "integer",
+         "rules": {"validate": [{"rule": "max", "value": 3}]}},
+        {"field_id": "fld_total_001", "key": "total", "type": "number",
+         "formula": {"op": "multiply", "args": ["qty", "price"]},
+         "rules": {"validate": [{"rule": "max", "value": 5}]}}
+    ]));
+    let stored = json!({
+        "qty": {"type": "integer", "value": 5},
+        "total": {"type": "decimal", "decimal": "10.00000000"}
+    });
+    let output = write(&tightened, stored.clone(), Some(&stored), RulePolicy::CarryAll)
+        .await
+        .expect("a recalculation is never refused by a rule");
+    assert_eq!(output.values["total"], stored["total"]);
+    let carried: Vec<(String, String)> = output
+        .carried
+        .iter()
+        .map(|error| (error.key.clone(), error.code.to_string()))
+        .collect();
+    // Only the derived field is reported; the stored, non-derived `qty` is not part of a recalculation.
+    assert_eq!(carried, vec![("total".to_string(), "max".to_string())]);
+
+    let output = write(&tightened, stored.clone(), Some(&stored), RulePolicy::Refuse)
+        .await
+        .expect("an untouched stored value never blocks a user write");
+    assert!(output.carried.is_empty());
+}

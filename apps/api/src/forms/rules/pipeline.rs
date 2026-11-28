@@ -6,7 +6,8 @@
 //! Stages 5-7 run for the values this write sets or changes (every value on create). A key in
 //! `always_check` runs even when unchanged: the update path passes the submitted read-denied keys,
 //! so a refusal never reveals whether a guess matched the hidden stored value. A stored value that
-//! breaks a rule added later and that the write does not touch never blocks it.
+//! breaks a rule added later and that the write does not touch never blocks it; a recalculation
+//! reports such a derived value as carried.
 
 use std::{borrow::Cow, collections::BTreeSet};
 
@@ -137,7 +138,10 @@ pub async fn run(
         }
         let touched = input.always_check.contains(key) || stored != Some(&value);
         if !touched {
-            if input.report_untouched {
+            // A recalculation reports a derived value that came out unchanged but breaks a rule
+            // tightened after it was stored (contract C2 §6): carried, never refused.
+            let recalculated_derived = input.policy == RulePolicy::CarryAll && field_plan.derived;
+            if input.report_untouched || recalculated_derived {
                 let failures = validate_value(field_plan, ctx, &record, &values, &value).await;
                 carried.extend(failures.errors);
             }
