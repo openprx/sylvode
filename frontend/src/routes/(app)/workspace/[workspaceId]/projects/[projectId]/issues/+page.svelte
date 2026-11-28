@@ -172,8 +172,19 @@
 		return map;
 	});
 
+	function issueHref(issueId: string): string {
+		return `/workspace/${workspaceId}/projects/${projectId}/issues/${issueId}`;
+	}
+
 	function goToIssue(issueId: string) {
-		window.open(`/workspace/${workspaceId}/projects/${projectId}/issues/${issueId}`, '_blank');
+		window.open(issueHref(issueId), '_blank');
+	}
+
+	// The title link opens the issue itself (keyboard, middle click); the row click is a pointer
+	// convenience and must not fire a second open when the click came from a link inside the row.
+	function onRowClick(event: MouseEvent, issueId: string) {
+		if ((event.target as HTMLElement | null)?.closest('a, button')) return;
+		goToIssue(issueId);
 	}
 
 	function formatIssueCode(issue: Issue): string {
@@ -524,11 +535,21 @@
 					</thead>
 					<tbody class="divide-y divide-line bg-raised">
 						{#each issues as issue (issue.id)}
-							<tr class="cursor-pointer hover:bg-surface" onclick={() => goToIssue(issue.id)}>
+							<tr
+								class="cursor-pointer hover:bg-surface"
+								onclick={(event) => onRowClick(event, issue.id)}
+							>
 								<td class="px-4 py-3">
 									<div class="space-y-1">
 										<p class="text-sm font-medium text-fg">
-											{issue.title}
+											<a
+												href={issueHref(issue.id)}
+												target="_blank"
+												rel="noopener noreferrer"
+												class="rounded-control hover:underline"
+											>
+												{issue.title}
+											</a>
 										</p>
 										<p class="font-mono text-xs text-fg-muted">
 											{formatIssueCode(issue)}

@@ -122,6 +122,8 @@
 	let orderVersion = $state(0); // bumped whenever the order map changes, to re-derive the tree
 	let loading = $state(true);
 	let expanded = $state(new Set<string>());
+	/** Ids of the objects that have at least one child, so collapsed nodes still announce it. */
+	const parentIds = $derived(new Set(objects.flatMap((o) => (o.parent_id ? [o.parent_id] : []))));
 	let focusedId = $state<string | null>(null);
 	let liftedId = $state<string | null>(null);
 	let draftSiblingOrder = $state<string[]>([]); // object ids, lift-mode only, visual-only until drop
@@ -1199,7 +1201,7 @@
 							? 0
 							: -1}
 						aria-level={node.depth + 1}
-						aria-expanded={node.children.length > 0 || undefined}
+						aria-expanded={parentIds.has(node.object.id) ? expanded.has(node.object.id) : undefined}
 						aria-selected={selectedObjectId === node.object.id}
 						draggable={canReorderPage(node.object.id)}
 						class={`group flex cursor-pointer items-center gap-1 rounded px-2 py-1.5 text-sm outline-none ${
@@ -1218,10 +1220,11 @@
 						ondragover={(e) => onDragOver(e, node.object.id)}
 						ondrop={(e) => onDrop(e, node.object.id)}
 					>
-						{#if node.children.length > 0 || objects.some((o) => o.parent_id === node.object.id)}
+						{#if parentIds.has(node.object.id)}
 							<button
 								type="button"
-								class="w-4 shrink-0 text-fg-muted"
+								tabindex={-1}
+								class="-my-1 -ml-1 inline-flex h-6 w-6 shrink-0 items-center justify-center text-fg-muted"
 								onclick={(e) => {
 									e.stopPropagation();
 									toggleExpand(node.object.id);
@@ -1233,7 +1236,7 @@
 								{expanded.has(node.object.id) ? '▾' : '▸'}
 							</button>
 						{:else}
-							<span class="w-4 shrink-0"></span>
+							<span class="-ml-1 inline-block w-6 shrink-0"></span>
 						{/if}
 						<FlowObjectIcon appearance={node.object.appearance} objectId={node.object.id} />
 						<span class="truncate">{node.object.title || $t('flow.nav.untitled')}</span>

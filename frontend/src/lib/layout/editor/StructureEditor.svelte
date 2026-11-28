@@ -99,6 +99,7 @@
 		history = step.history;
 		publish(step.spec);
 		status = $t('layout.editor.structure.undone', { values: { what: describe(step.op) } });
+		if (step.op.op === 'insert' || step.op.op === 'remove') void focusNear(step.op.path);
 	}
 
 	function stepRedo() {
@@ -107,6 +108,7 @@
 		history = step.history;
 		publish(step.spec);
 		status = $t('layout.editor.structure.redone', { values: { what: describe(step.op) } });
+		if (step.op.op === 'insert' || step.op.op === 'remove') void focusNear(step.op.path);
 	}
 
 	function onkeydown(event: KeyboardEvent) {
@@ -135,6 +137,35 @@
 			(item) => item.dataset.grip === path
 		);
 		grip?.focus();
+	}
+
+	/**
+	 * After a node is removed (or an add or remove is undone or redone) the focused control may be
+	 * gone: focus the grip at that position, else the previous sibling's grip, else the parent's
+	 * palette toggle, else the parent box itself.
+	 */
+	async function focusNear(path: string) {
+		await tick();
+		const cut = path.lastIndexOf('/children/');
+		if (cut < 0) return;
+		const parent = path.slice(0, cut);
+		const index = Number(path.slice(cut + '/children/'.length));
+		const count = nodeAt(working, parent)?.children?.length ?? 0;
+		const root = rootEl;
+		if (!root) return;
+		const byAttr = (attr: string, value: string) =>
+			[...root.querySelectorAll<HTMLElement>(`[${attr}]`)].find(
+				(el) => el.getAttribute(attr) === value
+			);
+		if (count > 0 && Number.isInteger(index)) {
+			const grip = byAttr('data-grip', `${parent}/children/${Math.min(index, count - 1)}`);
+			if (grip) {
+				grip.focus();
+				return;
+			}
+		}
+		const toggle = byAttr('data-palette', parent)?.querySelector<HTMLElement>('summary');
+		(toggle ?? byAttr('data-snode', parent))?.focus();
 	}
 
 	function endDrag() {
@@ -185,7 +216,7 @@
 			if (commit(moveOp(parent, working, from, to))) void focusGrip(`${parent}/children/${to}`);
 		},
 		remove(path) {
-			commit(removeOp(working, path));
+			if (commit(removeOp(working, path))) void focusNear(path);
 		},
 		add(parent, type) {
 			const count = nodeAt(working, parent)?.children?.length ?? 0;
@@ -246,6 +277,8 @@
 	<p id="structure-help" class="mb-2 text-xs text-fg-muted">
 		{$t('layout.editor.structure.help')}
 	</p>
-	<StructureNode node={working.root} path="/root" {ctrl} />
+	<div role="tree" aria-label={$t('layout.editor.structure.title')}>
+		<StructureNode node={working.root} path="/root" {ctrl} />
+	</div>
 	<p class="sr-only" role="status" aria-live="polite" data-structure-status>{status}</p>
 </section>

@@ -66,6 +66,8 @@ export interface EditorAdapterHooks {
 		attrs: Record<string, unknown>
 	): void;
 	ensureStructure?(): Promise<boolean>;
+	/** The accessible name of the editing surface, in the user's language. */
+	editorLabel?(): string;
 	lifecycleInfo?(): { refs: number; generation: number; retired: number; paused: boolean } | null;
 	/** The local caret/selection as a presence cursor (`null` when it is not inside a block). */
 	onPresenceCursor?(cursor: PresenceCursor | null): void;
@@ -721,7 +723,7 @@ export class FlowEditorAdapter implements EditorAdapterContract {
 				const life = this.hooks.lifecycleInfo?.();
 				return {
 					role: 'textbox',
-					'aria-label': 'Page editor',
+					'aria-label': this.hooks.editorLabel?.() ?? '',
 					'aria-multiline': 'true',
 					'data-testid': 'flow-page-editor',
 					...editorSessionDiagnostic(this.doc),

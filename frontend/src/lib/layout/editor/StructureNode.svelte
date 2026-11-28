@@ -50,6 +50,8 @@
 		!!drag && drag.parent === parentPath && drag.to === index && drag.from !== index
 	);
 
+	const level = $derived(path.split('/children/').length);
+
 	const inGrid = $derived(parent?.type === 'grid' && parentColumns !== null);
 	const span = $derived(Math.min(colSpanOf(node), parentColumns ?? 1));
 	let previewSpan = $state<number | null>(null);
@@ -168,7 +170,16 @@
 </script>
 
 <div
-	class="min-w-0 rounded-control border bg-surface-white p-2 {errors.length > 0
+	role="treeitem"
+	tabindex="-1"
+	aria-selected="false"
+	aria-level={level}
+	aria-posinset={index + 1}
+	aria-setsize={siblings}
+	aria-expanded={children.length > 0 ? true : undefined}
+	aria-label={summary ? `${node.type}: ${summary}` : node.type}
+	class="min-w-0 rounded-control border bg-raised p-2 focus-visible:ring-2 focus-visible:ring-focus focus-visible:outline-none {errors.length >
+	0
 		? 'border-danger'
 		: 'border-line'} {isDragged ? 'opacity-50' : ''} {isTarget ? 'outline-dashed outline-2' : ''}"
 	style={inGrid ? `grid-column: span ${shownSpan} / span ${shownSpan}` : undefined}
@@ -273,6 +284,7 @@
 
 	{#if takesChildren(node) || children.length > 0}
 		<div
+			role="group"
 			class="mt-2 min-w-0 gap-2 {isGrid ? 'grid' : 'flex flex-col'}"
 			style={isGrid ? `grid-template-columns: repeat(${shownColumns}, minmax(0, 1fr))` : undefined}
 			data-snode-list={path}

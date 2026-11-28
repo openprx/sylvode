@@ -208,28 +208,31 @@
 				{#if draft.capability_diff.length === 0}
 					<p>{$t('drafts.review.noCapabilities')}</p>
 				{:else}
-					<table class="diff" data-testid="draft-capabilities">
-						<thead>
-							<tr>
-								<th scope="col">{$t('drafts.review.capability')}</th>
-								<th scope="col">{$t('drafts.review.selector')}</th>
-								<th scope="col">{$t('drafts.review.risk')}</th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each draft.capability_diff as item (item.capability + JSON.stringify(item.selector))}
+					<!-- svelte-ignore a11y_no_noninteractive_tabindex -- a focusable scroll region -->
+					<div class="scroll" role="region" tabindex="0" aria-labelledby="draft-capabilities">
+						<table class="diff" data-testid="draft-capabilities">
+							<thead>
 								<tr>
-									<td><code>{item.capability}</code></td>
-									<td><code>{JSON.stringify(item.selector)}</code></td>
-									<td>
-										<StatusChip tone={riskTone(item.risk)}>{item.risk}</StatusChip>
-										{#if item.new}<StatusChip tone="warning">{$t('drafts.review.new')}</StatusChip
-											>{/if}
-									</td>
+									<th scope="col">{$t('drafts.review.capability')}</th>
+									<th scope="col">{$t('drafts.review.selector')}</th>
+									<th scope="col">{$t('drafts.review.risk')}</th>
 								</tr>
-							{/each}
-						</tbody>
-					</table>
+							</thead>
+							<tbody>
+								{#each draft.capability_diff as item (item.capability + JSON.stringify(item.selector))}
+									<tr>
+										<td><code>{item.capability}</code></td>
+										<td><code>{JSON.stringify(item.selector)}</code></td>
+										<td>
+											<StatusChip tone={riskTone(item.risk)}>{item.risk}</StatusChip>
+											{#if item.new}<StatusChip tone="warning">{$t('drafts.review.new')}</StatusChip
+												>{/if}
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
 				{/if}
 			</section>
 
@@ -250,7 +253,13 @@
 
 			<section aria-labelledby="draft-spec">
 				<h2 id="draft-spec">{$t('drafts.review.spec')}</h2>
-				<pre class="spec" data-testid="draft-spec">{specText}</pre>
+				<!-- svelte-ignore a11y_no_noninteractive_tabindex -- a focusable scroll region -->
+				<pre
+					class="spec"
+					role="region"
+					tabindex="0"
+					aria-labelledby="draft-spec"
+					data-testid="draft-spec">{specText}</pre>
 			</section>
 
 			{#if draft.review?.comment}
@@ -359,6 +368,14 @@
 		text-align: start;
 		border-bottom: 1px solid var(--rf-border);
 		vertical-align: top;
+	}
+	.scroll {
+		overflow-x: auto;
+	}
+	.scroll:focus-visible,
+	.spec:focus-visible {
+		outline: var(--rf-border-width-focus) solid var(--rf-focus);
+		outline-offset: 2px;
 	}
 	.spec {
 		margin: 0;
