@@ -198,7 +198,16 @@ await suite.checkAsync(
 			html.indexOf('<nav aria-label="shell.column.projects.current"'),
 			html.indexOf('</nav>', html.indexOf('<nav aria-label="shell.column.projects.current"'))
 		);
-		for (const kind of ['overview', 'issues', 'board', 'cycles', 'forms', 'apps', 'settings'])
+		for (const kind of [
+			'overview',
+			'issues',
+			'board',
+			'cycles',
+			'forms',
+			'apps',
+			'sites',
+			'settings'
+		])
 			assert(nav.includes(`data-tree-kind="${kind}"`), `${kind} inside the Project nav`);
 		assert(
 			nav.includes('data-project-id="p1"') && !nav.includes('data-project-id="p2"'),

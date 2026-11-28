@@ -13,6 +13,7 @@ export type TreeKind =
 	| 'form'
 	| 'all-forms'
 	| 'apps'
+	| 'sites'
 	| 'app'
 	| 'link'
 	| 'caption'
@@ -47,6 +48,7 @@ export const PROJECT_NAV_KEYS = {
 	forms: 'shell.projectNav.forms',
 	allForms: 'shell.projectNav.allForms',
 	apps: 'shell.projectNav.apps',
+	sites: 'shell.projectNav.sites',
 	settings: 'shell.projectNav.settings',
 	pluginsSection: 'shell.sections.projectPlugins',
 	executionSection: 'execution.connection.title',
@@ -224,6 +226,7 @@ export function projectTree(input: ProjectTreeInput): TreeNode {
 			}));
 		children.push(appsNode);
 	}
+	children.push(row('sites', PROJECT_NAV_KEYS.sites, `${base}/sites`));
 	if (isWorkspaceAdmin)
 		children.push(row('settings', PROJECT_NAV_KEYS.settings, `${base}/settings`));
 

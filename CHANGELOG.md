@@ -18,6 +18,15 @@ name.
 
 ### Added
 
+- **Sites: console fields and rules.** A site answers `url` and `url_mode` (`separate`: its own
+  `allowed_origin`; `same_origin`: served by the API from `[site] assets_dir`, `public_url` + `mount_path`
+  + `/?site=<slug>`; both null when nothing serves it), `published_at` (set when the site goes from
+  not published to published, kept on unpublish; sites published earlier stay null; migration `0145`) and
+  `installation` (`{id, package_key}` of the package that created its pages). An installation answers
+  `site_id`. `PATCH /sites/{id}` takes `slug` as well (people who own or administer the workspace; only
+  while the site is a draft, else `409 site_not_draft`; `409 slug_taken` on a collision). `DELETE
+  /sites/{id}` is refused with `409 site_published` while the site is published. The project navigation
+  gets a built-in `project.sites` row between Apps and Settings.
 - **Config: `[site] mount_path`.** The URL path the API serves the built site app at (default `/site`,
   no trailing `/`; paths that start with a top-level API route are refused at start). Build the site
   app with `VITE_SV_SITE_BASE` set to `mount_path` plus `/`; both must match.
