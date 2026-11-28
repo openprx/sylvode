@@ -804,7 +804,7 @@ fn private_state(fx: &Fixture) -> StateDir {
 const OTHER_BOT: &str = "00000000-0000-4000-8000-000000000002";
 
 fn bot_entry() -> String {
-    format!("[[runner.tmux.sessions]]\nbot = \"{BOT}\"\ncli = \"claude\"\nname = \"sv\"\n")
+    format!("[[runner.tmux.sessions]]\nbot = \"{BOT}\"\ncli = \"claude\"\nnames = [\"sv\"]\n")
 }
 
 fn record_of(bot: &str, name: &str) -> super::files::SessionRecord {
@@ -910,7 +910,7 @@ async fn an_entry_of_another_cli_does_not_apply() {
     let (tmux, _log) = logging_tmux(&fx);
     let m = ok_mock(task_view(&fx.project_dir, "tmux", "claude"));
     let (addr, _server) = serve(m.clone()).await;
-    let entry = format!("[[runner.tmux.sessions]]\nbot = \"{BOT}\"\ncli = \"codex\"\nname = \"sv\"\n");
+    let entry = format!("[[runner.tmux.sessions]]\nbot = \"{BOT}\"\ncli = \"codex\"\nnames = [\"sv\"]\n");
     let mut config = fx.config_with(addr, &format!("[runner.tmux]\nwindow_width = 200\n{entry}"));
     config.runner.tmux.binary = tmux.to_string_lossy().into_owned();
     let Verdict::Run(accepted) = fx.run(&config, m, addr, &delivery()).await else {

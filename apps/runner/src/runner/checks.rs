@@ -126,6 +126,8 @@ pub struct Accepted {
     pub program: PathBuf,
     /// The MCP server executable.
     pub mcp_server: PathBuf,
+    /// The work item the task is about, for the session pool's item affinity.
+    pub item: Option<String>,
 }
 
 impl Accepted {
@@ -394,7 +396,22 @@ pub async fn check_delivery(ctx: Context<'_>, payload: &Value) -> Verdict {
         cli,
         program,
         mcp_server,
+        item: item_key(&view, project_id),
     }))
+}
+
+/// The longest work item key the pool remembers.
+const ITEM_KEY_MAX: usize = 128;
+
+/// The work item a task view is about, as a key for the session pool: the issue's identifier in
+/// its project, or the proposal's id. `None` for a task with neither or one with an oversized text.
+pub fn item_key(view: &Value, project_id: &str) -> Option<String> {
+    let key = if let Some(identifier) = str_at(view, &["source", "issue", "identifier"]) {
+        format!("issue:{project_id}:{identifier}")
+    } else {
+        format!("proposal:{}", str_at(view, &["source", "proposal", "id"])?)
+    };
+    (key.len() <= ITEM_KEY_MAX && !key.chars().any(char::is_control)).then_some(key)
 }
 
 /// Whether the record of project slot `slot` names a bot other than `bot`.

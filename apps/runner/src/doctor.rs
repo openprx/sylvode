@@ -335,8 +335,8 @@ fn pointer_escape(token: &str) -> String {
 
 /// The session rows: `session.<KEY>-<cli>` for what the runner can see of the project's derived
 /// tmux sessions, one per CLI the runner has a record of (`claude` when it has none), and
-/// `session.bot-<uuid>-<cli>` for every `[[runner.tmux.sessions]]` entry, with or without a
-/// record. No project row for a key that is not a project key.
+/// `session.bot-<uuid>-<cli>` (and `-<n>` for each further pool member) for every
+/// `[[runner.tmux.sessions]]` entry, with or without a record. No project row for a key that is not a project key.
 pub fn session_rows(config: &Config, key: &str) -> Vec<Component> {
     let state = crate::runner::state_dir(config, crate::runner::paths::service_user_home().as_deref())
         .and_then(|dir| crate::runner::files::StateDir::open(&dir).ok());
@@ -363,7 +363,11 @@ pub fn session_rows(config: &Config, key: &str) -> Vec<Component> {
         .tmux
         .sessions
         .iter()
-        .filter_map(|entry| crate::runner::tmux::Slot::bot(&entry.bot, &entry.cli).ok())
+        .flat_map(|entry| {
+            (0..entry.names.len())
+                .filter_map(|member| u8::try_from(member).ok())
+                .filter_map(|member| crate::runner::tmux::Slot::bot_member(&entry.bot, &entry.cli, member).ok())
+        })
         .map(|slot| session_row(config, &slot));
     projects.chain(bots).collect()
 }

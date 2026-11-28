@@ -34,6 +34,8 @@ use super::tmux::{NameSource, Slot, TmuxName};
 
 /// The most bytes of one of these files that are read back.
 const MAX_FILE_BYTES: u64 = 64 * 1024;
+/// The most a pool's affinity file may hold (a thousand tasks and a thousand items fit well within).
+const POOL_FILE_BYTES: u64 = 512 * 1024;
 
 /// The events the claude hooks report.
 pub const CLAUDE_EVENTS: [&str; 4] = ["SessionStart", "UserPromptSubmit", "Stop", "Notification"];
@@ -380,6 +382,33 @@ impl StateDir {
         }
     }
 
+    /// Writes `pools/<primary slot>.json`: which member of a bot's pool served which task and work
+    /// item, so a restart keeps a retry on the agent that has its context.
+    ///
+    /// # Errors
+    ///
+    /// A message when `primary` is not a bot slot or the file cannot be written.
+    pub fn write_pool_affinity(&self, primary: &Slot, text: &str) -> Result<(), String> {
+        if !primary.is_bot() {
+            return Err("only a bot's pool has an affinity file".to_string());
+        }
+        let pools = private_dir(&self.fd, "pools")?;
+        write_private(&pools, &format!("{}.json", primary.as_str()), text.as_bytes()).map(|_| ())
+    }
+
+    /// Reads `pools/<primary slot>.json`; `None` when there is none or it is not ours (a link, a
+    /// special file, too large or unreadable).
+    pub fn read_pool_affinity(&self, primary: &Slot) -> Option<String> {
+        if !primary.is_bot() {
+            return None;
+        }
+        let pools = open_dir(&self.fd, "pools").ok()?;
+        match read_regular(&pools, &format!("{}.json", primary.as_str()), POOL_FILE_BYTES).ok()? {
+            Read_::Data { bytes, .. } => String::from_utf8(bytes).ok(),
+            _ => None,
+        }
+    }
+
     /// Records, durably, that `task_id` at `attempt` is about to be typed into session `name`.
     ///
     /// # Errors
@@ -461,7 +490,7 @@ impl StateDir {
             }
         };
         check(&self.root, 0o700);
-        for sub in ["mcp", "sessions", "panes"] {
+        for sub in ["mcp", "sessions", "panes", "pools"] {
             let dir = self.root.join(sub);
             check(&dir, 0o700);
             for (path, limit) in entries_below(&dir) {

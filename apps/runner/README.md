@@ -644,7 +644,7 @@ derived session and `bot-<bot id>-<cli>` for a bot's configured one, never a con
 [[runner.tmux.sessions]]
 bot = "8c1f0a52-3d4e-4b6a-9c7d-1e2f3a4b5c6d"   # the bot's id: a lower case, hyphenated UUID
 cli = "claude"       # claude or codex; required
-name = "sv"          # an existing tmux session
+names = ["sv"]       # existing tmux sessions; the first is the primary (1 to 8 names)
 ```
 
 Tasks of this bot for `claude`, from every project it is connected to, are then typed into the
@@ -695,9 +695,61 @@ Rules: the bot is a lower case, hyphenated UUID of a bot that a `runner` agent s
 `<KEY>-opencode` in any letter case, so it can never be or fold onto the derived name of any
 project. The runner refuses to start, naming `runner.tmux.sessions[i]`, for a bot that is not a
 canonical UUID, a bot no runner agent serves, a bot without a token, a CLI other than `claude` or
-`codex`, an invalid name, a repeated bot and CLI, or a repeated name (compared without case). The
-old `project` key is refused as an unknown key. `sylvode-runner release KEY` frees a project key
+`codex`, no name or more than eight, an invalid name, a repeated bot and CLI, or a repeated name
+(compared without case, within an entry and across entries). The old `project` and `name` keys are
+refused as unknown keys. `sylvode-runner release KEY` frees a project key
 only and has nothing to release for a bot's session.
+
+#### A bot with several sessions (a pool)
+
+```toml
+[[runner.tmux.sessions]]
+bot = "8c1f0a52-3d4e-4b6a-9c7d-1e2f3a4b5c6d"
+cli = "claude"
+names = ["sv", "sv-2", "sv-3"]   # the members; the first is the primary
+
+[runner.tmux.pool]
+affinity_ttl_secs = 3600     # a work item sticks to the member that last served it
+stuck_after_secs = 300       # a member blocked or held this long is unhealthy
+rebalance_after_secs = 120   # queued tasks leave a member unhealthy this long
+```
+
+With more than one name the bot works on up to that many tasks at once, one per session. Each
+member is an ordinary configured session of the bot: you start it, give it the bot's MCP entry
+(`setup claude --bot <id> --project KEY`) and the runner never creates, renames, restarts or ends
+it. Each member has its own queue and state (`sessions/bot-<bot id>-<cli>[-<n>]/`; member 0 keeps
+the name a single session has). A pool of one name behaves as before.
+
+The runner picks the member of each task, in this order, among the healthy members:
+
+1. the member that holds or served the same task (a retry or a new attempt stays with the agent
+   that has its context);
+2. the member that served the same work item within `affinity_ttl_secs`;
+3. the lowest-numbered member that is idle with an empty queue;
+4. the member with the fewest tasks (queued plus the one running), the lowest number on a tie;
+5. otherwise the primary, which then behaves as a single session does (failing with the attach
+   hint when it is absent).
+
+A member at `max_queued_per_session` is passed over while another has room, and tasks being
+enqueued count against the member they were chosen for, so concurrent deliveries spread. The
+choice is logged as `member selected` (`affinity_task`, `affinity_item`, `idle`, `shortest`,
+`fallback`); the task-to-member map is kept in `<state_dir>/pools/bot-<bot id>-<cli>.json` (at most
+1000 tasks and 1000 items) so a restart keeps a retry on its member.
+
+A member is unhealthy when its tmux session is absent, its session was declined at a delivery
+(for `stuck_after_secs`, after which it is tried again), the CLI is gone, it has been blocked on a
+dialog or held back by its screen for `stuck_after_secs`; it is healthy again at the next look
+(every 10 s while it has nothing to do). A task being worked on is never moved: it ends by the
+usual timers. The queued tasks of a member that has been unhealthy for `rebalance_after_secs`,
+which were never typed in, move to the other healthy members in their order (`rebalance` in the
+log); a task whose push is under way stays. After a restart, a task that was typed in is taken
+over by the member that typed it (its record or scrollback), the others are placed by the saved
+map or the rules above.
+
+Tasks of one bot can now run, and finish, out of order across members. `sessions` and `doctor`
+list every member (`bot-<bot id>-<cli>-<n>`), the report carries `member` (0 to 7) on each bot row
+and Sylvode's connection status shows one row per member. Existing runner files change in one way:
+`name = "sv"` becomes `names = ["sv"]`.
 
 A session the operator starts gets the Sylvode MCP server and the hooks through
 [`setup claude`](#setup-claude-for-a-session-you-start-yourself) or
@@ -1084,6 +1136,8 @@ valid values (`runner, openclaw, openprx, webhook, custom`).
 | `delivery_check_timeout_secs` | `5` | 1 to 60: the synchronous checks; slower is HTTP 503 |
 | `heartbeat_secs` | `600` | at least 1: `runner.queued` and `runner.alive` interval |
 | `report_interval_secs` | none | 1 to 86400: overrides the report interval Sylvode advertises |
+| `enqueue_answer_ms` | `250` | at most 60000: how long a delivery's answer waits for the queue position; after that it is `dispatched` with `queue_position: null` and the task stays queued. 0 waits without a bound |
+| `max_queued_per_session` | `100` | at most 100000: above it a delivery is answered 503; 0 means no limit |
 | `install_agent_guide` | `true` | [Agent guide](#agent-guide) |
 | `git_exclude_managed` | `true` | add the claude skill directory to `.git/info/exclude` |
 
@@ -1102,7 +1156,28 @@ valid values (`runner, openclaw, openprx, webhook, custom`).
 | `report_unacked_after_secs` | `900` | [Timers](#timers-of-a-tmux-task) |
 | `completion_grace_secs` | `60` | [Timers](#timers-of-a-tmux-task) |
 | `screen_hold_secs` | `600` | [Timers](#timers-of-a-tmux-task); at least 30 is applied |
-| `sessions` | `[]` | `[[runner.tmux.sessions]]` entries with `bot`, `cli` and `name`: [Using an existing session](#using-an-existing-session-with-another-name) |
+| `sessions` | `[]` | `[[runner.tmux.sessions]]` entries with `bot`, `cli` and `names`: [Using an existing session](#using-an-existing-session-with-another-name) |
+
+### `[runner.tmux.pool]`
+
+How the members of a bot's [session pool](#a-bot-with-several-sessions-a-pool) are chosen and watched.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `affinity_ttl_secs` | `3600` | 1 to 604800: how long a work item sticks to the member that last served it |
+| `stuck_after_secs` | `300` | 10 to 86400: a member blocked or held back by its screen this long, or declined at a delivery, is unhealthy |
+| `rebalance_after_secs` | `120` | 1 to 86400: queued, never typed tasks leave a member unhealthy this long |
+
+### `[runner.http]`
+
+The one HTTP client (a connection pool per host) the runner uses towards Sylvode.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `pool_idle_timeout_secs` | `60` | 1 to 3600: an idle connection is closed after this long |
+| `pool_max_idle_per_host` | `8` | at most 1024; 0 means no limit |
+| `tcp_keepalive_secs` | `30` | at most 3600; 0 turns keep-alive off |
+| `connect_timeout_secs` | `5` | at most 600; 0 means none |
 
 ### `[runner.cli.claude]`, `[runner.cli.codex]`, `[runner.cli.opencode]`
 

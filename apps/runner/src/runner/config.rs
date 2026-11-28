@@ -131,10 +131,13 @@ pub struct RunnerTmuxConfig {
     /// Existing tmux sessions that serve a bot for a CLI, whatever the project of the task
     /// (`[[runner.tmux.sessions]]`). The runner never creates, renames or restarts them.
     pub sessions: Vec<SessionOverride>,
+    /// `[runner.tmux.pool]`: how the members of a bot's session pool are chosen and watched.
+    pub pool: RunnerPoolConfig,
 }
 
-/// One `[[runner.tmux.sessions]]` entry: the existing tmux session `name` serves the tasks of bot
-/// `bot` for `cli`, from every project the bot is connected to.
+/// One `[[runner.tmux.sessions]]` entry: the existing tmux sessions `names` serve the tasks of bot
+/// `bot` for `cli`, from every project the bot is connected to. The first name is the primary
+/// (member 0); each further name is one more member of the bot's pool.
 #[derive(Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct SessionOverride {
@@ -142,8 +145,64 @@ pub struct SessionOverride {
     pub bot: String,
     /// `claude` or `codex`.
     pub cli: String,
-    /// The tmux session name, `^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$`, never shaped like `<KEY>-<cli>`.
-    pub name: String,
+    /// The tmux session names, 1 to 8, each `^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$` and never shaped
+    /// like `<KEY>-<cli>`. The first is the primary.
+    pub names: Vec<String>,
+}
+
+impl SessionOverride {
+    /// The tmux session name of member `member`; `None` when the pool has no such member.
+    pub fn name_of(&self, member: u8) -> Option<&str> {
+        self.names.get(usize::from(member)).map(String::as_str)
+    }
+
+    /// The tmux session name of the primary (member 0).
+    pub fn primary(&self) -> Option<&str> {
+        self.name_of(0)
+    }
+}
+
+/// `[runner.tmux.pool]`: the choice and the health of the members of a bot's session pool.
+#[derive(Deserialize, Clone, Copy, Debug)]
+#[serde(default, deny_unknown_fields)]
+#[allow(clippy::struct_field_names, reason = "the keys are in seconds, as their names say")]
+pub struct RunnerPoolConfig {
+    /// How long a work item sticks to the member that last served it.
+    pub affinity_ttl_secs: u64,
+    /// A member blocked, or holding pushes back because of its screen, for this long is unhealthy.
+    pub stuck_after_secs: u64,
+    /// Queued tasks that were never pushed leave a member that has been unhealthy this long.
+    pub rebalance_after_secs: u64,
+}
+
+impl Default for RunnerPoolConfig {
+    fn default() -> Self {
+        Self {
+            affinity_ttl_secs: 3600,
+            stuck_after_secs: 300,
+            rebalance_after_secs: 120,
+        }
+    }
+}
+
+impl RunnerPoolConfig {
+    /// Refuses values that parse but can never work.
+    ///
+    /// # Errors
+    ///
+    /// A message naming the key.
+    pub fn validate(&self) -> Result<(), String> {
+        if !(1..=604_800).contains(&self.affinity_ttl_secs) {
+            return Err("runner.tmux.pool.affinity_ttl_secs must be between 1 and 604800".to_string());
+        }
+        if !(10..=86_400).contains(&self.stuck_after_secs) {
+            return Err("runner.tmux.pool.stuck_after_secs must be between 10 and 86400".to_string());
+        }
+        if !(1..=86_400).contains(&self.rebalance_after_secs) {
+            return Err("runner.tmux.pool.rebalance_after_secs must be between 1 and 86400".to_string());
+        }
+        Ok(())
+    }
 }
 
 impl Default for RunnerTmuxConfig {
@@ -162,6 +221,7 @@ impl Default for RunnerTmuxConfig {
             completion_grace_secs: 60,
             screen_hold_secs: 600,
             sessions: Vec::new(),
+            pool: RunnerPoolConfig::default(),
         }
     }
 }
@@ -367,6 +427,7 @@ impl RunnerConfig {
             return Err("runner.tmux.window_width and window_height are out of range".to_string());
         }
         validate_sessions(&tmux.sessions)?;
+        tmux.pool.validate()?;
         if !TOOL_MODES.contains(&self.mcp.tool_mode.as_str()) {
             return Err(format!(
                 "runner.mcp.tool_mode must be one of: {}",
@@ -436,15 +497,32 @@ fn validate_sessions(sessions: &[SessionOverride]) -> Result<(), String> {
         if !matches!(entry.cli.as_str(), "claude" | "codex") {
             return Err(format!("{at}.cli must be claude or codex"));
         }
-        super::tmux::TmuxName::new(&entry.name).map_err(|e| format!("{at}.name: {e}"))?;
+        if entry.names.is_empty() || entry.names.len() > usize::from(super::tmux::MAX_POOL_MEMBERS) {
+            return Err(format!(
+                "{at}.names must hold 1 to {} session names",
+                super::tmux::MAX_POOL_MEMBERS
+            ));
+        }
+        for (k, name) in entry.names.iter().enumerate() {
+            super::tmux::TmuxName::new(name).map_err(|e| format!("{at}.names[{k}]: {e}"))?;
+            if entry.names.iter().take(k).any(|own| own.eq_ignore_ascii_case(name)) {
+                return Err(format!(
+                    "{at}.names[{k}] repeats a name of the same entry (names compare without case)"
+                ));
+            }
+        }
         for (j, other) in sessions.iter().enumerate().take(i) {
             let earlier = format!("runner.tmux.sessions[{j}]");
             if other.bot == entry.bot && other.cli == entry.cli {
                 return Err(format!("{at} repeats the bot and cli of {earlier}"));
             }
-            if other.name.eq_ignore_ascii_case(&entry.name) {
+            if entry
+                .names
+                .iter()
+                .any(|name| other.names.iter().any(|used| used.eq_ignore_ascii_case(name)))
+            {
                 return Err(format!(
-                    "{at}.name repeats the name of {earlier} (names compare without case)"
+                    "{at}.names repeats a name of {earlier} (names compare without case)"
                 ));
             }
         }

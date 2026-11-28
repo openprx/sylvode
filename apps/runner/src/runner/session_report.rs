@@ -599,10 +599,13 @@ pub fn assess_recorded(config: &crate::config::Config) -> Vec<Assessment> {
         .filter_map(|name| Slot::parse(name).ok())
         .collect();
     for entry in &config.runner.tmux.sessions {
-        if let Ok(name) = Slot::bot(&entry.bot, &entry.cli)
-            && !names.contains(&name)
-        {
-            names.push(name);
+        for member in 0..entry.names.len() {
+            let Ok(member) = u8::try_from(member) else { continue };
+            if let Ok(name) = Slot::bot_member(&entry.bot, &entry.cli, member)
+                && !names.contains(&name)
+            {
+                names.push(name);
+            }
         }
     }
     names

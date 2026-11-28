@@ -1,10 +1,11 @@
 //! Which slot and which tmux session a task of a bot, project and CLI goes to: a pure function of
 //! the runner's configuration.
 //!
-//! 1. For a tmux delivery, a local entry (`[[runner.tmux.sessions]]`) for the bot and CLI names an
-//!    existing session that serves the bot for every project: [`Slot::Bot`] and
-//!    [`NameSource::Local`]. The runner never creates such a session. A headless delivery never
-//!    uses it: the channel setting means what it says.
+//! 1. For a tmux delivery, a local entry (`[[runner.tmux.sessions]]`) for the bot and CLI names
+//!    existing sessions that serve the bot for every project: [`Slot::Bot`] and
+//!    [`NameSource::Local`]. The first name is member 0, the primary, which is what [`resolve`]
+//!    returns; the session pool picks the member that takes a task. The runner never creates such
+//!    a session. A headless delivery never uses it: the channel setting means what it says.
 //! 2. Else the derived `<KEY>-<cli>`: [`Slot::Project`] and [`NameSource::Derived`], the only kind
 //!    the runner creates.
 //!
@@ -37,7 +38,7 @@ pub fn resolve(cfg: &RunnerConfig, bot: &str, key: &str, cli: &str, channel: Cha
         let invalid = || Refusal::new("session_config_invalid", "the runner's configured session is not valid");
         return Ok(Resolved {
             slot: Slot::bot(&entry.bot, cli).map_err(|_| invalid())?,
-            tmux: TmuxName::new(&entry.name).map_err(|_| invalid())?,
+            tmux: TmuxName::new(entry.primary().ok_or_else(invalid)?).map_err(|_| invalid())?,
             source: NameSource::Local,
         });
     }
@@ -51,12 +52,12 @@ pub fn resolve(cfg: &RunnerConfig, bot: &str, key: &str, cli: &str, channel: Cha
 }
 
 /// The tmux session a slot is served by when nothing else says: the derived name of a project
-/// slot, the configured name of a bot slot (`None` when its entry is gone).
+/// slot, the configured name of a bot slot's member (`None` when its entry or the member is gone).
 pub fn tmux_of_slot(cfg: &RunnerConfig, slot: &Slot) -> Option<(TmuxName, NameSource)> {
     match slot.bot_id() {
         Some(bot) => {
             let entry = cfg.bot_session(bot, slot.cli())?;
-            Some((TmuxName::new(&entry.name).ok()?, NameSource::Local))
+            Some((TmuxName::new(entry.name_of(slot.member())?).ok()?, NameSource::Local))
         }
         None => Some((TmuxName::derived(slot)?, NameSource::Derived)),
     }

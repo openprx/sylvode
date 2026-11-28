@@ -27,7 +27,7 @@ fn an_empty_runner_block_takes_the_tuned_defaults() {
 }
 
 #[test]
-fn an_existing_block_with_a_name_entry_loads_unchanged() {
+fn an_existing_block_with_one_session_name_loads_unchanged() {
     let config = parse(
         r#"
 state_dir = "~/state"
@@ -40,7 +40,7 @@ socket_name = "svw"
 [[tmux.sessions]]
 bot = "00000000-0000-4000-8000-000000000001"
 cli = "claude"
-name = "sv"
+names = ["sv"]
 
 [mcp]
 tool_mode = "search"
@@ -48,7 +48,7 @@ tool_mode = "search"
     )
     .expect("a block written for the runner before the pool");
     assert_eq!(config.tmux.sessions.len(), 1);
-    assert_eq!(config.tmux.sessions[0].name, "sv");
+    assert_eq!(config.tmux.sessions[0].primary(), Some("sv"));
     assert_eq!(config.enqueue_answer_ms, 250);
     assert_eq!(config.http.pool_idle_timeout_secs, 60);
 }
