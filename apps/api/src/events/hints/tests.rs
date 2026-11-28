@@ -722,3 +722,156 @@ fn a_place_is_released_with_its_permit_and_takes_the_bots_shared_lookups_with_it
     assert_eq!(hub.open_streams(), 0);
     assert!(hub.shared.lock().is_empty(), "no stream left, nothing shared is kept");
 }
+
+// ---------------------------------------------------------------------------------------------
+// Open-body cap
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn an_open_body_keeps_its_place_after_the_stream_place_is_released_and_frees_it_on_drop() {
+    let hub = HintHub::new(
+        HintLimits {
+            per_bot: 1,
+            per_process: 2,
+        },
+        quiet_tuning(),
+    );
+    let (a, b) = (id(), id());
+    // Per bot: BODY_CAP_FACTOR times the stream cap.
+    let mut bodies = Vec::new();
+    for _ in 0..super::BODY_CAP_FACTOR {
+        let stream = hub.try_acquire(a).expect("a stream place");
+        bodies.push(hub.try_acquire_body(a).expect("a body place"));
+        // The stream ended: its place is gone, the body (socket) is still open.
+        drop(stream);
+    }
+    assert_eq!(hub.open_streams(), 0);
+    assert_eq!(hub.open_bodies(), 2);
+    assert_eq!(hub.try_acquire_body(a).err(), Some(LimitExceeded::Bot));
+    // Per process: BODY_CAP_FACTOR times the process cap (4); the bot above holds 2.
+    let _b1 = hub.try_acquire_body(b).expect("another bot");
+    let _b2 = hub.try_acquire_body(b).expect("another bot again");
+    assert_eq!(hub.open_bodies(), 4);
+    assert_eq!(hub.try_acquire_body(id()).err(), Some(LimitExceeded::Process));
+    // Dropping a body (the connection let go of it) frees exactly one place.
+    let released = bodies.pop();
+    assert!(released.is_some());
+    drop(released);
+    assert_eq!(hub.open_bodies(), 3);
+    assert!(hub.try_acquire_body(a).is_ok());
+}
+
+#[tokio::test]
+async fn dropping_the_response_body_releases_its_place() {
+    let hub = HintHub::new(HintLimits::from_runtime(), quiet_tuning());
+    let bot = id();
+    let permit = hub.try_acquire_body(bot).expect("a body place");
+    let (_tx, rx) = mpsc::channel(1);
+    let (_close_tx, close_rx) = tokio::sync::watch::channel(None);
+    let body = super::body(rx, close_rx, permit);
+    assert_eq!(hub.open_bodies(), 1, "the body holds its place while it exists");
+    drop(body);
+    assert_eq!(hub.open_bodies(), 0, "dropping the body releases it");
+}
+
+// ---------------------------------------------------------------------------------------------
+// Per-workspace coalescing
+// ---------------------------------------------------------------------------------------------
+
+fn coalescing_tuning() -> HintTuning {
+    HintTuning {
+        // The window is one tick; short, because the tests wait it out in real time.
+        tick: Duration::from_millis(150),
+        ..quiet_tuning()
+    }
+}
+
+fn issue_hint(workspace: Uuid) -> String {
+    format!(
+        "{{\"k\":\"issue\",\"id\":\"{}\",\"p\":\"{}\",\"w\":\"{workspace}\"}}",
+        id(),
+        id()
+    )
+}
+
+fn drain(rx: &mut broadcast::Receiver<Signal>) -> Vec<Signal> {
+    let mut out = Vec::new();
+    while let Ok(signal) = rx.try_recv() {
+        out.push(signal);
+    }
+    out
+}
+
+#[tokio::test]
+async fn a_bulk_write_in_one_workspace_sends_a_burst_then_one_overflow_and_spares_other_workspaces() {
+    let hub = HintHub::new(HintLimits::from_runtime(), coalescing_tuning());
+    let mut rx = hub.signals.subscribe();
+    let (noisy, quiet) = (id(), id());
+    let window = hub.tuning.tick;
+    for _ in 0..1_000 {
+        hub.dispatch(super::HINT_CHANNEL, &issue_hint(noisy));
+    }
+    // Another workspace's hint still goes through while the noisy one is held back.
+    hub.dispatch(super::HINT_CHANNEL, &issue_hint(quiet));
+    let first = drain(&mut rx);
+    assert_eq!(
+        first.len(),
+        super::WORKSPACE_BURST + 1,
+        "the burst plus the quiet workspace's hint"
+    );
+    assert!(matches!(
+        first.last(),
+        Some(Signal::Hint(Hint::Issue { workspace, .. })) if *workspace == quiet
+    ));
+    // At the end of the window one overflow signal names the noisy workspace.
+    tokio::time::sleep(window + Duration::from_millis(100)).await;
+    let later = drain(&mut rx);
+    assert_eq!(later.len(), 1);
+    assert!(matches!(later[0], Signal::Overflow(w) if w == noisy));
+    // The next window starts fresh.
+    hub.dispatch(super::HINT_CHANNEL, &issue_hint(noisy));
+    assert!(matches!(drain(&mut rx)[..], [Signal::Hint(Hint::Issue { .. })]));
+    assert!(
+        hub.windows
+            .lock()
+            .0
+            .get(&noisy)
+            .is_some_and(|w| w.passed == 1 && !w.overflowed)
+    );
+}
+
+#[tokio::test]
+async fn a_quiet_workspace_never_overflows_and_task_and_tool_hints_are_not_counted() {
+    let hub = HintHub::new(HintLimits::from_runtime(), coalescing_tuning());
+    let mut rx = hub.signals.subscribe();
+    let ws = id();
+    for _ in 0..super::WORKSPACE_BURST {
+        hub.dispatch(super::HINT_CHANNEL, &issue_hint(ws));
+    }
+    for _ in 0..(super::WORKSPACE_BURST * 3) {
+        hub.dispatch(
+            super::HINT_CHANNEL,
+            &format!(
+                "{{\"k\":\"task\",\"id\":\"{}\",\"w\":\"{ws}\",\"b\":\"{}\"}}",
+                id(),
+                id()
+            ),
+        );
+        hub.dispatch(super::HINT_CHANNEL, "{\"k\":\"tools\"}");
+    }
+    tokio::time::sleep(hub.tuning.tick * 2 + Duration::from_millis(100)).await;
+    let all = drain(&mut rx);
+    assert_eq!(all.len(), super::WORKSPACE_BURST * 7);
+    assert!(all.iter().all(|s| matches!(s, Signal::Hint(_))));
+}
+
+#[tokio::test]
+async fn an_overflow_ends_only_the_streams_of_its_workspace_with_lagged() {
+    let mut l = stream_loop(quiet_tuning(), 16);
+    let mut stream = l.stream.take().expect("stream");
+    assert!(stream.on_signal(Ok(Signal::Overflow(id()))).await.is_ok());
+    assert!(matches!(
+        stream.on_signal(Ok(Signal::Overflow(l.workspace))).await,
+        Err(End::Lagged)
+    ));
+}

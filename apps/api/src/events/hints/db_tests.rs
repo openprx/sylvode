@@ -483,6 +483,18 @@ async fn the_triggers_send_exactly_the_documented_payloads_after_commit_and_noth
     )
     .await;
     assert_eq!(listen.drain(Duration::from_millis(300)).await, vec![issue_hint.clone()]);
+    // A no-op UPDATE leaves the row as it was and sends nothing (0143); a real one did, above. A
+    // column type without an equality operator would make this statement fail, not stay silent.
+    exec(
+        db,
+        "UPDATE work_items SET title = title WHERE id = $1",
+        vec![item.into()],
+    )
+    .await;
+    assert!(
+        listen.drain(Duration::from_millis(300)).await.is_empty(),
+        "an UPDATE that changes nothing is not a hint"
+    );
 
     // A comment: insert, update and delete name the work item.
     let comment = Uuid::new_v4();
