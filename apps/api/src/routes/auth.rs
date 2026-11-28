@@ -3,7 +3,7 @@
 
 use axum::{
     Extension, Json,
-    extract::State,
+    extract::{ConnectInfo, State},
     http::{HeaderMap, HeaderValue, header},
     response::{IntoResponse, Response},
 };
@@ -14,8 +14,51 @@ use platform::{
 };
 use sea_orm::{ConnectionTrait, DbBackend, QueryResult, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
 
-use crate::{error::ApiError, response::ApiResponse, services::notifications::NotificationPreferences};
+use crate::{
+    error::ApiError,
+    oauth::rate::{self, RateBucket, RateError, RateKey},
+    response::ApiResponse,
+    services::notifications::NotificationPreferences,
+};
+
+/// The peer address axum recorded for the connection, when there is one (direct handler tests have none).
+type Peer = Option<Extension<ConnectInfo<SocketAddr>>>;
+
+/// Counts one hit of `bucket` for `key`. `Ok(Some(response))` is the `429` to return when the
+/// limit is used up. A counter that cannot be reached refuses the request: these routes face
+/// the internet and must not run unlimited.
+async fn limit(state: &AppState, bucket: RateBucket, key: &RateKey) -> Result<Option<Response>, ApiError> {
+    match rate::enforce(&state.db, bucket, key).await {
+        Ok(()) => Ok(None),
+        Err(RateError::Limited(limited)) => Ok(Some(rate::too_many_requests(limited))),
+        Err(RateError::Store(error)) => {
+            tracing::warn!(bucket = bucket.as_str(), error = %error, "auth rate counter unavailable");
+            Err(ApiError::Internal)
+        }
+    }
+}
+
+/// The key of the caller's address: the peer, or the forwarded client when the peer is a
+/// configured trusted proxy (see [`rate::client_address`]).
+fn address_key(headers: &HeaderMap, peer: &Peer) -> RateKey {
+    RateKey::from_ip(rate::client_address(
+        headers,
+        peer.as_ref().map(|Extension(info)| info.0),
+    ))
+}
+
+/// The key of a login account: the e-mail as the credential check normalizes it.
+fn account_key(email: &str) -> RateKey {
+    RateKey::from_text(&email.trim().to_lowercase())
+}
+
+/// The key of one account tried from one address.
+fn account_address_key(email: &str, headers: &HeaderMap, peer: &Peer) -> RateKey {
+    let ip = rate::client_address(headers, peer.as_ref().map(|Extension(info)| info.0));
+    RateKey::from_text(&format!("{}\n{}", email.trim().to_lowercase(), ip.to_canonical()))
+}
 
 #[derive(Debug, Serialize)]
 struct UserResponse {
@@ -122,7 +165,10 @@ const USER_BOOTSTRAP_LOCK_KEY: i64 = 7_483_926_150_234;
 
 /// `GET /api/v1/auth/setup-status` (no credentials): whether the server still waits for its first
 /// person, so the first-run page can be offered. It reveals nothing else.
-pub async fn setup_status(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+pub async fn setup_status(State(state): State<AppState>, headers: HeaderMap, peer: Peer) -> Result<Response, ApiError> {
+    if let Some(refused) = limit(&state, RateBucket::AuthSetupStatusIp, &address_key(&headers, &peer)).await? {
+        return Ok(refused);
+    }
     let row = state
         .db
         .query_one(Statement::from_string(
@@ -132,14 +178,18 @@ pub async fn setup_status(State(state): State<AppState>) -> Result<impl IntoResp
         .await?
         .ok_or(ApiError::Internal)?;
     let needs_setup = row.try_get::<bool>("", "needs_setup").map_err(|_| ApiError::Internal)?;
-    Ok(ApiResponse::success(SetupStatusResponse { needs_setup }))
+    Ok(ApiResponse::success(SetupStatusResponse { needs_setup }).into_response())
 }
 
 pub async fn register(
     State(state): State<AppState>,
     headers: HeaderMap,
+    peer: Peer,
     Json(req): Json<RegisterRequest>,
 ) -> Result<Response, ApiError> {
+    if let Some(refused) = limit(&state, RateBucket::AuthRegisterIp, &address_key(&headers, &peer)).await? {
+        return Ok(refused);
+    }
     if req.email.trim().is_empty() || req.password.trim().is_empty() || req.name.trim().is_empty() {
         return Err(ApiError::BadRequest(
             "email, password and name are required".to_string(),
@@ -153,6 +203,15 @@ pub async fn register(
     }
 
     let normalized_email = req.email.trim().to_lowercase();
+
+    // Once the instance has people, only an admin may register: refuse everyone else before the
+    // expensive password hash, so an anonymous request costs one cheap query.
+    let admin_checked = if count_users(&state.db).await? > 0 {
+        require_admin_caller(&state, &headers).await?;
+        true
+    } else {
+        false
+    };
     let password_hash = hash_password(req.password).await?;
 
     let tx = state.db.begin().await?;
@@ -162,30 +221,16 @@ pub async fn register(
         vec![USER_BOOTSTRAP_LOCK_KEY.into()],
     ))
     .await?;
-    let user_count_row = tx
-        .query_one(Statement::from_string(
-            DbBackend::Postgres,
-            "SELECT COUNT(*)::bigint as total FROM users".to_string(),
-        ))
-        .await?
-        .ok_or(ApiError::Internal)?;
-    let user_count = user_count_row
-        .try_get::<i64>("", "total")
-        .map_err(|_| ApiError::Internal)?;
+    let user_count = count_users(&tx).await?;
 
+    // The first account is the admin. If another registration won the race for it meanwhile, the
+    // caller must be an admin after all.
     let role = if user_count == 0 {
         "admin".to_string()
     } else {
-        let access_token = extract_bearer_token(&headers)
-            .or_else(|| extract_cookie_token(&headers, "access_token"))
-            .ok_or_else(|| ApiError::Forbidden("admin access required".to_string()))?;
-        let claims = jwt_manager(&state)
-            .verify_access_token(&access_token)
-            .map_err(|_| ApiError::Forbidden("admin access required".to_string()))?;
-        load_live_user_session(&state, &claims)
-            .await
-            .map_err(|_| ApiError::Forbidden("admin access required".to_string()))?;
-        ensure_admin_user(&state, &claims.sub).await?;
+        if !admin_checked {
+            require_admin_caller(&state, &headers).await?;
+        }
         "user".to_string()
     };
 
@@ -236,8 +281,95 @@ pub async fn register(
     Ok(resp)
 }
 
-pub async fn login(State(state): State<AppState>, Json(req): Json<LoginRequest>) -> Result<Response, ApiError> {
-    let row = check_login_credentials(&state, &req.email, req.password).await?;
+/// Number of accounts of any kind; zero means the instance still waits for its first person.
+async fn count_users<C: ConnectionTrait>(conn: &C) -> Result<i64, ApiError> {
+    let row = conn
+        .query_one(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT COUNT(*)::bigint as total FROM users".to_string(),
+        ))
+        .await?
+        .ok_or(ApiError::Internal)?;
+    row.try_get::<i64>("", "total").map_err(|_| ApiError::Internal)
+}
+
+/// Refuses unless the request carries the session of a live instance admin.
+async fn require_admin_caller(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
+    let denied = || ApiError::Forbidden("admin access required".to_string());
+    let access_token = extract_bearer_token(headers)
+        .or_else(|| extract_cookie_token(headers, "access_token"))
+        .ok_or_else(denied)?;
+    let claims = jwt_manager(state)
+        .verify_access_token(&access_token)
+        .map_err(|_| denied())?;
+    load_live_user_session(state, &claims).await.map_err(|_| denied())?;
+    ensure_admin_user(state, &claims.sub).await
+}
+
+pub async fn login(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    peer: Peer,
+    Json(req): Json<LoginRequest>,
+) -> Result<Response, ApiError> {
+    if let Some(refused) = limit(&state, RateBucket::AuthLoginIp, &address_key(&headers, &peer)).await? {
+        return Ok(refused);
+    }
+    // An attempt from one address at one account is limited tightly. The account as a whole is
+    // limited only by its failures, with a higher ceiling and never by successes, so a stranger
+    // who knows an e-mail cannot lock the owner out from the owner's own address.
+    if let Some(refused) = limit(
+        &state,
+        RateBucket::AuthLoginPair,
+        &account_address_key(&req.email, &headers, &peer),
+    )
+    .await?
+    {
+        return Ok(refused);
+    }
+    let account = account_key(&req.email);
+    // A pair that has signed in before is known. The account's failure cap does not stop a known
+    // pair, or one attacker address keeping the cap used up would lock the owner out.
+    let pair = account_address_key(&req.email, &headers, &peer);
+    let known = match rate::is_over_limit(&state.db, RateBucket::AuthLoginKnown, &pair, 1).await {
+        Ok(known) => known.is_some(),
+        Err(error) => {
+            tracing::warn!(error = %error, "auth known-pair lookup unavailable");
+            return Err(ApiError::Internal);
+        }
+    };
+    match rate::is_over_limit(
+        &state.db,
+        RateBucket::AuthLoginAccountFail,
+        &account,
+        RateBucket::AuthLoginAccountFail.limit(),
+    )
+    .await
+    {
+        Ok(Some(limited)) if !known => return Ok(rate::too_many_requests(limited)),
+        Ok(_) => {}
+        Err(error) => {
+            tracing::warn!(error = %error, "auth failed-login counter unavailable");
+            return Err(ApiError::Internal);
+        }
+    }
+    let row = match check_login_credentials(&state, &req.email, req.password).await {
+        Ok(row) => row,
+        Err(error) => {
+            // A known pair is never refused by the account's cap, even while its failures count.
+            if matches!(error, ApiError::Unauthorized(_))
+                && let Some(refused) = limit(&state, RateBucket::AuthLoginAccountFail, &account).await?
+                && !known
+            {
+                return Ok(refused);
+            }
+            return Err(error);
+        }
+    };
+    if let Err(error) = rate::enforce_with_limit(&state.db, RateBucket::AuthLoginKnown, &pair, u32::MAX).await {
+        // Signing in does not depend on remembering the pair.
+        tracing::warn!(error = %error, "auth known-pair record failed");
+    }
     let session_version = row
         .try_get::<i64>("", "session_version")
         .map_err(|_| ApiError::Internal)?;
@@ -256,8 +388,12 @@ pub async fn login(State(state): State<AppState>, Json(req): Json<LoginRequest>)
 pub async fn refresh(
     State(state): State<AppState>,
     headers: HeaderMap,
+    peer: Peer,
     Json(req): Json<RefreshRequest>,
 ) -> Result<Response, ApiError> {
+    if let Some(refused) = limit(&state, RateBucket::AuthRefreshIp, &address_key(&headers, &peer)).await? {
+        return Ok(refused);
+    }
     let refresh_token = req
         .refresh_token
         .or_else(|| extract_cookie_token(&headers, "refresh_token"))

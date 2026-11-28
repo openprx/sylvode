@@ -537,7 +537,7 @@ const OTHER_BOT: &str = "00000000-0000-4000-8000-000000000002";
 
 #[tokio::test(flavor = "multi_thread")]
 async fn each_bots_deliveries_verify_only_with_its_own_secret() {
-    use crate::support::{post_with, sign};
+    use crate::support::post_signed_by;
     let fx = Fixture::new().await;
     // A second bot on the same runner; each has its own signing secret and its own roots.
     let other_root = TempDir::new("rn-other");
@@ -579,11 +579,7 @@ async fn each_bots_deliveries_verify_only_with_its_own_secret() {
     };
     let post = |body: String, secret: &'static str| {
         let url = server.url("/webhook");
-        async move {
-            post_with(&url, &body, &[("x-webhook-signature", &sign(&body, secret))])
-                .await
-                .0
-        }
+        async move { post_signed_by(&url, &body, secret).await.0 }
     };
     // Each bot's delivery verifies with its own secret.
     assert_eq!(post(delivery_for(BOT, 1), "secret-of-bot-one-xx").await, 200);

@@ -55,6 +55,33 @@ function normalizeEnvelope<T>(parsed: Partial<ApiResult<T>>): ApiResult<T> {
 	};
 }
 
+/** Longest wait the client honours for one `Retry-After`, in seconds. */
+const MAX_RETRY_AFTER_SECS = 15;
+/** How many times a refresh that was answered 429 is tried again. */
+const REFRESH_RETRIES = 2;
+
+/** The seconds a 429 asks to wait (`Retry-After`), at least 1; 5 when the header is missing. */
+export function retryAfterSecs(res: Pick<Response, 'headers'>): number {
+	const seconds = Number.parseInt(res.headers.get('Retry-After') ?? '', 10);
+	return Number.isFinite(seconds) && seconds > 0 ? seconds : 5;
+}
+
+/** A 429 as a result the UI can word in the user's language, with the wait it asks for. */
+function rateLimited<T>(res: Pick<Response, 'headers'>): ApiResult<T> {
+	const seconds = retryAfterSecs(res);
+	return {
+		...transportFailure<T>(429, 'transport.rateLimited', {
+			error_code: 'rate_limited',
+			details: { retry_after_secs: seconds }
+		}),
+		messageValues: { seconds }
+	};
+}
+
+/** What a token refresh came to: a new token, a refusal (sign in again), or a temporary failure
+ * that leaves the session as it is. */
+export type RefreshOutcome = 'refreshed' | 'denied' | 'unavailable';
+
 /** Local cancellation only: an earlier legitimate server mutation may already have applied. */
 export function authSessionChanged<T>(): ApiResult<T> {
 	return transportFailure<T>(499, 'transport.sessionChanged', {
@@ -85,7 +112,7 @@ export class ApiClient {
 	private baseUrl: string;
 	private token: string | null = null;
 	private refreshTokenValue: string | null = null;
-	private refreshInFlight: { epoch: number; promise: Promise<boolean> } | null = null;
+	private refreshInFlight: { epoch: number; promise: Promise<RefreshOutcome> } | null = null;
 	private authEpoch = 0;
 	private epochAbort = new AbortController();
 	private principal: string | null = null;
@@ -237,61 +264,75 @@ export class ApiClient {
 		}
 	}
 
-	private async performTokenRefresh(epoch: number): Promise<boolean> {
-		if (!this.isAuthSessionEpoch(epoch)) return false;
+	private async performTokenRefresh(epoch: number): Promise<RefreshOutcome> {
+		if (!this.isAuthSessionEpoch(epoch)) return 'denied';
 		const signal = this.epochAbort.signal;
-		const refreshToken = this.getRefreshToken();
-		const body = refreshToken ? JSON.stringify({ refresh_token: refreshToken }) : undefined;
 		const url = `${this.baseUrl}/api/v1/auth/refresh`;
-		const headers = new Headers();
-		headers.set('Content-Type', 'application/json');
 
-		try {
-			const res = await fetch(url, {
-				method: 'POST',
-				headers,
-				body,
-				signal,
-				credentials: 'include'
-			});
-			const parsed = (await res.json()) as Partial<
-				ApiResult<{
-					tokens?: { access_token?: string; refresh_token?: string };
-					user?: { id?: string };
-				}>
-			>;
-
-			if (
-				this.isAuthSessionEpoch(epoch) &&
-				!signal.aborted &&
-				parsed.code === 0 &&
-				parsed.data?.tokens?.access_token &&
-				typeof parsed.data.tokens.access_token === 'string'
-			) {
-				const refreshedPrincipal =
-					parsed.data.user?.id ?? authPrincipal(parsed.data.tokens.access_token);
-				if (this.principal && refreshedPrincipal && this.principal !== refreshedPrincipal)
-					return false;
-				this.principal = this.principal ?? refreshedPrincipal ?? null;
-				this.writeToken(parsed.data.tokens.access_token);
-				if (typeof parsed.data.tokens.refresh_token === 'string') {
-					this.writeRefreshToken(parsed.data.tokens.refresh_token);
+		for (let attempt = 0; ; attempt++) {
+			const refreshToken = this.getRefreshToken();
+			const body = refreshToken ? JSON.stringify({ refresh_token: refreshToken }) : undefined;
+			const headers = new Headers();
+			headers.set('Content-Type', 'application/json');
+			try {
+				const res = await fetch(url, {
+					method: 'POST',
+					headers,
+					body,
+					signal,
+					credentials: 'include'
+				});
+				// Too many requests is temporary: keep the session, wait as asked (bounded) and try
+				// again; when it persists the session stays and the caller's own request fails.
+				if (res.status === 429) {
+					if (attempt >= REFRESH_RETRIES) return 'unavailable';
+					const waitMs = Math.min(retryAfterSecs(res), MAX_RETRY_AFTER_SECS) * 1000;
+					await new Promise<void>((done) => setTimeout(done, waitMs));
+					if (!this.isAuthSessionEpoch(epoch) || signal.aborted) return 'denied';
+					continue;
 				}
-				return true;
-			}
-		} catch {
-			return false;
-		}
+				if (res.status >= 500) return 'unavailable';
+				const parsed = (await res.json()) as Partial<
+					ApiResult<{
+						tokens?: { access_token?: string; refresh_token?: string };
+						user?: { id?: string };
+					}>
+				>;
 
-		return false;
+				if (
+					this.isAuthSessionEpoch(epoch) &&
+					!signal.aborted &&
+					parsed.code === 0 &&
+					parsed.data?.tokens?.access_token &&
+					typeof parsed.data.tokens.access_token === 'string'
+				) {
+					const refreshedPrincipal =
+						parsed.data.user?.id ?? authPrincipal(parsed.data.tokens.access_token);
+					if (this.principal && refreshedPrincipal && this.principal !== refreshedPrincipal)
+						return 'denied';
+					this.principal = this.principal ?? refreshedPrincipal ?? null;
+					this.writeToken(parsed.data.tokens.access_token);
+					if (typeof parsed.data.tokens.refresh_token === 'string') {
+						this.writeRefreshToken(parsed.data.tokens.refresh_token);
+					}
+					return 'refreshed';
+				}
+				// The server's own 429 or 5xx in the envelope is as temporary as the HTTP status.
+				if (parsed.code === 429 || (typeof parsed.code === 'number' && parsed.code >= 500))
+					return 'unavailable';
+			} catch {
+				return 'denied';
+			}
+			return 'denied';
+		}
 	}
 
-	private async refreshAccessTokenOnce(epoch = this.authEpoch): Promise<boolean> {
-		if (!this.isAuthSessionEpoch(epoch)) return false;
+	private async refreshAccessTokenOnce(epoch = this.authEpoch): Promise<RefreshOutcome> {
+		if (!this.isAuthSessionEpoch(epoch)) return 'denied';
 		if (this.refreshInFlight?.epoch === epoch) return this.refreshInFlight.promise;
-		const flight: { epoch: number; promise: Promise<boolean> } = {
+		const flight: { epoch: number; promise: Promise<RefreshOutcome> } = {
 			epoch,
-			promise: Promise.resolve(false)
+			promise: Promise.resolve('denied')
 		};
 		flight.promise = this.performTokenRefresh(epoch).finally(() => {
 			if (this.refreshInFlight === flight) this.refreshInFlight = null;
@@ -314,6 +355,15 @@ export class ApiClient {
 	 * Resolves `true` only when the refresh actually produced a new access token.
 	 */
 	async ensureFreshAccessToken(epoch = this.authEpoch): Promise<boolean> {
+		return (await this.refreshAccessToken(epoch)) === 'refreshed';
+	}
+
+	/**
+	 * Like `ensureFreshAccessToken`, but says why it failed: `denied` means sign in again,
+	 * `unavailable` means the refresh was answered 429 or 5xx and the session is intact, so the
+	 * caller should try again later instead of treating the person as signed out.
+	 */
+	async refreshAccessToken(epoch = this.authEpoch): Promise<RefreshOutcome> {
 		return this.refreshAccessTokenOnce(epoch);
 	}
 
@@ -349,7 +399,7 @@ export class ApiClient {
 			if (!this.isAuthSessionEpoch(epoch))
 				return this.bindAuthResult(authSessionChanged<T>(), epoch);
 			const parsed = (await res.json()) as Partial<ApiResult<T>>;
-			const result = normalizeEnvelope<T>(parsed);
+			const result = res.status === 429 ? rateLimited<T>(res) : normalizeEnvelope<T>(parsed);
 			if (!this.isAuthSessionEpoch(epoch))
 				return this.bindAuthResult(authSessionChanged<T>(), epoch);
 
@@ -367,9 +417,11 @@ export class ApiClient {
 							error_code: 'request_aborted',
 							details: { reason: 'request_cancelled', outcome: 'unknown' }
 						});
-					if (refreshed) {
+					if (refreshed === 'refreshed') {
 						return this.request<T>(method, endpoint, body, false, additionalHeaders, signal);
 					}
+					// Only a refused refresh ends the session; a temporary failure keeps it.
+					if (refreshed === 'unavailable') return this.bindAuthResult(result);
 				}
 				if (!this.isAuthSessionEpoch(epoch))
 					return this.bindAuthResult(authSessionChanged<T>(), epoch);
@@ -468,9 +520,10 @@ export class ApiClient {
 		if (result.code === 401 && retryAfterRefresh) {
 			const refreshed = await this.refreshAccessTokenOnce(epoch);
 			if (!this.isAuthSessionEpoch(epoch)) return authSessionChanged<T>();
-			if (refreshed) {
+			if (refreshed === 'refreshed') {
 				return this.xhrFormData<T>(endpoint, data, headers, signal, onProgress, false);
 			}
+			if (refreshed === 'unavailable') return result;
 			this.clearAuth();
 			this.redirectToLogin();
 		} else if (result.code === 401) {
@@ -539,13 +592,15 @@ export class ApiClient {
 				);
 				if (!this.isAuthSessionEpoch(epoch)) return authSessionChanged();
 				if (result.code === 401) {
-					const refreshed = retryAfterRefresh && (await this.refreshAccessTokenOnce(epoch));
+					const refreshed = retryAfterRefresh ? await this.refreshAccessTokenOnce(epoch) : 'denied';
 					if (!this.isAuthSessionEpoch(epoch)) return authSessionChanged();
-					if (refreshed) {
+					if (refreshed === 'refreshed') {
 						return this.requestBinary(endpoint, method, body, false, signal);
 					}
-					this.clearAuth();
-					this.redirectToLogin();
+					if (refreshed !== 'unavailable') {
+						this.clearAuth();
+						this.redirectToLogin();
+					}
 				}
 				return { ...result, data: null };
 			}

@@ -170,6 +170,7 @@ These answers use a real HTTP error status:
 | A write refused because the resource changed since it was read (`error_code: "version_conflict"`, for example replacing an alert rule with a stale `expected_version`) | 409 | Envelope with `code: 409` and `details` `{"reason", "action": "review_and_retry", "write_state": "not_accepted"}` |
 | `POST /api/v1/inbound/events` | the status in `code` | Envelope; see [Alerts](alerts.md#responses) |
 | `PUT /api/v1/ai/runner/report` over its rate or size limit | 429 (with `Retry-After`) or 413 | Envelope |
+| `POST /api/v1/auth/login`, `/register` and `/refresh`, and `GET /api/v1/auth/setup-status`, over their per-address limit (login also per account) | 429 (with `Retry-After`) | Envelope |
 | OAuth endpoints and refusals of a delegated `sva_` token | 400, 401, 403, 404, 429 | OAuth error bodies; see [OAuth](oauth.md) |
 | A request the framework cannot parse (malformed JSON, a path parameter that is not a UUID, a missing JSON content type) | 4xx | Plain text |
 | An unknown path or method | 404 or 405 | Empty |

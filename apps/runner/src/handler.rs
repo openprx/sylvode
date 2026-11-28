@@ -228,14 +228,30 @@ pub async fn handle_webhook(
             }
         };
         let sig = inbound.value.unwrap_or_default();
+        let timestamp = match signature::extract_timestamp_from_headers(&headers) {
+            Ok(timestamp) => timestamp,
+            Err(e) => {
+                tracing::warn!("Refused webhook timestamp headers: {e}");
+                return Err(StatusCode::UNAUTHORIZED);
+            }
+        };
         // The claimed bot only selects which secrets may verify the delivery; nothing in the body
         // is trusted until the signature has verified against the secrets of that bot alone.
         let claimed = serde_json::from_str::<Value>(&body)
             .ok()
             .and_then(|p| ai_task_bot(&p).map(str::to_string));
         let secrets = state.config.webhook_secrets_for(claimed.as_deref());
-        if !signature::verify_signature(body.as_bytes(), &sig, &secrets) {
-            tracing::warn!("Invalid webhook signature");
+        // The signed timestamp is the header's: a captured request cannot be sent again outside
+        // the window. The same age limit as for the delivery's own `timestamp`.
+        if !signature::verify_request(
+            body.as_bytes(),
+            timestamp.as_deref(),
+            &sig,
+            secrets.iter().map(String::as_str),
+            crate::replay::unix_now(),
+            state.config.security.max_delivery_age_secs,
+        ) {
+            tracing::warn!("Invalid or stale webhook signature");
             return Err(StatusCode::UNAUTHORIZED);
         }
     }

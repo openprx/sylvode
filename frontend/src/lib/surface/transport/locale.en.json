@@ -6,6 +6,7 @@
 		"networkError": "The server could not be reached. Check your connection and try again.",
 		"downloadFailed": "The download failed.",
 		"sessionRefreshFailed": "Your session could not be renewed. Sign in again.",
+		"rateLimited": "Too many requests. Try again in {seconds} seconds.",
 		"unsupportedDownloadUrl": "This download link is not supported.",
 		"assetResponseInvalid": "The file received for this page is not valid.",
 		"privateAssetUnavailable": "Files of this page cannot be read right now.",

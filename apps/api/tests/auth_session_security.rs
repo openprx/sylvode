@@ -126,6 +126,7 @@ async fn call_register(state: &AppState, email: &str) -> Value {
         register(
             State(state.clone()),
             HeaderMap::new(),
+            None,
             Json(register_request(email, "password1", "Ada")),
         )
         .await,
@@ -215,6 +216,8 @@ async fn deactivation_and_password_reset_reject_existing_refresh_tokens() {
     let relogin_body = into_json(
         login(
             State(state.clone()),
+            HeaderMap::new(),
+            None,
             Json(
                 serde_json::from_value::<LoginRequest>(json!({"email": "ada@example.com", "password": "password2"}))
                     .expect("login"),
@@ -246,6 +249,8 @@ async fn deactivation_and_password_reset_reject_existing_refresh_tokens() {
     let login_disabled = into_json(
         login(
             State(state.clone()),
+            HeaderMap::new(),
+            None,
             Json(
                 serde_json::from_value::<LoginRequest>(json!({"email": "ada@example.com", "password": "password2"}))
                     .expect("login"),
@@ -348,7 +353,7 @@ async fn workspace_user_search_stays_inside_the_workspace_unless_the_caller_is_a
 
 async fn refresh_with(state: &AppState, token: &str) -> Value {
     let request: RefreshRequest = serde_json::from_value(json!({"refresh_token": token})).expect("refresh request");
-    into_json(refresh(State(state.clone()), HeaderMap::new(), Json(request)).await).await
+    into_json(refresh(State(state.clone()), HeaderMap::new(), None, Json(request)).await).await
 }
 
 async fn search(state: &AppState, user_id: Uuid, workspace_id: Uuid, term: Option<String>) -> Value {
@@ -376,4 +381,96 @@ async fn search(state: &AppState, user_id: Uuid, workspace_id: Uuid, term: Optio
 
 async fn flatten(joined: impl Future<Output = Result<Value, tokio::task::JoinError>>) -> Value {
     joined.await.expect("register task")
+}
+
+fn peer(last_octet: u8) -> axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>> {
+    let addr = std::net::SocketAddr::from(([203, 0, 113, last_octet], 4000));
+    axum::Extension(axum::extract::ConnectInfo(addr))
+}
+
+#[tokio::test]
+async fn failed_logins_from_one_address_do_not_lock_the_owner_out_elsewhere() {
+    let Some(scratch) = scratch("login_limit").await else {
+        eprintln!("skipped: {TEST_DATABASE_URL_ENV} is not set");
+        return;
+    };
+    let state = state_for(scratch.db.clone());
+    let created = call_register(&state, "ada@example.com").await;
+    assert_eq!(created["code"], 0, "{created}");
+    let attempt = |last_octet: u8, password: &'static str| {
+        let state = state.clone();
+        async move {
+            let request =
+                serde_json::from_value::<LoginRequest>(json!({"email": "ada@example.com", "password": password}))
+                    .expect("login");
+            login(State(state), HeaderMap::new(), Some(peer(last_octet)), Json(request))
+                .await
+                .unwrap_or_else(IntoResponse::into_response)
+        }
+    };
+    // An attacker at address A: ten wrong passwords are answered 401, the eleventh is limited.
+    for _ in 0..10 {
+        assert_eq!(body_json(attempt(1, "wrong-password").await).await["code"], 401);
+    }
+    let limited = attempt(1, "wrong-password").await;
+    assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(limited.headers().contains_key(axum::http::header::RETRY_AFTER));
+    // The owner at address B still signs in with the right password.
+    let owner = body_json(attempt(2, "password1").await).await;
+    assert_eq!(owner["code"], 0, "{owner}");
+    // A success is not counted against the account: it can sign in again and again.
+    for _ in 0..5 {
+        assert_eq!(body_json(attempt(2, "password1").await).await["code"], 0);
+    }
+    scratch.drop_self().await;
+}
+
+#[tokio::test]
+async fn an_account_over_its_failure_cap_still_admits_a_known_address_only() {
+    let Some(scratch) = scratch("login_account_fail").await else {
+        eprintln!("skipped: {TEST_DATABASE_URL_ENV} is not set");
+        return;
+    };
+    let state = state_for(scratch.db.clone());
+    let created = call_register(&state, "ada@example.com").await;
+    assert_eq!(created["code"], 0, "{created}");
+    // The owner signs in once, from address 250, so that pair is known.
+    let sign_in = |last_octet: u8, password: &'static str| {
+        let state = state.clone();
+        async move {
+            let request =
+                serde_json::from_value::<LoginRequest>(json!({"email": "ada@example.com", "password": password}))
+                    .expect("login");
+            login(State(state), HeaderMap::new(), Some(peer(last_octet)), Json(request))
+                .await
+                .unwrap_or_else(IntoResponse::into_response)
+        }
+    };
+    assert_eq!(body_json(sign_in(250, "password1").await).await["code"], 0);
+    // 50 failures, spread over addresses so no pair or address limit is hit first.
+    for n in 0..50_u8 {
+        assert_eq!(body_json(sign_in(n, "wrong-password").await).await["code"], 401);
+    }
+    // The cap is used up: an address that never signed in is limited, even with the right password.
+    let stranger = sign_in(200, "password1").await;
+    assert_eq!(stranger.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(stranger.headers().contains_key(axum::http::header::RETRY_AFTER));
+    // The owner still signs in from the known address, and a wrong password there is a plain 401.
+    assert_eq!(body_json(sign_in(250, "password1").await).await["code"], 0);
+    assert_eq!(body_json(sign_in(250, "wrong-password").await).await["code"], 401);
+    scratch.drop_self().await;
+}
+
+#[tokio::test]
+async fn register_without_an_admin_session_is_refused_once_the_instance_has_people() {
+    let Some(scratch) = scratch("register_gate").await else {
+        eprintln!("skipped: {TEST_DATABASE_URL_ENV} is not set");
+        return;
+    };
+    let state = state_for(scratch.db.clone());
+    let first = call_register(&state, "first@example.com").await;
+    assert_eq!(first["code"], 0, "{first}");
+    let second = call_register(&state, "second@example.com").await;
+    assert_eq!(second["code"], 403, "{second}");
+    scratch.drop_self().await;
 }

@@ -421,7 +421,7 @@ agent_type = "webhook"
 
 [agents.webhook]
 url = "https://review.example.com/hooks/sylvode"
-secret = "<shared secret>"   # optional: adds X-Webhook-Signature: sha256=<hex>
+secret = "<shared secret>"   # optional: adds X-Webhook-Timestamp and X-Webhook-Signature: v1=<hex>
 ```
 
 The delivery JSON is posted unchanged; no message is rendered, so `message_template` has no
@@ -963,8 +963,9 @@ most 30 seconds between two attempts).
   Sylvode would make an argument start with `-`, the command is not run (`custom_error: ...`),
   unless an earlier argument is `--`. A leading `-` you write yourself, in an argument such as
   `--text={message}` or at the start of `message_template`, is left alone.
-- `webhook` posts the delivery JSON unchanged to `url`, with `X-Webhook-Signature: sha256=<hex>`
-  (HMAC-SHA256 of the body with `secret`) when `secret` is set.
+- `webhook` posts the delivery JSON unchanged to `url`, with `X-Webhook-Timestamp` and
+  `X-Webhook-Signature: v1=<hex>` (HMAC-SHA256 of `<timestamp>.<body>` with `secret`) when `secret`
+  is set.
 
 Commands run directly, never through a shell, so `command` names one program and its arguments go
 in `args`. A `command` with whitespace refuses start-up
@@ -1212,11 +1213,15 @@ this service's log (`Dispatch result` with `detail=...`).
 
 ### Signatures
 
-The request signature is `sha256=<hex>` (the prefix is optional), an HMAC-SHA256 of the raw body.
-It is read from `X-Sylvode-Signature` and `X-Webhook-Signature` (the header the Sylvode API
-sends). When the headers present carry different signatures, or one header is repeated with
-different values, the request is refused with `401`, even if one of them is valid; a non-ASCII
-value is refused the same way. With `allow_unsigned = true` the headers are not read.
+The request signature is `v1=<hex>` (the prefix is required), an HMAC-SHA256 of the timestamp, a
+dot and the raw body. It is read from `X-Sylvode-Signature` and `X-Webhook-Signature` (the header
+the Sylvode API sends), and the timestamp, in Unix seconds, from `X-Sylvode-Timestamp` and
+`X-Webhook-Timestamp`. A request without a timestamp, or whose timestamp is more than
+`max_delivery_age_secs` from the runner's clock, either way, is refused with `401`
+(`max_delivery_age_secs = 0` turns the window off; the timestamp is still required and signed).
+When the headers present carry different signatures or timestamps, or one header is repeated
+with different values, the request is refused with `401`, even if one of them is valid; a
+non-ASCII value is refused the same way. With `allow_unsigned = true` the headers are not read.
 
 ### Replayed requests
 

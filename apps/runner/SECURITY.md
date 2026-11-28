@@ -17,8 +17,10 @@ the advisory unless you prefer otherwise.
 
 ## Inbound requests
 
-- Deliveries are authenticated by an HMAC-SHA256 signature in `X-Sylvode-Signature` or
-  `X-Webhook-Signature`. Requests whose signature headers disagree are refused, even if one of
+- Deliveries are authenticated by an HMAC-SHA256 signature, `v1=<hex>` over `<timestamp>.<body>`,
+  in `X-Sylvode-Signature` or `X-Webhook-Signature`, with the timestamp in `X-Sylvode-Timestamp` or
+  `X-Webhook-Timestamp`. A timestamp further than `max_delivery_age_secs` from the clock is
+  refused. Requests whose signature or timestamp headers disagree are refused, even if one of
   them is valid. A delivery for a bot that has its own `webhook_secret` is verified with that
   secret only.
 - `allow_unsigned = true` disables verification and is meant for local development only. It is

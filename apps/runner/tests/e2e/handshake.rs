@@ -265,7 +265,7 @@ async fn health_answers_exactly_the_documented_keys() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_body_over_the_limit_is_refused_before_the_signature_is_checked() {
-    use crate::support::{post_with, sign};
+    use crate::support::post_signed_by;
     use std::error::Error as _;
     use std::fmt::Write as _;
     let api = MockSv::start().await;
@@ -281,7 +281,7 @@ async fn a_body_over_the_limit_is_refused_before_the_signature_is_checked() {
     let result = reqwest::Client::new()
         .post(server.url("/webhook"))
         .header("content-type", "application/json")
-        .header("x-webhook-signature", "sha256=00")
+        .header("x-webhook-signature", "v1=00")
         .body(big)
         .send()
         .await;
@@ -303,11 +303,6 @@ async fn a_body_over_the_limit_is_refused_before_the_signature_is_checked() {
         }
     }
     // An ordinary body is still answered.
-    let (status, _) = post_with(
-        &server.url("/webhook"),
-        "{}",
-        &[("x-webhook-signature", &sign("{}", SECRET))],
-    )
-    .await;
+    let (status, _) = post_signed_by(&server.url("/webhook"), "{}", SECRET).await;
     assert_eq!(status, 200);
 }

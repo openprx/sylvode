@@ -19,6 +19,7 @@ export type TransportKey =
 	| 'transport.networkError'
 	| 'transport.downloadFailed'
 	| 'transport.sessionRefreshFailed'
+	| 'transport.rateLimited'
 	| 'transport.unsupportedDownloadUrl'
 	| 'transport.assetResponseInvalid'
 	| 'transport.privateAssetUnavailable'

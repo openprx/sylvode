@@ -4,14 +4,12 @@
 
 use std::time::Instant;
 
-use hmac::{Hmac, Mac};
 use platform::app::AppState;
 use platform::timestamp::Timestamp;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue, USER_AGENT};
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use serde::Serialize;
 use serde_json::{Value, json};
-use sha2::Sha256;
 use uuid::Uuid;
 
 use crate::outbound::{delivery_client, resolve_outbound_target, truncate_string};
@@ -935,14 +933,17 @@ pub const WEBHOOK_USER_AGENT: &str = "Sylvode-Webhook/1.0";
 ///
 /// Built together from the same values so the stored `request_headers` cannot drift from what
 /// actually went on the wire.
-fn delivery_request_headers(signature: &str, event: &str, delivery_id: &str) -> (HeaderMap, Value) {
-    let signature = format!("sha256={signature}");
+fn delivery_request_headers(signature: &WebhookSignature, event: &str, delivery_id: &str) -> (HeaderMap, Value) {
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert(USER_AGENT, HeaderValue::from_static(WEBHOOK_USER_AGENT));
     headers.insert(
         WEBHOOK_SIGNATURE_HEADER,
-        HeaderValue::from_str(&signature).unwrap_or(HeaderValue::from_static("sha256=")),
+        HeaderValue::from_str(&signature.signature).unwrap_or(HeaderValue::from_static("v1=")),
+    );
+    headers.insert(
+        WEBHOOK_TIMESTAMP_HEADER,
+        HeaderValue::from_str(&signature.timestamp).unwrap_or(HeaderValue::from_static("0")),
     );
     headers.insert(
         "X-Webhook-Event",
@@ -956,7 +957,8 @@ fn delivery_request_headers(signature: &str, event: &str, delivery_id: &str) -> 
     let recorded = json!({
         "Content-Type": "application/json",
         "User-Agent": WEBHOOK_USER_AGENT,
-        "X-Webhook-Signature": signature,
+        "X-Webhook-Signature": signature.signature,
+        "X-Webhook-Timestamp": signature.timestamp,
         "X-Webhook-Event": event,
         "X-Webhook-Delivery": delivery_id,
     });
@@ -971,8 +973,7 @@ async fn deliver_webhook(
     let body = serde_json::to_string(&payload)
         .map_err(|e| sea_orm::DbErr::Custom(format!("serialize payload failed: {e}")))?;
 
-    let signature = sign_payload(&webhook.secret, &body)
-        .map_err(|e| sea_orm::DbErr::Custom(format!("sign payload failed: {e}")))?;
+    let signature = sign_payload(&webhook.secret, &body);
 
     let (headers, request_headers) = delivery_request_headers(&signature, &payload.event, &payload.id);
 
@@ -1128,15 +1129,42 @@ async fn record_delivery(state: &AppState, rec: DeliveryRecord) -> Result<(), se
 /// Header carrying the outbound HMAC, shared with the worker so both paths agree on the name.
 pub const WEBHOOK_SIGNATURE_HEADER: &str = "X-Webhook-Signature";
 
-/// Signs an outbound webhook body the way `X-Webhook-Signature: sha256=<hex>` is verified.
+/// Header carrying the unix timestamp the signature covers.
+pub const WEBHOOK_TIMESTAMP_HEADER: &str = "X-Webhook-Timestamp";
+
+/// How far a receiver lets the timestamp of a delivery differ from its own clock, in seconds. Not
+/// enforced here; documented for receivers, and the value the in-repo receiver uses.
+pub const WEBHOOK_SIGNATURE_TOLERANCE_SECS: i64 = 300;
+
+/// The two header values of a signed delivery.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WebhookSignature {
+    /// Decimal unix seconds, for `X-Webhook-Timestamp`.
+    pub timestamp: String,
+    /// `v1=<hex>`, for `X-Webhook-Signature`: HMAC-SHA256 over `<timestamp>.<raw body>`.
+    pub signature: String,
+}
+
+/// Signs an outbound webhook body now.
+///
+/// The construction is the one of the inbound event endpoint (`inbound::auth::compute_signature`),
+/// so a captured delivery cannot be replayed outside the tolerance window.
 ///
 /// Shared with the worker's AI-task dispatch so both outbound paths present the same signature
-/// instead of one of them delivering unauthenticated.
-pub fn sign_payload(secret: &str, raw_body: &str) -> Result<String, String> {
-    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).map_err(|e| format!("invalid hmac secret: {e}"))?;
-    mac.update(raw_body.as_bytes());
-    let bytes = mac.finalize().into_bytes();
-    Ok(hex::encode(bytes))
+/// instead of one of them delivering unauthenticated. Sign at send time, not when a delivery is
+/// queued: a retry must carry a fresh timestamp.
+pub fn sign_payload(secret: &str, raw_body: &str) -> WebhookSignature {
+    sign_payload_at(secret, raw_body, Timestamp::now().unix_timestamp())
+}
+
+/// [`sign_payload`] at a given time.
+pub fn sign_payload_at(secret: &str, raw_body: &str, unix_seconds: i64) -> WebhookSignature {
+    let timestamp = unix_seconds.to_string();
+    let digest = crate::inbound::auth::compute_signature(secret, &timestamp, raw_body.as_bytes());
+    WebhookSignature {
+        timestamp,
+        signature: format!("v1={digest}"),
+    }
 }
 
 fn extract_assignee_ids(issue_payload: &Value) -> Vec<Uuid> {
@@ -1228,7 +1256,7 @@ mod event_list_tests {
 mod delivery_tests {
     use super::{
         WEBHOOK_DIAGNOSTIC_CHARS, WEBHOOK_RESPONSE_BYTE_LIMIT, delivery_client, delivery_request_headers,
-        read_capped_body,
+        read_capped_body, sign_payload_at,
     };
     use crate::outbound::validate_outbound_url;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -1336,7 +1364,8 @@ mod delivery_tests {
             String::from_utf8_lossy(&raw).into_owned()
         });
 
-        let (headers, recorded) = delivery_request_headers("abc123", "issue.created", "delivery-1");
+        let signed = sign_payload_at("secret", "{}", 1_700_000_000);
+        let (headers, recorded) = delivery_request_headers(&signed, "issue.created", "delivery-1");
         let client = build_delivery_client().expect("client must build");
         client
             .post(format!("http://{addr}/hook"))
@@ -1360,8 +1389,19 @@ mod delivery_tests {
         );
         assert_eq!(
             recorded.get("X-Webhook-Signature").and_then(serde_json::Value::as_str),
-            Some("sha256=abc123")
+            Some(signed.signature.as_str())
         );
+        assert_eq!(
+            recorded.get("X-Webhook-Timestamp").and_then(serde_json::Value::as_str),
+            Some("1700000000")
+        );
+        let sent_timestamp: Vec<&str> = raw
+            .lines()
+            .filter_map(|line| line.split_once(':'))
+            .filter(|(name, _)| name.eq_ignore_ascii_case("x-webhook-timestamp"))
+            .map(|(_, value)| value.trim())
+            .collect();
+        assert_eq!(sent_timestamp, ["1700000000"], "the timestamp goes on the wire: {raw}");
     }
 
     /// Delivery re-validates the stored URL, so a webhook row that predates the checks, or that was
@@ -1518,5 +1558,89 @@ mod bot_task_rule_tests {
             1,
             "another bot's change"
         );
+    }
+}
+
+#[cfg(test)]
+mod signature_tests {
+    use super::{WEBHOOK_SIGNATURE_TOLERANCE_SECS, sign_payload, sign_payload_at};
+    use crate::inbound::auth::{SignatureCheck, check_signature};
+
+    const BODY: &str = r#"{"event":"issue.created"}"#;
+    const NOW: i64 = 1_700_000_000;
+
+    fn check(secret: &str, signed: &super::WebhookSignature, body: &str, now: i64) -> SignatureCheck {
+        check_signature(
+            secret,
+            Some(&signed.timestamp),
+            Some(&signed.signature),
+            body.as_bytes(),
+            now,
+            WEBHOOK_SIGNATURE_TOLERANCE_SECS,
+        )
+    }
+
+    #[test]
+    fn the_signature_covers_the_timestamp_and_the_body() {
+        let signed = sign_payload_at("secret", BODY, NOW);
+        assert_eq!(signed.timestamp, "1700000000");
+        assert!(signed.signature.starts_with("v1="));
+        assert_eq!(signed.signature.len(), 3 + 64);
+        // The construction a receiver implements: HMAC-SHA256(secret, "<timestamp>.<body>").
+        assert_eq!(
+            signed.signature,
+            format!(
+                "v1={}",
+                crate::inbound::auth::compute_signature("secret", "1700000000", BODY.as_bytes())
+            )
+        );
+        assert_ne!(
+            signed,
+            sign_payload_at("secret", BODY, NOW + 1),
+            "the timestamp is signed"
+        );
+    }
+
+    #[test]
+    fn a_fresh_delivery_verifies() {
+        let signed = sign_payload_at("secret", BODY, NOW);
+        assert_eq!(check("secret", &signed, BODY, NOW), SignatureCheck::Valid);
+        assert_eq!(check("secret", &signed, BODY, NOW + 300), SignatureCheck::Valid);
+    }
+
+    #[test]
+    fn a_stale_or_future_delivery_is_refused() {
+        let signed = sign_payload_at("secret", BODY, NOW);
+        assert_eq!(check("secret", &signed, BODY, NOW + 301), SignatureCheck::Invalid);
+        assert_eq!(check("secret", &signed, BODY, NOW - 301), SignatureCheck::Invalid);
+    }
+
+    #[test]
+    fn a_tampered_delivery_is_refused() {
+        let signed = sign_payload_at("secret", BODY, NOW);
+        assert_eq!(
+            check("secret", &signed, r#"{"event":"x"}"#, NOW),
+            SignatureCheck::Invalid
+        );
+        assert_eq!(check("other", &signed, BODY, NOW), SignatureCheck::Invalid);
+        // A replay with a refreshed timestamp but the old digest fails: the timestamp is signed.
+        let refreshed = super::WebhookSignature {
+            timestamp: (NOW + 10_000).to_string(),
+            signature: signed.signature.clone(),
+        };
+        assert_eq!(check("secret", &refreshed, BODY, NOW + 10_000), SignatureCheck::Invalid);
+        // The old bare `sha256=` format is gone.
+        let old = super::WebhookSignature {
+            timestamp: signed.timestamp.clone(),
+            signature: signed.signature.replace("v1=", "sha256="),
+        };
+        assert_eq!(check("secret", &old, BODY, NOW), SignatureCheck::Invalid);
+    }
+
+    #[test]
+    fn signing_now_uses_the_clock() {
+        let signed = sign_payload("secret", BODY);
+        let now = platform::timestamp::Timestamp::now().unix_timestamp();
+        assert_eq!(check("secret", &signed, BODY, now), SignatureCheck::Valid);
     }
 }

@@ -247,10 +247,10 @@ async fn rotating_from_one_project_replaces_the_token_and_the_secret_for_all() {
     .await;
     assert_eq!(stored, new_secret);
     let body = r#"{"task_id":"t"}"#;
-    let signature = crate::webhook_trigger::sign_payload(&stored, body).expect("sign");
+    let signature = crate::webhook_trigger::sign_payload_at(&stored, body, 1_700_000_000);
     assert_ne!(
         signature,
-        crate::webhook_trigger::sign_payload(&old_secret, body).expect("sign"),
+        crate::webhook_trigger::sign_payload_at(&old_secret, body, 1_700_000_000),
         "the old secret no longer produces the delivery signature"
     );
     scratch.drop_self().await;

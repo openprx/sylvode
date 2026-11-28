@@ -23,14 +23,13 @@ async fn a_replayed_delivery_is_refused() {
 /// accepted once.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_unverified_request_does_not_use_up_the_delivery_id() {
-    use crate::support::{post_with, sign};
+    use crate::support::{post_signed_by, post_with};
 
     let server = Server::start(RUNNER, &config(), &[]).expect("server starts");
     let body = bot_task("Nobody", "verify first").to_string();
     let (status, _) = post_with(&server.url("/webhook"), &body, &[]).await;
     assert_eq!(status, 401, "unsigned");
-    let bad = sign(&body, "not-the-secret");
-    let (status, _) = post_with(&server.url("/webhook"), &body, &[("x-webhook-signature", &bad)]).await;
+    let (status, _) = post_signed_by(&server.url("/webhook"), &body, "not-the-secret").await;
     assert_eq!(status, 401, "wrongly signed");
 
     let (status, answer) = post_signed(&server.url("/webhook"), &body).await;
@@ -182,4 +181,23 @@ async fn a_stalled_request_does_not_hold_up_shutdown_beyond_the_bound() {
         server.stdout()
     );
     drop(stalled);
+}
+
+/// A correctly signed request whose timestamp is outside the window is refused and does not use
+/// up the delivery id, so the same body signed now is still accepted once.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stale_signature_timestamp_is_refused() {
+    use crate::support::{SECRET, now_secs, post_signed_at};
+
+    let server = Server::start(RUNNER, &config(), &[]).expect("server starts");
+    let body = bot_task("Nobody", "stale").to_string();
+    let url = server.url("/webhook");
+    for skew in [330_u64, 3_600] {
+        let (status, _) = post_signed_at(&url, &body, SECRET, now_secs() - skew).await;
+        assert_eq!(status, 401, "{skew}s old");
+        let (status, _) = post_signed_at(&url, &body, SECRET, now_secs() + skew).await;
+        assert_eq!(status, 401, "{skew}s ahead");
+    }
+    let (status, answer) = post_signed(&url, &body).await;
+    assert_eq!(status, 200, "{answer}");
 }

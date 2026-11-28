@@ -72,7 +72,8 @@ These areas carry the highest impact, and reports about them are especially welc
   gate admitting a call it should refuse, or forging the `X-Sylvode-MCP-*`
   attribution recorded in the audit trail is in scope.
 - **Webhooks and outbound requests.** Outbound webhook deliveries are signed with
-  HMAC-SHA256 over the raw body in `X-Webhook-Signature: sha256=<hex>`. Delivery targets
+  HMAC-SHA256 over `<timestamp>.<raw body>` in `X-Webhook-Signature: v1=<hex>`, with the
+  timestamp in `X-Webhook-Timestamp` so a captured delivery cannot be replayed later. Delivery targets
   that resolve to loopback, private, link-local or other internal addresses are refused
   unless listed in `[outbound] allowed_hosts`, and redirects are not followed. A forged or
   unverifiable signature, a way past the outbound address filter (SSRF), or a secret

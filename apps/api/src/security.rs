@@ -37,8 +37,10 @@ fn parse_hop(token: &str) -> Option<IpAddr> {
 /// one of `trusted_proxies`. Only then are the proxy's headers believed: the right-most
 /// `X-Forwarded-For` entry that is not itself a trusted proxy (each trusted hop appends the
 /// address it received the request from, so the right-most untrusted entry is the first address a
-/// trusted proxy saw from outside), else `X-Real-IP`. A header that does not parse is never
-/// guessed at; the lookup falls back to the peer. Without a peer (direct handler tests) the
+/// trusted proxy saw from outside). `X-Real-IP` is not read: it carries one address that no proxy
+/// in a chain checks, so a header the chain did not overwrite could be set by a client. A header
+/// that is missing, does not parse or is too long is never guessed at; the lookup falls back to
+/// the peer, which is the nearest proxy. Without a peer (direct handler tests) the
 /// unspecified address is returned, matching the previous behaviour of the share limiter.
 pub fn client_ip(headers: &HeaderMap, peer: Option<SocketAddr>, trusted_proxies: &[IpCidr]) -> IpAddr {
     let Some(peer) = peer else {
@@ -49,13 +51,6 @@ pub fn client_ip(headers: &HeaderMap, peer: Option<SocketAddr>, trusted_proxies:
         return peer_ip;
     }
     if let Some(addr) = forwarded_for_client(headers, trusted_proxies) {
-        return addr;
-    }
-    if let Some(addr) = headers
-        .get("x-real-ip")
-        .and_then(|value| value.to_str().ok())
-        .and_then(parse_hop)
-    {
         return addr;
     }
     peer_ip
@@ -143,17 +138,15 @@ mod tests {
     }
 
     #[test]
-    fn x_real_ip_used_without_forwarded_for() {
+    fn x_real_ip_is_never_believed() {
         let trusted = default_trusted_proxies();
         let h = headers(&[("x-real-ip", "203.0.113.9")]);
-        assert_eq!(client_ip(&h, Some(peer("127.0.0.1:1")), &trusted), ip("203.0.113.9"));
-    }
-
-    #[test]
-    fn forwarded_for_wins_over_real_ip() {
-        let trusted = default_trusted_proxies();
+        assert_eq!(client_ip(&h, Some(peer("127.0.0.1:1")), &trusted), ip("127.0.0.1"));
+        // Not even beside a usable or an unusable X-Forwarded-For.
         let h = headers(&[("x-forwarded-for", "203.0.113.7"), ("x-real-ip", "203.0.113.9")]);
         assert_eq!(client_ip(&h, Some(peer("127.0.0.1:1")), &trusted), ip("203.0.113.7"));
+        let h = headers(&[("x-forwarded-for", "garbage"), ("x-real-ip", "203.0.113.9")]);
+        assert_eq!(client_ip(&h, Some(peer("127.0.0.1:1")), &trusted), ip("127.0.0.1"));
     }
 
     #[test]

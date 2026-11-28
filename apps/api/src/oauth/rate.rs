@@ -32,6 +32,12 @@ pub const WINDOW_SECS: u32 = 60;
 /// Length of the daily window, in seconds.
 pub const DAY_WINDOW_SECS: u32 = 86_400;
 
+/// Length of the failed-login window per account, in seconds (15 minutes).
+pub const ACCOUNT_FAIL_WINDOW_SECS: u32 = 900;
+
+/// How long a signed-in (account, address) pair stays known, in seconds (30 days).
+pub const KNOWN_PAIR_WINDOW_SECS: u32 = 2_592_000;
+
 /// The database-backed buckets and their limits per window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RateBucket {
@@ -55,10 +61,26 @@ pub enum RateBucket {
     InboundSourceDay,
     /// Self-reports of one runner bot.
     RunnerReport,
+    /// Console login attempts, per client address.
+    AuthLoginIp,
+    /// Console login attempts, per account and client address together.
+    AuthLoginPair,
+    /// Failed console logins, per account. Successful logins are not counted.
+    AuthLoginAccountFail,
+    /// An (account, address) pair that has signed in: one row per pair, kept for 30 days from its
+    /// first hit in a window and renewed by the next sign-in after that. Not a limit: a row means
+    /// "known", and the account's failure cap does not apply to a known pair.
+    AuthLoginKnown,
+    /// Registration requests, per client address.
+    AuthRegisterIp,
+    /// Session refreshes, per client address.
+    AuthRefreshIp,
+    /// First-run status reads, per client address.
+    AuthSetupStatusIp,
 }
 
 impl RateBucket {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 17] = [
         Self::Authorize,
         Self::Decision,
         Self::TokenIp,
@@ -69,6 +91,13 @@ impl RateBucket {
         Self::InboundSourceMinute,
         Self::InboundSourceDay,
         Self::RunnerReport,
+        Self::AuthLoginIp,
+        Self::AuthLoginPair,
+        Self::AuthLoginAccountFail,
+        Self::AuthLoginKnown,
+        Self::AuthRegisterIp,
+        Self::AuthRefreshIp,
+        Self::AuthSetupStatusIp,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -83,6 +112,13 @@ impl RateBucket {
             Self::InboundSourceMinute => "inbound_source_minute",
             Self::InboundSourceDay => "inbound_source_day",
             Self::RunnerReport => "runner_report",
+            Self::AuthLoginIp => "auth_login_ip",
+            Self::AuthLoginPair => "auth_login_pair",
+            Self::AuthLoginAccountFail => "auth_login_account_fail",
+            Self::AuthLoginKnown => "auth_login_known",
+            Self::AuthRegisterIp => "auth_register_ip",
+            Self::AuthRefreshIp => "auth_refresh_ip",
+            Self::AuthSetupStatusIp => "auth_setup_status_ip",
         }
     }
 
@@ -90,6 +126,8 @@ impl RateBucket {
     pub const fn window_secs(self) -> u32 {
         match self {
             Self::InboundSourceDay => DAY_WINDOW_SECS,
+            Self::AuthLoginAccountFail => ACCOUNT_FAIL_WINDOW_SECS,
+            Self::AuthLoginKnown => KNOWN_PAIR_WINDOW_SECS,
             _ => WINDOW_SECS,
         }
     }
@@ -97,9 +135,16 @@ impl RateBucket {
     /// Hits allowed per window.
     pub const fn limit(self) -> u32 {
         match self {
-            Self::Authorize | Self::Revoke | Self::InboundAuthFail => 30,
-            Self::Decision | Self::StreamConnect => 10,
-            Self::TokenIp => 60,
+            // Console authentication (the `Auth*` buckets) shares the figures of the endpoints
+            // that face the internet in the same way. A shared address (an office behind one NAT)
+            // needs headroom, one account has one owner so its bucket is tight, and register is
+            // the tightest per address because each accepted call costs a full password hash.
+            Self::Authorize | Self::Revoke | Self::InboundAuthFail | Self::AuthLoginIp | Self::AuthSetupStatusIp => 30,
+            Self::Decision | Self::StreamConnect | Self::AuthLoginPair | Self::AuthRegisterIp => 10,
+            Self::AuthLoginAccountFail => 50,
+            // One hit makes a pair known.
+            Self::AuthLoginKnown => 1,
+            Self::TokenIp | Self::AuthRefreshIp => 60,
             Self::TokenGrant => 20,
             Self::InboundSourceMinute => 120,
             Self::InboundSourceDay => 20_000,
@@ -121,6 +166,11 @@ impl RateKey {
         Self(hash_secret(&id.to_string()).as_hex().to_owned())
     }
 
+    /// A key for a text identity such as a normalized e-mail address. Only the hash is stored.
+    pub fn from_text(text: &str) -> Self {
+        Self(hash_secret(text).as_hex().to_owned())
+    }
+
     pub fn as_hex(&self) -> &str {
         &self.0
     }
@@ -130,6 +180,20 @@ impl RateKey {
 /// the peer is a configured trusted proxy, the peer itself otherwise.
 pub fn client_address(headers: &HeaderMap, peer: Option<SocketAddr>) -> IpAddr {
     client_ip(headers, peer, &crate::config::runtime().trusted_proxies)
+}
+
+/// The `429` answer of a console route: the standard envelope with a `Retry-After` header.
+pub fn too_many_requests(limited: RateLimited) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let mut response = (
+        axum::http::StatusCode::TOO_MANY_REQUESTS,
+        crate::response::ApiResponse::<()>::error(429, "too many requests; wait before trying again"),
+    )
+        .into_response();
+    if let Ok(value) = limited.retry_after_secs.to_string().parse() {
+        response.headers_mut().insert(axum::http::header::RETRY_AFTER, value);
+    }
+    response
 }
 
 /// A hit over the limit.
@@ -371,6 +435,13 @@ mod tests {
             (RateBucket::InboundSourceMinute, "inbound_source_minute", 120),
             (RateBucket::InboundSourceDay, "inbound_source_day", 20_000),
             (RateBucket::RunnerReport, "runner_report", 12),
+            (RateBucket::AuthLoginIp, "auth_login_ip", 30),
+            (RateBucket::AuthLoginPair, "auth_login_pair", 10),
+            (RateBucket::AuthLoginAccountFail, "auth_login_account_fail", 50),
+            (RateBucket::AuthLoginKnown, "auth_login_known", 1),
+            (RateBucket::AuthRegisterIp, "auth_register_ip", 10),
+            (RateBucket::AuthRefreshIp, "auth_refresh_ip", 60),
+            (RateBucket::AuthSetupStatusIp, "auth_setup_status_ip", 30),
         ];
         assert_eq!(table.len(), RateBucket::ALL.len());
         for (bucket, name, limit) in table {
@@ -404,6 +475,22 @@ mod tests {
         let id = Uuid::new_v4();
         assert_eq!(RateKey::from_id(id).as_hex().len(), 64);
         assert_ne!(RateKey::from_id(id), RateKey::from_id(Uuid::new_v4()));
+    }
+
+    #[test]
+    fn text_keys_are_hashes_and_differ_per_identity() {
+        let key = RateKey::from_text("alice@example.com");
+        assert_eq!(key.as_hex().len(), 64);
+        assert!(!key.as_hex().contains("alice"));
+        assert_eq!(key, RateKey::from_text("alice@example.com"));
+        assert_ne!(key, RateKey::from_text("bob@example.com"));
+    }
+
+    #[test]
+    fn the_console_answer_is_429_with_retry_after() {
+        let response = too_many_requests(RateLimited { retry_after_secs: 23 });
+        assert_eq!(response.status(), axum::http::StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(response.headers()[axum::http::header::RETRY_AFTER], "23");
     }
 
     #[test]

@@ -428,3 +428,112 @@ test('a session check cut short by the page unloading does not end the stored se
 		apiClient.clearAuth();
 	}
 });
+
+const tooMany = (retryAfter: string) =>
+	new Response(JSON.stringify({ code: 429, message: 'too many requests; wait', data: null }), {
+		status: 429,
+		headers: { 'Content-Type': 'application/json', 'Retry-After': retryAfter }
+	});
+test('a 429 from refresh is temporary: it waits as asked, retries and keeps the session', async () => {
+	const { ApiClient } = await import('../src/lib/api/client');
+	const client = new ApiClient(''),
+		original = globalThis.fetch;
+	let refreshes = 0,
+		writes = 0;
+	client.installAuthSession(jwt('actor-a'), 'synthetic-refresh-a', 'actor-a');
+	globalThis.fetch = async (input) => {
+		if (String(input).endsWith('/auth/refresh')) {
+			refreshes++;
+			return refreshes === 1
+				? tooMany('1')
+				: envelope(0, {
+						tokens: { access_token: jwt('actor-a', 2), refresh_token: 'synthetic-refresh-a2' }
+					});
+		}
+		writes++;
+		return envelope(writes === 1 ? 401 : 0, { accepted: true });
+	};
+	try {
+		const result = await client.patch('/synthetic-write', {});
+		assert.equal(result.code, 0);
+		assert.equal(refreshes, 2);
+		assert.equal(client.getRefreshToken(), 'synthetic-refresh-a2');
+	} finally {
+		globalThis.fetch = original;
+		client.clearAuth();
+	}
+});
+test('a refresh that stays 429 does not sign the person out', async () => {
+	const { ApiClient } = await import('../src/lib/api/client');
+	const client = new ApiClient(''),
+		original = globalThis.fetch;
+	let refreshes = 0;
+	client.installAuthSession(jwt('actor-a'), 'synthetic-refresh-a', 'actor-a');
+	globalThis.fetch = async (input) => {
+		if (String(input).endsWith('/auth/refresh')) {
+			refreshes++;
+			return tooMany('1');
+		}
+		return envelope(401);
+	};
+	try {
+		const result = await client.patch('/synthetic-write', {});
+		assert.equal(result.code, 401);
+		assert.equal(refreshes, 3, 'one try and two retries');
+		assert.equal(client.getRefreshToken(), 'synthetic-refresh-a', 'the session is kept');
+		assert.notEqual(client.getToken(), null);
+	} finally {
+		globalThis.fetch = original;
+		client.clearAuth();
+	}
+});
+test('a refused refresh (401) still ends the session', async () => {
+	const { ApiClient } = await import('../src/lib/api/client');
+	const client = new ApiClient(''),
+		original = globalThis.fetch;
+	client.installAuthSession(jwt('actor-a'), 'synthetic-refresh-a', 'actor-a');
+	globalThis.fetch = async () => envelope(401);
+	try {
+		await client.patch('/synthetic-write', {});
+		assert.equal(client.getToken(), null);
+		assert.equal(client.getRefreshToken(), null);
+	} finally {
+		globalThis.fetch = original;
+		client.clearAuth();
+	}
+});
+test('a 429 answer carries a translatable message and the wait', async () => {
+	const { ApiClient } = await import('../src/lib/api/client');
+	const client = new ApiClient(''),
+		original = globalThis.fetch;
+	globalThis.fetch = async () => tooMany('42');
+	try {
+		const result = await client.post('/api/v1/auth/login', {});
+		assert.equal(result.code, 429);
+		assert.equal(result.messageKey, 'transport.rateLimited');
+		assert.deepEqual(result.messageValues, { seconds: 42 });
+		assert.equal(result.message, '');
+	} finally {
+		globalThis.fetch = original;
+	}
+});
+test('refreshAccessToken tells a temporary failure from a refusal', async () => {
+	const { ApiClient } = await import('../src/lib/api/client');
+	const original = globalThis.fetch;
+	try {
+		for (const [answer, expected] of [
+			[() => tooMany('1'), 'unavailable'],
+			[() => envelope(401), 'denied'],
+			[() => envelope(0, { tokens: { access_token: jwt('actor-a', 2) } }), 'refreshed']
+		] as const) {
+			const client = new ApiClient('');
+			client.installAuthSession(jwt('actor-a'), 'synthetic-refresh-a', 'actor-a');
+			globalThis.fetch = async () => answer();
+			assert.equal(await client.refreshAccessToken(), expected);
+			assert.equal(await client.ensureFreshAccessToken(), expected === 'refreshed');
+			client.clearAuth();
+		}
+	} finally {
+		globalThis.fetch = original;
+	}
+});

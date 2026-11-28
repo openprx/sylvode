@@ -127,7 +127,7 @@ fn delivery_key(payload: &Value) -> Option<(&'static str, Key)> {
         .map(|id| ("delivery", digest("delivery", &[id.as_bytes()])))
 }
 
-fn unix_now() -> i64 {
+pub fn unix_now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .ok()
