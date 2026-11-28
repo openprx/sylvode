@@ -39,7 +39,7 @@ fn task(id: &str, slot: &Slot) -> TmuxTask {
         project_id: "p".to_string(),
         project_key: "SVWL".to_string(),
         slot: slot.clone(),
-        tmux: TmuxName::derived(slot).expect("derived name"),
+        tmux: TmuxName::derived(slot).unwrap_or_else(|| TmuxName::new("pool-test").expect("name")),
         name_source: NameSource::Derived,
         dir: PathBuf::from("/nonexistent"),
         dir_checked: true,
@@ -244,6 +244,67 @@ async fn the_manager_applies_the_configured_cap_and_answer_time() {
     assert!(started.elapsed() <= ANSWER + SLACK);
     // The first is still in the channel: it counts, so the second is over the cap of 1.
     assert_eq!(manager.enqueue(second).await, Err(EnqueueRefusal::Capped));
+}
+
+fn member(n: u8) -> Slot {
+    Slot::bot_member(BOT, "claude", n).expect("bot member")
+}
+
+#[tokio::test]
+async fn a_refused_enqueue_leaves_no_affinity_and_the_retry_goes_to_another_member() {
+    let (manager, _dir) = manager(1);
+    let (m0, m1) = (member(0), member(1));
+    let (handle0, mut rx0, status0) = stalled(8);
+    let (handle1, mut rx1, _status1) = stalled(8);
+    manager.install(&m0, handle0);
+    manager.install(&m1, handle1);
+    // The first task fills member 0 up to the cap of 1 (its status still reads idle).
+    assert_eq!(manager.enqueue(task("t1", &m0)).await, Ok(None));
+    // Held, not dropped: a command in flight counts towards the cap.
+    let first = rx0.try_recv().expect("t1");
+    // t2 is chosen for member 0 (idle by its status) and refused: nothing is remembered.
+    assert_eq!(manager.enqueue(task("t2", &m0)).await, Err(EnqueueRefusal::Capped));
+    assert!(rx0.try_recv().is_err());
+    assert_eq!(queued_id(first), "t1");
+    // Member 0 is busy now and member 1 idle: the retry would return to member 0 had the refusal
+    // recorded affinity.
+    status0.send_replace(MemberStatus::fresh().next(State::Busy, 0, Instant::now()));
+    assert_eq!(manager.enqueue(task("t2", &m0)).await, Ok(None));
+    assert_eq!(queued_id(rx1.try_recv().expect("t2 on member 1")), "t2");
+    assert!(rx0.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn a_member_at_its_cap_is_passed_over_even_with_affinity() {
+    let (manager, _dir) = manager(2);
+    let (m0, m1) = (member(0), member(1));
+    let (handle0, mut rx0, status0) = stalled(8);
+    let (handle1, mut rx1, _status1) = stalled(8);
+    manager.install(&m0, handle0);
+    manager.install(&m1, handle1);
+    assert_eq!(manager.enqueue(task("t1", &m0)).await, Ok(None));
+    assert_eq!(queued_id(rx0.try_recv().expect("t1")), "t1");
+    // Member 0 reports a full queue: the retry of t1 falls through to member 1.
+    status0.send_replace(MemberStatus::fresh().next(State::Busy, 2, Instant::now()));
+    assert_eq!(manager.enqueue(task("t1", &m0)).await, Ok(None));
+    assert_eq!(queued_id(rx1.try_recv().expect("t1 on member 1")), "t1");
+}
+
+#[tokio::test]
+async fn an_accepted_enqueue_records_affinity_and_the_retry_sticks_to_it() {
+    let (manager, _dir) = manager(0);
+    let (m0, m1) = (member(0), member(1));
+    let (handle0, mut rx0, status0) = stalled(8);
+    let (handle1, mut rx1, _status1) = stalled(8);
+    manager.install(&m0, handle0);
+    manager.install(&m1, handle1);
+    assert_eq!(manager.enqueue(task("t1", &m0)).await, Ok(None));
+    assert_eq!(queued_id(rx0.try_recv().expect("t1")), "t1");
+    // Member 0 is busy and member 1 idle, yet the retry of t1 stays with member 0.
+    status0.send_replace(MemberStatus::fresh().next(State::Busy, 0, Instant::now()));
+    assert_eq!(manager.enqueue(task("t1", &m0)).await, Ok(None));
+    assert_eq!(queued_id(rx0.try_recv().expect("t1 again")), "t1");
+    assert!(rx1.try_recv().is_err());
 }
 
 #[tokio::test]
