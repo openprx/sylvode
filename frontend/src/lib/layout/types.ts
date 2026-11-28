@@ -10,6 +10,8 @@ export interface LayoutNode {
 	children?: LayoutNode[];
 	when?: string;
 	on_click?: string;
+	/** Columns this node spans inside a `grid` parent (1..the grid's columns). */
+	col_span?: number;
 }
 
 export interface LayoutParamSpec {

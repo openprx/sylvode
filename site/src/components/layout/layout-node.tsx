@@ -29,6 +29,12 @@ const COLUMNS: Record<number, string> = {
   3: "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3",
   4: "grid-cols-1 sm:grid-cols-2 lg:grid-cols-4",
 };
+/** Static class names so Tailwind sees them; the 2-column breakpoint clamps a wider span to 2. */
+const COL_SPAN: Record<number, string> = {
+  2: "sm:col-span-2",
+  3: "sm:col-span-2 lg:col-span-3",
+  4: "sm:col-span-2 lg:col-span-4",
+};
 const TEXT_STYLE: Record<string, string> = {
   body: "text-small text-text",
   muted: "text-small text-secondary",
@@ -58,6 +64,24 @@ export const KNOWN_TYPES = new Set([
   "form",
   "button",
 ]);
+
+/** Grid children: a child with `col_span` above 1 sits in a wrapper that spans that many columns. */
+function GridChildren(props: { nodes: NodeSpec[] | undefined }): JSX.Element {
+  return (
+    <For each={props.nodes ?? []}>
+      {(child) => {
+        const span = COL_SPAN[Number(child.col_span)];
+        return span ? (
+          <div class={`min-w-0 empty:hidden ${span}`} data-layout-span={child.col_span}>
+            <LayoutNode node={child} />
+          </div>
+        ) : (
+          <LayoutNode node={child} />
+        );
+      }}
+    </For>
+  );
+}
 
 function Children(props: { nodes: NodeSpec[] | undefined }): JSX.Element {
   return <For each={props.nodes ?? []}>{(child) => <LayoutNode node={child} />}</For>;
@@ -159,7 +183,7 @@ function NodeView(props: { node: NodeSpec }): JSX.Element {
             class={`grid min-w-0 ${COLUMNS[Number(cfg.columns)] ?? COLUMNS[2]} ${gap}`}
             data-layout-node="grid"
           >
-            <Children nodes={node.children} />
+            <GridChildren nodes={node.children} />
           </div>
         </Match>
         <Match when={node.type === "card"}>

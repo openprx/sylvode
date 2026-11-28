@@ -213,9 +213,68 @@ export function removeOp(spec: LayoutSpec, path: string): LayoutOp | null {
 	return node ? { op: 'remove', path, before: clone(node), after: null } : null;
 }
 
+/** Columns of a grid as the renderers lay it out: `columns` 1..=4, 2 when absent. */
 export function columnsOf(node: LayoutNode): number {
 	const value = node.props?.columns;
-	return typeof value === 'number' && value >= 1 && value <= GRID_MAX_COLUMNS ? value : 1;
+	return typeof value === 'number' && value >= 1 && value <= GRID_MAX_COLUMNS ? value : 2;
+}
+
+/** Columns a grid child spans (`col_span`, 1 when absent or invalid). */
+export function colSpanOf(node: LayoutNode): number {
+	const value = node.col_span;
+	return typeof value === 'number' && Number.isInteger(value) && value >= 1 ? value : 1;
+}
+
+/**
+ * Sets `col_span` of a grid child to 1..=the grid's columns. A span of 1 removes the member.
+ * The op is a plain `set` whose inverse restores the previous value.
+ */
+export function setColSpanOp(spec: LayoutSpec, childPath: string, span: number): LayoutOp | null {
+	if (!/\/children\/\d+$/.test(childPath)) return null;
+	const node = nodeAt(spec, childPath);
+	const grid = nodeAt(spec, childPath.slice(0, childPath.lastIndexOf('/children/')));
+	if (!node || !grid || grid.type !== 'grid') return null;
+	const next = Math.min(columnsOf(grid), Math.max(1, Math.round(span)));
+	const stored = node.col_span;
+	if (stored === next || (stored === undefined && next === 1)) return null;
+	return {
+		op: 'set',
+		path: `${childPath}/col_span`,
+		before: stored === undefined ? null : stored,
+		after: next === 1 ? null : next
+	};
+}
+
+/** Ops that bring every child span of a grid within a new column count (run before shrinking). */
+export function clampSpanOps(spec: LayoutSpec, gridPath: string, columns: number): LayoutOp[] {
+	const grid = nodeAt(spec, gridPath);
+	if (!grid || grid.type !== 'grid') return [];
+	const ops: LayoutOp[] = [];
+	(grid.children ?? []).forEach((child, index) => {
+		if (colSpanOf(child) > columns) {
+			ops.push({
+				op: 'set',
+				path: `${gridPath}/children/${index}/col_span`,
+				before: child.col_span ?? null,
+				after: columns === 1 ? null : columns
+			});
+		}
+	});
+	return ops;
+}
+
+/**
+ * The span a handle drag lands on: the start span plus the pointer travel in whole columns,
+ * where one column is `columnWidth` pixels wide.
+ */
+export function spanFromDrag(
+	startSpan: number,
+	dx: number,
+	columnWidth: number,
+	columns: number
+): number {
+	if (!(columnWidth > 0)) return startSpan;
+	return Math.min(columns, Math.max(1, startSpan + Math.round(dx / columnWidth)));
 }
 
 export function setColumnsOp(spec: LayoutSpec, gridPath: string, columns: number): LayoutOp | null {
@@ -385,4 +444,5 @@ export interface StructureCtrl {
 	remove(path: string): void;
 	add(parent: string, type: string): void;
 	setColumns(path: string, columns: number): void;
+	setColSpan(path: string, span: number): void;
 }

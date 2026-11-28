@@ -42,6 +42,13 @@
 		3: 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3',
 		4: 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4'
 	};
+	/** Static class names so Tailwind sees them; the 2-column breakpoint clamps a wider span to 2. */
+	const COL_SPAN: Record<number, string> = {
+		2: 'sm:col-span-2',
+		3: 'sm:col-span-2 lg:col-span-3',
+		4: 'sm:col-span-2 lg:col-span-4'
+	};
+	const spanClass = (child: NodeSpec) => COL_SPAN[Number(child.col_span)] ?? '';
 	const TEXT_STYLE: Record<string, string> = {
 		body: 'text-sm text-fg',
 		muted: 'text-sm text-fg-muted',
@@ -124,7 +131,15 @@
 		</div>
 	{:else if node.type === 'grid'}
 		<div class="grid min-w-0 {columns} {gap}" data-layout-node="grid">
-			{#each children as child, index (index)}<LayoutNode node={child} />{/each}
+			{#each children as child, index (index)}
+				{#if spanClass(child)}
+					<div class="min-w-0 empty:hidden {spanClass(child)}" data-layout-span={child.col_span}>
+						<LayoutNode node={child} />
+					</div>
+				{:else}
+					<LayoutNode node={child} />
+				{/if}
+			{/each}
 		</div>
 	{:else if node.type === 'card'}
 		<section class="rounded-card border border-line bg-raised p-4" data-layout-node="card">

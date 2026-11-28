@@ -12,6 +12,7 @@
 		EMPTY_HISTORY,
 		canRedo,
 		canUndo,
+		clampSpanOps,
 		defaultNode,
 		dropIndex,
 		errorsByNode,
@@ -22,6 +23,7 @@
 		perform,
 		redo,
 		removeOp,
+		setColSpanOp,
 		setColumnsOp,
 		undo,
 		type LayoutOp,
@@ -192,7 +194,16 @@
 			}
 		},
 		setColumns(path, columns) {
-			commit(setColumnsOp(working, path, columns));
+			const next = setColumnsOp(working, path, columns);
+			if (!next) return;
+			// Spans wider than the new column count are narrowed first, so every step is valid.
+			for (const clamp of clampSpanOps(working, path, Math.max(1, Math.round(columns)))) {
+				if (!commit(clamp)) return;
+			}
+			commit(next);
+		},
+		setColSpan(path, span) {
+			commit(setColSpanOp(working, path, span));
 		}
 	};
 </script>
