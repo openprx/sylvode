@@ -3,6 +3,7 @@ import type { JSX } from "@solidjs/web";
 import { For, lazy, Show } from "solid-js";
 import { ConfirmHost } from "./components/confirm";
 import { Button, ThemeToggle, Toaster } from "./components/ui";
+import { isHashRouting, routerBase, withBase } from "./lib/base";
 import { pickText } from "./lib/i18n";
 import { resolveSlug, SiteProvider, useSite } from "./lib/site/store";
 import type { ManifestPage } from "./lib/site/types";
@@ -15,7 +16,7 @@ const Mine = lazy(() => import("./routes/mine"));
 const Operator = lazy(() => import("./routes/operator"));
 
 /** `VITE_SV_SITE_ROUTING=hash` lets a plain static file server serve every route. */
-const history = import.meta.env.VITE_SV_SITE_ROUTING === "hash" ? hashHistory() : browserHistory();
+const history = isHashRouting ? hashHistory() : browserHistory();
 
 /**
  * The app's own routes come first; every other path is a page of the site manifest (resolved in
@@ -23,6 +24,7 @@ const history = import.meta.env.VITE_SV_SITE_ROUTING === "hash" ? hashHistory() 
  */
 export const Router = createRouter({
   history,
+  base: routerBase,
   routes: [
     { path: "/", component: Home },
     { path: "/gallery", component: Gallery },
@@ -71,25 +73,31 @@ function Header(): JSX.Element {
       await site.client.logout();
     } finally {
       await site.reload();
-      window.location.assign("/");
+      window.location.assign(withBase("/"));
     }
   };
   return (
     <header class="flex flex-wrap items-center justify-between gap-4 px-6 min-h-14 border-b border-line bg-nav">
       <nav class="flex flex-wrap items-center gap-5 text-button">
-        <a href="/" class="font-semibold text-text no-underline">
+        <a href={withBase("/")} class="font-semibold text-text no-underline">
           {pickText(site.manifest()?.site.title, site.locale) || "Sylvode"}
         </a>
         <For each={links()}>
           {(entry) => (
-            <a href={entry.page.route} class="text-secondary no-underline hover:text-text">
+            <a
+              href={withBase(entry.page.route)}
+              class="text-secondary no-underline hover:text-text"
+            >
               {entry.label}
             </a>
           )}
         </For>
         <For each={mine()}>
           {(binding) => (
-            <a href={`/mine/${binding.key}`} class="text-secondary no-underline hover:text-text">
+            <a
+              href={withBase(`/mine/${binding.key}`)}
+              class="text-secondary no-underline hover:text-text"
+            >
               {site.t("nav.mine")}
             </a>
           )}
@@ -97,7 +105,7 @@ function Header(): JSX.Element {
         <For each={operatorBindings()}>
           {(binding) => (
             <a
-              href={`/operator/${binding.key}`}
+              href={withBase(`/operator/${binding.key}`)}
               class="text-secondary no-underline hover:text-text"
             >
               {site.t("nav.operator")}
@@ -114,7 +122,10 @@ function Header(): JSX.Element {
         <Show
           when={site.manifest()?.operator}
           fallback={
-            <a href="/login" class="text-secondary text-button no-underline hover:text-text">
+            <a
+              href={withBase("/login")}
+              class="text-secondary text-button no-underline hover:text-text"
+            >
               {site.t("nav.login")}
             </a>
           }

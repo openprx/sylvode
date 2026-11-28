@@ -3,6 +3,7 @@ import type { JSX } from "@solidjs/web";
 import { createSignal, Match, onSettled, Show, Switch } from "solid-js";
 import { LayoutView } from "../components/layout/layout-view";
 import { ApiError } from "../lib/api";
+import { stripBase, withBase } from "../lib/base";
 import { createRuntimeEnv, matchPage } from "../lib/site/env";
 import { ManifestGate, useSite } from "../lib/site/store";
 import type { Manifest, PageResponse } from "../lib/site/types";
@@ -52,7 +53,7 @@ function PageLoader(props: { route: string; manifest: Manifest }): JSX.Element {
           <section class="flex flex-col gap-3">
             <p class="m-0">{site.t("page.operatorRequired")}</p>
             <p class="m-0">
-              <a href="/login" class="text-text underline">
+              <a href={withBase("/login")} class="text-text underline">
                 {site.t("page.signIn")}
               </a>
             </p>
@@ -84,7 +85,7 @@ function PageLoader(props: { route: string; manifest: Manifest }): JSX.Element {
 export default function SitePage(): JSX.Element {
   const location = useLocation();
   const params = useParams();
-  const route = () => (params.slug ? `/${params.slug}` : location.pathname || "/");
+  const route = () => (params.slug ? `/${params.slug}` : stripBase(location.pathname));
   return (
     <ManifestGate>
       {(manifest) => (

@@ -24,6 +24,13 @@ bun run lint         # biome check
 bun run format       # biome format --write
 ```
 
+## Base path
+
+The app is built for the base `/site/` (served by the API at `/site` and `/site/{*path}`). Override with
+`VITE_SV_SITE_BASE` (must start and end with `/`, e.g. `VITE_SV_SITE_BASE=/ bun run build`). The router,
+every `<a href>` and full-page navigation use the same base (`src/lib/base.ts`); API calls stay absolute
+at `/api/site/v1`. With `VITE_SV_SITE_ROUTING=hash` the router base is empty (routes live in the hash).
+
 ## Structure
 
 - `src/main.tsx`, `src/app.tsx`: mount, router (`/`, `/gallery`, `/p/:slug`, 404) and shell.
