@@ -36,6 +36,8 @@ pub struct RuntimeConfig {
     pub api: ApiConfig,
     /// Peers allowed to vouch for a client address through `X-Forwarded-For`.
     pub trusted_proxies: Vec<IpCidr>,
+    /// `[auth] rate_limit_scale`: multiplier of the console authentication rate limits.
+    pub auth_rate_limit_scale: u32,
     /// The authorization server settings, `None` when `[oauth] issuer` is not configured.
     pub oauth: Option<Arc<OAuthConfig>>,
     /// The alert chain's inbound endpoint settings (`[inbound]`, off by default).
@@ -64,6 +66,7 @@ impl RuntimeConfig {
                 .trusted_proxies
                 .clone()
                 .unwrap_or_else(default_trusted_proxies),
+            auth_rate_limit_scale: config.auth.rate_limit_scale.max(1),
             oauth: config.oauth.clone().map(Arc::new),
             inbound: config.inbound,
             email: config.email.clone(),
@@ -96,6 +99,7 @@ impl RuntimeConfig {
             ai_tasks: AiTasksConfig::default(),
             api: ApiConfig::default(),
             trusted_proxies: default_trusted_proxies(),
+            auth_rate_limit_scale: 1,
             oauth: None,
             inbound: InboundConfig::default(),
             email: None,

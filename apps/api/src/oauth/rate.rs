@@ -159,6 +159,36 @@ impl RateBucket {
             Self::RunnerReport => 12,
         }
     }
+
+    /// Whether `[auth] rate_limit_scale` multiplies this bucket: the console authentication
+    /// buckets, except the known-pair marker (a hit there is a flag, not a limit).
+    const fn scaled_by_auth_config(self) -> bool {
+        matches!(
+            self,
+            Self::AuthLoginIp
+                | Self::AuthLoginPair
+                | Self::AuthLoginAccountFail
+                | Self::AuthLoginKnownFail
+                | Self::AuthRegisterIp
+                | Self::AuthRefreshIp
+                | Self::AuthSetupStatusIp
+        )
+    }
+
+    /// The limit with `scale` applied (a scale of 0 counts as 1). Saturates instead of overflowing.
+    pub const fn limit_scaled(self, scale: u32) -> u32 {
+        if self.scaled_by_auth_config() {
+            let scale = if scale == 0 { 1 } else { scale };
+            self.limit().saturating_mul(scale)
+        } else {
+            self.limit()
+        }
+    }
+
+    /// The limit this process enforces: [`Self::limit`] scaled by `[auth] rate_limit_scale`.
+    pub fn effective_limit(self) -> u32 {
+        self.limit_scaled(crate::config::runtime().auth_rate_limit_scale)
+    }
 }
 
 /// The identity a window is counted for, stored only as a SHA-256 hash.
@@ -287,7 +317,7 @@ pub const fn advance_window(previous_count: Option<u32>, window_open: bool, limi
 
 /// Counts one hit for `key` in `bucket`'s current window and admits or refuses it.
 pub async fn enforce(db: &DatabaseConnection, bucket: RateBucket, key: &RateKey) -> Result<(), RateError> {
-    enforce_with_limit(db, bucket, key, bucket.limit()).await
+    enforce_with_limit(db, bucket, key, bucket.effective_limit()).await
 }
 
 pub(crate) async fn enforce_with_limit<C: ConnectionTrait>(
@@ -487,6 +517,31 @@ mod tests {
         assert_eq!(table.len(), RateBucket::ALL.len());
         for (bucket, name, limit) in table {
             assert_eq!((bucket.as_str(), bucket.limit()), (name, limit));
+        }
+    }
+
+    #[test]
+    fn the_auth_scale_multiplies_only_the_console_buckets() {
+        let scaled = [
+            (RateBucket::AuthLoginIp, 30),
+            (RateBucket::AuthLoginPair, 10),
+            (RateBucket::AuthLoginAccountFail, 50),
+            (RateBucket::AuthLoginKnownFail, 200),
+            (RateBucket::AuthRegisterIp, 10),
+            (RateBucket::AuthRefreshIp, 60),
+            (RateBucket::AuthSetupStatusIp, 30),
+        ];
+        for (bucket, base) in scaled {
+            assert_eq!(bucket.limit_scaled(1), base, "{bucket:?}");
+            assert_eq!(bucket.limit_scaled(0), base, "{bucket:?} treats 0 as 1");
+            assert_eq!(bucket.limit_scaled(1000), base * 1000, "{bucket:?}");
+            assert_eq!(bucket.limit_scaled(u32::MAX), u32::MAX, "{bucket:?} saturates");
+        }
+        // The known-pair marker and every non-console bucket keep their limit.
+        for bucket in RateBucket::ALL {
+            if !scaled.iter().any(|(scaled_bucket, _)| *scaled_bucket == bucket) {
+                assert_eq!(bucket.limit_scaled(1000), bucket.limit(), "{bucket:?}");
+            }
         }
     }
 

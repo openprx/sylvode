@@ -99,6 +99,12 @@ refresh_ttl_seconds = 1728000  # default: 1728000 (20 days)
 # insecure cookie.
 # allow_insecure_cookies = true
 
+# Multiplies every limit of the console authentication routes (sign-in per address, per account
+# and address, the account failure cap and its known-pair ceiling, register, refresh, setup
+# status). Integer, at least 1. Default: 1. Raise it only for a test stack that signs in and
+# registers many times from one address; production keeps 1.
+# rate_limit_scale = 1
+
 
 # ---------------------------------------------------------------------------------------------
 # [logging] — log filter, format and stream. The api, worker and mcp-server do not read RUST_LOG.

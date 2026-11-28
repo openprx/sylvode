@@ -336,14 +336,14 @@ async fn an_upgrade_replaces_the_pages_of_the_published_site() {
     assert_eq!(routes(db, site).await, vec!["/help".to_string()]);
     let total = crate::routes::context::tenant_fixture::count(
         db,
-        "SELECT COUNT(*) AS n FROM site_pages WHERE installation_id = $1",
+        "SELECT COUNT(*) AS count FROM site_pages WHERE installation_id = $1",
         vec![installation.into()],
     )
     .await;
     assert_eq!(total, 1, "the old generation's rows are deleted");
     let sites = crate::routes::context::tenant_fixture::count(
         db,
-        "SELECT COUNT(*) AS n FROM sites WHERE project_id = $1",
+        "SELECT COUNT(*) AS count FROM sites WHERE project_id = $1",
         vec![tenant.project_id.into()],
     )
     .await;

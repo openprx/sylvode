@@ -248,6 +248,14 @@ impl World {
             )
             .await;
         }
+        // The agent's access row, as every created bot has one: an unlimited (workspace-wide) bot.
+        exec(
+            &db,
+            "INSERT INTO workspace_bots (id, workspace_id, name, token_hash, token_prefix) \
+             VALUES ($1, $2, 'agent', replace($1::text, '-', '') || replace($1::text, '-', ''), 'svb_test')",
+            vec![agent.into(), ws1.into()],
+        )
+        .await;
         for (id, ws, key) in [(p1, ws1, "AAA"), (p2, ws1, "BBB"), (p3, ws2, "CCC")] {
             exec(
                 &db,

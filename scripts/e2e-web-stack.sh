@@ -185,6 +185,8 @@ min_connections = 2
 
 [auth]
 jwt_secret = "$(random_hex 32)"
+# The specs sign in and register many times from one address; keep the limits on, scaled up.
+rate_limit_scale = 1000
 
 [logging]
 

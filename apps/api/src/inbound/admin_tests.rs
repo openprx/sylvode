@@ -669,15 +669,9 @@ async fn the_rule_warning_follows_the_bots_connection_to_the_rules_project() {
 #[tokio::test]
 async fn the_rule_warns_when_the_bot_cannot_read_the_rules_project() {
     let w = world!("adm_rule_unreadable");
-    // A bot no runner connection made (no `bot_runners` row), connected to the project and limited
-    // to other projects: the only reason to warn is the access.
-    exec(
-        w.db(),
-        "INSERT INTO project_bot_connections (project_id, bot_id, enabled, working_directory) \
-         VALUES ($1, $2, true, '/work/a')",
-        vec![w.tenant.project_id.into(), w.bot.into()],
-    )
-    .await;
+    // A connected bot (a project connection always references its `bot_runners` row), limited to
+    // other projects: the only reason to warn is the access.
+    connect_the_bot(&w).await;
     exec(
         w.db(),
         "UPDATE workspace_bots SET project_scope = 'projects', default_project_level = 'none' WHERE id = $1",

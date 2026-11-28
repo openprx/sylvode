@@ -345,7 +345,7 @@ pub async fn login(
             &state.db,
             RateBucket::AuthLoginKnownFail,
             &account,
-            RateBucket::AuthLoginKnownFail.limit(),
+            RateBucket::AuthLoginKnownFail.effective_limit(),
         )
         .await
         {
@@ -360,7 +360,7 @@ pub async fn login(
         &state.db,
         RateBucket::AuthLoginAccountFail,
         &account,
-        RateBucket::AuthLoginAccountFail.limit(),
+        RateBucket::AuthLoginAccountFail.effective_limit(),
     )
     .await
     {

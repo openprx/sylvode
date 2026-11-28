@@ -251,7 +251,10 @@ suite.check('labels follow the app language, never the browser locale', () => {
 	);
 	assertEqual(weekdayLabels('en', 0)[0].full, 'Sunday', 'Sunday start');
 	assertEqual(fullDateLabel(iso('2026-11-24'), 'en'), 'Tuesday, November 24, 2026', 'full date');
-	assertEqual(fullDateLabel(iso('2026-11-24'), 'zh'), '2026年11月24日 星期二', 'zh full date');
+	// CLDR releases differ on whether a space separates the date from the weekday in zh, so the
+	// separator is not part of what is checked.
+	const zhFull = fullDateLabel(iso('2026-11-24'), 'zh');
+	assert(/^2026年11月24日 ?星期二$/.test(zhFull), `zh full date ${zhFull}`);
 });
 
 finish(suite.result());
