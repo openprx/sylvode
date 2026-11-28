@@ -16,7 +16,7 @@ use platform::{
     app::AppState,
     config::{
         AiTasksConfig, AppConfig, AuditConfig, AuthConfig, DatabaseConfig, FlowConfig, LoggingConfig, McpConfig,
-        MigrationsConfig, OpenPrConfig, OutboundConfig, Secret, ServerConfig, StorageBackend, StorageConfig,
+        OpenPrConfig, OutboundConfig, Secret, ServerConfig, StorageBackend, StorageConfig,
     },
 };
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
@@ -81,7 +81,6 @@ fn install_config(receiver_port: u16) {
         audit: AuditConfig::default(),
         api: platform::config::ApiConfig::default(),
         ai_tasks: AiTasksConfig::default(),
-        migrations: MigrationsConfig::default(),
         outbound: OutboundConfig {
             allowed_hosts: vec![format!("127.0.0.1:{receiver_port}")],
             allow_private: false,

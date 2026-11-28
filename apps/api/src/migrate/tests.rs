@@ -1,7 +1,5 @@
-use super::{
-    MIGRATION_ADOPTION_CUTOFF, MIGRATION_PROBES, MIGRATIONS, MigrationOptions, SchemaProbe, migration_checksum,
-};
-use platform::config::MigrationsConfig;
+use super::{MIGRATIONS, migration_checksum, plan_migrations};
+use std::collections::HashMap;
 
 /// [`MIGRATIONS`] is generated from the `migrations/` directory at build time; this compares the
 /// generated list with a fresh directory listing, so a registry that stops covering the directory
@@ -41,123 +39,8 @@ fn the_ledger_bootstrap_is_first_and_idempotent() {
     assert!(sql.contains("CREATE TABLE IF NOT EXISTS schema_migrations"));
 }
 
-/// The cutoff decides which files an existing database claims without executing them.
-/// It must name a real migration, and everything after it must actually run.
-#[test]
-fn the_adoption_cutoff_names_a_registered_migration() {
-    assert!(
-        MIGRATIONS.iter().any(|(name, _)| *name == MIGRATION_ADOPTION_CUTOFF),
-        "adoption cutoff must be a registered migration"
-    );
-    let replayed: Vec<&str> = MIGRATIONS
-        .iter()
-        .map(|(name, _)| *name)
-        .filter(|name| *name > MIGRATION_ADOPTION_CUTOFF)
-        .collect();
-    assert_eq!(
-        replayed,
-        vec![
-            "0048_delivery_lease_and_pickup_indexes.sql",
-            "0049_agent_invocation_duplicate_tagging.sql",
-            "0050_proposal_workspace_scope.sql",
-            "0051_bot_operation_logs.sql",
-            "0052_drop_connectors_and_agent_invocations.sql",
-            "0053_drop_event_outbox.sql",
-            "0054_flow_data_layer.sql",
-            "0055_flow_import_jobs.sql",
-            "0056_flow_objects_parent_project_invariant.sql",
-            "0057_flow_objects_parent_project_scope_index.sql",
-            "0058_flow_search_index.sql",
-            "0059_flow_navigator_root.sql",
-            "0060_flow_collections_core.sql",
-            "0061_flow_collections_query_indexes.sql",
-            "0062_flow_forms_bridge.sql",
-            "0063_flow_v08_hardening.sql",
-            "0064_flow_v08_replay_requests.sql",
-            "0065_flow_v08_operation_idempotency.sql",
-            "0066_flow_v08_object_retention.sql",
-            "0067_flow_package_jobs.sql",
-            "0068_flow_authz_revocations.sql",
-            "0069_flow_v08_rollback_control.sql",
-            "0070_bot_operation_logs_surface_check.sql",
-            "0071_flow_conversion_job_error_reason.sql",
-            "0072_flow_conversion_job_started_at.sql",
-            "0073_user_session_version.sql",
-            "0074_flow_comments.sql",
-            "0075_flow_share_links.sql",
-            "0076_flow_page_appearance.sql",
-            "0077_flow_public_share_rate.sql",
-            "0078_flow_scope_expansion.sql",
-            "0079_flow_scope_constraint_cutover.sql",
-            "0080_flow_scope_secondary_ownership.sql",
-            "0081_flow_scope_typed_ownership.sql",
-            "0082_flow_scope_relations_mount_ancestry.sql",
-            "0083_flow_export_authority_snapshot.sql",
-            "0084_flow_legacy_export_authority.sql",
-            "0085_flow_ticket_authorization_notifications.sql",
-            "0086_flow_purge_tombstone_receipts.sql",
-            "0087_flow_reference_source_scope.sql",
-            "0088_flow_scope_import_ownership.sql",
-            "0089_flow_export_scope_selection.sql",
-            "0090_flow_conversion_source_scope.sql",
-            "0091_flow_operation_scope_ownership.sql",
-            "0092_ai_participant_config_version.sql",
-            "0093_flow_page_body_assets.sql",
-            "0094_flow_child_page_reservations.sql",
-            "0095_flow_logical_blocks.sql",
-            "0096_flow_page_block_transfers.sql",
-            "0097_flow_portable_page_packages.sql",
-            "0098_flow_portable_graph_packages.sql",
-            "0099_form_plugin_packages.sql",
-            "0100_form_plugin_layouts.sql",
-            "0101_form_plugin_library.sql",
-            "0102_flow_integrity_cross_workspace_attempts.sql",
-            "0103_form_plugin_extensions.sql",
-            "0104_project_resource_kinds.sql",
-            "0105_token_bot_entity_type.sql",
-            "0106_flow_capabilities_default_on.sql",
-            "0107_flow_block_registration_progress.sql",
-            "0108_flow_block_checkpoint_digest.sql",
-            "0109_oauth_authorization_server.sql",
-            "0110_runner_task_protocol.sql",
-            "0111_alert_chain.sql",
-            "0112_bot_connections.sql",
-            "0113_ai_task_chain.sql",
-            "0114_multi_bot_connections.sql",
-            "0115_flow_default_on.sql",
-            "0116_webhook_delivery_duration.sql",
-            "0117_sprint_rules.sql",
-            "0118_label_rules.sql",
-            "0119_plugin_single_active_version.sql",
-            "0120_email_outbox.sql",
-            "0121_milestones.sql",
-            "0122_bot_project_access.sql",
-            "0123_work_item_page_links.sql",
-            "0124_comment_mentions.sql",
-            "0125_oauth_client_scopes.sql",
-            "0126_retire_unused_columns.sql",
-            "0127_retire_legacy_objects.sql",
-            "0130_tmux_cli_codex.sql",
-            "0131_drop_one_tmux_per_cli.sql",
-            "0132_change_hints.sql",
-            "0133_capability_ids.sql",
-            "0134_packages.sql",
-            "0135_layouts.sql",
-            "0136_form_schema_v2.sql",
-            "0137_sites.sql",
-            "0138_installations.sql",
-            "0139_artefact_drafts.sql",
-            "0140_nav.sql",
-            "0141_drop_scenario_templates.sql",
-            "0142_cap_record_titles.sql",
-            "0143_change_hints_narrow.sql",
-        ],
-        "everything past the cutoff re-runs on an adopted database and must be idempotent"
-    );
-}
-
-/// Adoption records a checksum without executing the file, so the checksum has to be a pure
-/// function of the content and has to separate two different files.
+/// A changed file is detected by its checksum, so the checksum has to be a pure function of the
+/// content and has to separate two different files.
 #[test]
 fn migration_checksums_are_content_addressed() {
     assert_eq!(migration_checksum("select 1;"), migration_checksum("select 1;"));
@@ -165,214 +48,57 @@ fn migration_checksums_are_content_addressed() {
     assert_eq!(migration_checksum("").len(), 64);
 }
 
-/// The post-cutoff files that intentionally drop relations. Everything else past the cutoff
-/// must stay replay-safe.
-const RETIREMENT_MIGRATIONS: [&str; 5] = [
-    "0052_drop_connectors_and_agent_invocations.sql",
-    "0053_drop_event_outbox.sql",
-    "0114_multi_bot_connections.sql",
-    "0127_retire_legacy_objects.sql",
-    "0141_drop_scenario_templates.sql",
+const FILES: &[(&str, &str)] = &[
+    ("0000_a.sql", "select 0;"),
+    ("0001_b.sql", "select 1;"),
+    ("0002_c.sql", "select 2;"),
+    ("0003_d.sql", "select 3;"),
 ];
 
-/// Non-destructive post-cutoff migrations must remain safe to replay. The explicitly
-/// destructive retirement migrations are checked separately.
-#[test]
-fn the_delivery_migrations_never_delete_rows() {
-    for (name, sql) in MIGRATIONS.iter().filter(|(name, _)| *name > MIGRATION_ADOPTION_CUTOFF) {
-        if RETIREMENT_MIGRATIONS.contains(name) {
-            continue;
-        }
-        let upper = sql.to_uppercase();
-        assert!(
-            !upper.contains("DELETE FROM"),
-            "{name} must not delete rows: it re-runs on every adopted database"
-        );
-        assert!(
-            !upper.contains("DROP TABLE"),
-            "{name} must not drop tables: it re-runs on every adopted database"
-        );
-    }
-}
-
-/// A post-cutoff migration is executed whenever the ledger has no row for it, and that can
-/// happen after the relations it touches were already dropped: a database restored without
-/// its ledger, or one retrying the file after a single failed run. Referencing a dropped
-/// relation unguarded then fails on every start and never reaches the migration that drops
-/// it, which is an unrecoverable restart loop rather than a bad run.
-#[test]
-fn post_cutoff_migrations_guard_the_relations_a_retirement_migration_drops() {
-    let dropped = [
-        "connectors",
-        "agent_invocation_tool_calls",
-        "agent_invocations",
-        "event_outbox",
-        "project_execution_settings",
-    ];
-    for (name, sql) in MIGRATIONS.iter().filter(|(name, _)| *name > MIGRATION_ADOPTION_CUTOFF) {
-        if RETIREMENT_MIGRATIONS.contains(name) {
-            continue;
-        }
-        for relation in dropped {
-            // Whole identifiers only: `oauth_event_outbox` is not the retired `event_outbox`.
-            let mentioned = sql.match_indices(relation).any(|(at, _)| {
-                !sql[..at]
-                    .chars()
-                    .next_back()
-                    .is_some_and(|prev| prev.is_ascii_alphanumeric() || prev == '_')
-            });
-            if !mentioned {
-                continue;
-            }
-            assert!(
-                sql.contains(&format!("to_regclass('{relation}')")),
-                "{name} touches {relation}, which a later migration drops, so every statement \
-                 reaching it must sit behind a to_regclass('{relation}') guard"
-            );
-        }
-    }
-}
-
-#[test]
-fn the_retirement_migrations_drop_only_the_confirmed_relations() {
-    for (name, dropped) in [
-        (
-            "0052_drop_connectors_and_agent_invocations.sql",
-            ["agent_invocation_tool_calls", "agent_invocations", "connectors"].as_slice(),
-        ),
-        ("0053_drop_event_outbox.sql", ["event_outbox"].as_slice()),
-        (
-            "0114_multi_bot_connections.sql",
-            ["project_execution_settings"].as_slice(),
-        ),
-        (
-            "0127_retire_legacy_objects.sql",
-            ["pages", "form_plugin_layouts"].as_slice(),
-        ),
-    ] {
-        let sql = MIGRATIONS
-            .iter()
-            .find(|(candidate, _)| *candidate == name)
-            .map(|(_, sql)| *sql)
-            .expect("retirement migration must be registered");
-        for relation in dropped {
-            assert!(
-                sql.contains(&format!("DROP TABLE IF EXISTS {relation}")),
-                "{name} must drop {relation} idempotently"
-            );
-        }
-        assert_eq!(
-            sql.matches("DROP TABLE").count(),
-            dropped.len(),
-            "{name} must not drop an unrelated table"
-        );
-    }
-}
-
-/// Every migration needs a probe, otherwise an existing database either replays it (which the
-/// early non idempotent files do not survive) or, worse, a future migration falls back on a
-/// probe belonging to another file. The two lists are kept in lockstep here.
-#[test]
-fn every_migration_has_a_schema_probe() {
-    let migrations: Vec<&str> = MIGRATIONS.iter().map(|(name, _)| *name).collect();
-    let probed: Vec<&str> = MIGRATION_PROBES.iter().map(|(name, _)| *name).collect();
-    assert_eq!(
-        migrations, probed,
-        "MIGRATIONS and MIGRATION_PROBES must list the same files in the same order"
-    );
-}
-
-/// A probe has to produce a statement, except for the files that create nothing and are
-/// executed rather than adopted.
-#[test]
-fn only_rerunnable_probes_have_no_statement() {
-    let without: Vec<&str> = MIGRATION_PROBES
+fn recorded(names: &[&str]) -> HashMap<String, String> {
+    FILES
         .iter()
-        .filter(|(_, probe)| matches!(probe, SchemaProbe::Rerunnable))
-        .map(|(name, _)| *name)
-        .collect();
-    assert_eq!(
-        without,
-        vec![
-            "0014_proposal_comments_schema_compat.sql",
-            "0021_fix_cascade.sql",
-            "0035_project_type_two_lanes.sql",
-            "0105_token_bot_entity_type.sql",
-            "0125_oauth_client_scopes.sql",
-            "0127_retire_legacy_objects.sql",
-            "0136_form_schema_v2.sql",
-            "0142_cap_record_titles.sql",
-            "0143_change_hints_narrow.sql",
-        ],
-        "a migration may only skip its probe when re-executing it is a no-op"
-    );
+        .filter(|(name, _)| names.contains(name))
+        .map(|(name, sql)| ((*name).to_string(), migration_checksum(sql)))
+        .collect()
 }
 
-/// 0106 re-runs whenever the ledger has no row for it, so the one-time switch-on must be
-/// claimed through its marker, may only raise values, and must leave the capabilities that
-/// stay off alone. Comment lines are stripped so the explanation in the file cannot satisfy
-/// or trip the assertions.
 #[test]
-fn flow_capability_default_migration_runs_once_and_only_raises() {
-    let sql = MIGRATIONS
-        .iter()
-        .find(|(name, _)| *name == "0106_flow_capabilities_default_on.sql")
-        .map(|(_, sql)| *sql)
-        .expect("0106 must be registered");
-    let statements: String = sql
-        .lines()
-        .filter(|line| !line.trim_start().starts_with("--"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let update = statements
-        .split_once("UPDATE flow_runtime_capabilities")
-        .map(|(_, rest)| rest)
-        .expect("0106 updates the singleton row");
-
-    assert!(
-        statements.contains("ON CONFLICT (name) DO NOTHING") && update.contains("AND EXISTS (SELECT 1 FROM claimed)"),
-        "the row update must run only in the execution that claims the rollout marker"
-    );
-    assert!(
-        update.contains("minimum_reader_version = GREATEST(minimum_reader_version, 5)"),
-        "the reader floor may only be raised"
-    );
-    assert!(
-        !update.to_lowercase().contains("false"),
-        "the one-time update may only switch capabilities on"
-    );
-    for column in [
-        "personal_provisioning",
-        "personal_writes",
-        "external_mounts",
-        "personal_forms_conversion",
-        "block_transfers_enabled",
-        "portable_page_packages_enabled",
-        "portable_graph_packages_enabled",
-    ] {
-        assert!(
-            update.contains(&format!("{column} = true")),
-            "{column} must be switched on for existing databases"
-        );
-        assert!(
-            statements.contains(&format!("ALTER COLUMN {column} SET DEFAULT true")),
-            "{column} must default on for new rows"
-        );
-    }
-    for column in [
-        "scope_native_legacy",
-        "personal_package_imports",
-        "personal_scope_package_exports",
-        "cross_workspace_forms_conversion",
-    ] {
-        assert!(
-            !statements.contains(column),
-            "{column} belongs to 0115 and must not be touched here"
-        );
-    }
+fn an_empty_ledger_plans_every_file_in_order() {
+    let pending = plan_migrations(FILES, &HashMap::new()).expect("plan");
+    assert_eq!(pending, FILES.to_vec());
 }
 
-/// 0115 re-runs whenever the ledger has no row for it: the capability switch-on must be claimed
+#[test]
+fn a_fully_recorded_ledger_plans_nothing() {
+    let ledger = recorded(&["0000_a.sql", "0001_b.sql", "0002_c.sql", "0003_d.sql"]);
+    assert!(plan_migrations(FILES, &ledger).expect("plan").is_empty());
+}
+
+#[test]
+fn a_file_numbered_below_a_recorded_one_still_runs() {
+    let ledger = recorded(&["0000_a.sql", "0002_c.sql", "0003_d.sql"]);
+    let pending = plan_migrations(FILES, &ledger).expect("plan");
+    assert_eq!(pending, vec![("0001_b.sql", "select 1;")]);
+}
+
+#[test]
+fn a_changed_recorded_file_is_refused() {
+    let mut ledger = recorded(&["0000_a.sql", "0001_b.sql"]);
+    ledger.insert("0001_b.sql".to_string(), migration_checksum("select 99;"));
+    let err = plan_migrations(FILES, &ledger).expect_err("checksum mismatch must refuse");
+    assert!(err.to_string().contains("0001_b.sql changed after it was applied"));
+}
+
+#[test]
+fn a_recorded_file_that_is_not_shipped_is_refused() {
+    let mut ledger = recorded(&["0000_a.sql"]);
+    ledger.insert("0099_gone.sql".to_string(), migration_checksum("select 9;"));
+    let err = plan_migrations(FILES, &ledger).expect_err("unshipped record must refuse");
+    assert!(err.to_string().contains("0099_gone.sql is recorded but not shipped"));
+}
+
+/// 0115 is applied once: the capability switch-on must be claimed
 /// through its marker and may only raise values, and the backfill must never overwrite a row.
 #[test]
 fn flow_default_on_migration_runs_once_and_never_overwrites() {
@@ -409,67 +135,6 @@ fn flow_default_on_migration_runs_once_and_never_overwrites() {
         "the trigger and the backfill both leave an existing row alone"
     );
 }
-
-#[test]
-fn only_retired_delivery_migrations_are_superseded() {
-    let superseded: Vec<&str> = MIGRATION_PROBES
-        .iter()
-        .filter(|(_, probe)| matches!(probe, SchemaProbe::Superseded))
-        .map(|(name, _)| *name)
-        .collect();
-    assert_eq!(
-        superseded,
-        vec![
-            "0026_connectors_invocations.sql",
-            "0028_invocation_tool_calls.sql",
-            "0029_scenario_templates.sql",
-            "0032_print_device_connector_kinds.sql",
-            "0048_delivery_lease_and_pickup_indexes.sql",
-            "0049_agent_invocation_duplicate_tagging.sql"
-        ]
-    );
-}
-
-/// Probes must resolve relations through search_path. A hardcoded `public.` prefix reports
-/// "absent" on a deployment that does not use the public schema, which sends the runner into
-/// replaying the early non idempotent migrations.
-#[test]
-fn probes_do_not_hardcode_the_public_schema() {
-    for (name, probe) in MIGRATION_PROBES {
-        let Some(statement) = probe.statement() else {
-            continue;
-        };
-        let rendered = format!("{statement:?}");
-        assert!(
-            !rendered.contains("public."),
-            "{name} probe must not hardcode the public schema"
-        );
-    }
-}
-
-#[test]
-fn migration_escape_hatches_are_off_until_the_file_asks_for_them() {
-    let quiet = MigrationOptions::from_config(MigrationsConfig::default());
-    assert!(!quiet.replay);
-    assert!(!quiet.continue_on_error);
-
-    // Each switch is read from its own key. Asserted one at a time so a swapped mapping
-    // cannot pass by setting both.
-    let replaying = MigrationOptions::from_config(MigrationsConfig {
-        replay: true,
-        continue_on_error: false,
-    });
-    assert!(replaying.replay);
-    assert!(!replaying.continue_on_error);
-
-    let tolerant = MigrationOptions::from_config(MigrationsConfig {
-        replay: false,
-        continue_on_error: true,
-    });
-    assert!(!tolerant.replay);
-    assert!(tolerant.continue_on_error);
-}
-
 /// Routes are authenticated one by one with `route_layer`, so forgetting one is invisible
 /// until somebody calls it. Four proposal reads were unauthenticated that way, two of which
 /// finalized voting and wrote decisions. The router source is parsed here and every route

@@ -8,7 +8,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::print_stderr, clippy::doc_markdown)]
 
 use crate::migrate::db_tests::scratch;
-use crate::migrate::{MigrationOptions, run_migrations_with};
+use crate::migrate::run_migrations;
 use crate::router::build_router_with_inbound;
 use api::inbound::INBOUND_EVENTS_PATH;
 use api::inbound::credentials::mint_token;
@@ -83,9 +83,7 @@ async fn the_production_router_accepts_a_source_credential_and_refuses_the_rest(
         return;
     };
     let db = scratch.connection().clone();
-    run_migrations_with(&db, MigrationOptions::default())
-        .await
-        .expect("migrations apply");
+    run_migrations(&db).await.expect("migrations apply");
 
     let [admin, workspace, project, source] = std::array::from_fn(|_| Uuid::new_v4());
     exec(
