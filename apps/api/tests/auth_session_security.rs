@@ -383,34 +383,73 @@ async fn flatten(joined: impl Future<Output = Result<Value, tokio::task::JoinErr
     joined.await.expect("register task")
 }
 
+fn peer(last_octet: u8) -> axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>> {
+    let addr = std::net::SocketAddr::from(([203, 0, 113, last_octet], 4000));
+    axum::Extension(axum::extract::ConnectInfo(addr))
+}
+
 #[tokio::test]
-async fn login_is_limited_per_account_with_retry_after() {
+async fn failed_logins_from_one_address_do_not_lock_the_owner_out_elsewhere() {
     let Some(scratch) = scratch("login_limit").await else {
         eprintln!("skipped: {TEST_DATABASE_URL_ENV} is not set");
         return;
     };
     let state = state_for(scratch.db.clone());
-    let attempt = |email: &'static str| {
+    let created = call_register(&state, "ada@example.com").await;
+    assert_eq!(created["code"], 0, "{created}");
+    let attempt = |last_octet: u8, password: &'static str| {
         let state = state.clone();
         async move {
-            let request = serde_json::from_value::<LoginRequest>(json!({"email": email, "password": "wrong-password"}))
-                .expect("login");
-            login(State(state), HeaderMap::new(), None, Json(request))
+            let request =
+                serde_json::from_value::<LoginRequest>(json!({"email": "ada@example.com", "password": password}))
+                    .expect("login");
+            login(State(state), HeaderMap::new(), Some(peer(last_octet)), Json(request))
                 .await
                 .unwrap_or_else(IntoResponse::into_response)
         }
     };
-    // The account bucket allows 10 attempts a minute; the wrong password is refused each time.
+    // An attacker at address A: ten wrong passwords are answered 401, the eleventh is limited.
     for _ in 0..10 {
-        let response = attempt("ada@example.com").await;
-        assert_eq!(body_json(response).await["code"], 401);
+        assert_eq!(body_json(attempt(1, "wrong-password").await).await["code"], 401);
     }
-    let limited = attempt("ada@example.com").await;
+    let limited = attempt(1, "wrong-password").await;
     assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
     assert!(limited.headers().contains_key(axum::http::header::RETRY_AFTER));
-    // Another account on the same address is still inside the address limit and is not affected.
-    let other = attempt("bob@example.com").await;
-    assert_eq!(body_json(other).await["code"], 401);
+    // The owner at address B still signs in with the right password.
+    let owner = body_json(attempt(2, "password1").await).await;
+    assert_eq!(owner["code"], 0, "{owner}");
+    // A success is not counted against the account: it can sign in again and again.
+    for _ in 0..5 {
+        assert_eq!(body_json(attempt(2, "password1").await).await["code"], 0);
+    }
+    scratch.drop_self().await;
+}
+
+#[tokio::test]
+async fn an_account_with_too_many_failures_is_limited_from_every_address() {
+    let Some(scratch) = scratch("login_account_fail").await else {
+        eprintln!("skipped: {TEST_DATABASE_URL_ENV} is not set");
+        return;
+    };
+    let state = state_for(scratch.db.clone());
+    let created = call_register(&state, "ada@example.com").await;
+    assert_eq!(created["code"], 0, "{created}");
+    // 50 failures, spread over addresses so no pair or address limit is hit first.
+    for n in 0..50_u8 {
+        let request =
+            serde_json::from_value::<LoginRequest>(json!({"email": "ada@example.com", "password": "wrong-password"}))
+                .expect("login");
+        let response = login(State(state.clone()), HeaderMap::new(), Some(peer(n)), Json(request))
+            .await
+            .unwrap_or_else(IntoResponse::into_response);
+        assert_eq!(body_json(response).await["code"], 401);
+    }
+    let request = serde_json::from_value::<LoginRequest>(json!({"email": "ada@example.com", "password": "password1"}))
+        .expect("login");
+    let response = login(State(state.clone()), HeaderMap::new(), Some(peer(200)), Json(request))
+        .await
+        .unwrap_or_else(IntoResponse::into_response);
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
     scratch.drop_self().await;
 }
 

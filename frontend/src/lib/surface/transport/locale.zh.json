@@ -6,6 +6,7 @@
 		"networkError": "无法连接服务器，请检查网络后重试。",
 		"downloadFailed": "下载失败。",
 		"sessionRefreshFailed": "登录状态无法续期，请重新登录。",
+		"rateLimited": "请求过于频繁，请 {seconds} 秒后再试。",
 		"unsupportedDownloadUrl": "不支持此下载链接。",
 		"assetResponseInvalid": "为此页面收到的文件无效。",
 		"privateAssetUnavailable": "此页面的文件暂时无法读取。",

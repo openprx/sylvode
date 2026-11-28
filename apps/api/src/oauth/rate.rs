@@ -32,6 +32,9 @@ pub const WINDOW_SECS: u32 = 60;
 /// Length of the daily window, in seconds.
 pub const DAY_WINDOW_SECS: u32 = 86_400;
 
+/// Length of the failed-login window per account, in seconds (15 minutes).
+pub const ACCOUNT_FAIL_WINDOW_SECS: u32 = 900;
+
 /// The database-backed buckets and their limits per window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RateBucket {
@@ -57,8 +60,10 @@ pub enum RateBucket {
     RunnerReport,
     /// Console login attempts, per client address.
     AuthLoginIp,
-    /// Console login attempts, per account (hash of the normalized e-mail).
-    AuthLoginAccount,
+    /// Console login attempts, per account and client address together.
+    AuthLoginPair,
+    /// Failed console logins, per account. Successful logins are not counted.
+    AuthLoginAccountFail,
     /// Registration requests, per client address.
     AuthRegisterIp,
     /// Session refreshes, per client address.
@@ -68,7 +73,7 @@ pub enum RateBucket {
 }
 
 impl RateBucket {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::Authorize,
         Self::Decision,
         Self::TokenIp,
@@ -80,7 +85,8 @@ impl RateBucket {
         Self::InboundSourceDay,
         Self::RunnerReport,
         Self::AuthLoginIp,
-        Self::AuthLoginAccount,
+        Self::AuthLoginPair,
+        Self::AuthLoginAccountFail,
         Self::AuthRegisterIp,
         Self::AuthRefreshIp,
         Self::AuthSetupStatusIp,
@@ -99,7 +105,8 @@ impl RateBucket {
             Self::InboundSourceDay => "inbound_source_day",
             Self::RunnerReport => "runner_report",
             Self::AuthLoginIp => "auth_login_ip",
-            Self::AuthLoginAccount => "auth_login_account",
+            Self::AuthLoginPair => "auth_login_pair",
+            Self::AuthLoginAccountFail => "auth_login_account_fail",
             Self::AuthRegisterIp => "auth_register_ip",
             Self::AuthRefreshIp => "auth_refresh_ip",
             Self::AuthSetupStatusIp => "auth_setup_status_ip",
@@ -110,6 +117,7 @@ impl RateBucket {
     pub const fn window_secs(self) -> u32 {
         match self {
             Self::InboundSourceDay => DAY_WINDOW_SECS,
+            Self::AuthLoginAccountFail => ACCOUNT_FAIL_WINDOW_SECS,
             _ => WINDOW_SECS,
         }
     }
@@ -122,7 +130,8 @@ impl RateBucket {
             // needs headroom, one account has one owner so its bucket is tight, and register is
             // the tightest per address because each accepted call costs a full password hash.
             Self::Authorize | Self::Revoke | Self::InboundAuthFail | Self::AuthLoginIp | Self::AuthSetupStatusIp => 30,
-            Self::Decision | Self::StreamConnect | Self::AuthLoginAccount | Self::AuthRegisterIp => 10,
+            Self::Decision | Self::StreamConnect | Self::AuthLoginPair | Self::AuthRegisterIp => 10,
+            Self::AuthLoginAccountFail => 50,
             Self::TokenIp | Self::AuthRefreshIp => 60,
             Self::TokenGrant => 20,
             Self::InboundSourceMinute => 120,
@@ -415,7 +424,8 @@ mod tests {
             (RateBucket::InboundSourceDay, "inbound_source_day", 20_000),
             (RateBucket::RunnerReport, "runner_report", 12),
             (RateBucket::AuthLoginIp, "auth_login_ip", 30),
-            (RateBucket::AuthLoginAccount, "auth_login_account", 10),
+            (RateBucket::AuthLoginPair, "auth_login_pair", 10),
+            (RateBucket::AuthLoginAccountFail, "auth_login_account_fail", 50),
             (RateBucket::AuthRegisterIp, "auth_register_ip", 10),
             (RateBucket::AuthRefreshIp, "auth_refresh_ip", 60),
             (RateBucket::AuthSetupStatusIp, "auth_setup_status_ip", 30),

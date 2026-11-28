@@ -54,6 +54,12 @@ fn account_key(email: &str) -> RateKey {
     RateKey::from_text(&email.trim().to_lowercase())
 }
 
+/// The key of one account tried from one address.
+fn account_address_key(email: &str, headers: &HeaderMap, peer: &Peer) -> RateKey {
+    let ip = rate::client_address(headers, peer.as_ref().map(|Extension(info)| info.0));
+    RateKey::from_text(&format!("{}\n{}", email.trim().to_lowercase(), ip.to_canonical()))
+}
+
 #[derive(Debug, Serialize)]
 struct UserResponse {
     id: String,
@@ -309,10 +315,45 @@ pub async fn login(
     if let Some(refused) = limit(&state, RateBucket::AuthLoginIp, &address_key(&headers, &peer)).await? {
         return Ok(refused);
     }
-    if let Some(refused) = limit(&state, RateBucket::AuthLoginAccount, &account_key(&req.email)).await? {
+    // An attempt from one address at one account is limited tightly. The account as a whole is
+    // limited only by its failures, with a higher ceiling and never by successes, so a stranger
+    // who knows an e-mail cannot lock the owner out from the owner's own address.
+    if let Some(refused) = limit(
+        &state,
+        RateBucket::AuthLoginPair,
+        &account_address_key(&req.email, &headers, &peer),
+    )
+    .await?
+    {
         return Ok(refused);
     }
-    let row = check_login_credentials(&state, &req.email, req.password).await?;
+    let account = account_key(&req.email);
+    match rate::is_over_limit(
+        &state.db,
+        RateBucket::AuthLoginAccountFail,
+        &account,
+        RateBucket::AuthLoginAccountFail.limit(),
+    )
+    .await
+    {
+        Ok(None) => {}
+        Ok(Some(limited)) => return Ok(rate::too_many_requests(limited)),
+        Err(error) => {
+            tracing::warn!(error = %error, "auth failed-login counter unavailable");
+            return Err(ApiError::Internal);
+        }
+    }
+    let row = match check_login_credentials(&state, &req.email, req.password).await {
+        Ok(row) => row,
+        Err(error) => {
+            if matches!(error, ApiError::Unauthorized(_))
+                && let Some(refused) = limit(&state, RateBucket::AuthLoginAccountFail, &account).await?
+            {
+                return Ok(refused);
+            }
+            return Err(error);
+        }
+    };
     let session_version = row
         .try_get::<i64>("", "session_version")
         .map_err(|_| ApiError::Internal)?;

@@ -34,7 +34,7 @@ pub struct RuntimeConfig {
     pub ai_tasks: AiTasksConfig,
     /// `[api]`: limits of this process (open change-hint streams).
     pub api: ApiConfig,
-    /// Peers allowed to vouch for a client address through `X-Forwarded-For` / `X-Real-IP`.
+    /// Peers allowed to vouch for a client address through `X-Forwarded-For`.
     pub trusted_proxies: Vec<IpCidr>,
     /// The authorization server settings, `None` when `[oauth] issuer` is not configured.
     pub oauth: Option<Arc<OAuthConfig>>,

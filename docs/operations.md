@@ -85,7 +85,9 @@ Whatever proxy you use:
   script is needed.
 - List the proxy's address in `server.trusted_proxies` if it is not covered by the default
   (loopback and `172.16.0.0/12`), so the API sees real client addresses in rate limits and
-  allow-lists.
+  allow-lists. This includes every outer load balancer or CDN in front of it: a hop that is not
+  listed is taken for the client, and everyone behind it shares one rate limit. The API reads
+  only `X-Forwarded-For`, so the proxy must append to it (`proxy_add_x_forwarded_for` in `nginx.conf`).
 - List the public origin in `flow.collab_allowed_origins`, or live editing is refused.
 - Terminate TLS. A web UI served over plain `http://` on an address other than `localhost` still
   works for sign-in (with `auth.allow_insecure_cookies`), live editing and copying, but it sends

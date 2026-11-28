@@ -28,8 +28,10 @@ name.
 
 - **Rate limits on the sign-in routes.** Per client address and minute: `POST /api/v1/auth/login` 30,
   `POST /api/v1/auth/register` 10, `POST /api/v1/auth/refresh` 60 and
-  `GET /api/v1/auth/setup-status` 30; `login` is also limited to 10 attempts per account (e-mail) and
-  minute. Over a limit the answer is `429` with `Retry-After`. The client address is the connection
+  `GET /api/v1/auth/setup-status` 30; `login` is also limited to 10 attempts per account and address
+  together per minute, and to 50 failed attempts per account in 15 minutes from any address (a
+  successful sign-in is not counted, so a stranger who knows an e-mail cannot lock the owner out from
+  the owner's own address). Over a limit the answer is `429` with `Retry-After`. The client address is the connection
   peer, or the forwarded client when the peer is in `trusted_proxies`; the limits are fixed.
 - **Sites: console fields and rules.** A site answers `url` and `url_mode` (`separate`: its own
   `allowed_origin`; `same_origin`: served by the API from `[site] assets_dir`, `public_url` + `mount_path`
@@ -160,6 +162,9 @@ name.
   receiver (`sylvode-runner`) verifies it, refuses a missing or stale timestamp (window
   `max_delivery_age_secs`), reads `X-Sylvode-Timestamp` or `X-Webhook-Timestamp`, and signs its
   `webhook` agent forwards the same way. Update any other receiver before upgrading.
+- **The client address no longer falls back to `X-Real-IP`.** From a trusted proxy the API reads only
+  `X-Forwarded-For`; when it is missing or unusable the proxy's own address is used. Every proxy in
+  front of the API, including an outer load balancer, must be in `trusted_proxies`.
 - **`register` checks the caller before it hashes.** Once the instance has people, a request without an
   admin session is refused with 403 before the password is hashed, so an anonymous request no longer
   costs a password hash.
