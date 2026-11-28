@@ -463,9 +463,62 @@ fn serve_router(state: SseState, protected: Router<SseState>) -> Router {
 }
 
 /// Largest JSON-RPC body of the HTTP transports: a 32 MiB package is 44.7 MiB of base64 in
-/// `packages.upload`. The limit sits on the routes behind the inbound authentication and the
-/// `Origin` check, so only an authenticated caller can make the server read that much.
+/// `packages.upload`.
 const RPC_BODY_LIMIT: usize = 48 * 1024 * 1024;
+/// Every request body is capped here unless it qualifies for the large-body gate.
+const SMALL_BODY_LIMIT: usize = 2 * 1024 * 1024;
+
+/// Requests with a body above [`SMALL_BODY_LIMIT`] that run at once in this process.
+static LARGE_BODIES: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+
+/// The rule of the JSON-RPC routes for body size. The inbound authentication does not look up an
+/// ordinary bearer token before the handler, so this runs without trusting the caller: a body is
+/// read up to 2 MiB; a larger one only when its `Content-Length` (at most [`RPC_BODY_LIMIT`]) is
+/// declared and a permit of the small process-wide pool is free, before a byte of it is read. The
+/// permit is held until the request is answered. A body without a length (chunked) stays capped at
+/// 2 MiB, whatever it declares later.
+async fn body_gate(request: axum::extract::Request, next: middleware::Next) -> Response {
+    let declared = request
+        .headers()
+        .get(axum::http::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<usize>().ok());
+    match declared {
+        Some(length) if length > SMALL_BODY_LIMIT => {
+            if length > RPC_BODY_LIMIT {
+                return (
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    Json(json!({"error": "the request body is larger than 48 MiB"})),
+                )
+                    .into_response();
+            }
+            let Ok(_permit) = LARGE_BODIES.try_acquire() else {
+                return (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    Json(json!({"error": "too many large requests at once; retry shortly"})),
+                )
+                    .into_response();
+            };
+            next.run(request).await
+        }
+        _ => {
+            let (parts, body) = request.into_parts();
+            let body = axum::body::Body::new(http_body_util::Limited::new(body, SMALL_BODY_LIMIT));
+            next.run(axum::extract::Request::from_parts(parts, body)).await
+        }
+    }
+}
+
+/// A JSON-RPC POST route under [`body_gate`]; the 48 MiB limit only ever applies to a request the
+/// gate let through with a permit.
+fn gated<S>(route: axum::routing::MethodRouter<S>) -> axum::routing::MethodRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    route
+        .layer(DefaultBodyLimit::max(RPC_BODY_LIMIT))
+        .layer(middleware::from_fn(body_gate))
+}
 
 async fn run_http(
     bind_addr: &str,
@@ -486,15 +539,9 @@ async fn run_http(
     };
 
     let protected = Router::new()
-        .route(
-            "/mcp/rpc",
-            post(handle_jsonrpc).layer(DefaultBodyLimit::max(RPC_BODY_LIMIT)),
-        )
+        .route("/mcp/rpc", gated(post(handle_jsonrpc)))
         .route("/sse", get(handle_sse_connect))
-        .route(
-            "/messages",
-            post(handle_sse_message).layer(DefaultBodyLimit::max(RPC_BODY_LIMIT)),
-        );
+        .route("/messages", gated(post(handle_sse_message)));
     let app = serve_router(state, protected);
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
@@ -708,10 +755,9 @@ async fn run_sse(
         net,
     };
 
-    let protected = Router::new().route("/sse", get(handle_sse_connect)).route(
-        "/messages",
-        post(handle_sse_message).layer(DefaultBodyLimit::max(RPC_BODY_LIMIT)),
-    );
+    let protected = Router::new()
+        .route("/sse", get(handle_sse_connect))
+        .route("/messages", gated(post(handle_sse_message)));
     let app = serve_router(state, protected);
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
