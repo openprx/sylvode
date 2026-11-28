@@ -19,7 +19,12 @@ use crate::{
 
 pub struct NativeFormSchemaUpdate {
     pub form_id: Uuid,
-    pub schema: Value,
+    /// The new schema. `None` keeps the stored schema and still bumps the version, for a save that
+    /// only changes the layout stored beside it.
+    pub schema: Option<Value>,
+    /// Names reported in the `form.updated` event payload. Callers that wrote other columns in the
+    /// same transaction list them here so one save emits exactly one event.
+    pub changed_fields: Vec<&'static str>,
     /// When set, the write is refused unless the form is still at this schema version.
     pub expected_schema_version: Option<i32>,
     pub actor_id: Option<Uuid>,
@@ -33,24 +38,37 @@ pub async fn update_form_schema_in_transaction(
     tx: &DatabaseTransaction,
     req: NativeFormSchemaUpdate,
 ) -> Result<FormResponse, ApiError> {
-    let current = find_form_with_conn(tx, req.form_id).await?;
-    let schema = ensure_schema_field_ids(req.schema).map_err(ApiError::BadRequest)?;
-    ensure_valid_schema(
-        &schema,
-        Some(SchemaScope {
-            workspace_id: current.workspace_id,
-            project_id: current.project_id,
-        }),
-    )?;
-    let mut sql = "UPDATE project_forms \
-                   SET schema = $1, schema_version = schema_version + 1, \
-                       updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 microsecond') \
-                   WHERE id = $2"
-        .to_owned();
-    let mut values = vec![schema.into(), req.form_id.into()];
+    let schema = match req.schema {
+        Some(schema) => {
+            let current = find_form_with_conn(tx, req.form_id).await?;
+            let schema = ensure_schema_field_ids(schema).map_err(ApiError::BadRequest)?;
+            ensure_valid_schema(
+                &schema,
+                Some(SchemaScope {
+                    workspace_id: current.workspace_id,
+                    project_id: current.project_id,
+                }),
+            )?;
+            Some(schema)
+        }
+        None => None,
+    };
+    let mut set = String::new();
+    let mut values: Vec<sea_orm::Value> = Vec::new();
+    if let Some(schema) = schema {
+        values.push(schema.into());
+        set.push_str("schema = $1, ");
+    }
+    set.push_str(
+        "schema_version = schema_version + 1, \
+         updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 microsecond')",
+    );
+    values.push(req.form_id.into());
+    let mut sql = format!("UPDATE project_forms SET {set} WHERE id = ${}", values.len());
     if let Some(expected) = req.expected_schema_version {
-        sql.push_str(" AND schema_version = $3");
         values.push(expected.into());
+        std::fmt::Write::write_fmt(&mut sql, format_args!(" AND schema_version = ${}", values.len()))
+            .map_err(|_| ApiError::Internal)?;
     }
     let written = tx
         .execute(Statement::from_sql_and_values(DbBackend::Postgres, &sql, values))
@@ -66,7 +84,7 @@ pub async fn update_form_schema_in_transaction(
         "form.updated",
         req.actor_id,
         req.source,
-        json!({ "form_id": form.id, "key": form.key, "changed_fields": ["schema"] }),
+        json!({ "form_id": form.id, "key": form.key, "changed_fields": req.changed_fields }),
         None,
     )
     .await?;

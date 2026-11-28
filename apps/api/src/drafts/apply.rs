@@ -46,7 +46,8 @@ pub(super) async fn save(
                 tx,
                 NativeFormSchemaUpdate {
                     form_id,
-                    schema: prepared.spec.clone(),
+                    schema: Some(prepared.spec.clone()),
+                    changed_fields: vec!["schema"],
                     expected_schema_version: None,
                     actor_id: Some(approver),
                     source,
