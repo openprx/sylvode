@@ -58,7 +58,7 @@ bash scripts/start.sh
 2. Generates `config/sylvode.compose.toml` (read by `api` and `worker`) and
    `config/sylvode.compose.mcp.toml` (read by `mcp-server`) when they are missing. Existing files
    are never rewritten. The first holds a generated `auth.jwt_secret` and the database URL; the
-   second holds only `[logging]` and `[mcp]`, with a placeholder bot token and workspace id.
+   second holds only `[logging]` and `[mcp]`, with a placeholder bot token and no workspace id.
 3. Validates the three files and stops with a list of problems if any value is unusable.
 4. Builds the release binaries with `cargo build --workspace --release`.
 5. Builds the images and starts the services, then waits until the API, the MCP server and the web
