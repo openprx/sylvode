@@ -483,11 +483,11 @@ async fn the_triggers_send_exactly_the_documented_payloads_after_commit_and_noth
     )
     .await;
     assert_eq!(listen.drain(Duration::from_millis(300)).await, vec![issue_hint.clone()]);
-    // A no-op UPDATE leaves the row as it was and sends nothing (0143); a real one did, above. A
-    // column type without an equality operator would make this statement fail, not stay silent.
+    // An UPDATE that changes nothing sends nothing (0143), even though the handlers bump
+    // `updated_at` on every write; a real one did, above.
     exec(
         db,
-        "UPDATE work_items SET title = title WHERE id = $1",
+        "UPDATE work_items SET title = title, updated_at = now() + interval '1 second' WHERE id = $1",
         vec![item.into()],
     )
     .await;
