@@ -35,8 +35,7 @@ apps/api/src/outbound.rs	            "192.168.0.9",	test input: the policy resol
 apps/api/src/outbound.rs	            "::ffff:10.0.0.1",	test input: an IPv4-mapped IPv6 form of a private address must be refused
 apps/api/src/outbound.rs	            "::10.0.0.1",	test input: an IPv4-compatible IPv6 form of a private address must be refused
 apps/api/src/outbound.rs	            "::ffff:192.168.1.1",	test input: an IPv4-mapped IPv6 form of a private address must follow the IPv4 rule
-apps/api/src/outbound.rs	        let lookup = Scripted::new(vec![Ok(ips(&["127.0.0.1"])), Ok(ips(&["10.0.0.9"]))]);	test input: a name rebound to a private address must be refused on the next connect
-apps/api/src/outbound.rs	        let lookup = Scripted::always(&["10.0.0.1"]);	test input: a private answer reached through a proxy documents the proxy gap'
+apps/api/src/outbound.rs	        let lookup = Scripted::new(vec![Ok(ips(&["127.0.0.1"])), Ok(ips(&["10.0.0.9"]))]);	test input: a name rebound to a private address must be refused on the next connect'
 
 exempt() {
   local rel=$1 text=$2 e_path e_text e_reason
