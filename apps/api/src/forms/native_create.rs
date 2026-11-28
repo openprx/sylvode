@@ -61,7 +61,13 @@ pub fn form_key_taken() -> ApiError {
     )
 }
 
-/// Maps the unique violations of form and view keys to the 409 they stand for.
+/// The 409 for a caller-supplied record id that already exists.
+#[must_use]
+pub fn record_exists() -> ApiError {
+    ApiError::conflict_coded("record_exists", "a record with this id already exists", None)
+}
+
+/// Maps the unique violations of form keys, view keys and record ids to the 409 they stand for.
 ///
 /// A check before the write answers the common case where one exists; this catches every create
 /// path and two requests racing. Any other database error passes through unchanged.
@@ -76,6 +82,8 @@ pub fn key_violation(err: sea_orm::DbErr) -> ApiError {
             "a view with this key already exists on the form (an archived one still holds its key)",
             None,
         )
+    } else if text.contains("form_records_pkey") {
+        record_exists()
     } else {
         ApiError::from(err)
     }
@@ -287,7 +295,8 @@ pub async fn create_record_as(
             created_by.into(),
         ],
     ))
-    .await?;
+    .await
+    .map_err(key_violation)?;
     refresh_record_projection(tx, form.project_id, form.id, record_id, &form.schema, &normalized).await?;
     let event_payload = json!({"record_id":record_id,"values":normalized});
     insert_form_event_with_idempotency(
@@ -368,8 +377,14 @@ mod tests {
     }
 
     #[test]
-    fn any_other_database_error_stays_a_database_error() {
+    fn a_taken_record_id_is_a_409_record_exists() {
         let err = key_violation(unique("form_records_pkey"));
+        assert_eq!(coded(&err), Some((409, "record_exists")));
+    }
+
+    #[test]
+    fn any_other_database_error_stays_a_database_error() {
+        let err = key_violation(unique("form_records_other_key"));
         assert!(matches!(err, ApiError::Database(_)));
     }
 }
