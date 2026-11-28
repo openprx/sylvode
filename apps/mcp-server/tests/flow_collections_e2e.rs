@@ -680,12 +680,28 @@ async fn seed_workspace(state: &AppState) -> TestResultValue<(Uuid, Uuid)> {
     )
     .await?;
     for (token, surface) in [(MCP_BOT_TOKEN, "mcp_stdio"), (CLI_BOT_TOKEN, "cli")] {
+        // A bot as `bots::create` makes it: a bot user (the Flow authorization finds a bot through
+        // it), its seat and its token row under the same id.
+        let bot_id = Uuid::new_v4();
+        exec(
+            &state.db,
+            "INSERT INTO users (id,email,password_hash,name,role,is_active,entity_type,agent_type) \
+             VALUES ($1,$2,'!','embed after block bot','user',true,'bot','mcp')",
+            vec![bot_id.into(), format!("{bot_id}@bot.embed-after-block.test").into()],
+        )
+        .await?;
+        exec(
+            &state.db,
+            "INSERT INTO workspace_members (workspace_id,user_id,role) VALUES ($1,$2,'member')",
+            vec![workspace_id.into(), bot_id.into()],
+        )
+        .await?;
         exec(
             &state.db,
             "INSERT INTO workspace_bots (id,workspace_id,name,token_hash,token_prefix,permissions,created_by,transport_surface) \
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
             vec![
-                Uuid::new_v4().into(),
+                bot_id.into(),
                 workspace_id.into(),
                 format!("embed after block {surface}").into(),
                 hex::encode(Sha256::digest(token.as_bytes())).into(),

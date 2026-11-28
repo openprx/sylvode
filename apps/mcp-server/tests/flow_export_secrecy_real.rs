@@ -150,13 +150,29 @@ async fn seed_workspace(state: &AppState) -> Result<(Uuid, Uuid), Box<dyn Error>
         },
     )
     .await?;
+    // A bot as `bots::create` makes it: a bot user (the Flow authorization finds a bot through it), its
+    // seat and its token row under the same id.
+    let bot_id = Uuid::new_v4();
+    exec(
+        &state.db,
+        "INSERT INTO users (id,email,password_hash,name,role,is_active,entity_type,agent_type) \
+         VALUES ($1,$2,'!','export secrecy bot','user',true,'bot','mcp')",
+        vec![bot_id.into(), format!("{bot_id}@bot.export-secrecy.test").into()],
+    )
+    .await?;
+    exec(
+        &state.db,
+        "INSERT INTO workspace_members (workspace_id,user_id,role) VALUES ($1,$2,'member')",
+        vec![workspace_id.into(), bot_id.into()],
+    )
+    .await?;
     let token_hash = hex::encode(Sha256::digest(BOT_TOKEN.as_bytes()));
     exec(
         &state.db,
         "INSERT INTO workspace_bots (id,workspace_id,name,token_hash,token_prefix,permissions,created_by,transport_surface) \
          VALUES ($1,$2,'export secrecy bot',$3,$4,$5,$6,'mcp_stdio')",
         vec![
-            Uuid::new_v4().into(),
+            bot_id.into(),
             workspace_id.into(),
             token_hash.into(),
             BOT_TOKEN[..8].into(),
