@@ -283,6 +283,16 @@ pub(super) async fn delete_history_generations(
     db: &impl ConnectionTrait,
     package_row_id: Uuid,
 ) -> Result<(), ApiError> {
+    // Lock every installation that has a generation of this package, in id order, so a concurrent
+    // revoke either commits before the statements below (and is seen by them) or waits until this
+    // transaction ends. Lock order: publisher key, then installation; the package delete takes no
+    // publisher-key lock.
+    db.execute(stmt(
+        "SELECT i.id FROM installations i WHERE EXISTS (SELECT 1 FROM installation_generations g \
+         WHERE g.installation_id = i.id AND g.package_row_id = $1) ORDER BY i.id FOR UPDATE OF i",
+        vec![package_row_id.into()],
+    ))
+    .await?;
     db.execute(stmt(
         "UPDATE installations i SET active_generation = NULL WHERE i.status = 'revoked' \
          AND i.active_generation IS NOT NULL AND EXISTS (SELECT 1 FROM installation_generations g \

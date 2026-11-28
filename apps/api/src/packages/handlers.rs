@@ -235,7 +235,8 @@ pub async fn delete_package(
         .await
         .map_err(map_in_use)?;
     store::delete_package(&tx, row.id).await.map_err(map_in_use)?;
-    tx.commit().await?;
+    // The deferred `active_generation` key is checked here: a revoke that slipped in is a conflict.
+    tx.commit().await.map_err(|err| map_in_use(err.into()))?;
     tracing::info!(%workspace_id, package_id = %row.id, "package deleted");
     remove_orphan_blob(&state, workspace_id, &row.blob_digest).await;
     Ok(ApiResponse::ok())
