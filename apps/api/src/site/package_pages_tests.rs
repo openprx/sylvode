@@ -30,6 +30,87 @@ async fn seed_site(db: &impl ConnectionTrait, tenant: &Tenant, slug: &str, statu
     id
 }
 
+/// Generations 1..=`GENERATIONS` exist for every seeded installation: the layouts' and the active
+/// generation's foreign keys need the row, and the tests move the active generation between them.
+const GENERATIONS: i32 = 3;
+
+/// Seeds a package row (its publisher key and blob first), then the installation together with its
+/// approved generations in one statement: `installations_active_generation_fk` is deferred, so the
+/// installation may name its active generation as long as the row exists when the statement ends.
+async fn seed_installation_in(
+    db: &impl ConnectionTrait,
+    tenant: &Tenant,
+    project_id: Uuid,
+    key: &str,
+    status: &str,
+    generation: i32,
+) -> Uuid {
+    let id = Uuid::new_v4();
+    let key_row = Uuid::new_v4();
+    let package_row = Uuid::new_v4();
+    let unique = Uuid::new_v4().simple().to_string();
+    let digest = format!("sha256:{unique}{unique}");
+    let reason = if status == "disabled" { Some("admin") } else { None };
+    exec(
+        db,
+        "INSERT INTO publisher_keys (id, workspace_id, publisher, key_id, public_key) \
+         VALUES ($1, $2, 'acme', $3, decode(repeat('01', 32), 'hex'))",
+        vec![
+            key_row.into(),
+            tenant.workspace_id.into(),
+            format!("ed25519:{unique}").into(),
+        ],
+    )
+    .await;
+    exec(
+        db,
+        "INSERT INTO package_blobs (blob_digest, size, bytes) VALUES ($1, 1, decode('00', 'hex'))",
+        vec![digest.clone().into()],
+    )
+    .await;
+    exec(
+        db,
+        "INSERT INTO packages (id, workspace_id, digest, blob_digest, package_key, version, kind, publisher_key_id, \
+         manifest, files, custom_code, tier, created_by) \
+         VALUES ($1, $2, $3, $3, $4, $5, 'page-template', $6, '{}'::jsonb, '[]'::jsonb, false, 'private', $7)",
+        vec![
+            package_row.into(),
+            tenant.workspace_id.into(),
+            digest.into(),
+            key.into(),
+            unique.into(),
+            key_row.into(),
+            tenant.member_id.into(),
+        ],
+    )
+    .await;
+    exec(
+        db,
+        "WITH inst AS ( \
+           INSERT INTO installations (id, workspace_id, scope_kind, project_id, package_key, status, \
+             disabled_reason, active_generation, created_by_kind, created_by) \
+           VALUES ($1, $2, 'project', $3, $4, $5, $6, $7, 'user', $8) RETURNING id) \
+         INSERT INTO installation_generations (installation_id, generation, package_row_id, status, \
+           requested_capabilities, requested_by_kind, requested_by, reviewed_by, reviewed_at) \
+         SELECT inst.id, g, $9::uuid, 'approved', '{}'::text[], 'user', $8::uuid, $8::uuid, now() \
+           FROM inst, generate_series(1, $10::int) AS g",
+        vec![
+            id.into(),
+            tenant.workspace_id.into(),
+            project_id.into(),
+            key.into(),
+            status.into(),
+            reason.into(),
+            generation.into(),
+            tenant.member_id.into(),
+            package_row.into(),
+            GENERATIONS.into(),
+        ],
+    )
+    .await;
+    id
+}
+
 async fn seed_installation(
     db: &impl ConnectionTrait,
     tenant: &Tenant,
@@ -37,25 +118,7 @@ async fn seed_installation(
     status: &str,
     generation: i32,
 ) -> Uuid {
-    let id = Uuid::new_v4();
-    let reason = if status == "disabled" { Some("admin") } else { None };
-    exec(
-        db,
-        "INSERT INTO installations (id, workspace_id, scope_kind, project_id, package_key, status, disabled_reason, \
-         active_generation, created_by_kind, created_by) VALUES ($1, $2, 'project', $3, $4, $5, $6, $7, 'user', $8)",
-        vec![
-            id.into(),
-            tenant.workspace_id.into(),
-            tenant.project_id.into(),
-            key.into(),
-            status.into(),
-            reason.into(),
-            generation.into(),
-            tenant.member_id.into(),
-        ],
-    )
-    .await;
-    id
+    seed_installation_in(db, tenant, tenant.project_id, key, status, generation).await
 }
 
 async fn seed_layout(
@@ -322,19 +385,7 @@ async fn a_page_of_an_installation_in_another_project_or_workspace_is_never_show
         vec![other_project.into(), mine.workspace_id.into(), mine.member_id.into()],
     )
     .await;
-    let sibling = Uuid::new_v4();
-    exec(
-        db,
-        "INSERT INTO installations (id, workspace_id, scope_kind, project_id, package_key, status, active_generation, \
-         created_by_kind, created_by) VALUES ($1, $2, 'project', $3, 'acme/other', 'active', 1, 'user', $4)",
-        vec![
-            sibling.into(),
-            mine.workspace_id.into(),
-            other_project.into(),
-            mine.member_id.into(),
-        ],
-    )
-    .await;
+    let sibling = seed_installation_in(db, &mine, other_project, "acme/other", "active", 1).await;
     for (installation, route) in [(foreign, "/foreign"), (sibling, "/sibling")] {
         let layout = seed_layout(db, &mine, site, &route[1..], Some((installation, 1))).await;
         seed_page(db, site, layout, route, "visitor", Some((installation, 1))).await;
