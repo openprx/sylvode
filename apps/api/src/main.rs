@@ -91,7 +91,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     let db = connect_db(&config.database_runtime()?).await?;
-    migrate::run_migrations(&db, config.migrations).await?;
+    migrate::run_migrations(&db).await?;
     migrate::verify_governance_schema(&db).await?;
     // Every router route has exactly one catalogue entry, or the API does not start.
     match api::catalogue::boot::check(router::ROUTER_SOURCES, &db).await {

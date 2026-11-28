@@ -622,7 +622,7 @@ variable. It is a local onboarding helper, not a way to seed production data.
 3. Replace the binaries, keeping `collab-isolated-apply-worker` beside `api`, and replace the web UI
    files.
 4. Restart the API first. It applies any new migrations at startup and refuses to start if one
-   fails (unless `migrations.continue_on_error` is set). Then restart the worker and the MCP
+   fails. Then restart the worker and the MCP
    server.
 
 With Compose, update the checkout and run `bash scripts/start.sh` again. It keeps the existing

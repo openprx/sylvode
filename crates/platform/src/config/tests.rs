@@ -69,10 +69,6 @@ operation_log_retention_days = 45
 [ai_tasks]
 processing_timeout_secs = 7200
 
-[migrations]
-replay = true
-continue_on_error = true
-
 [outbound]
 allowed_hosts = ["worker.internal", "hooks.example.com:8443"]
 allow_private = true
@@ -125,9 +121,6 @@ fn a_complete_file_parses_into_every_section() {
     );
     assert_eq!(config.audit.operation_log_retention_days, 45);
     assert_eq!(config.ai_tasks.processing_timeout_secs, 7200);
-
-    assert!(config.migrations.replay);
-    assert!(config.migrations.continue_on_error);
 
     assert_eq!(
         config.outbound.allowed_hosts,
@@ -185,8 +178,6 @@ jwt_secret = "0123456789abcdef0123456789abcdef"
     assert_eq!(config.storage.dir, Path::new("./uploads"));
     assert_eq!(config.audit.operation_log_retention_days, 30);
     assert_eq!(config.ai_tasks.processing_timeout_secs, 3600);
-    assert!(!config.migrations.replay);
-    assert!(!config.migrations.continue_on_error);
     assert!(config.outbound.allowed_hosts.is_empty());
     assert!(!config.outbound.allow_private);
     assert_eq!(config.mcp.transport, McpTransport::Stdio);
@@ -1556,6 +1547,17 @@ fn the_retired_unused_settings_are_unknown_keys() {
         text.contains("unknown field") && text.contains("default_author_id"),
         "{text}"
     );
+}
+
+/// The `[migrations]` section is gone: a file that still has it is refused as an unknown section.
+#[test]
+fn the_retired_migrations_section_is_refused() {
+    let error = parse(
+        "[database]\nurl = \"postgres://localhost/openpr\"\n\n[auth]\njwt_secret = \"0123456789abcdef0123456789abcdef\"\n\n[migrations]\ncontinue_on_error = false\n",
+    )
+    .expect_err("the migrations section is refused");
+    let text = error.to_string();
+    assert!(text.contains("unknown field") && text.contains("migrations"), "{text}");
 }
 
 #[test]

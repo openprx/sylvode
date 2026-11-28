@@ -1,5 +1,5 @@
 use crate::migrate::db_tests::scratch;
-use crate::migrate::{MigrationOptions, run_migrations_with};
+use crate::migrate::run_migrations;
 use crate::router::build_router;
 use api::routes::flow_surface::FlowSurfaceResponse;
 use axum::body::Body;
@@ -517,9 +517,7 @@ async fn real_database_failures_are_typed_on_flow_routes_and_unchanged_elsewhere
         return;
     };
     let db = scratch.connection().clone();
-    run_migrations_with(&db, MigrationOptions::default())
-        .await
-        .expect("migrations apply");
+    run_migrations(&db).await.expect("migrations apply");
     let state = state_for(db.clone());
     let (workspace_id, owner_id) = seed_flow_workspace(&db).await;
     let token = token_for(owner_id);
@@ -612,9 +610,7 @@ async fn bot_credential_database_failures_are_typed_on_flow_routes_and_unchanged
         return;
     };
     let db = scratch.connection().clone();
-    run_migrations_with(&db, MigrationOptions::default())
-        .await
-        .expect("migrations apply");
+    run_migrations(&db).await.expect("migrations apply");
     let state = state_for(db.clone());
     let (workspace_id, owner_id) = seed_flow_workspace(&db).await;
     let token = format!("opr_{}", Uuid::new_v4().simple());

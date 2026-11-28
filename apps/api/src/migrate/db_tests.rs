@@ -1,4 +1,7 @@
-use super::{MIGRATIONS, MigrationOptions, migration_is_present, run_migrations_with};
+use super::{
+    MIGRATIONS, bootstrap_migration_ledger, migration_checksum, record_migration_if_absent, record_migration_with_conn,
+    run_migrations,
+};
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement};
 use std::collections::HashMap;
 
@@ -90,9 +93,16 @@ macro_rules! scratch_or_skip {
     };
 }
 
-/// Reproduces the pre-ledger runner: every file executed straight against the database with
-/// no ledger to record it. `stop_before` leaves the database half built.
-async fn seed_pre_ledger_schema(db: &DatabaseConnection, stop_before: Option<&str>) {
+/// Brings a database to the state before `stop_before` by applying and recording every earlier
+/// file, so a test can start the runner on a database one release behind.
+async fn seed_schema_before(db: &DatabaseConnection, stop_before: Option<&str>) {
+    let (ledger_name, ledger_sql) = MIGRATIONS.first().expect("migrations exist");
+    bootstrap_migration_ledger(db, ledger_name, ledger_sql)
+        .await
+        .expect("the ledger is created");
+    record_migration_if_absent(db, ledger_name, &migration_checksum(ledger_sql))
+        .await
+        .expect("the ledger bootstrap is recorded");
     for (name, sql) in MIGRATIONS.iter().skip(1) {
         if stop_before.is_some_and(|limit| *name >= limit) {
             break;
@@ -100,6 +110,9 @@ async fn seed_pre_ledger_schema(db: &DatabaseConnection, stop_before: Option<&st
         if let Err(err) = db.execute_unprepared(sql).await {
             panic!("seeding {name} failed: {err}");
         }
+        record_migration_with_conn(db, name, &migration_checksum(sql))
+            .await
+            .expect("the seeded file is recorded");
     }
 }
 
@@ -124,20 +137,11 @@ fn status_of<'a>(ledger: &'a HashMap<String, String>, name: &str) -> &'a str {
     ledger.get(name).map_or("<absent>", String::as_str)
 }
 
-/// Every object the ledger claims is present has to be there.
-async fn assert_schema_complete(db: &DatabaseConnection) {
-    for (name, _) in MIGRATIONS {
-        let present = migration_is_present(db, name).await.expect("probe runs");
-        let probe_exists = super::migration_probe(name).is_some_and(|probe| probe.statement().is_some());
-        assert!(!probe_exists || present, "{name} left no trace in the database");
-    }
-}
-
 #[tokio::test]
 async fn a_fresh_database_applies_every_migration() {
     let scratch = scratch_or_skip!("fresh");
 
-    run_migrations_with(&scratch.db, MigrationOptions::default())
+    run_migrations(&scratch.db)
         .await
         .expect("a fresh database migrates cleanly");
 
@@ -146,7 +150,6 @@ async fn a_fresh_database_applies_every_migration() {
     for (name, _) in MIGRATIONS {
         assert_eq!(status_of(&ledger, name), "applied", "{name} should have been executed");
     }
-    assert_schema_complete(&scratch.db).await;
 
     scratch.drop_self().await;
 }
@@ -155,7 +158,7 @@ async fn a_fresh_database_applies_every_migration() {
 #[tokio::test]
 async fn a_fresh_database_applies_the_files_in_name_order() {
     let scratch = scratch_or_skip!("order_fresh");
-    run_migrations_with(&scratch.db, MigrationOptions::default())
+    run_migrations(&scratch.db)
         .await
         .expect("a fresh database migrates cleanly");
     let applied = scalar_text(
@@ -176,9 +179,7 @@ async fn a_fresh_database_applies_the_files_in_name_order() {
 async fn a_file_that_sorts_before_applied_ones_is_applied_on_the_next_start() {
     let scratch = scratch_or_skip!("order_late_file");
     let db = &scratch.db;
-    run_migrations_with(db, MigrationOptions::default())
-        .await
-        .expect("a fresh database migrates cleanly");
+    run_migrations(db).await.expect("a fresh database migrates cleanly");
     let late = "0118_label_rules.sql";
     let newest = MIGRATIONS.last().map(|(name, _)| *name).expect("migrations exist");
     assert!(late < newest, "the late file sorts before the newest applied one");
@@ -196,9 +197,7 @@ async fn a_file_that_sorts_before_applied_ones_is_applied_on_the_next_start() {
     )
     .await;
 
-    run_migrations_with(db, MigrationOptions::default())
-        .await
-        .expect("the next start applies the late file");
+    run_migrations(db).await.expect("the next start applies the late file");
 
     let ledger = ledger(db).await;
     assert_eq!(status_of(&ledger, late), "applied", "the late file was executed");
@@ -227,431 +226,10 @@ async fn scalar_text(db: &DatabaseConnection, sql: &str) -> String {
         .expect("v is text")
 }
 
-async fn config_version_of(db: &DatabaseConnection, project: &str, bot: &str) -> String {
-    scalar_text(
-        db,
-        &format!(
-            "SELECT config_updated_at::text AS v FROM ai_participants \
-             WHERE project_id = '{project}' AND id = '{bot}'"
-        ),
-    )
-    .await
-}
-
-/// 0112 is after the adoption cutoff, so it re-runs on an adopted database, and 0092 (edited so
-/// that its trigger no longer names the dropped columns) re-runs after it on a replay start.
-/// Both must succeed any number of times and leave the same schema and the same versions.
-#[tokio::test]
-async fn bot_connections_migration_reruns_and_replaying_0092_after_it_succeeds() {
-    let scratch = scratch_or_skip!("bot_connections_replay");
-    let db = &scratch.db;
-    run_migrations_with(db, MigrationOptions::default())
-        .await
-        .expect("a fresh database migrates cleanly");
-
-    let dropped = scalar_text(
-        db,
-        "SELECT count(*)::text AS v FROM information_schema.columns \
-         WHERE table_schema = current_schema() AND table_name = 'ai_participants' \
-           AND column_name IN ('model', 'provider', 'api_endpoint', 'capabilities')",
-    )
-    .await;
-    assert_eq!(dropped, "0", "the four stored-only columns are gone");
-    let key = scalar_text(
-        db,
-        "SELECT string_agg(a.attname, ',' ORDER BY k.ord) AS v \
-         FROM pg_index i \
-         CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord) \
-         JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum \
-         WHERE i.indrelid = 'ai_participants'::regclass AND i.indisprimary",
-    )
-    .await;
-    assert_eq!(key, "project_id,id", "one registration per bot per project");
-    let learning_fk = scalar_text(
-        db,
-        "SELECT count(*)::text AS v FROM pg_constraint \
-         WHERE conrelid = 'ai_learning_records'::regclass AND contype = 'f' \
-           AND confrelid = 'ai_participants'::regclass",
-    )
-    .await;
-    assert_eq!(
-        learning_fk, "0",
-        "learning records keep no foreign key to the participant"
-    );
-
-    // A bot registered in two projects.
-    let user = "00000000-0000-0000-0000-0000000000a1";
-    let ws = "00000000-0000-0000-0000-0000000000b1";
-    let (p1, p2) = (
-        "00000000-0000-0000-0000-0000000000c1",
-        "00000000-0000-0000-0000-0000000000c2",
-    );
-    let bot = "bot-registered-twice";
-    let setup = format!(
-        "INSERT INTO users(id,email,password_hash,name,role,is_active) \
-           VALUES ('{user}','a1@example.test','','Owner','user',true); \
-         INSERT INTO workspaces(id,slug,name,created_by) VALUES ('{ws}','bc-ws','BC',  '{user}'); \
-         INSERT INTO projects(id,workspace_id,key,name,created_by) VALUES \
-           ('{p1}','{ws}','BCA','A','{user}'),('{p2}','{ws}','BCB','B','{user}'); \
-         INSERT INTO ai_participants(id,project_id,name,registered_by) VALUES \
-           ('{bot}','{p1}','Bot','{user}'),('{bot}','{p2}','Bot','{user}');"
-    );
-    db.execute_unprepared(&setup)
-        .await
-        .expect("the same bot id registers in two projects");
-
-    let before = config_version_of(db, p1, bot).await;
-    let heartbeat = format!("UPDATE ai_participants SET last_active_at = clock_timestamp() WHERE project_id = '{p1}'");
-    db.execute_unprepared(&heartbeat).await.expect("heartbeat");
-    assert_eq!(
-        config_version_of(db, p1, bot).await,
-        before,
-        "a heartbeat is not a configuration edit"
-    );
-    let rename = format!("UPDATE ai_participants SET name = 'Renamed' WHERE project_id = '{p1}'");
-    db.execute_unprepared(&rename).await.expect("rename");
-    let after = config_version_of(db, p1, bot).await;
-    assert_ne!(after, before, "a configuration edit advances the version");
-
-    for (name, sql) in [
-        (
-            "0112 again",
-            include_str!("../../../../migrations/0112_bot_connections.sql"),
-        ),
-        (
-            "0092 after 0112",
-            include_str!("../../../../migrations/0092_ai_participant_config_version.sql"),
-        ),
-        (
-            "0112 after 0092",
-            include_str!("../../../../migrations/0112_bot_connections.sql"),
-        ),
-    ] {
-        db.execute_unprepared(sql)
-            .await
-            .unwrap_or_else(|err| panic!("{name} must succeed: {err}"));
-        assert_eq!(
-            config_version_of(db, p1, bot).await,
-            after,
-            "{name} preserves versions and rows"
-        );
-    }
-    let trigger = scalar_text(
-        db,
-        "SELECT pg_get_triggerdef(oid) AS v FROM pg_trigger \
-         WHERE tgrelid = 'ai_participants'::regclass AND tgname = 'ai_participant_config_version'",
-    )
-    .await;
-    for column in ["model", "provider", "api_endpoint", "capabilities"] {
-        assert!(
-            !trigger.contains(column),
-            "the trigger must not name {column}: {trigger}"
-        );
-    }
-    for table in ["bot_runners", "project_bot_connections"] {
-        let present = scalar_text(db, &format!("SELECT (to_regclass('{table}') IS NOT NULL)::text AS v")).await;
-        assert_eq!(present, "true", "{table} exists");
-    }
-
-    scratch.drop_self().await;
-}
-
-async fn flow_forms_bridge_schema_snapshot(db: &DatabaseConnection) -> String {
-    db.query_one(Statement::from_string(
-        DbBackend::Postgres,
-        "SELECT jsonb_build_object( \
-             'columns', ( \
-               SELECT coalesce(jsonb_agg(jsonb_build_array(table_name, column_name, data_type, \
-                 is_nullable, column_default) ORDER BY table_name, ordinal_position), '[]'::jsonb) \
-               FROM information_schema.columns \
-               WHERE table_schema = current_schema() AND ( \
-                 table_name IN ('flow_bridge_references', 'flow_conversion_previews', \
-                   'flow_conversion_jobs', 'flow_object_lineage') OR \
-                 (table_name = 'workspace_bots' AND column_name = 'transport_surface') OR \
-                 (table_name = 'flow_workspace_settings' AND column_name = 'bridge_enabled') \
-               ) \
-             ), \
-             'constraints', ( \
-               SELECT coalesce(jsonb_agg(jsonb_build_array(rel.relname, con.conname, \
-                 pg_get_constraintdef(con.oid)) ORDER BY rel.relname, con.conname), '[]'::jsonb) \
-               FROM pg_constraint con JOIN pg_class rel ON rel.oid = con.conrelid \
-               JOIN pg_namespace ns ON ns.oid = rel.relnamespace \
-               WHERE ns.nspname = current_schema() AND rel.relname IN ( \
-                 'workspace_bots', 'flow_bridge_references', 'flow_conversion_previews', \
-                 'flow_conversion_jobs', 'flow_object_lineage') \
-             ), \
-             'indexes', ( \
-               SELECT coalesce(jsonb_agg(jsonb_build_array(tablename, indexname, indexdef) \
-                 ORDER BY tablename, indexname), '[]'::jsonb) \
-               FROM pg_indexes WHERE schemaname = current_schema() AND tablename IN ( \
-                 'flow_bridge_references', 'flow_conversion_previews', \
-                 'flow_conversion_jobs', 'flow_object_lineage') \
-             ), \
-             'view', pg_get_viewdef('flow_forms_bridge_schema_guard'::regclass, true), \
-             'rows', jsonb_build_array( \
-               (SELECT count(*) FROM flow_bridge_references), \
-               (SELECT count(*) FROM flow_conversion_previews), \
-               (SELECT count(*) FROM flow_conversion_jobs), \
-               (SELECT count(*) FROM flow_object_lineage) \
-             ) \
-           )::text AS snapshot"
-            .to_string(),
-    ))
-    .await
-    .expect("bridge schema snapshot query runs")
-    .expect("bridge schema snapshot query returns one row")
-    .try_get("", "snapshot")
-    .expect("bridge schema snapshot is text")
-}
-
-/// 0062 is after the adoption cutoff, so an existing database may execute it after some or
-/// all of its objects already exist. Execute the exact migration twice and compare the
-/// complete bridge schema plus row counts; syntax-only `IF NOT EXISTS` scans are insufficient.
-#[tokio::test]
-async fn flow_forms_bridge_migration_is_replay_safe() {
-    let scratch = scratch_or_skip!("flow_forms_bridge_replay");
-    seed_pre_ledger_schema(&scratch.db, Some("0062_flow_forms_bridge.sql")).await;
-
-    let migration = std::env::var("OPENPR_TEST_FLOW_BRIDGE_MIGRATION_PATH").map_or_else(
-        |_| include_str!("../../../../migrations/0062_flow_forms_bridge.sql").to_string(),
-        |path| std::fs::read_to_string(path).expect("test migration override is readable"),
-    );
-    scratch
-        .db
-        .execute_unprepared(&migration)
-        .await
-        .expect("0062 first execution succeeds");
-    let first = flow_forms_bridge_schema_snapshot(&scratch.db).await;
-
-    scratch
-        .db
-        .execute_unprepared(&migration)
-        .await
-        .expect("0062 second execution succeeds");
-    let second = flow_forms_bridge_schema_snapshot(&scratch.db).await;
-    assert_eq!(second, first, "0062 replay must preserve schema objects and row counts");
-
-    scratch.drop_self().await;
-}
-
-/// ADR-0018 NR-1..NR-4 is a data migration, not just a final CHECK constraint: it must create
-/// one addressable root aggregate, reparent compatible legacy rows, survive replay, and make
-/// the old NULL-parent page shape impossible afterward.
-#[tokio::test]
-async fn navigator_root_migration_materializes_reparents_and_replays() {
-    let scratch = scratch_or_skip!("navigator_root_replay");
-    seed_pre_ledger_schema(&scratch.db, Some("0059_flow_navigator_root.sql")).await;
-
-    scratch
-        .db
-        .execute_unprepared(
-            "INSERT INTO users (id, email, name, password_hash) VALUES \
-             ('10000000-0000-0000-0000-000000000001', 'nr-replay@example.test', 'NR Replay', 'x'); \
-             INSERT INTO workspaces (id, slug, name, created_by) VALUES \
-             ('20000000-0000-0000-0000-000000000001', 'nr-replay', 'NR Replay', \
-              '10000000-0000-0000-0000-000000000001'); \
-             INSERT INTO projects (id, workspace_id, key, name, created_by) VALUES \
-             ('25000000-0000-0000-0000-000000000001', \
-              '20000000-0000-0000-0000-000000000001', 'NRP', 'NR Project', \
-              '10000000-0000-0000-0000-000000000001'); \
-             INSERT INTO flow_objects (id, workspace_id, object_type, project_id, parent_id) VALUES \
-             ('30000000-0000-0000-0000-000000000001', \
-              '20000000-0000-0000-0000-000000000001', 'page', NULL, NULL), \
-             ('30000000-0000-0000-0000-000000000011', \
-              '20000000-0000-0000-0000-000000000001', 'page', \
-              '25000000-0000-0000-0000-000000000001', NULL), \
-             ('30000000-0000-0000-0000-000000000012', \
-              '20000000-0000-0000-0000-000000000001', 'navigator', \
-              '25000000-0000-0000-0000-000000000001', NULL); \
-             UPDATE flow_objects \
-                SET governance_metadata = '{\"legacy_key\":\"preserved\"}'::jsonb \
-              WHERE id = '30000000-0000-0000-0000-000000000012'; \
-             INSERT INTO collab_documents ( \
-               id, object_id, engine, format_version, snapshot, snapshot_frontier, snapshot_seq, \
-               head_frontier, head_seq, byte_count, update_count \
-             ) VALUES ( \
-               '35000000-0000-0000-0000-000000000012', \
-               '30000000-0000-0000-0000-000000000012', 'loro', 'loro-1', \
-               decode('00','hex'), decode('00','hex'), 0, decode('00','hex'), 0, 1, 0 \
-             ); \
-             INSERT INTO flow_object_projections ( \
-               object_id, document_seq, document_frontier, title, state, plain_text, projection_version \
-             ) VALUES ( \
-               '30000000-0000-0000-0000-000000000012', 0, decode('00','hex'), \
-               'Legacy navigator', '{\"nodes\":{}}'::jsonb, '', 1 \
-             );",
-        )
-        .await
-        .expect("legacy compatible root page fixture is valid before 0059");
-
-    let migration = include_str!("../../../../migrations/0059_flow_navigator_root.sql");
-    scratch
-        .db
-        .execute_unprepared(migration)
-        .await
-        .expect("0059 materializes the root and reparents the compatible page");
-
-    let first = scratch
-        .db
-        .query_one(Statement::from_string(
-            DbBackend::Postgres,
-            "SELECT root.id AS root_id, page.parent_id, \
-                    count(doc.id)::bigint AS document_count, \
-                    count(projection.object_id)::bigint AS projection_count \
-               FROM flow_objects root \
-               JOIN flow_objects page ON page.id = \
-                    '30000000-0000-0000-0000-000000000001'::uuid \
-               LEFT JOIN collab_documents doc ON doc.object_id = root.id \
-               LEFT JOIN flow_object_projections projection ON projection.object_id = root.id \
-              WHERE root.workspace_id = '20000000-0000-0000-0000-000000000001'::uuid \
-                AND root.object_type = 'navigator' AND root.project_id IS NULL \
-                AND root.parent_id IS NULL \
-              GROUP BY root.id, page.parent_id"
-                .to_string(),
-        ))
-        .await
-        .expect("root aggregate query runs")
-        .expect("root aggregate exists");
-    let root_id: uuid::Uuid = first.try_get("", "root_id").expect("root id");
-    let parent_id: uuid::Uuid = first.try_get("", "parent_id").expect("page parent id");
-    assert_eq!(parent_id, root_id, "legacy top-level page must be attached to the root");
-    assert_eq!(first.try_get::<i64>("", "document_count").expect("document count"), 1);
-    assert_eq!(
-        first.try_get::<i64>("", "projection_count").expect("projection count"),
-        1
-    );
-
-    let adopted = scratch
-        .db
-        .query_one(Statement::from_string(
-            DbBackend::Postgres,
-            "SELECT page.parent_id, page.project_id, root.governance_metadata, \
-                    count(doc.id)::bigint AS document_count, \
-                    count(projection.object_id)::bigint AS projection_count \
-               FROM flow_objects root \
-               JOIN flow_objects page ON page.id = \
-                    '30000000-0000-0000-0000-000000000011'::uuid \
-               LEFT JOIN collab_documents doc ON doc.object_id = root.id \
-               LEFT JOIN flow_object_projections projection ON projection.object_id = root.id \
-              WHERE root.id = '30000000-0000-0000-0000-000000000012'::uuid \
-              GROUP BY page.parent_id, page.project_id, root.governance_metadata"
-                .to_string(),
-        ))
-        .await
-        .expect("adopted project root query runs")
-        .expect("adopted project root remains");
-    assert_eq!(
-        adopted
-            .try_get::<uuid::Uuid>("", "parent_id")
-            .expect("project page parent"),
-        uuid::Uuid::parse_str("30000000-0000-0000-0000-000000000012").expect("literal uuid"),
-        "projected legacy page must attach to its own scope root"
-    );
-    assert_eq!(
-        adopted.try_get::<uuid::Uuid>("", "project_id").expect("project scope"),
-        uuid::Uuid::parse_str("25000000-0000-0000-0000-000000000001").expect("literal uuid"),
-        "reparenting must not rewrite project scope"
-    );
-    let metadata: serde_json::Value = adopted.try_get("", "governance_metadata").expect("metadata");
-    assert_eq!(metadata["system_role"], "workspace_navigator_root");
-    assert_eq!(
-        metadata["legacy_key"], "preserved",
-        "adoption must preserve unrelated metadata"
-    );
-    assert_eq!(adopted.try_get::<i64>("", "document_count").expect("document count"), 1);
-    assert_eq!(
-        adopted
-            .try_get::<i64>("", "projection_count")
-            .expect("projection count"),
-        1,
-        "adoption must preserve, not duplicate, the projection"
-    );
-
-    scratch
-        .db
-        .execute_unprepared(migration)
-        .await
-        .expect("0059 is replay-safe");
-    let replayed = scratch
-        .db
-        .query_one(Statement::from_string(
-            DbBackend::Postgres,
-            "SELECT count(*)::bigint AS roots, \
-                    min(id::text) FILTER (WHERE project_id IS NULL) AS root_id \
-               FROM flow_objects \
-              WHERE workspace_id = '20000000-0000-0000-0000-000000000001'::uuid \
-                AND object_type = 'navigator' AND parent_id IS NULL"
-                .to_string(),
-        ))
-        .await
-        .expect("replay census runs")
-        .expect("replay census row");
-    assert_eq!(replayed.try_get::<i64>("", "roots").expect("root count"), 2);
-    assert_eq!(
-        replayed.try_get::<String>("", "root_id").expect("root id"),
-        root_id.to_string()
-    );
-
-    scratch
-        .db
-        .execute_unprepared(
-            "INSERT INTO workspaces (id, slug, name, created_by) VALUES \
-             ('20000000-0000-0000-0000-000000000005', 'nr-future', 'NR Future', \
-              '10000000-0000-0000-0000-000000000001')",
-        )
-        .await
-        .expect("a workspace created after 0059 commits with its root aggregate");
-    let future = scratch
-        .db
-        .query_one(Statement::from_string(
-            DbBackend::Postgres,
-            "SELECT count(*)::bigint AS roots, count(doc.id)::bigint AS documents, \
-                    count(projection.object_id)::bigint AS projections \
-               FROM flow_objects root \
-               LEFT JOIN collab_documents doc ON doc.object_id = root.id \
-               LEFT JOIN flow_object_projections projection ON projection.object_id = root.id \
-              WHERE root.workspace_id = '20000000-0000-0000-0000-000000000005'::uuid \
-                AND root.object_type = 'navigator' AND root.project_id IS NULL \
-                AND root.parent_id IS NULL"
-                .to_string(),
-        ))
-        .await
-        .expect("future root query runs")
-        .expect("future root census row");
-    assert_eq!(future.try_get::<i64>("", "roots").expect("future roots"), 1);
-    assert_eq!(future.try_get::<i64>("", "documents").expect("future documents"), 1);
-    assert_eq!(future.try_get::<i64>("", "projections").expect("future projections"), 1);
-
-    let violations = scratch
-        .db
-        .query_one(Statement::from_string(
-            DbBackend::Postgres,
-            "SELECT count(*)::bigint AS n FROM flow_object_navigator_root_violations".to_string(),
-        ))
-        .await
-        .expect("root invariant monitor query runs")
-        .expect("root invariant monitor row");
-    assert_eq!(violations.try_get::<i64>("", "n").expect("violation count"), 0);
-
-    let mutation = scratch
-        .db
-        .execute_unprepared(
-            "INSERT INTO flow_objects (workspace_id, object_type, project_id, parent_id) VALUES \
-             ('20000000-0000-0000-0000-000000000001', 'page', NULL, NULL)",
-        )
-        .await;
-    assert!(
-        mutation.is_err(),
-        "NR-4 mutation survived: removing flow_objects_non_navigator_parent_check must make this assertion red"
-    );
-
-    scratch.drop_self().await;
-}
-
 #[tokio::test]
 async fn navigator_root_migration_fails_closed_on_duplicate_roots() {
     let scratch = scratch_or_skip!("navigator_root_duplicate");
-    seed_pre_ledger_schema(&scratch.db, Some("0059_flow_navigator_root.sql")).await;
+    seed_schema_before(&scratch.db, Some("0059_flow_navigator_root.sql")).await;
     scratch
         .db
         .execute_unprepared(
@@ -691,7 +269,7 @@ async fn navigator_root_migration_fails_closed_on_duplicate_roots() {
 #[tokio::test]
 async fn navigator_root_migration_materializes_project_scope_without_rewriting_it() {
     let scratch = scratch_or_skip!("navigator_root_scope");
-    seed_pre_ledger_schema(&scratch.db, Some("0059_flow_navigator_root.sql")).await;
+    seed_schema_before(&scratch.db, Some("0059_flow_navigator_root.sql")).await;
     scratch
         .db
         .execute_unprepared(
@@ -770,7 +348,7 @@ async fn flow_v04_data_layer_lands() {
 
     let scratch = scratch_or_skip!("flow_v04");
 
-    run_migrations_with(&scratch.db, MigrationOptions::default())
+    run_migrations(&scratch.db)
         .await
         .expect("a fresh database migrates cleanly");
 
@@ -792,145 +370,8 @@ async fn flow_v04_data_layer_lands() {
     scratch.drop_self().await;
 }
 
-/// A database built by the pre-ledger runner keeps its schema: the early files, which are not
-/// idempotent, must be recognised rather than replayed.
-#[tokio::test]
-async fn an_existing_database_is_adopted_rather_than_replayed() {
-    let scratch = scratch_or_skip!("existing");
-    seed_pre_ledger_schema(&scratch.db, None).await;
-
-    run_migrations_with(&scratch.db, MigrationOptions::default())
-        .await
-        .expect("an existing database migrates cleanly");
-
-    let ledger = ledger(&scratch.db).await;
-    assert_eq!(status_of(&ledger, "0001_init.sql"), "adopted");
-    assert_eq!(status_of(&ledger, "0005_webhooks.sql"), "adopted");
-    assert_eq!(status_of(&ledger, "0022_bot_tokens.sql"), "adopted");
-    assert_eq!(status_of(&ledger, "0038_form_permissions.sql"), "adopted");
-    // Past the frozen cutoff nothing is ever adopted; both files are idempotent and re-run.
-    assert_eq!(
-        status_of(&ledger, "0048_delivery_lease_and_pickup_indexes.sql"),
-        "applied"
-    );
-    assert!(
-        !ledger.values().any(|status| status == "failed"),
-        "no migration may fail on an existing database"
-    );
-    assert_schema_complete(&scratch.db).await;
-
-    scratch.drop_self().await;
-}
-
-/// The regression that made the previous revision dangerous: a database whose early files
-/// succeeded and whose forms files never did. The blanket `to_regclass('public.users')`
-/// predicate claimed all of them, so the missing tables were never created again. Per file
-/// probes have to adopt what is there and execute what is not.
-#[tokio::test]
-async fn a_half_built_database_only_adopts_what_it_actually_has() {
-    let scratch = scratch_or_skip!("half_built");
-    seed_pre_ledger_schema(&scratch.db, Some("0030_universal_forms.sql")).await;
-
-    assert!(
-        !migration_is_present(&scratch.db, "0038_form_permissions.sql")
-            .await
-            .expect("probe runs"),
-        "the fixture must start without the forms tables"
-    );
-
-    run_migrations_with(&scratch.db, MigrationOptions::default())
-        .await
-        .expect("a half built database heals");
-
-    let ledger = ledger(&scratch.db).await;
-    assert_eq!(status_of(&ledger, "0001_init.sql"), "adopted");
-    assert_eq!(status_of(&ledger, "0029_scenario_templates.sql"), "applied");
-    assert_eq!(status_of(&ledger, "0030_universal_forms.sql"), "applied");
-    assert_eq!(status_of(&ledger, "0038_form_permissions.sql"), "applied");
-    assert!(
-        migration_is_present(&scratch.db, "0038_form_permissions.sql")
-            .await
-            .expect("probe runs"),
-        "the forms tables have to exist after the run"
-    );
-    assert_schema_complete(&scratch.db).await;
-
-    scratch.drop_self().await;
-}
-
-/// Adoption used to be a bare loop entered only while the ledger was empty, so an
-/// interruption left it half claimed and the next start executed the remaining early files
-/// against a database that already had them. Adoption is now re-derived per file.
-#[tokio::test]
-async fn an_interrupted_adoption_resumes_on_the_next_start() {
-    let scratch = scratch_or_skip!("interrupted");
-    seed_pre_ledger_schema(&scratch.db, None).await;
-
-    run_migrations_with(&scratch.db, MigrationOptions::default())
-        .await
-        .expect("first run adopts the database");
-
-    // Same shape as an adoption killed after 0004: a ledger with a handful of rows in it.
-    scratch
-        .db
-        .execute_unprepared("DELETE FROM schema_migrations WHERE name > '0004'")
-        .await
-        .expect("the ledger is writable");
-
-    run_migrations_with(&scratch.db, MigrationOptions::default())
-        .await
-        .expect("the interrupted adoption resumes instead of replaying");
-
-    let ledger = ledger(&scratch.db).await;
-    assert_eq!(
-        status_of(&ledger, "0005_webhooks.sql"),
-        "adopted",
-        "0005 creates webhooks without IF NOT EXISTS; executing it here would fail"
-    );
-    assert_eq!(status_of(&ledger, "0022_bot_tokens.sql"), "adopted");
-    assert!(!ledger.values().any(|status| status == "failed"));
-
-    scratch.drop_self().await;
-}
-
-/// The escape hatch used to be a trap: one replay recorded the non idempotent files as
-/// `failed`, and an ordinary start retries `failed` rows, so the API could never start again
-/// without the switch. A replay may now report failures but must never downgrade a recorded
-/// success, and the ordinary start afterwards has to work.
-#[tokio::test]
-async fn a_replay_never_leaves_the_database_unable_to_start() {
-    let scratch = scratch_or_skip!("replay");
-    seed_pre_ledger_schema(&scratch.db, None).await;
-    run_migrations_with(&scratch.db, MigrationOptions::default())
-        .await
-        .expect("first run adopts the database");
-
-    run_migrations_with(
-        &scratch.db,
-        MigrationOptions {
-            replay: true,
-            continue_on_error: false,
-        },
-    )
-    .await
-    .expect("a replay reports failures without aborting");
-
-    let after_replay = ledger(&scratch.db).await;
-    assert!(
-        !after_replay.values().any(|status| status == "failed"),
-        "a replay must not downgrade a recorded success to failed"
-    );
-
-    run_migrations_with(&scratch.db, MigrationOptions::default())
-        .await
-        .expect("an ordinary start after a replay still works");
-    assert_schema_complete(&scratch.db).await;
-
-    scratch.drop_self().await;
-}
-
-/// A genuine failure aborts the start, is recorded with its error, and is retried once the
-/// cause is gone.
+/// A failing migration stops the start without leaving a ledger row, and the next start retries
+/// it once the cause is gone.
 #[tokio::test]
 async fn a_failing_migration_aborts_the_start_and_is_retried_later() {
     let scratch = scratch_or_skip!("failing");
@@ -942,7 +383,7 @@ async fn a_failing_migration_aborts_the_start_and_is_retried_later() {
         .await
         .expect("the blocker table is created");
 
-    let err = run_migrations_with(&scratch.db, MigrationOptions::default())
+    let err = run_migrations(&scratch.db)
         .await
         .expect_err("a failing migration must abort the start");
     assert!(
@@ -951,7 +392,7 @@ async fn a_failing_migration_aborts_the_start_and_is_retried_later() {
     );
 
     let after_failure = ledger(&scratch.db).await;
-    assert_eq!(status_of(&after_failure, "0005_webhooks.sql"), "failed");
+    assert_eq!(status_of(&after_failure, "0005_webhooks.sql"), "<absent>");
     assert_eq!(status_of(&after_failure, "0004_sprints.sql"), "applied");
 
     scratch
@@ -959,82 +400,107 @@ async fn a_failing_migration_aborts_the_start_and_is_retried_later() {
         .execute_unprepared("DROP TABLE webhooks")
         .await
         .expect("the blocker table is dropped");
-    run_migrations_with(&scratch.db, MigrationOptions::default())
+    run_migrations(&scratch.db)
         .await
         .expect("the retry succeeds once the cause is gone");
     let after_retry = ledger(&scratch.db).await;
     assert_eq!(status_of(&after_retry, "0005_webhooks.sql"), "applied");
-    assert_schema_complete(&scratch.db).await;
+    assert_eq!(after_retry.len(), MIGRATIONS.len());
 
     scratch.drop_self().await;
 }
 
-/// The degradation channel an operator needs: start with the failure recorded and visible,
-/// rather than being locked out of a database that cannot be inspected.
+/// A `failed` row written by an older runner is retried: the file runs and the row is replaced.
 #[tokio::test]
-async fn continue_on_error_starts_despite_a_failed_migration() {
-    let scratch = scratch_or_skip!("continue_on_error");
+async fn a_failed_ledger_row_is_retried() {
+    let scratch = scratch_or_skip!("failed_row");
+    run_migrations(&scratch.db).await.expect("first start");
+    // Make 0118 absent and leave a failed row for it, as the old runner did.
     scratch
         .db
-        .execute_unprepared("CREATE TABLE webhooks (blocker integer)")
+        .execute_unprepared(
+            "DROP INDEX labels_workspace_lower_name_key; \
+             ALTER TABLE labels DROP CONSTRAINT labels_color_hex; \
+             UPDATE schema_migrations SET status = 'failed', error = 'boom' WHERE name = '0118_label_rules.sql';",
+        )
         .await
-        .expect("the blocker table is created");
+        .expect("the file is made absent");
 
-    run_migrations_with(
-        &scratch.db,
-        MigrationOptions {
-            replay: false,
-            continue_on_error: true,
-        },
-    )
-    .await
-    .expect("the degraded start comes up");
+    run_migrations(&scratch.db).await.expect("the failed file is retried");
 
     let ledger = ledger(&scratch.db).await;
-    assert_eq!(status_of(&ledger, "0005_webhooks.sql"), "failed");
-    assert_eq!(
-        status_of(&ledger, "0030_universal_forms.sql"),
-        "applied",
-        "the run continues past the failure instead of stopping"
-    );
-
+    assert_eq!(status_of(&ledger, "0118_label_rules.sql"), "applied");
+    let index = scalar_text(
+        &scratch.db,
+        "SELECT (to_regclass('labels_workspace_lower_name_key') IS NOT NULL)::text AS v",
+    )
+    .await;
+    assert_eq!(index, "true", "its effect is back");
     scratch.drop_self().await;
 }
 
-/// A ledger row is a claim, not proof. When the object it claims is gone the start has to
-/// stop and name it, because the previous revision started up healthy with the forms tables
-/// missing and answered 500 for every forms request instead.
+/// A second start on a fully migrated database executes nothing and changes no ledger row.
 #[tokio::test]
-async fn a_ledger_claim_without_the_object_stops_the_start() {
-    let scratch = scratch_or_skip!("gap");
-    run_migrations_with(&scratch.db, MigrationOptions::default())
-        .await
-        .expect("a fresh database migrates cleanly");
+async fn a_second_start_is_a_no_op() {
+    let scratch = scratch_or_skip!("second_start");
+    run_migrations(&scratch.db).await.expect("first start");
+    let before = scalar_text(
+        &scratch.db,
+        "SELECT string_agg(name || checksum || applied_at::text, ',' ORDER BY name) AS v FROM schema_migrations",
+    )
+    .await;
+    run_migrations(&scratch.db).await.expect("second start");
+    let after = scalar_text(
+        &scratch.db,
+        "SELECT string_agg(name || checksum || applied_at::text, ',' ORDER BY name) AS v FROM schema_migrations",
+    )
+    .await;
+    assert_eq!(after, before, "the ledger is untouched by the second start");
+    scratch.drop_self().await;
+}
 
+/// A recorded file whose content no longer matches the ledger stops the start.
+#[tokio::test]
+async fn a_changed_recorded_migration_stops_the_start() {
+    let scratch = scratch_or_skip!("checksum_mismatch");
+    run_migrations(&scratch.db).await.expect("first start");
     scratch
         .db
-        .execute_unprepared("DROP TABLE form_permissions CASCADE")
+        .execute_unprepared("UPDATE schema_migrations SET checksum = 'edited' WHERE name = '0005_webhooks.sql'")
         .await
-        .expect("the forms table is dropped");
-
-    let err = run_migrations_with(&scratch.db, MigrationOptions::default())
+        .expect("the ledger is writable");
+    let err = run_migrations(&scratch.db)
         .await
-        .expect_err("a missing object must stop the start");
+        .expect_err("a checksum mismatch must stop the start");
     assert!(
-        err.to_string().contains("0038_form_permissions.sql"),
-        "the error has to name the migration, got: {err}"
+        err.to_string()
+            .contains("0005_webhooks.sql changed after it was applied"),
+        "got: {err}"
     );
+    scratch.drop_self().await;
+}
 
-    run_migrations_with(
-        &scratch.db,
-        MigrationOptions {
-            replay: false,
-            continue_on_error: true,
-        },
-    )
-    .await
-    .expect("the operator can still start to inspect the database");
-
+/// A ledger row without a shipped file stops the start.
+#[tokio::test]
+async fn a_recorded_migration_that_is_not_shipped_stops_the_start() {
+    let scratch = scratch_or_skip!("recorded_not_shipped");
+    run_migrations(&scratch.db).await.expect("first start");
+    scratch
+        .db
+        .execute_unprepared(
+            "INSERT INTO schema_migrations (name, checksum, status, applied_at) \
+             VALUES ('9999_not_shipped.sql', 'x', 'applied', now())",
+        )
+        .await
+        .expect("the ledger is writable");
+    let err = run_migrations(&scratch.db)
+        .await
+        .expect_err("an unshipped record must stop the start");
+    assert!(
+        err.to_string()
+            .contains("9999_not_shipped.sql is recorded but not shipped"),
+        "got: {err}"
+    );
     scratch.drop_self().await;
 }
 
@@ -1046,17 +512,13 @@ async fn two_runners_starting_together_both_succeed() {
     let scratch = scratch_or_skip!("concurrent");
     let second = scratch.second_connection().await.expect("a second connection opens");
 
-    let (first_result, second_result) = tokio::join!(
-        run_migrations_with(&scratch.db, MigrationOptions::default()),
-        run_migrations_with(&second, MigrationOptions::default()),
-    );
+    let (first_result, second_result) = tokio::join!(run_migrations(&scratch.db), run_migrations(&second),);
     first_result.expect("the first runner succeeds");
     second_result.expect("the second runner succeeds");
 
     let ledger = ledger(&scratch.db).await;
     assert_eq!(ledger.len(), MIGRATIONS.len());
     assert!(!ledger.values().any(|status| status == "failed"));
-    assert_schema_complete(&scratch.db).await;
 
     drop(second);
     scratch.drop_self().await;
@@ -1080,16 +542,13 @@ async fn a_database_outside_the_public_schema_migrates() {
         .expect("the search_path is set");
 
     let relocated = scratch.second_connection().await.expect("a fresh connection opens");
-    run_migrations_with(&relocated, MigrationOptions::default())
+    run_migrations(&relocated)
         .await
         .expect("a non public schema migrates cleanly");
-    assert_schema_complete(&relocated).await;
 
     drop(relocated);
     scratch.drop_self().await;
 }
-
-const CAPABILITY_DEFAULT_MIGRATION: &str = "0106_flow_capabilities_default_on.sql";
 
 /// Every operator-controlled column of the capability singleton, `updated_at` excluded so a
 /// no-op re-run compares equal.
@@ -1186,7 +645,7 @@ async fn register_running_readers(db: &DatabaseConnection) {
 #[tokio::test]
 async fn a_fresh_database_migrates_with_flow_capabilities_on() {
     let scratch = scratch_or_skip!("flow_caps_fresh");
-    run_migrations_with(&scratch.db, MigrationOptions::default())
+    run_migrations(&scratch.db)
         .await
         .expect("a fresh database migrates cleanly");
 
@@ -1223,148 +682,6 @@ async fn a_fresh_database_migrates_with_flow_capabilities_on() {
     assert!(caps.personal_provisioning && caps.personal_writes && caps.external_mounts);
     assert!(caps.block_transfers_supported, "block transfers are advertised");
     assert!(caps.portable_page_packages_supported && caps.portable_graph_packages_supported);
-
-    scratch.drop_self().await;
-}
-
-/// An operator who turns personal Flow off keeps it off: neither a replay nor a re-run of
-/// 0106 after its ledger row is gone may switch a capability back on.
-#[tokio::test]
-async fn an_operator_disable_survives_a_migration_rerun() {
-    let scratch = scratch_or_skip!("flow_caps_operator_off");
-    run_migrations_with(&scratch.db, MigrationOptions::default())
-        .await
-        .expect("a fresh database migrates cleanly");
-    scratch
-        .db
-        .execute_unprepared(
-            "UPDATE flow_runtime_capabilities SET external_mounts=false, personal_writes=false, \
-             personal_provisioning=false, personal_forms_conversion=false, block_transfers_enabled=false, \
-             portable_page_packages_enabled=false, portable_graph_packages_enabled=false WHERE singleton",
-        )
-        .await
-        .expect("the documented operator switch-off satisfies the CHECK constraints");
-    let disabled = flow_capability_row(&scratch.db).await;
-
-    run_migrations_with(
-        &scratch.db,
-        MigrationOptions {
-            replay: true,
-            continue_on_error: false,
-        },
-    )
-    .await
-    .expect("a replay runs");
-    assert_eq!(
-        flow_capability_row(&scratch.db).await,
-        disabled,
-        "a replay keeps the operator's choice"
-    );
-
-    scratch
-        .db
-        .execute(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            "DELETE FROM schema_migrations WHERE name=$1",
-            vec![CAPABILITY_DEFAULT_MIGRATION.into()],
-        ))
-        .await
-        .expect("the ledger row is removed");
-    run_migrations_with(&scratch.db, MigrationOptions::default())
-        .await
-        .expect("an ordinary start re-executes 0106");
-    assert_eq!(
-        status_of(&ledger(&scratch.db).await, CAPABILITY_DEFAULT_MIGRATION),
-        "applied",
-        "0106 was executed again"
-    );
-    assert_eq!(
-        flow_capability_row(&scratch.db).await,
-        disabled,
-        "a re-execution keeps the operator's choice"
-    );
-
-    register_running_readers(&scratch.db).await;
-    let refused = ordinary_user_creates_a_personal_page(&scratch.db)
-        .await
-        .expect_err("personal Flow is off");
-    assert!(
-        format!("{refused:?}").contains("personal_creation_disabled"),
-        "the switch-off is enforced: {refused:?}"
-    );
-
-    scratch.drop_self().await;
-}
-
-/// An existing database that predates 0106 is switched on once, keeps everything an operator
-/// turned on (including capabilities that stay off by default) and never sees its reader floor
-/// lowered; executing the file again changes nothing.
-#[tokio::test]
-async fn the_flow_capability_default_migration_is_idempotent_and_never_lowers() {
-    let scratch = scratch_or_skip!("flow_caps_idempotent");
-    seed_pre_ledger_schema(&scratch.db, Some(CAPABILITY_DEFAULT_MIGRATION)).await;
-    let before = flow_capability_row(&scratch.db).await;
-    for column in DEFAULT_ON {
-        assert!(!capability_flag(&before, column), "{column} starts off before 0106");
-    }
-    scratch
-        .db
-        .execute_unprepared(
-            "UPDATE flow_runtime_capabilities SET minimum_reader_version=6, personal_package_imports=false, \
-             scope_native_legacy=false WHERE singleton",
-        )
-        .await
-        .expect("the operator settings are applied");
-
-    let sql = MIGRATIONS
-        .iter()
-        .find(|(name, _)| *name == CAPABILITY_DEFAULT_MIGRATION)
-        .map(|(_, sql)| *sql)
-        .expect("0106 is registered");
-    scratch
-        .db
-        .execute_unprepared(sql)
-        .await
-        .expect("0106 first execution succeeds");
-    let first = flow_capability_row(&scratch.db).await;
-    for column in DEFAULT_ON {
-        assert!(capability_flag(&first, column), "{column} is switched on: {first}");
-    }
-    assert!(
-        !capability_flag(&first, "personal_package_imports"),
-        "operator choice kept"
-    );
-    assert!(!capability_flag(&first, "scope_native_legacy"), "operator choice kept");
-    assert!(capability_flag(&first, "personal_scope_package_exports"));
-    assert!(capability_flag(&first, "cross_workspace_forms_conversion"));
-    assert_eq!(reader_floor(&first), 6, "the reader floor is never lowered");
-
-    scratch
-        .db
-        .execute_unprepared(sql)
-        .await
-        .expect("0106 second execution succeeds");
-    assert_eq!(
-        flow_capability_row(&scratch.db).await,
-        first,
-        "a second execution is a no-op"
-    );
-
-    run_migrations_with(&scratch.db, MigrationOptions::default())
-        .await
-        .expect("the runner adopts the database and re-executes the post-cutoff files");
-    // The runner also executes 0115 for the first time, which switches the four capabilities
-    // 0106 leaves alone on once; nothing else changes and the reader floor stays.
-    let mut expected = first.clone();
-    for column in DEFAULT_ON_SINCE_0115 {
-        expected[column] = serde_json::Value::Bool(true);
-    }
-    assert_eq!(
-        flow_capability_row(&scratch.db).await,
-        expected,
-        "the runner's execution only adds the 0115 switch-on"
-    );
-    assert_schema_complete(&scratch.db).await;
 
     scratch.drop_self().await;
 }
@@ -1411,7 +728,7 @@ async fn insert_user(db: &DatabaseConnection) -> uuid::Uuid {
 #[tokio::test]
 async fn a_new_workspace_gets_a_flow_settings_row_with_flow_on() {
     let scratch = scratch_or_skip!("flow_ws_default");
-    run_migrations_with(&scratch.db, MigrationOptions::default())
+    run_migrations(&scratch.db)
         .await
         .expect("a fresh database migrates cleanly");
     let user = insert_user(&scratch.db).await;
@@ -1437,7 +754,7 @@ async fn a_new_workspace_gets_a_flow_settings_row_with_flow_on() {
 #[tokio::test]
 async fn the_flow_default_on_migration_upgrades_an_existing_database_once() {
     let scratch = scratch_or_skip!("flow_default_on_upgrade");
-    seed_pre_ledger_schema(&scratch.db, Some(FLOW_DEFAULT_ON_MIGRATION)).await;
+    seed_schema_before(&scratch.db, Some(FLOW_DEFAULT_ON_MIGRATION)).await;
     let user = insert_user(&scratch.db).await;
     let without_row = insert_workspace(&scratch.db, user).await;
     let switched_off = insert_workspace(&scratch.db, user).await;
@@ -1509,10 +826,9 @@ async fn the_flow_default_on_migration_upgrades_an_existing_database_once() {
         "a second execution keeps the operator's choice"
     );
     assert_eq!(flow_enabled_row(&scratch.db, switched_off).await, Some(false));
-    run_migrations_with(&scratch.db, MigrationOptions::default())
+    run_migrations(&scratch.db)
         .await
-        .expect("the runner adopts the database and re-executes the post-cutoff files");
-    assert_schema_complete(&scratch.db).await;
+        .expect("the runner applies the files that are still unrecorded");
     scratch.drop_self().await;
 }
 
@@ -1523,7 +839,7 @@ async fn the_flow_default_on_migration_upgrades_an_existing_database_once() {
 #[tokio::test]
 async fn sprint_rules_migration_fixes_data_and_reruns() {
     let scratch = scratch_or_skip!("sprint_rules_migration");
-    run_migrations_with(&scratch.db, MigrationOptions::default())
+    run_migrations(&scratch.db)
         .await
         .expect("a fresh database migrates cleanly");
     let db = &scratch.db;
@@ -1691,7 +1007,7 @@ async fn sprint_rules_migration_fixes_data_and_reruns() {
 #[tokio::test]
 async fn label_rules_migration_fixes_data_and_reruns() {
     let scratch = scratch_or_skip!("label_rules_migration");
-    run_migrations_with(&scratch.db, MigrationOptions::default())
+    run_migrations(&scratch.db)
         .await
         .expect("a fresh database migrates cleanly");
     let db = &scratch.db;
@@ -1811,7 +1127,7 @@ const REGISTRATION_PROGRESS_MIGRATION: &str = "0107_flow_block_registration_prog
 #[tokio::test]
 async fn the_registration_progress_migration_keeps_existing_checkpoints_complete() {
     let scratch = scratch_or_skip!("flow_registration_progress");
-    run_migrations_with(&scratch.db, MigrationOptions::default())
+    run_migrations(&scratch.db)
         .await
         .expect("a fresh database migrates cleanly");
     register_running_readers(&scratch.db).await;
@@ -1866,7 +1182,6 @@ async fn the_registration_progress_migration_keeps_existing_checkpoints_complete
             .is_err(),
         "a negative pending count is refused"
     );
-    assert_schema_complete(&scratch.db).await;
     scratch.drop_self().await;
 }
 
@@ -1875,7 +1190,7 @@ async fn the_registration_progress_migration_keeps_existing_checkpoints_complete
 #[tokio::test]
 async fn the_legacy_objects_migration_retires_what_it_names_and_reruns() {
     let scratch = scratch_or_skip!("legacy_objects_migration");
-    run_migrations_with(&scratch.db, MigrationOptions::default())
+    run_migrations(&scratch.db)
         .await
         .expect("a fresh database migrates cleanly");
     let db = &scratch.db;
@@ -1910,7 +1225,7 @@ async fn the_legacy_objects_migration_retires_what_it_names_and_reruns() {
 #[tokio::test]
 async fn the_legacy_objects_migration_keeps_only_package_imports() {
     let scratch = scratch_or_skip!("legacy_objects_imports");
-    run_migrations_with(&scratch.db, MigrationOptions::default())
+    run_migrations(&scratch.db)
         .await
         .expect("a fresh database migrates cleanly");
     let db = &scratch.db;
@@ -1990,15 +1305,13 @@ async fn the_legacy_objects_migration_keeps_only_package_imports() {
     scratch.drop_self().await;
 }
 
-/// The low-code migrations (0133-0143) apply on a fresh database, each re-runs as a no-op, and
-/// the runner's replay start succeeds after them. 0136 also rewrites a v1 form schema it finds.
+/// The low-code migrations (0133-0143) apply on a fresh database, each re-runs as a no-op.
+/// 0136 also rewrites a v1 form schema it finds.
 #[tokio::test]
 async fn low_code_migrations_apply_and_rerun() {
     let scratch = scratch_or_skip!("low_code_rerun");
     let db = scratch.connection();
-    run_migrations_with(db, MigrationOptions::default())
-        .await
-        .expect("a fresh database migrates cleanly");
+    run_migrations(db).await.expect("a fresh database migrates cleanly");
     let low_code: Vec<(&str, &str)> = MIGRATIONS
         .iter()
         .copied()
@@ -2077,21 +1390,6 @@ async fn low_code_migrations_apply_and_rerun() {
         serde_json::json!([{"rule": "min", "value": "2026-01-01T10:00:00Z"}])
     );
 
-    let replay = MigrationOptions {
-        replay: true,
-        continue_on_error: false,
-    };
-    run_migrations_with(db, replay)
-        .await
-        .expect("a replay start re-executes every file without failing");
-    let ledger = ledger(db).await;
-    for (name, _) in &low_code {
-        assert_eq!(
-            status_of(&ledger, name),
-            "applied",
-            "{name} stays applied after the replay"
-        );
-    }
     scratch.drop_self().await;
 }
 
@@ -2102,9 +1400,7 @@ async fn low_code_migrations_apply_and_rerun() {
 async fn record_title_cap_migration_cuts_on_characters_and_reruns() {
     let scratch = scratch_or_skip!("record_title_cap");
     let db = scratch.connection();
-    run_migrations_with(db, MigrationOptions::default())
-        .await
-        .expect("a fresh database migrates cleanly");
+    run_migrations(db).await.expect("a fresh database migrates cleanly");
     db.execute_unprepared(
         "INSERT INTO users (id, email, name, password_hash) VALUES \
          ('10000000-0000-0000-0000-000000000142', 'title-cap@example.test', 'Title Cap', 'x'); \
@@ -2153,9 +1449,7 @@ async fn record_title_cap_migration_cuts_on_characters_and_reruns() {
 async fn work_item_hint_trigger_fires_only_for_a_changed_row_and_reruns() {
     let scratch = scratch_or_skip!("work_item_hint_when");
     let db = scratch.connection();
-    run_migrations_with(db, MigrationOptions::default())
-        .await
-        .expect("a fresh database migrates cleanly");
+    run_migrations(db).await.expect("a fresh database migrates cleanly");
     let sql_0143 = MIGRATIONS
         .iter()
         .find(|(name, _)| name.starts_with("0143"))
