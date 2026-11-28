@@ -220,7 +220,6 @@ pub struct OpenPrConfig {
     pub audit: AuditConfig,
     pub api: ApiConfig,
     pub ai_tasks: AiTasksConfig,
-    pub migrations: MigrationsConfig,
     pub outbound: OutboundConfig,
     pub mcp: McpConfig,
     pub flow: FlowConfig,
@@ -675,15 +674,6 @@ pub struct S3Config {
     pub access_key_id: Secret,
     pub secret_access_key: Secret,
     pub session_token: Option<Secret>,
-}
-
-/// `[migrations]` — the two escape hatches of the migration runner.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct MigrationsConfig {
-    /// Re-execute every migration once, reporting failures without aborting.
-    pub replay: bool,
-    /// Start even though a migration failed or the schema check found a gap.
-    pub continue_on_error: bool,
 }
 
 /// `[outbound]` — what the delivery pipeline is allowed to call.

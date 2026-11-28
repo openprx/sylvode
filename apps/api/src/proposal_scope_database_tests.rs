@@ -1,5 +1,5 @@
 use crate::migrate::db_tests::{Scratch, scratch};
-use crate::migrate::{MigrationOptions, run_migrations_with};
+use crate::migrate::run_migrations;
 use api::routes::proposal::{ListProposalsQuery, get_proposal, governance_tick, list_proposals};
 use axum::extract::{Extension, Query, State};
 use axum::response::IntoResponse;
@@ -175,9 +175,7 @@ async fn decision_count(state: &AppState, proposal_id: &str) -> i64 {
 async fn a_member_of_one_workspace_cannot_read_another_workspace() {
     let scratch = scratch_or_skip!("proposal_scope");
     let state = state_for(&scratch);
-    run_migrations_with(&state.db, MigrationOptions::default())
-        .await
-        .expect("the scratch database migrates");
+    run_migrations(&state.db).await.expect("the scratch database migrates");
 
     let alpha = seed_tenant(&state, "alpha", "open").await;
     let beta = seed_tenant(&state, "beta", "open").await;
@@ -227,9 +225,7 @@ async fn a_member_of_one_workspace_cannot_read_another_workspace() {
 async fn reading_an_expired_proposal_does_not_settle_it_but_the_worker_tick_does() {
     let scratch = scratch_or_skip!("proposal_settlement");
     let state = state_for(&scratch);
-    run_migrations_with(&state.db, MigrationOptions::default())
-        .await
-        .expect("the scratch database migrates");
+    run_migrations(&state.db).await.expect("the scratch database migrates");
 
     // Voting started 48 hours ago on a `rapid` cycle, whose window is one hour.
     let tenant = seed_tenant(&state, "settle", "voting").await;

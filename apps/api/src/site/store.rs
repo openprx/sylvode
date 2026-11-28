@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use crate::error::ApiError;
 
-const SITE_COLUMNS: &str = "id, workspace_id, project_id, slug, title, settings, status, created_at";
+const SITE_COLUMNS: &str = "id, workspace_id, project_id, slug, title, settings, status, created_at, published_at";
 
 /// A `sites` row.
 #[derive(Debug, Clone, FromQueryResult)]
@@ -30,6 +30,7 @@ pub struct SiteRow {
     pub(crate) settings: Value,
     pub(crate) status: String,
     pub(crate) created_at: Timestamp,
+    pub(crate) published_at: Option<Timestamp>,
 }
 
 /// `Site` of contract C3 section 6.6.
@@ -42,10 +43,33 @@ pub struct SiteBody {
     settings: Value,
     status: String,
     created_at: Timestamp,
+    /// When the site last went from not published to published; kept when it is unpublished.
+    published_at: Option<Timestamp>,
+    /// Where the site is opened; `None` when nothing serves it (see [`super::link`]).
+    url: Option<String>,
+    /// How `url` was built: `separate` (the site's own origin) or `same_origin` (served by the API).
+    url_mode: Option<&'static str>,
+    /// The package installation that created the site's pages, if any.
+    installation: Option<SiteInstallation>,
 }
 
-impl From<&SiteRow> for SiteBody {
-    fn from(row: &SiteRow) -> Self {
+/// The installation a site was created for.
+#[derive(Debug, Clone, Serialize, FromQueryResult)]
+pub struct SiteInstallation {
+    pub id: Uuid,
+    pub package_key: String,
+}
+
+impl SiteBody {
+    pub(crate) fn new(
+        row: &SiteRow,
+        link: Option<super::link::SiteLink>,
+        installation: Option<SiteInstallation>,
+    ) -> Self {
+        let (url, url_mode) = match link {
+            Some(link) => (Some(link.url), Some(link.mode)),
+            None => (None, None),
+        };
         Self {
             id: row.id,
             project_id: row.project_id,
@@ -54,6 +78,10 @@ impl From<&SiteRow> for SiteBody {
             settings: row.settings.clone(),
             status: row.status.clone(),
             created_at: row.created_at,
+            published_at: row.published_at,
+            url,
+            url_mode,
+            installation,
         }
     }
 }
@@ -157,6 +185,74 @@ pub async fn insert_site(db: &impl ConnectionTrait, site: NewSite<'_>) -> Result
     .await?)
 }
 
+/// Renames a draft site; `None` when the site is not a draft any more (or gone); a taken slug is the
+/// `slug_taken` conflict.
+pub async fn update_slug(db: &impl ConnectionTrait, id: Uuid, slug: &str) -> Result<Option<SiteRow>, ApiError> {
+    SiteRow::find_by_statement(statement(
+        &format!("UPDATE sites SET slug = $2 WHERE id = $1 AND status = 'draft' RETURNING {SITE_COLUMNS}"),
+        vec![id.into(), slug.into()],
+    ))
+    .one(db)
+    .await
+    .map_err(|error| {
+        if error.to_string().contains("sites_slug_key") {
+            ApiError::conflict_coded("slug_taken", "this slug is taken", None)
+        } else {
+            ApiError::from(error)
+        }
+    })
+}
+
+/// The installation behind each of these sites: the one whose pages the site holds in the newest
+/// generation (a site holds pages of one installation, see `site_of_installation`).
+pub async fn installations_of_sites(
+    db: &impl ConnectionTrait,
+    site_ids: &[Uuid],
+) -> Result<std::collections::HashMap<Uuid, SiteInstallation>, ApiError> {
+    #[derive(FromQueryResult)]
+    struct Row {
+        site_id: Uuid,
+        id: Uuid,
+        package_key: String,
+    }
+    let rows = Row::find_by_statement(statement(
+        "SELECT DISTINCT ON (p.site_id) p.site_id, i.id, i.package_key \
+         FROM site_pages p JOIN installations i ON i.id = p.installation_id \
+         WHERE p.site_id = ANY($1) \
+         ORDER BY p.site_id, p.generation DESC NULLS LAST, p.id",
+        vec![site_ids.to_vec().into()],
+    ))
+    .all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            (
+                row.site_id,
+                SiteInstallation {
+                    id: row.id,
+                    package_key: row.package_key,
+                },
+            )
+        })
+        .collect())
+}
+
+/// The site that holds the pages of an installation's newest generation.
+pub async fn site_of_installation(db: &impl ConnectionTrait, installation_id: Uuid) -> Result<Option<Uuid>, ApiError> {
+    #[derive(FromQueryResult)]
+    struct Row {
+        site_id: Uuid,
+    }
+    Ok(Row::find_by_statement(statement(
+        "SELECT site_id FROM site_pages WHERE installation_id = $1 ORDER BY generation DESC NULLS LAST, id LIMIT 1",
+        vec![installation_id.into()],
+    ))
+    .one(db)
+    .await?
+    .map(|row| row.site_id))
+}
+
 pub async fn update_title(db: &impl ConnectionTrait, id: Uuid, title: &Value) -> Result<Option<SiteRow>, ApiError> {
     Ok(SiteRow::find_by_statement(statement(
         &format!("UPDATE sites SET title = $2 WHERE id = $1 RETURNING {SITE_COLUMNS}"),
@@ -168,7 +264,11 @@ pub async fn update_title(db: &impl ConnectionTrait, id: Uuid, title: &Value) ->
 
 pub async fn set_status(db: &impl ConnectionTrait, id: Uuid, status: &str) -> Result<Option<SiteRow>, ApiError> {
     Ok(SiteRow::find_by_statement(statement(
-        &format!("UPDATE sites SET status = $2 WHERE id = $1 RETURNING {SITE_COLUMNS}"),
+        &format!(
+            "UPDATE sites SET status = $2, \
+         published_at = CASE WHEN $2 = 'published' AND status <> 'published' THEN now() ELSE published_at END \
+         WHERE id = $1 RETURNING {SITE_COLUMNS}"
+        ),
         vec![id.into(), status.into()],
     ))
     .one(db)

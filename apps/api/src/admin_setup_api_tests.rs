@@ -145,9 +145,7 @@ async fn setup_status_is_true_only_until_the_first_registration() {
         return;
     };
     let db = scratch.connection().clone();
-    crate::migrate::run_migrations_with(&db, crate::migrate::MigrationOptions::default())
-        .await
-        .expect("migrations apply");
+    crate::migrate::run_migrations(&db).await.expect("migrations apply");
     let state = platform::app::AppState {
         cfg: platform::config::AppConfig {
             app_name: "api-test".to_string(),

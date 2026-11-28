@@ -37,8 +37,8 @@ use super::{
     DEFAULT_MAX_CHANGE_HINT_STREAMS, DEFAULT_OPERATION_LOG_RETENTION_DAYS, DEFAULT_S3_REGION, DEFAULT_STORAGE_DIR,
     DatabaseConfig, FlowConfig, IpCidr, LogFormat, LogOutput, LoggingConfig, MAX_CHANGE_HINT_STREAMS_CEILING,
     MAX_FLOW_BODY_ASSET_BYTES, MAX_FLOW_CONVERSION_REAP_INTERVAL_SECS, MAX_FLOW_SETUP_CPU_BUDGET_MS,
-    MIN_FLOW_SETUP_CPU_BUDGET_MS, MIN_JWT_SECRET_LEN, McpConfig, McpToolMode, McpTransport, MigrationsConfig,
-    OAuthConfig, OpenPrConfig, OutboundConfig, S3Config, ServerConfig, StorageBackend, StorageConfig,
+    MIN_FLOW_SETUP_CPU_BUDGET_MS, MIN_JWT_SECRET_LEN, McpConfig, McpToolMode, McpTransport, OAuthConfig, OpenPrConfig,
+    OutboundConfig, S3Config, ServerConfig, StorageBackend, StorageConfig,
 };
 
 const DEFAULT_MAX_CONNECTIONS: u32 = 20;
@@ -80,8 +80,6 @@ pub(super) struct RawConfig {
     api: RawApi,
     #[serde(default)]
     ai_tasks: RawAiTasks,
-    #[serde(default)]
-    migrations: RawMigrations,
     #[serde(default)]
     outbound: RawOutbound,
     #[serde(default)]
@@ -198,13 +196,6 @@ struct RawS3 {
 
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
-struct RawMigrations {
-    replay: Option<bool>,
-    continue_on_error: Option<bool>,
-}
-
-#[derive(Deserialize, Default)]
-#[serde(deny_unknown_fields)]
 struct RawOutbound {
     allowed_hosts: Option<Vec<String>>,
     allow_private: Option<bool>,
@@ -278,7 +269,6 @@ impl RawConfig {
         let audit = self.audit.validate(&mut issues);
         let api = self.api.validate(&mut issues);
         let ai_tasks = self.ai_tasks.validate(&mut issues);
-        let migrations = self.migrations.validate();
         let outbound = self.outbound.validate(&mut issues);
         let mcp = self.mcp.validate(&mut issues);
         let flow = self.flow.validate(&mut issues);
@@ -310,7 +300,6 @@ impl RawConfig {
             audit,
             api,
             ai_tasks,
-            migrations,
             outbound,
             mcp,
             flow,
@@ -876,15 +865,6 @@ fn required_secret(issues: &mut Issues, field: &str, value: Option<String>) -> O
             None
         }
         Some(raw) => Some(Secret::new(raw.trim())),
-    }
-}
-
-impl RawMigrations {
-    fn validate(self) -> MigrationsConfig {
-        MigrationsConfig {
-            replay: self.replay.unwrap_or(false),
-            continue_on_error: self.continue_on_error.unwrap_or(false),
-        }
     }
 }
 

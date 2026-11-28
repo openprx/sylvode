@@ -21,7 +21,7 @@
 )]
 
 use crate::migrate::db_tests::{Scratch, scratch};
-use crate::migrate::{MigrationOptions, run_migrations_with};
+use crate::migrate::run_migrations;
 use crate::router::{build_router, build_router_with};
 use api::oauth::delegated::{DELEGATED_ROUTES, OAuthConfigOverride, Required, Resolver, RouteEntry, lookup};
 use api::oauth::scopes::{Scope, ScopeSet};
@@ -194,9 +194,7 @@ impl World {
             return None;
         };
         let db = scratch.connection().clone();
-        run_migrations_with(&db, MigrationOptions::default())
-            .await
-            .expect("migrations apply");
+        run_migrations(&db).await.expect("migrations apply");
         let state = state_for(db.clone());
         let config = oauth_config();
         let router = build_router_with(state, Some(&config)).layer(axum::Extension(OAuthConfigOverride(config)));

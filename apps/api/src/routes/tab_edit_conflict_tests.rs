@@ -352,7 +352,8 @@ async fn form_update_writes_the_schema_once_and_emits_one_event_per_save() {
     let f = fixture().await;
     let db = &f.scratch.db;
     let path = format!("/forms/{}", f.form);
-    let schema = |label: &str| json!({"fields":[{"key":"text","label":label,"type":"text"}]});
+    let schema =
+        |label: &str| json!({"version":"sv.form.schema.v2","fields":[{"key":"text","label":label,"type":"text"}]});
     let (version0, history0, _) = form_state(db, f.form).await;
 
     // A name-only save changes no version and writes no history row, but emits one event.
@@ -364,13 +365,15 @@ async fn form_update_writes_the_schema_once_and_emits_one_event_per_save() {
     assert_eq!(events[0]["changed_fields"], json!(["name"]));
 
     // A schema-only save bumps once, writes one history row and emits one event.
-    let (status, _) = request(
+    let (status, body) = request(
         f.router.clone(),
         path.clone(),
         json!({"schema":schema("One"),"expected_schema_version":version0}),
     )
     .await;
-    assert_eq!(status, 200);
+    // Coded refusals answer HTTP 200 with the status in the body, so check the body too.
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["data"]["schema_version"], version0 + 1, "{body}");
     let (version, history, events) = form_state(db, f.form).await;
     assert_eq!((version, history, events.len()), (version0 + 1, history0 + 1, 2));
     assert_eq!(events[1]["changed_fields"], json!(["schema"]));

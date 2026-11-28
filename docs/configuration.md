@@ -35,7 +35,6 @@ The `api`, `worker` and `mcp-server` binaries, and the `sylvode` command line, r
 | `[storage]`, `[storage.s3]` | `api`, `worker` |
 | `[audit]` | `worker` |
 | `[ai_tasks]` | `api`, `worker` |
-| `[migrations]` | `api` |
 | `[outbound]` | `api`, `worker` |
 | `[mcp]` | `mcp-server`, `sylvode` |
 | `[flow]` | `api`, `worker` |
@@ -131,16 +130,6 @@ How long work handed to a bot may run. The task lifecycle is described in
 | `pool_idle_timeout_secs` | integer | `30` | 1 to 3600. An idle pooled connection is closed after this many seconds. |
 | `pool_max_idle_per_host` | integer | `4` | 1 to 64. Idle pooled connections kept per runner address. |
 | `tcp_keepalive_secs` | integer | `30` | 0 to 3600. TCP keepalive interval of pooled connections; 0 turns it off. |
-
-## `[migrations]`
-
-The `api` applies the database migrations at startup. Both switches default to `false`, which is
-the setting for normal operation; see [operations.md](operations.md#database-and-migrations).
-
-| Key | Type | Default | Accepted values and notes |
-|---|---|---|---|
-| `replay` | boolean | `false` | Re-execute every migration once, reporting failures without stopping. A ledger row that records a success is never downgraded. |
-| `continue_on_error` | boolean | `false` | Start even though a migration failed or the schema check found a gap. The failures are recorded and retried at the next start. |
 
 ## `[outbound]`
 
