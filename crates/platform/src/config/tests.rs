@@ -1015,6 +1015,24 @@ jwt_secret = "0123456789abcdef0123456789abcdef"
     assert_eq!(cfg.bind_addr, "0.0.0.0:8081");
 }
 
+#[test]
+fn rate_limit_scale_defaults_to_one_and_must_be_positive() {
+    let config = parse(&full_config()).expect("the complete example should validate");
+    assert_eq!(config.auth.rate_limit_scale, 1);
+
+    let with_scale =
+        |value: &str| full_config().replacen("[auth]\n", &format!("[auth]\nrate_limit_scale = {value}\n"), 1);
+    let scaled = parse(&with_scale("1000")).expect("a positive scale validates");
+    assert_eq!(scaled.auth.rate_limit_scale, 1000);
+    for bad in ["0", "-3"] {
+        let found = issues(&with_scale(bad));
+        assert!(
+            found.iter().any(|issue| issue.contains("auth.rate_limit_scale")),
+            "{bad}: {found:?}"
+        );
+    }
+}
+
 // ---- auth.allow_insecure_cookies (Secure attribute fail-closed gate) ----
 
 #[test]

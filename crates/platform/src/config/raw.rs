@@ -125,6 +125,7 @@ struct RawAuth {
     access_ttl_seconds: Option<i64>,
     refresh_ttl_seconds: Option<i64>,
     allow_insecure_cookies: Option<bool>,
+    rate_limit_scale: Option<i64>,
 }
 
 #[derive(Deserialize, Default)]
@@ -451,11 +452,30 @@ impl RawAuth {
             DEFAULT_REFRESH_TTL_SECONDS,
         );
 
+        let rate_limit_scale = rate_limit_scale(issues, self.rate_limit_scale);
+
         AuthConfig {
             jwt_secret,
             access_ttl_seconds,
             refresh_ttl_seconds,
             allow_insecure_cookies: self.allow_insecure_cookies.unwrap_or(false),
+            rate_limit_scale,
+        }
+    }
+}
+
+fn rate_limit_scale(issues: &mut Issues, value: Option<i64>) -> u32 {
+    let Some(scale) = value else {
+        return 1;
+    };
+    match u32::try_from(scale) {
+        Ok(valid) if valid >= 1 => valid,
+        _ => {
+            issues.push(format!(
+                "auth.rate_limit_scale must be an integer from 1 to {}, got {scale}",
+                u32::MAX
+            ));
+            1
         }
     }
 }

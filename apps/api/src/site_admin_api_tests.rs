@@ -105,7 +105,7 @@ async fn a_site_editor_and_a_bot_cannot_change_the_slug_and_rights_come_before_s
             created_by: api.alice,
             name: "site bot",
             permissions: vec!["read".to_string(), "write".to_string()],
-            transport_surface: "mcp_stdio".to_string(),
+            transport_surface: "rest".to_string(),
             expires_at: None,
         },
     )

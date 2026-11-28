@@ -15,7 +15,8 @@
       "jwt_secret",
       "access_ttl_seconds",
       "refresh_ttl_seconds",
-      "allow_insecure_cookies"
+      "allow_insecure_cookies",
+      "rate_limit_scale"
     ],
     "logging": ["filter", "format", "output"],
     "storage": ["backend", "dir", "s3"],

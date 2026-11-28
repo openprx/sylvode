@@ -74,6 +74,7 @@ Token signing and issuance.
 | `access_ttl_seconds` | integer | `1296000` (15 days) | Greater than 0. |
 | `refresh_ttl_seconds` | integer | `1728000` (20 days) | Greater than 0. |
 | `allow_insecure_cookies` | boolean | `false` | `true` drops the `Secure` attribute from the authentication cookies, for local development over plain `http://`. `api` and `worker` refuse to start with `true` unless `server.bind_addr` (or the binary's default when it is unset) is a loopback host: `127.0.0.1`, `::1` or `localhost`. |
+| `rate_limit_scale` | integer | `1` | At least 1. Multiplies every limit of the console authentication routes: sign-in per address, per account and address, the per-account failure cap and the known-pair daily ceiling, register, refresh and setup status. Leave it at `1` in production; raise it only for a test stack (the Web E2E stack uses `1000`) that signs in or registers many times from one address. The marker of a known sign-in pair is not a limit and is not scaled. |
 
 ## `[logging]`
 

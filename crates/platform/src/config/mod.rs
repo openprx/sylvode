@@ -395,6 +395,10 @@ pub struct AuthConfig {
     /// the machine, and a missing/non-loopback bind must fail closed rather than silently ship an
     /// insecure cookie to the network.
     pub allow_insecure_cookies: bool,
+    /// Multiplier applied to every limit of the console authentication routes (sign-in, register,
+    /// refresh, setup status). Validated to be at least 1 by the file loader; a value built by
+    /// `Default` is 0 and means 1 to the consumer.
+    pub rate_limit_scale: u32,
 }
 
 impl AuthConfig {

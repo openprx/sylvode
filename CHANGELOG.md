@@ -26,6 +26,9 @@ name.
 
 ### Added
 
+- **`[auth] rate_limit_scale`.** A positive integer (default `1`) that multiplies every limit of the
+  console authentication routes (sign-in, register, refresh, setup status). The Web E2E stack sets it
+  to `1000` so its many sign-ins from one address are not throttled; the limits stay on.
 - **Rate limits on the sign-in routes.** Per client address and minute: `POST /api/v1/auth/login` 30,
   `POST /api/v1/auth/register` 10, `POST /api/v1/auth/refresh` 60 and
   `GET /api/v1/auth/setup-status` 30; `login` is also limited to 10 attempts per account and address
