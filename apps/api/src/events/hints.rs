@@ -34,7 +34,13 @@
 //!   (a dropped hint, a lagging broadcast) is therefore told it must re-read: it learns this
 //!   within [`HintTuning::lag_timeout`] (30 s), when the stream sends `lagged` and ends. Per process: one
 //!   broadcast of [`BROADCAST_CAPACITY`] hints. Per bot: [`STREAMS_PER_BOT`] streams; per process:
-//!   `[api] max_change_hint_streams`.
+//!   `[api] max_change_hint_streams`. A stream's place is released when its task ends. A second,
+//!   larger cap ([`BODY_CAP_FACTOR`] times both) counts response bodies until they are dropped, so
+//!   a client that keeps the socket of an ended stream open cannot exceed it; both refuse with
+//!   `429` and `Retry-After`.
+//! * **One workspace cannot flood the broadcast.** Per workspace, at most [`WORKSPACE_BURST`]
+//!   issue or draft hints pass per window of one [`HintTuning::tick`]; the rest become one
+//!   overflow signal that ends that workspace's streams with `lagged` (clients re-read).
 //!
 //! Nothing here logs a token or a payload: log fields are ids, counts and fixed reason codes.
 
@@ -80,6 +86,13 @@ pub const TOKEN_CHANNEL: &str = "sv_bot_token_changed";
 
 /// Concurrent streams of one bot.
 pub const STREAMS_PER_BOT: usize = 64;
+/// How many times the stream limits an open response body may be held: a second, larger cap on
+/// bodies that are still open, counted until the body is dropped (see [`BodyPermit`]).
+pub const BODY_CAP_FACTOR: usize = 2;
+/// Hints of one workspace that pass the hub within one coalescing window (one
+/// [`HintTuning::tick`]). The rest of that window's hints are replaced by a single overflow
+/// signal, which ends that workspace's streams with `lagged` so their clients re-read.
+pub const WORKSPACE_BURST: usize = 32;
 /// Parsed notifications the shared channel holds for a slow stream before it is declared lagging.
 pub const BROADCAST_CAPACITY: usize = 4_096;
 /// `Retry-After` of a refusal because a limit of open streams is reached.
@@ -226,6 +239,9 @@ enum Signal {
     Hint(Hint),
     Access(Uuid),
     Token(Uuid),
+    /// More issue or draft hints than [`WORKSPACE_BURST`] came from this workspace within one
+    /// window: some were not forwarded, so its streams must re-read.
+    Overflow(Uuid),
     /// The listener (re)connected or a payload could not be understood: anything may be missed.
     Reset,
 }
@@ -278,6 +294,75 @@ struct Registry {
     bots: HashMap<Uuid, usize>,
 }
 
+impl Registry {
+    fn acquire(&mut self, bot_id: Uuid, per_bot: usize, per_process: usize) -> Result<(), LimitExceeded> {
+        if self.total >= per_process {
+            return Err(LimitExceeded::Process);
+        }
+        if self.bots.get(&bot_id).copied().unwrap_or(0) >= per_bot {
+            return Err(LimitExceeded::Bot);
+        }
+        self.total += 1;
+        *self.bots.entry(bot_id).or_insert(0) += 1;
+        Ok(())
+    }
+
+    /// Gives a place back. `true` when it was the bot's last one.
+    fn release(&mut self, bot_id: Uuid) -> bool {
+        self.total = self.total.saturating_sub(1);
+        let last = self.bots.get_mut(&bot_id).is_some_and(|count| {
+            *count = count.saturating_sub(1);
+            *count == 0
+        });
+        if last {
+            self.bots.remove(&bot_id);
+        }
+        last
+    }
+}
+
+/// The coalescing windows of the workspaces that sent issue or draft hints recently.
+#[derive(Default)]
+struct Windows(HashMap<Uuid, Window>);
+
+impl Windows {
+    /// Counts one hint of `workspace`. `None`: forward it. `Some((first, started))`: it is held
+    /// back; `first` is true for the first held-back hint of the window, which `started`.
+    fn admit(&mut self, workspace: Uuid, now: Instant, window: Duration) -> Option<(bool, Instant)> {
+        if self.0.len() > 1_024 {
+            self.0
+                .retain(|_, w| now.duration_since(w.started) < window || w.overflowed);
+        }
+        let entry = self.0.entry(workspace).or_insert(Window {
+            started: now,
+            passed: 0,
+            overflowed: false,
+        });
+        if now.duration_since(entry.started) >= window && !entry.overflowed {
+            *entry = Window {
+                started: now,
+                passed: 0,
+                overflowed: false,
+            };
+        }
+        if entry.passed < WORKSPACE_BURST {
+            entry.passed += 1;
+            return None;
+        }
+        let first = !entry.overflowed;
+        entry.overflowed = true;
+        Some((first, entry.started))
+    }
+}
+
+/// One workspace's hints in the current coalescing window.
+struct Window {
+    started: Instant,
+    passed: usize,
+    /// Hints were held back and an overflow signal is due at the end of the window.
+    overflowed: bool,
+}
+
 /// Which limit refused a stream.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LimitExceeded {
@@ -294,19 +379,24 @@ pub struct Permit {
 
 impl Drop for Permit {
     fn drop(&mut self) {
-        let mut registry = self.hub.registry.lock();
-        registry.total = registry.total.saturating_sub(1);
-        let last = registry.bots.get_mut(&self.bot_id).is_some_and(|count| {
-            *count = count.saturating_sub(1);
-            *count == 0
-        });
-        if last {
-            registry.bots.remove(&self.bot_id);
-        }
-        drop(registry);
+        let last = self.hub.registry.lock().release(self.bot_id);
         if last {
             self.hub.shared.lock().remove(&self.bot_id);
         }
+    }
+}
+
+/// One open response body's place in the body limits. Released when the body is dropped, that is
+/// when the client's connection lets go of it, not when the stream's task ends: a stream that has
+/// ended but whose client keeps the socket open still counts.
+pub struct BodyPermit {
+    hub: Arc<HintHub>,
+    bot_id: Uuid,
+}
+
+impl Drop for BodyPermit {
+    fn drop(&mut self) {
+        self.hub.bodies.lock().release(self.bot_id);
     }
 }
 
@@ -315,6 +405,10 @@ pub struct HintHub {
     limits: HintLimits,
     tuning: HintTuning,
     registry: Mutex<Registry>,
+    /// Response bodies that are still open; capped at [`BODY_CAP_FACTOR`] times the stream limits.
+    bodies: Mutex<Registry>,
+    /// Per-workspace coalescing windows of issue and draft hints.
+    windows: Mutex<Windows>,
     /// Lookups shared by the open streams of one bot; an entry lives while the bot has a stream.
     shared: Mutex<HashMap<Uuid, Arc<BotShared>>>,
     signals: broadcast::Sender<Signal>,
@@ -344,6 +438,8 @@ impl HintHub {
             limits,
             tuning,
             registry: Mutex::new(Registry::default()),
+            bodies: Mutex::new(Registry::default()),
+            windows: Mutex::new(Windows::default()),
             shared: Mutex::new(HashMap::new()),
             signals: broadcast::channel(BROADCAST_CAPACITY).0,
             shutdown: watch::channel(false).0,
@@ -361,20 +457,33 @@ impl HintHub {
 
     /// Takes a place for a stream of `bot_id`, or names the limit that is reached.
     pub fn try_acquire(self: &Arc<Self>, bot_id: Uuid) -> Result<Permit, LimitExceeded> {
-        let mut registry = self.registry.lock();
-        if registry.total >= self.limits.per_process {
-            return Err(LimitExceeded::Process);
-        }
-        if registry.bots.get(&bot_id).copied().unwrap_or(0) >= self.limits.per_bot {
-            return Err(LimitExceeded::Bot);
-        }
-        registry.total += 1;
-        *registry.bots.entry(bot_id).or_insert(0) += 1;
-        drop(registry);
+        self.registry
+            .lock()
+            .acquire(bot_id, self.limits.per_bot, self.limits.per_process)?;
         Ok(Permit {
             hub: Arc::clone(self),
             bot_id,
         })
+    }
+
+    /// Takes a place for an open response body of `bot_id`, or names the limit that is reached.
+    /// The caps are [`BODY_CAP_FACTOR`] times the stream caps, so a refusal here means the bot (or
+    /// the process) holds many more sockets open than it has live streams.
+    pub fn try_acquire_body(self: &Arc<Self>, bot_id: Uuid) -> Result<BodyPermit, LimitExceeded> {
+        self.bodies.lock().acquire(
+            bot_id,
+            self.limits.per_bot.saturating_mul(BODY_CAP_FACTOR),
+            self.limits.per_process.saturating_mul(BODY_CAP_FACTOR),
+        )?;
+        Ok(BodyPermit {
+            hub: Arc::clone(self),
+            bot_id,
+        })
+    }
+
+    /// Response bodies currently open in this process.
+    pub fn open_bodies(&self) -> usize {
+        self.bodies.lock().total
     }
 
     /// Streams currently open in this process.
@@ -472,7 +581,7 @@ impl HintHub {
         match signal {
             Signal::Access(bot) | Signal::Token(bot) => self.invalidate(Some(bot)),
             Signal::Reset => self.invalidate(None),
-            Signal::Hint(_) => {}
+            Signal::Hint(_) | Signal::Overflow(_) => {}
         }
         // No receiver means no stream is open; there is nobody to wake.
         let _ = self.signals.send(signal);
@@ -545,9 +654,42 @@ impl HintHub {
         }
     }
 
-    fn dispatch(&self, channel: &str, payload: &str) {
+    /// Forwards a row hint, or holds it back when its workspace is over its burst for this window.
+    ///
+    /// Only issue and draft hints are counted: they are the ones a bulk write fans out per row.
+    /// The first [`WORKSPACE_BURST`] hints of a workspace in a window of one [`HintTuning::tick`]
+    /// pass at once; later ones are dropped and replaced by one [`Signal::Overflow`] sent when the
+    /// window ends. So a bulk write in one workspace puts at most `WORKSPACE_BURST + 1` entries
+    /// per window into the shared broadcast and cannot push other workspaces' hints out of it.
+    fn dispatch_hint(self: &Arc<Self>, hint: Hint) {
+        let workspace = match hint {
+            Hint::Issue { workspace, .. } | Hint::Draft { workspace, .. } => workspace,
+            Hint::Task { .. } | Hint::Tools { .. } => return self.signal(Signal::Hint(hint)),
+        };
+        let window = self.tuning.tick;
+        let now = Instant::now();
+        let first_overflow = self.windows.lock().admit(workspace, now, window);
+        match first_overflow {
+            None => self.signal(Signal::Hint(hint)),
+            // Later hints of an overflowing window are covered by the overflow signal.
+            Some((false, _)) => {}
+            Some((true, started)) => {
+                let hub = Arc::clone(self);
+                tokio::spawn(async move {
+                    tokio::time::sleep_until(started + window).await;
+                    hub.windows.lock().0.remove(&workspace);
+                    hub.signal(Signal::Overflow(workspace));
+                });
+            }
+        }
+    }
+
+    fn dispatch(self: &Arc<Self>, channel: &str, payload: &str) {
         let signal = match channel {
-            HINT_CHANNEL => parse_hint(payload).map(Signal::Hint),
+            HINT_CHANNEL => match parse_hint(payload) {
+                Some(hint) => return self.dispatch_hint(hint),
+                None => None,
+            },
             ACCESS_CHANNEL => parse_bot(payload).map(Signal::Access),
             TOKEN_CHANNEL => parse_bot(payload).map(Signal::Token),
             _ => return,
@@ -832,6 +974,7 @@ impl HintStream {
             Err(broadcast::error::RecvError::Lagged(_)) | Ok(Signal::Reset) => Err(End::Lagged),
             Err(broadcast::error::RecvError::Closed) => Err(End::Shutdown),
             Ok(Signal::Hint(hint)) => self.deliver(hint).await,
+            Ok(Signal::Overflow(workspace)) if workspace == self.workspace_id => Err(End::Lagged),
             Ok(Signal::Access(bot)) if bot == self.bot_id => {
                 // A permission change is an access change too: check the token (read) first.
                 self.verify_token().await?;
@@ -839,7 +982,7 @@ impl HintStream {
                 self.send(frame("access_changed", &serde_json::json!({})))
             }
             Ok(Signal::Token(bot)) if bot == self.bot_id => self.verify_token().await,
-            Ok(Signal::Access(_) | Signal::Token(_)) => Ok(()),
+            Ok(Signal::Overflow(_) | Signal::Access(_) | Signal::Token(_)) => Ok(()),
         }
     }
 
@@ -944,15 +1087,22 @@ fn project_to_check(hint: Hint, workspace_id: Uuid) -> Option<Uuid> {
     }
 }
 
-/// The response body: queued frames in order, then the closing frame. It owns no place in the
-/// limits: the stream's task does.
-fn body(rx: mpsc::Receiver<Bytes>, close: watch::Receiver<Option<Bytes>>) -> Body {
+/// The response body: queued frames in order, then the closing frame. It owns a [`BodyPermit`]
+/// (not a place in the stream limits, which the stream's task holds), so the body counts against
+/// the body caps until it is dropped.
+fn body(rx: mpsc::Receiver<Bytes>, close: watch::Receiver<Option<Bytes>>, permit: BodyPermit) -> Body {
     struct State {
         rx: mpsc::Receiver<Bytes>,
         close: watch::Receiver<Option<Bytes>>,
         done: bool,
+        _permit: BodyPermit,
     }
-    let state = State { rx, close, done: false };
+    let state = State {
+        rx,
+        close,
+        done: false,
+        _permit: permit,
+    };
     Body::from_stream(futures_util::stream::unfold(state, |mut state| async move {
         if state.done {
             return None;
@@ -1013,6 +1163,17 @@ pub async fn change_hints(
             "the server is shutting down",
         ));
     }
+    // The body cap is checked first: it is the larger of the two, and a refusal here costs nothing.
+    let body_permit = match hub.try_acquire_body(bot.bot_id) {
+        Ok(permit) => permit,
+        Err(limit) => {
+            tracing::info!(bot_id = %bot.bot_id, limit = ?limit, "change hint stream refused: open bodies limit reached");
+            return Ok(limit_response(
+                StatusCode::TOO_MANY_REQUESTS,
+                "too many open change-hint streams",
+            ));
+        }
+    };
     let permit = match hub.try_acquire(bot.bot_id) {
         Ok(permit) => permit,
         Err(limit) => {
@@ -1077,7 +1238,7 @@ pub async fn change_hints(
         let _ = tokio::time::timeout(CLOSE_GRACE, close_tx.closed()).await;
     });
 
-    let mut response = Response::new(body(rx, close_rx));
+    let mut response = Response::new(body(rx, close_rx, body_permit));
     let headers = response.headers_mut();
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
