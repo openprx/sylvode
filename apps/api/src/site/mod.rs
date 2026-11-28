@@ -12,6 +12,7 @@ mod projection;
 pub mod public;
 mod records;
 mod session;
+pub mod static_assets;
 mod store;
 
 pub use store::SiteRow;

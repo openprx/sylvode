@@ -62,7 +62,7 @@ pub fn build_router(state: AppState) -> Router {
 pub fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform::config::OAuthConfig>>) -> Router {
     let auth_state = state.clone();
 
-    Router::new()
+    let router = Router::new()
         .route("/health", get(crate::health))
         .route("/ready", get(crate::ready))
         .merge(uploads::routes(&auth_state))
@@ -97,8 +97,12 @@ pub fn build_router_with(state: AppState, oauth: Option<&std::sync::Arc<platform
         .layer(CompressionLayer::new())
         // The public site API brings its own layer stack (contract C3 section 6.4): merged after
         // the global layers, so neither the permissive CORS nor the 200 MiB limit reaches it.
-        .merge(site::public_routes(&auth_state))
-        .with_state(state)
+        .merge(site::public_routes(&auth_state));
+    let router = match site::static_routes() {
+        Some(static_routes) => router.merge(static_routes),
+        None => router,
+    };
+    router.with_state(state)
 }
 
 #[cfg(test)]

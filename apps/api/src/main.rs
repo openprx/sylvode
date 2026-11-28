@@ -82,6 +82,12 @@ async fn main() -> anyhow::Result<()> {
             "site.cookie_insecure is on: site cookies lack Secure and operator login is allowed over plain HTTP"
         );
     }
+    match config.site.served_assets_dir() {
+        Some(dir) => tracing::info!(assets_dir = %dir.display(), "site assets are served at /site"),
+        None => {
+            tracing::info!("site assets are not served (site.same_origin_trial and site.assets_dir are both required)")
+        }
+    }
     let db = connect_db(&config.database_runtime()?).await?;
     migrate::run_migrations(&db, config.migrations).await?;
     migrate::verify_governance_schema(&db).await?;

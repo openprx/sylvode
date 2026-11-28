@@ -147,3 +147,11 @@ pub(super) fn public_routes(auth_state: &AppState) -> Router<AppState> {
         .route_layer(DefaultBodyLimit::max(site::http::MAX_BODY_BYTES))
         .route_layer(TraceLayer::new_for_http().make_span_with(api::routes::collab::trace_span))
 }
+
+/// The built site app under `/site`, `None` unless `site.same_origin_trial` and `site.assets_dir`
+/// are both set. Merged after the global layers (no CORS, no body limit). It registers no
+/// `.route(` call: the files are a nested service, not catalogue operations, so the boot coverage
+/// check has nothing to classify.
+pub(super) fn static_routes() -> Option<Router<AppState>> {
+    site::static_assets::service(&api::config::runtime().site)
+}
