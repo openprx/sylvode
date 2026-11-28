@@ -447,6 +447,61 @@ pub fn defaults(scope: NavScope, project_type: Option<&str>) -> NavDoc {
     }
 }
 
+impl NavDoc {
+    /// A copy of the document in which every built-in the defaults of this scope hold, and the
+    /// document lacks, is added at its default position: after the nearest preceding default
+    /// built-in the document has (in that entry's section), else before the nearest following one,
+    /// else at the head of the first section. A built-in the document does name (hidden or not) is
+    /// left alone, so a destination added to the defaults later reaches saved documents too.
+    #[must_use]
+    pub fn with_missing_builtins(&self, scope: NavScope, project_type: Option<&str>) -> Self {
+        let defaults: Vec<EntryDoc> = defaults(scope, project_type)
+            .sections
+            .into_iter()
+            .flat_map(|section| section.entries)
+            .filter(|entry| matches!(entry.target, Target::Builtin { .. }))
+            .collect();
+        let page_of = |entry: &EntryDoc| match &entry.target {
+            Target::Builtin { page } => Some(page.clone()),
+            _ => None,
+        };
+        let mut out = self.clone();
+        for (index, missing) in defaults.iter().enumerate() {
+            let Some(page) = page_of(missing) else { continue };
+            let find = |doc: &Self, wanted: &str| {
+                doc.sections.iter().enumerate().find_map(|(s, section)| {
+                    section
+                        .entries
+                        .iter()
+                        .position(|entry| page_of(entry).as_deref() == Some(wanted))
+                        .map(|e| (s, e))
+                })
+            };
+            if find(&out, &page).is_some() || out.entries().any(|(_, entry)| entry.id == missing.id) {
+                continue;
+            }
+            let after = defaults
+                .iter()
+                .take(index)
+                .rev()
+                .filter_map(page_of)
+                .find_map(|earlier| find(&out, &earlier).map(|(s, e)| (s, e + 1)));
+            let at = after.or_else(|| {
+                defaults
+                    .iter()
+                    .skip(index + 1)
+                    .filter_map(page_of)
+                    .find_map(|later| find(&out, &later))
+            });
+            let (s, e) = at.unwrap_or((0, 0));
+            if let Some(section) = out.sections.get_mut(s) {
+                section.entries.insert(e, missing.clone());
+            }
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::panic)]
 mod tests {
@@ -596,5 +651,48 @@ mod tests {
             json!({"kind": "external", "url": format!("https://x.test/{}", "a".repeat(70_000))})
         )]));
         assert_eq!(reason(&big), ("nav_invalid", "too_large"));
+    }
+
+    #[test]
+    fn a_saved_project_document_gets_the_built_ins_it_lacks_at_their_default_position() {
+        let saved = parse(
+            &json!({"schema": "sv.nav.v1", "scope": "project", "sections": [
+                {"id": "main", "entries": [
+                    {"id": "overview", "target": {"kind": "builtin", "page": "project.overview"}},
+                    {"id": "apps", "target": {"kind": "builtin", "page": "project.apps"}, "hidden": true},
+                    {"id": "settings", "target": {"kind": "builtin", "page": "project.settings"}},
+                ]},
+                {"id": "extra", "entries": [
+                    {"id": "docs", "target": {"kind": "external", "url": "https://example.com/docs"}},
+                ]},
+            ]}),
+            NavScope::Project,
+        )
+        .expect("valid document");
+        let merged = saved.with_missing_builtins(NavScope::Project, None);
+        let ids = |doc: &NavDoc| -> Vec<Vec<String>> {
+            doc.sections
+                .iter()
+                .map(|s| s.entries.iter().map(|e| e.id.clone()).collect())
+                .collect()
+        };
+        assert_eq!(
+            ids(&merged),
+            vec![
+                [
+                    "overview", "issues", "board", "cycles", "forms", "apps", "sites", "settings"
+                ]
+                .map(String::from)
+                .to_vec(),
+                vec!["docs".to_string()],
+            ]
+        );
+        // The hidden entry stays hidden, and a second pass changes nothing.
+        assert!(merged.sections[0].entries[5].hidden);
+        assert_eq!(merged.with_missing_builtins(NavScope::Project, None), merged);
+        // A project type without work items does not get them back.
+        let forms = saved.with_missing_builtins(NavScope::Project, Some("custom_form"));
+        assert!(!forms.entries().any(|(_, e)| e.id == "issues"));
+        assert!(forms.entries().any(|(_, e)| e.id == "sites"));
     }
 }

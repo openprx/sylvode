@@ -1,0 +1,49 @@
+import { apiClient, type ApiResult, type PaginatedData } from '#lib/api/client.js';
+import type { SettingsInput, Site, SiteBinding, SitePage, SiteRole, SiteText } from './wire';
+
+const enc = encodeURIComponent;
+
+export const sitesApi = {
+	list(projectId: string): Promise<ApiResult<PaginatedData<Site>>> {
+		return apiClient.get<PaginatedData<Site>>(
+			`/api/v1/projects/${enc(projectId)}/sites?per_page=200`
+		);
+	},
+	get(id: string): Promise<ApiResult<Site>> {
+		return apiClient.get<Site>(`/api/v1/sites/${enc(id)}`);
+	},
+	create(projectId: string, body: { slug: string; title: SiteText }): Promise<ApiResult<Site>> {
+		return apiClient.post<Site>(`/api/v1/projects/${enc(projectId)}/sites`, body);
+	},
+	/** Title, and the slug while the site is a draft (owner or admin only). */
+	update(id: string, body: { title?: SiteText; slug?: string }): Promise<ApiResult<Site>> {
+		return apiClient.patch<Site>(`/api/v1/sites/${enc(id)}`, body);
+	},
+	publish(id: string): Promise<ApiResult<Site>> {
+		return apiClient.post<Site>(`/api/v1/sites/${enc(id)}/publish`, {});
+	},
+	unpublish(id: string): Promise<ApiResult<Site>> {
+		return apiClient.post<Site>(`/api/v1/sites/${enc(id)}/unpublish`, {});
+	},
+	disable(id: string): Promise<ApiResult<Site>> {
+		return apiClient.post<Site>(`/api/v1/sites/${enc(id)}/disable`, {});
+	},
+	remove(id: string): Promise<ApiResult<{ id: string }>> {
+		return apiClient.delete<{ id: string }>(`/api/v1/sites/${enc(id)}`);
+	},
+	putSettings(id: string, settings: SettingsInput): Promise<ApiResult<Site>> {
+		return apiClient.put<Site>(`/api/v1/sites/${enc(id)}/settings`, settings);
+	},
+	pages(id: string): Promise<ApiResult<{ items: SitePage[] }>> {
+		return apiClient.get<{ items: SitePage[] }>(`/api/v1/sites/${enc(id)}/pages`);
+	},
+	bindings(id: string): Promise<ApiResult<{ items: SiteBinding[] }>> {
+		return apiClient.get<{ items: SiteBinding[] }>(`/api/v1/sites/${enc(id)}/bindings`);
+	},
+	roles(id: string): Promise<ApiResult<{ items: SiteRole[] }>> {
+		return apiClient.get<{ items: SiteRole[] }>(`/api/v1/sites/${enc(id)}/roles`);
+	},
+	putRole(id: string, userId: string, role: SiteRole['role']): Promise<ApiResult<SiteRole>> {
+		return apiClient.put<SiteRole>(`/api/v1/sites/${enc(id)}/roles/${enc(userId)}`, { role });
+	}
+};

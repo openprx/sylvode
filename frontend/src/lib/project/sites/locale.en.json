@@ -1,0 +1,130 @@
+{
+	"sites": {
+		"title": "Sites",
+		"thing": "sites",
+		"object": "site",
+		"cancel": "Cancel",
+		"retry": "Retry",
+		"backToList": "Back to sites",
+		"disabledTip": "This site is disabled. It answers \"not found\" to everyone, operators included. Publish it again to restore it.",
+		"status": {
+			"draft": "Draft",
+			"published": "Published",
+			"disabled": "Disabled"
+		},
+		"list": {
+			"new": "New site",
+			"browseTemplates": "Browse templates",
+			"empty": "No sites yet. A site shows chosen pages and forms to people outside the workspace.",
+			"never": "Never",
+			"notServed": "Not served by this server",
+			"manual": "Created here",
+			"package": "Package {key}",
+			"col": {
+				"title": "Title",
+				"status": "Status",
+				"address": "Address",
+				"source": "Source",
+				"published": "Last published"
+			}
+		},
+		"create": {
+			"title": "New site",
+			"kind": "How to start",
+			"blank": "Blank site",
+			"template": "From a template",
+			"titleEn": "Title",
+			"titleZh": "Title in Chinese (optional)",
+			"slug": "Address name",
+			"slugHelper": "2-40 lowercase letters, digits or hyphens. It is part of the site address.",
+			"submit": "Create site",
+			"templateNote": "Templates install from the Market and create a draft site in this project. Nothing is public until someone publishes it.",
+			"openMarket": "Open Market"
+		},
+		"actions": {
+			"publish": "Publish",
+			"unpublish": "Unpublish",
+			"open": "Open site",
+			"disable": "Disable site",
+			"delete": "Delete site"
+		},
+		"draftTip": {
+			"text": "Draft: only people with a site role who sign in on the site can see it.",
+			"grant": "Give me editor access",
+			"granted": "You are now an editor of this site."
+		},
+		"tabs": {
+			"label": "Site sections",
+			"settings": "Settings"
+		},
+		"publish": {
+			"title": "Publish {title}?",
+			"thing": "what becomes public",
+			"lead": "Once published, people outside the workspace can open the site. This becomes public:",
+			"visitorPages": "{count, plural, =0 {No pages for visitors} one {# page for visitors} other {# pages for visitors}}",
+			"binding": "Form binding {key}: visitors submit {submit} fields and read {read} fields",
+			"summaryFailed": "The list of what becomes public could not be loaded. You can still publish.",
+			"agents": "Agents cannot change a published site directly; their changes wait in Drafts.",
+			"confirm": "Publish site",
+			"done": "{title} is published.",
+			"warn": {
+				"no_visitor_page": "The site has no page for visitors, so visitors will see nothing.",
+				"no_home_page": "No visitor page is at \"/\", so the site's front door is empty.",
+				"missing_binding": "The page {route} uses the binding \"{key}\", which does not exist on this site.",
+				"no_url": "This server does not serve the site, so there is no address to open."
+			}
+		},
+		"unpublish": {
+			"title": "Unpublish {title}?",
+			"body": "Visitors get \"not found\". People with a site role can still sign in and preview.",
+			"confirm": "Unpublish site",
+			"done": "The site is unpublished."
+		},
+		"disable": {
+			"title": "Disable {title}?",
+			"body": "The site answers \"not found\" to everyone, operators included. Pages, bindings and records are kept; publish again to restore it.",
+			"confirm": "Disable site",
+			"done": "The site is disabled."
+		},
+		"delete": {
+			"title": "Delete {title}?",
+			"body": "Its pages, bindings, roles, visitor sessions and operator sessions are removed. Form records stay in their forms. This cannot be undone.",
+			"confirm": "Delete site",
+			"unpublishFirst": "Unpublish first",
+			"done": "The site is deleted."
+		},
+		"settings": {
+			"titleHeading": "Title",
+			"titleReadOnly": "Owners, admins and site editors change the title.",
+			"addressHeading": "Address",
+			"slugDraftOnly": "The address name changes only while the site is a draft.",
+			"slugAdminOnly": "Owners and admins change the address name.",
+			"siteAddress": "Site address",
+			"copy": "Copy",
+			"copied": "Address copied.",
+			"copyFailed": "The address could not be copied.",
+			"deployHeading": "Separate site origin",
+			"deployLead": "A site is normally deployed on its own origin, built for this one site.",
+			"sameOriginNote": "Trial mode: until a separate origin is set, this server serves the site on its own origin, shared by all sites. Use it to try a site, not to run one.",
+			"origin": "Separate site origin",
+			"originHelper": "One exact https origin, for example https://help.example.com. Leave empty to serve the site from this server (trial).",
+			"ancestors": "Frame ancestors",
+			"ancestorsHelper": "Origins that may embed the site in a frame. One https origin per line, at most 8.",
+			"adminOnly": "Owners and admins change the deployment settings.",
+			"save": "Save",
+			"saveSlug": "Rename",
+			"saved": "Saved."
+		},
+		"errors": {
+			"slug_invalid": "Use 2-40 lowercase letters, digits or hyphens.",
+			"slug_taken": "This address is taken.",
+			"title_invalid": "Enter a title of at most 200 characters.",
+			"site_not_draft": "The address name changes only while the site is a draft.",
+			"site_published": "Unpublish the site before deleting it.",
+			"allowed_origin_invalid": "Enter one exact https origin without a path, such as https://help.example.com.",
+			"frame_ancestors_invalid": "Enter at most 8 exact https origins, one per line.",
+			"update_empty": "Nothing to save.",
+			"user_not_member": "That person is not an active member of this workspace."
+		}
+	}
+}

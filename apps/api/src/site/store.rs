@@ -287,16 +287,25 @@ pub async fn update_settings(
 }
 
 /// Deletes a site (pages, bindings, roles, visitors and sessions cascade) and then the layouts
-/// stored at its scope, which nothing else can reference.
-pub async fn delete_site(db: &impl ConnectionTrait, id: Uuid) -> Result<(), ApiError> {
-    db.execute(statement("DELETE FROM sites WHERE id = $1", vec![id.into()]))
-        .await?;
+/// stored at its scope, which nothing else can reference. `false` (nothing deleted) when the site is
+/// published, so a publish that races the request is never deleted.
+pub async fn delete_site(db: &impl ConnectionTrait, id: Uuid) -> Result<bool, ApiError> {
+    let deleted = db
+        .execute(statement(
+            "DELETE FROM sites WHERE id = $1 AND status <> 'published'",
+            vec![id.into()],
+        ))
+        .await?
+        .rows_affected();
+    if deleted == 0 {
+        return Ok(false);
+    }
     db.execute(statement(
         "DELETE FROM layouts WHERE scope_kind = 'site' AND scope_id = $1",
         vec![id.into()],
     ))
     .await?;
-    Ok(())
+    Ok(true)
 }
 
 const PAGE_COLUMNS: &str =

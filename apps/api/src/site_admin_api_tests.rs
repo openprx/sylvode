@@ -5,8 +5,12 @@
 #![allow(clippy::indexing_slicing, clippy::too_many_lines, clippy::doc_markdown)]
 
 use super::item_api_tests::{Answer, Api};
-use axum::http::{Method, StatusCode};
+use api::services::bots::{self, NewBot};
+use axum::body::Body;
+use axum::http::{Method, Request, StatusCode, header};
+use sea_orm::TransactionTrait as _;
 use serde_json::{Value, json};
+use tower::ServiceExt as _;
 use uuid::Uuid;
 
 impl Api {
@@ -68,6 +72,67 @@ async fn a_draft_site_is_renamed_and_a_published_one_is_not() {
 
     let empty = api.patch_site(id, api.alice, json!({})).await;
     assert_eq!(empty.status, StatusCode::BAD_REQUEST, "{}", empty.body);
+    api.finish().await;
+}
+
+#[tokio::test]
+async fn a_site_editor_and_a_bot_cannot_change_the_slug_and_rights_come_before_shapes() {
+    let Some(api) = Api::new("site_slug_rights").await else {
+        return;
+    };
+    let id = api.new_site("help-rights").await;
+    let role = api
+        .put(
+            &format!("/api/v1/sites/{id}/roles/{}", api.bob),
+            api.alice,
+            json!({"role": "site_editor"}),
+        )
+        .await;
+    assert_eq!(role.code(), Some(0), "{}", role.body);
+
+    // The site editor still changes the title, but not the address.
+    let titled = api.patch_site(id, api.bob, json!({"title": "Editor title"})).await;
+    assert_eq!(titled.code(), Some(0), "{}", titled.body);
+    let editor = api.patch_site(id, api.bob, json!({"slug": "editor-name"})).await;
+    assert_eq!(editor.status, StatusCode::FORBIDDEN, "{}", editor.body);
+
+    // A bot with write access is refused the slug as well.
+    let tx = api.db.begin().await.expect("begin");
+    let bot = bots::create(
+        &tx,
+        NewBot {
+            workspace_id: api.ws,
+            created_by: api.alice,
+            name: "site bot",
+            permissions: vec!["read".to_string(), "write".to_string()],
+            transport_surface: "mcp_stdio".to_string(),
+            expires_at: None,
+        },
+    )
+    .await
+    .expect("bot");
+    tx.commit().await.expect("commit");
+    let request = Request::builder()
+        .method(Method::PATCH)
+        .uri(format!("/api/v1/sites/{id}"))
+        .header(header::AUTHORIZATION, format!("Bearer {}", bot.token))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({"slug": "bot-name"}).to_string()))
+        .expect("request");
+    let response = api.router.clone().oneshot(request).await.expect("answer");
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    // Rights before shapes: a caller who may not rename gets 403 even for a malformed slug or title.
+    let outsider = api.patch_site(id, api.carol, json!({"slug": "Bad Slug"})).await;
+    assert_ne!(outsider.status, StatusCode::BAD_REQUEST, "{}", outsider.body);
+    let plain = api.new_site("help-plain").await;
+    let member = api.patch_site(plain, api.bob, json!({"slug": "Bad Slug"})).await;
+    assert_eq!(member.status, StatusCode::FORBIDDEN, "{}", member.body);
+    let member_title = api.patch_site(plain, api.bob, json!({"title": ""})).await;
+    assert_eq!(member_title.status, StatusCode::FORBIDDEN, "{}", member_title.body);
+
+    let after = api.get(&format!("/api/v1/sites/{id}"), api.alice).await;
+    assert_eq!(after.data()["slug"], json!("help-rights"));
     api.finish().await;
 }
 

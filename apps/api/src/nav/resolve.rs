@@ -161,6 +161,8 @@ fn reorder(items: Vec<Item>, order: Option<&Vec<String>>) -> Vec<Item> {
 /// Resolves the navigation of one scope for one viewer.
 #[must_use]
 pub fn resolve(doc: &NavDoc, config_version: i32, customised: bool, input: &Inputs<'_>) -> Resolved {
+    // A saved document predates built-ins added to the defaults since; they appear at their default place.
+    let doc = &doc.with_missing_builtins(input.at.scope, input.project_type);
     let prefs = if input.viewer.is_bot { None } else { input.prefs };
     let hidden: BTreeSet<&str> = prefs
         .map(|p| p.hidden.iter().map(String::as_str).collect())
@@ -310,7 +312,18 @@ mod tests {
     }
 
     #[allow(clippy::needless_pass_by_value)]
-    fn doc_of(entries: Vec<serde_json::Value>) -> NavDoc {
+    fn doc_of(mut entries: Vec<serde_json::Value>) -> NavDoc {
+        // Built-ins a saved document lacks are added back at resolve time; these documents name every
+        // other built-in as hidden so each test sees only the entries it lists.
+        for page in doc::PROJECT_BUILTINS {
+            if !entries.iter().any(|e| e["target"]["page"] == *page) {
+                entries.push(entry(
+                    &format!("off_{}", page.replace('.', "_")),
+                    page,
+                    json!({"hidden": true}),
+                ));
+            }
+        }
         parse(
             &json!({"schema": "sv.nav.v1", "scope": "project", "sections": [{"id": "main", "entries": entries}]}),
             NavScope::Project,
