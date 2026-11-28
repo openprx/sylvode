@@ -22,7 +22,7 @@
     "storage": ["backend", "dir", "s3"],
     "storage.s3": ["endpoint", "bucket", "region", "access_key_id", "secret_access_key", "session_token"],
     "audit": ["operation_log_retention_days"],
-    "api": ["max_change_hint_streams"],
+    "api": ["max_change_hint_streams", "max_change_hint_streams_per_workspace"],
     "ai_tasks": [
       "processing_timeout_secs",
       "lease_extension_secs",
