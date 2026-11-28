@@ -60,7 +60,7 @@ async fn begin_write(
 ) -> Result<DatabaseTransaction, ApiError> {
     let tx = db.begin().await?;
     let scope = proofs.first().ok_or_else(ApiError::internal)?.scope_id;
-    if scope::legacy_workspace(&tx, scope).await?.is_none() {
+    if scope::bound_workspace(&tx, scope).await?.is_none() {
         scope::require_personal_write(&tx).await?;
     }
     scope::fence_many(&tx, proofs).await?;

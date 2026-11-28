@@ -10,7 +10,7 @@
   },
   "scope": {
     "id": "uuid",
-    "kind": "personal|legacy_managed",
+    "kind": "personal|workspace",
     "owner_user_id": "uuid|null",
     "lifecycle_status": "active|archived"
   },
@@ -19,7 +19,7 @@
     "project_id": "uuid|null"
   },
   "capabilities": {
-    "scope_native_legacy": "boolean",
+    "workspace_editor_initialization": "boolean",
     "personal_provisioning": "boolean",
     "personal_writes": "boolean",
     "external_mounts": "boolean"
@@ -70,7 +70,7 @@
   "routes": {
     "capabilities": "GET /api/v2/flow/capabilities",
     "home": "GET /api/v2/flow/home",
-    "legacy_scope": "GET /api/v2/flow/workspaces/{workspace_id}/scope",
+    "workspace_scope": "GET /api/v2/flow/workspaces/{workspace_id}/scope",
     "create": "POST /api/v2/flow/objects (scope_id + v1 create fields)",
     "list": "GET /api/v2/flow/scopes/{scope_id}/objects",
     "navigator": "GET /api/v2/flow/scopes/{scope_id}/navigator",

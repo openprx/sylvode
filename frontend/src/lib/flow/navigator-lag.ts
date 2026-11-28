@@ -2,7 +2,7 @@
 // `GET /workspaces/{workspace_id}/flow/projection-lag` -> lag badge; `rest-api-v1.md` v0.5:
 // `{max_lag,p95_lag,items,next_cursor?}`).
 //
-// Both scope-native and genuine legacy adapters compute aggregates before pagination.
+// Both scope-native and workspace adapters compute aggregates before pagination.
 // Personal scope reads fail explicitly if the published authorization scan budget is exceeded.
 // Refreshed every 30s while mounted. A rejected read hides the numbers rather than showing a
 // stale "synced": the badge must never claim a state it did not observe.

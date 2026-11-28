@@ -90,7 +90,7 @@ async fn accept_inner(
 
     if identity.workspace_id.is_some() && !editor_init && !record_typed && shared.is_none() {
         return Err(ApiError::invalid_update(
-            "legacy updates must use the compatibility application service",
+            "workspace updates must use the workspace application service",
         ));
     }
     if editor_init && identity.object_type != "page" {
@@ -213,7 +213,7 @@ async fn accept_inner(
         }
         if shared.is_some() {
             // Lifecycle commands lock the object before their durable share-suspension trigger.
-            // Keep the same object→document→share order, including workspace legacy archives.
+            // Keep the same object→document→share order, including workspace archives.
             let row = tx
                 .query_one(Statement::from_sql_and_values(
                     DbBackend::Postgres,
@@ -275,7 +275,7 @@ async fn accept_inner(
         };
         tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,r"INSERT INTO collab_updates(document_id,seq,update_id,content_hash,idempotency_key,before_frontier,after_frontier,bytes,actor_id,origin_surface,origin_client_id,projection_seq,event_id)
    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'web',$10,$2,$11)",vec![document.into(),seq.into(),update.into(),prepared.content_hash_hex.clone().into(),key.map(str::to_string).into(),prepared.observed.head_frontier.clone().into(),prepared.after_frontier.clone().into(),bytes.clone().into(),user.into(),client.into(),event.into()])).await?;
-        // The same bounded snapshot+tail model as legacy Flow. Accepted history remains available
+        // The same bounded snapshot+tail model as workspace Flow. Accepted history remains available
         // until the shared compactor's acknowledged retention boundary, never a private checkpoint.
         tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,"UPDATE collab_documents SET head_seq=$2,head_frontier=$3,byte_count=byte_count+$4,update_count=update_count+1,updated_at=now() WHERE id=$1",vec![document.into(),seq.into(),prepared.after_frontier.clone().into(),i64::try_from(bytes.len()).unwrap_or(i64::MAX).into()])).await?;
         tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,"UPDATE flow_object_projections SET document_seq=$2,document_frontier=$3,title=$4,state=$5,plain_text=$6,updated_at=now() WHERE object_id=$1",vec![object.into(),seq.into(),prepared.after_frontier.clone().into(),prepared.title.clone().into(),prepared.state_json.clone().into(),prepared.plain_text.clone().into()])).await?;

@@ -12,7 +12,7 @@ const capabilities = {
 	block_transfers_enabled: false,
 	portable_page_packages_enabled: false,
 	portable_graph_packages_enabled: false,
-	scope_native_legacy: false,
+	workspace_editor_initialization: false,
 	personal_provisioning: false,
 	personal_writes: false,
 	external_mounts: false,
@@ -42,7 +42,7 @@ function defaults() {
 	flowApi.getWorkspaceScope = async () => {
 		legacyReads++;
 		return ok({
-			scope: { id: 'legacy-scope', kind: 'legacy_managed', lifecycle_status: 'active' },
+			scope: { id: 'legacy-scope', kind: 'workspace', lifecycle_status: 'active' },
 			roots: []
 		});
 	};

@@ -274,7 +274,9 @@ pub async fn execute(
     let initial = scope::identity(&state.db, object).await?;
     scope::authorize(&state.db, object, user, PermissionLevel::FullAccess).await?;
     if initial.workspace_id.is_some() {
-        return Err(ApiError::invalid_update("legacy moves require their workspace adapter"));
+        return Err(ApiError::invalid_update(
+            "workspace moves require their workspace adapter",
+        ));
     }
     if let Some(result) = super::scope_commands::replay(&state.db, initial.scope_id, user, key, &body).await? {
         return Ok(result);

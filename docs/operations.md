@@ -230,7 +230,7 @@ authorised per user.
 | `portable_graph_packages_enabled` | on | Exporting and importing multi-object packages. |
 | `personal_package_imports` | on | Importing packages into a personal space. |
 | `personal_scope_package_exports` | on | Exporting a whole personal space as a package. |
-| `scope_native_legacy` | on | Scope-native editor initialisation of workspace Pages. |
+| `workspace_editor_initialization` | on | Scope-native editor initialisation of workspace Pages. |
 
 Capabilities are switched with SQL and take effect on the next request, without a restart. The
 table's constraints require `external_mounts` to be off before `personal_writes`, and

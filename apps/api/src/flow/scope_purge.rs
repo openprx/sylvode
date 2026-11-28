@@ -36,9 +36,9 @@ pub async fn purge(state: &AppState, object: Uuid, actor: Uuid, key: &str) -> Re
         return Ok(result);
     }
     let mut proof = scope::authorize(&state.db, object, actor, PermissionLevel::FullAccess).await?;
-    if scope::legacy_workspace(&state.db, scope_id).await?.is_some() {
+    if scope::bound_workspace(&state.db, scope_id).await?.is_some() {
         return Err(ApiError::invalid_update(
-            "legacy purge requires its integration adapter",
+            "workspace purge requires its integration adapter",
         ));
     }
     let nodes = tree(&state.db, scope_id, object).await?;

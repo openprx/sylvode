@@ -1,4 +1,4 @@
-//! Independent Flow event source. Legacy adapters retain Workspace source/replay namespaces.
+//! Independent Flow event source. Workspace adapters retain Workspace source/replay namespaces.
 #[derive(FromQueryResult)]
 struct ExistingScopeEvent {
     id: Uuid,
@@ -85,7 +85,7 @@ async fn insert_with_delivery<C: ConnectionTrait>(
     Ok(existing.id)
 }
 
-/// Integration adapter for shared application services. Existing legacy writes retain their
+/// Integration adapter for shared application services. Existing workspace writes retain their
 /// historical Workspace namespace; independent writes use the canonical Flow source namespace.
 #[allow(clippy::too_many_arguments)]
 pub async fn insert_for_object<C: ConnectionTrait>(
@@ -171,7 +171,7 @@ async fn insert_for_object_delivery<C: ConnectionTrait>(
                 || row.try_get::<Option<Uuid>>("", "actor_id")? != Some(user)
             {
                 return Err(ApiError::idempotency_key_body_drift(
-                    "legacy event operation identity changed",
+                    "workspace event operation identity changed",
                 ));
             }
         }
@@ -219,7 +219,7 @@ pub async fn insert_object_audit<C: ConnectionTrait>(
     .await
 }
 
-/// Accepted editor initialization shares the legacy or personal event namespace and ordering.
+/// Accepted editor initialization shares the workspace or personal event namespace and ordering.
 pub async fn insert_content_accepted<C: ConnectionTrait>(
     tx: &C,
     object: &super::scope::ObjectIdentity,

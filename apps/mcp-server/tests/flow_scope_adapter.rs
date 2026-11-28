@@ -113,7 +113,7 @@ async fn handler(
     } else if path == "/api/v2/flow/home" {
         json!({"scope":{"id":scope,"kind":"personal"},"roots":[],"capabilities":{}})
     } else if path == format!("/api/v2/flow/workspaces/{WORKSPACE}/scope") {
-        json!({"scope":{"id":SA,"kind":"legacy_managed"},"roots":[]})
+        json!({"scope":{"id":SA,"kind":"workspace"},"roots":[]})
     } else if path == "/api/v2/flow/objects" && method == Method::POST {
         json!({"object":{"id":OBJECT,"scope_id":body.get("scope_id"),"project_id":null,"object_type":body.get("object_type")}})
     } else if path.ends_with(&format!("/objects/{OBJECT}")) {
@@ -493,7 +493,7 @@ async fn existing_sylvode_binary_flow_call_reuses_the_mocked_mcp_path_without_wo
 }
 
 #[test]
-fn private_token_file_and_flow_config_do_not_weaken_legacy_workspace_validation() {
+fn private_token_file_and_flow_config_do_not_weaken_workspace_validation() {
     use std::io::Write as _;
     let directory = std::env::temp_dir().join(format!("sv-flow-mcp-contract-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir(&directory).expect("private fixture directory");

@@ -378,7 +378,7 @@ async fn legacy_restricted_parent_creation_is_fenced_and_leaves_no_residue() {
     ))
     .await
     .unwrap();
-    let scope = scope::legacy_scope(db, workspace).await.unwrap();
+    let scope = scope::workspace_scope(db, workspace).await.unwrap();
     let root = scope::roots(db, scope.id)
         .await
         .unwrap()
@@ -872,7 +872,7 @@ async fn legacy_artifacts_capture_policy_and_only_old_page_text_has_a_safe_excep
     ))
     .await
     .unwrap();
-    let scope = scope::legacy_scope(db, workspace).await.unwrap();
+    let scope = scope::workspace_scope(db, workspace).await.unwrap();
     let root = scope::roots(db, scope.id)
         .await
         .unwrap()
@@ -1649,7 +1649,7 @@ async fn legacy_v2_search_distinguishes_project_unprojected_and_all_visible() {
     ))
     .await
     .unwrap();
-    let scope = scope::legacy_scope(db, workspace).await.unwrap();
+    let scope = scope::workspace_scope(db, workspace).await.unwrap();
     let mut ids = Vec::new();
     for (partition, title) in [(None, "needle unprojected"), (Some(project), "needle project")] {
         let root = repo::ensure_navigator_root(db, workspace, partition).await.unwrap();
@@ -2452,12 +2452,12 @@ async fn new_legacy_page_is_editor_ready_while_existing_conversion_cutover_is_of
     ))
     .await
     .unwrap();
-    scope::legacy_scope(db, workspace).await.unwrap();
+    scope::workspace_scope(db, workspace).await.unwrap();
     assert!(
-        scope::capabilities(db).await.unwrap().scope_native_legacy,
-        "legacy editor initialization is on by default"
+        scope::capabilities(db).await.unwrap().workspace_editor_initialization,
+        "workspace editor initialization is on by default"
     );
-    db.execute_unprepared("UPDATE flow_runtime_capabilities SET scope_native_legacy=false WHERE singleton")
+    db.execute_unprepared("UPDATE flow_runtime_capabilities SET workspace_editor_initialization=false WHERE singleton")
         .await
         .unwrap();
     let state = test_state(db.clone());
@@ -2499,10 +2499,10 @@ async fn new_legacy_page_is_editor_ready_while_existing_conversion_cutover_is_of
     scratch.close().await;
 }
 
-/// The default state: `scope_native_legacy` is on, so a Page an agent created in a workspace with an
+/// The default state: `workspace_editor_initialization` is on, so a Page an agent created in a workspace with an
 /// older editor model can be upgraded to the rich editor, and the switch still closes the path.
 #[tokio::test]
-async fn workspace_page_upgrades_to_the_rich_editor_with_scope_native_legacy_on() {
+async fn workspace_page_upgrades_to_the_rich_editor_with_workspace_editor_initialization_on() {
     use collab_core::CollabEngine;
     use serde_json::json;
     let scratch = Scratch::new().await;
@@ -2527,8 +2527,8 @@ async fn workspace_page_upgrades_to_the_rich_editor_with_scope_native_legacy_on(
         workspace_flow_enabled(db, workspace).await,
         "the workspace trigger left Flow on"
     );
-    scope::legacy_scope(db, workspace).await.unwrap();
-    assert!(scope::capabilities(db).await.unwrap().scope_native_legacy);
+    scope::workspace_scope(db, workspace).await.unwrap();
+    assert!(scope::capabilities(db).await.unwrap().workspace_editor_initialization);
     let state = test_state(db.clone());
     let created = api::flow::command::create_object(
         &state,
@@ -2582,14 +2582,14 @@ async fn workspace_page_upgrades_to_the_rich_editor_with_scope_native_legacy_on(
     assert_eq!(*view.field("editor_initialization_supported"), true);
     let expected = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &frontier);
 
-    db.execute_unprepared("UPDATE flow_runtime_capabilities SET scope_native_legacy=false WHERE singleton")
+    db.execute_unprepared("UPDATE flow_runtime_capabilities SET workspace_editor_initialization=false WHERE singleton")
         .await
         .unwrap();
     let refused = api::flow::scope_editor::initialize(db, object, owner, json!({}), &expected, "agent-upgrade-off")
         .await
         .unwrap_err();
-    assert!(format!("{refused:?}").contains("scope_native_legacy_disabled"));
-    db.execute_unprepared("UPDATE flow_runtime_capabilities SET scope_native_legacy=true WHERE singleton")
+    assert!(format!("{refused:?}").contains("workspace_editor_initialization_disabled"));
+    db.execute_unprepared("UPDATE flow_runtime_capabilities SET workspace_editor_initialization=true WHERE singleton")
         .await
         .unwrap();
     api::flow::scope_editor::initialize(db, object, owner, json!({}), &expected, "agent-upgrade")
@@ -2652,7 +2652,7 @@ async fn pre_change_v1_browser_package_promotes_with_old_fingerprint_and_current
     ))
     .await
     .unwrap();
-    scope::legacy_scope(db, workspace).await.unwrap();
+    scope::workspace_scope(db, workspace).await.unwrap();
     let path = std::path::PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/flow-v2/browser-package-v4"
@@ -2753,7 +2753,7 @@ async fn legacy_raw_typed_packages_refuse_and_explicit_scope_kind_selection_reco
     ))
     .await
     .unwrap();
-    scope::legacy_scope(db, workspace).await.unwrap();
+    scope::workspace_scope(db, workspace).await.unwrap();
     let state = test_state(db.clone());
     let create_input = |kind: &str| command::CreateObjectInput {
         workspace_id: workspace,
@@ -3500,7 +3500,7 @@ async fn workspace_page_converts_into_another_workspace_forms_when_the_switch_is
     ))
     .await
     .unwrap();
-    scope::legacy_scope(db, source_workspace).await.unwrap();
+    scope::workspace_scope(db, source_workspace).await.unwrap();
     let state = test_state(db.clone());
     let created = api::flow::command::create_object(
         &state,
@@ -4706,7 +4706,7 @@ async fn a_bot_cannot_tell_a_personal_or_foreign_target_from_a_missing_one() {
         .await
         .unwrap();
     let personal_object = Uuid::parse_str(personal.field("object").field("id").as_str().unwrap()).unwrap();
-    let foreign_scope = scope::legacy_scope(db, other.workspace).await.unwrap().id;
+    let foreign_scope = scope::workspace_scope(db, other.workspace).await.unwrap().id;
     let context = || Some(axum::Extension(bot_context(bot, world.workspace, &["write"])));
     let object_answer = |object: Uuid| {
         let state = test_state(db.clone());
@@ -4772,7 +4772,7 @@ async fn the_bot_that_made_an_export_reads_its_status_and_nobody_else_does() {
     let page = seed_page(db, &world, Some(world.project_a)).await;
     let maker = seed_bot(db, &world, "member", &["write"], "workspace", &[]).await;
     let other = seed_bot(db, &world, "member", &["write"], "workspace", &[]).await;
-    let scope = scope::legacy_scope(db, world.workspace).await.unwrap();
+    let scope = scope::workspace_scope(db, world.workspace).await.unwrap();
     let revision = scope::revision(db, scope.id).await.unwrap();
     let job = Uuid::new_v4();
     // A record export is the scope-native kind of a workspace job: it carries the record fingerprint.

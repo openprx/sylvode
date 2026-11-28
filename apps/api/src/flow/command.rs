@@ -1816,7 +1816,7 @@ pub(crate) fn map_collab_error(err: &CollabError) -> ApiError {
 /// `execute_content_command`) that is simply dropped on any `Err` return — a batch-count or
 /// per-operation rejection therefore never reaches `engine.export_from`/`write::accept_update`, so
 /// it can never advance a document head or produce a business event/`event_dispatch` row.
-/// Shared validated command vocabulary for scope-native and legacy transports.
+/// Shared validated command vocabulary for scope-native and workspace transports.
 pub(crate) fn apply_scope_content_command(
     engine: &mut LoroCollabEngine,
     command: &str,

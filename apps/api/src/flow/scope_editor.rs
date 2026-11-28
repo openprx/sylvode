@@ -13,11 +13,11 @@ pub async fn require_write<C: ConnectionTrait>(db: &C, identity: &scope::ObjectI
     if identity.workspace_id.is_none() {
         return scope::require_personal_write(db).await;
     }
-    if !scope::capabilities(db).await?.scope_native_legacy {
+    if !scope::capabilities(db).await?.workspace_editor_initialization {
         return Err(ApiError::typed_with_details(
             ApiErrorKind::FeatureDisabled,
-            "legacy editor initialization is not enabled",
-            json!({"reason":"scope_native_legacy_disabled"}),
+            "workspace editor initialization is not enabled",
+            json!({"reason":"workspace_editor_initialization_disabled"}),
         ));
     }
     Ok(())
@@ -236,7 +236,7 @@ pub async fn initialize(
             .is_some()
     {
         return Err(ApiError::idempotency_key_body_drift(
-            "legacy event identity is already used",
+            "workspace event identity is already used",
         ));
     }
     let (doc, seq, frontier) = document(db, object).await?;

@@ -1718,7 +1718,7 @@ async fn run_conversion(
     finish_conversion(state, tx, source.id, source.projection_title, actor, run).await
 }
 
-// Both scope-native and legacy entry points use the same native Forms mutation transaction.
+// Both scope-native and workspace entry points use the same native Forms mutation transaction.
 async fn finish_conversion(
     state: &AppState,
     tx: sea_orm::DatabaseTransaction,
@@ -2349,7 +2349,7 @@ pub async fn record_flow_lineage(
         Ok((actor, role, is_bot)) => {
             caller = Some((actor, matches!(role.as_str(), "owner" | "admin")));
             if is_bot {
-                // Existing OPR credentials stay bounded to their actual legacy workspace.
+                // Existing workspace bot credentials stay bounded to their actual workspace.
                 for (id, level) in
                     authz::effective_permissions(&state.db, workspace_id, &source_ids, "bot", actor, &role).await?
                 {
@@ -2660,7 +2660,7 @@ pub async fn list_scope_references(
 }
 
 /// Personal references retain a real Forms target namespace, independent of Flow ownership.
-/// The same Forms/Flow intersection policy as legacy references decides visibility and actions.
+/// The same Forms/Flow intersection policy as workspace references decides visibility and actions.
 pub async fn create_scope_reference(
     state: &AppState,
     user: Uuid,
@@ -2675,7 +2675,7 @@ pub async fn create_scope_reference(
     }
     if identity.workspace_id.is_some() {
         return Err(ApiError::invalid_update(
-            "legacy reference requires its integration adapter",
+            "workspace reference requires its integration adapter",
         ));
     }
     if !input.display.is_object() {

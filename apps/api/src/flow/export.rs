@@ -252,7 +252,7 @@ async fn render_export(
     request: &CreateExportRequest,
     authorized_workspace: &mut Option<Uuid>,
     recorded_warnings: &mut Vec<String>,
-) -> Result<(Uuid, Vec<u8>, String, LegacyArtifactSnapshot), ApiError> {
+) -> Result<(Uuid, Vec<u8>, String, WorkspaceArtifactSnapshot), ApiError> {
     let tx = db
         .begin_with_config(Some(IsolationLevel::RepeatableRead), Some(AccessMode::ReadWrite))
         .await?;
@@ -272,7 +272,7 @@ async fn render_export(
 
     lock_authorization_epoch(&tx, workspace_id).await?;
     let mut effective = request.clone();
-    effective.principal.role = legacy_principal_role(&tx, workspace_id, &request.principal).await?;
+    effective.principal.role = workspace_principal_role(&tx, workspace_id, &request.principal).await?;
     effective.principal.workspace_export_capability &= effective.principal.role == "admin";
     enforce_scope_principal(&effective, workspace_id)?;
     let object_ids: Vec<Uuid> = objects.iter().map(|row| row.id).collect();
@@ -425,7 +425,7 @@ async fn render_export(
     if request.format != "package" {
         let bytes = rendered_object.ok_or_else(ApiError::internal)?;
         let checksum = sha256_hex(&bytes);
-        let snapshot = capture_legacy_artifact_snapshot(&tx, workspace_id, &object_ids).await?;
+        let snapshot = capture_workspace_artifact_snapshot(&tx, workspace_id, &object_ids).await?;
         tx.commit().await?;
         return Ok((workspace_id, bytes, checksum, snapshot));
     }
@@ -564,13 +564,13 @@ async fn render_export(
     resources.extend(external_ids);
     resources.sort_unstable();
     resources.dedup();
-    let snapshot = capture_legacy_artifact_snapshot(&tx, workspace_id, &resources).await?;
+    let snapshot = capture_workspace_artifact_snapshot(&tx, workspace_id, &resources).await?;
     tx.commit().await?;
 
     Ok((workspace_id, package.bytes, package.package_sha256, snapshot))
 }
 
-/// One accepted object serializer shared by legacy and scope-native textual exports.
+/// One accepted object serializer shared by workspace and scope-native textual exports.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_object_text_export(
     id: Uuid,
@@ -653,7 +653,7 @@ async fn authorize_export_access(
     let initiating = row.actor_kind == principal.kind && row.actor_id == principal.id;
     let tx = db.begin().await?;
     lock_authorization_epoch(&tx, row.workspace_id).await?;
-    let current_role = legacy_principal_role(&tx, row.workspace_id, principal).await?;
+    let current_role = workspace_principal_role(&tx, row.workspace_id, principal).await?;
     if !(initiating || principal.kind == "user" && matches!(current_role.as_str(), "owner" | "admin")) {
         return Err(ApiError::not_found("export job not found"));
     }
@@ -666,7 +666,7 @@ async fn authorize_export_access(
             "workspace export permission is required".to_string(),
         ));
     }
-    validate_legacy_artifact_policy(&tx, row, principal).await?;
+    validate_workspace_artifact_policy(&tx, row, principal).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -804,7 +804,7 @@ async fn authorize_all<C: ConnectionTrait>(
     principal: &ExportPrincipal,
     action: &str,
 ) -> Result<(), ApiError> {
-    let role = legacy_principal_role(conn, workspace_id, principal).await?;
+    let role = workspace_principal_role(conn, workspace_id, principal).await?;
     let levels =
         authz::effective_permissions(conn, workspace_id, object_ids, &principal.kind, principal.id, &role).await?;
     if levels.len() != object_ids.len() || levels.iter().any(|(_, level)| *level < PermissionLevel::View) {
@@ -1111,13 +1111,13 @@ async fn persist_export(
     request_hash: &str,
     bytes: Vec<u8>,
     package_sha256: String,
-    snapshot: LegacyArtifactSnapshot,
+    snapshot: WorkspaceArtifactSnapshot,
     warnings: Vec<String>,
 ) -> Result<ExportJobReceipt, ApiError> {
     let tx = db.begin().await?;
-    validate_legacy_snapshot(&tx, workspace_id, &request.principal, &snapshot).await?;
+    validate_workspace_snapshot(&tx, workspace_id, &request.principal, &snapshot).await?;
     let mut effective = request.clone();
-    effective.principal.role = legacy_principal_role(&tx, workspace_id, &request.principal).await?;
+    effective.principal.role = workspace_principal_role(&tx, workspace_id, &request.principal).await?;
     effective.principal.workspace_export_capability &= effective.principal.role == "admin";
     enforce_scope_principal(&effective, workspace_id)?;
     let job_id = Uuid::new_v4();
@@ -1287,29 +1287,29 @@ pub(crate) fn csv_cell(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
 }
 
-struct LegacyArtifactSnapshot {
+struct WorkspaceArtifactSnapshot {
     epoch: i64,
     resources: Vec<Uuid>,
     schemas: Value,
 }
-async fn capture_legacy_artifact_snapshot<C: ConnectionTrait>(
+async fn capture_workspace_artifact_snapshot<C: ConnectionTrait>(
     db: &C,
     workspace: Uuid,
     resources: &[Uuid],
-) -> Result<LegacyArtifactSnapshot, ApiError> {
+) -> Result<WorkspaceArtifactSnapshot, ApiError> {
     let epoch = authz::read_epoch(db, workspace).await?;
     let rows=db.query_all(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT c.collection_id,c.schema_seq FROM flow_collection_projections c WHERE c.collection_id=ANY($1) OR c.collection_id IN(SELECT r.collection_id FROM flow_record_projections r WHERE r.record_id=ANY($1)) ORDER BY c.collection_id",vec![resources.to_vec().into()])).await?;
     let mut schemas = Vec::new();
     for row in rows {
         schemas.push(json!({"collection_id":row.try_get::<Uuid>("","collection_id")?,"schema_seq":row.try_get::<i64>("","schema_seq")?}));
     }
-    Ok(LegacyArtifactSnapshot {
+    Ok(WorkspaceArtifactSnapshot {
         epoch,
         resources: resources.to_vec(),
         schemas: json!(schemas),
     })
 }
-async fn legacy_principal_role<C: ConnectionTrait>(
+async fn workspace_principal_role<C: ConnectionTrait>(
     db: &C,
     workspace: Uuid,
     principal: &ExportPrincipal,
@@ -1336,11 +1336,11 @@ fn stale_artifact_authority() -> ApiError {
         json!({"reason":"export_authority_changed","new_request_required":true,"action":"regenerate_export"}),
     )
 }
-async fn validate_legacy_snapshot<C: ConnectionTrait>(
+async fn validate_workspace_snapshot<C: ConnectionTrait>(
     db: &C,
     workspace: Uuid,
     principal: &ExportPrincipal,
-    snapshot: &LegacyArtifactSnapshot,
+    snapshot: &WorkspaceArtifactSnapshot,
 ) -> Result<(), ApiError> {
     authz::fence_epoch_for_share(db, workspace, snapshot.epoch)
         .await
@@ -1375,7 +1375,7 @@ async fn validate_legacy_snapshot<C: ConnectionTrait>(
         .map_err(|_| stale_artifact_authority())?;
     Ok(())
 }
-async fn validate_legacy_artifact_policy<C: ConnectionTrait>(
+async fn validate_workspace_artifact_policy<C: ConnectionTrait>(
     db: &C,
     row: &ExportAccessRow,
     principal: &ExportPrincipal,
@@ -1384,11 +1384,11 @@ async fn validate_legacy_artifact_policy<C: ConnectionTrait>(
         return Ok(());
     } // No bytes exist; historical failure metadata stays readable.
     if let Some(epoch) = row.source_authz_revision {
-        return validate_legacy_snapshot(
+        return validate_workspace_snapshot(
             db,
             row.workspace_id,
             principal,
-            &LegacyArtifactSnapshot {
+            &WorkspaceArtifactSnapshot {
                 epoch,
                 resources: row.artifact_resource_ids.clone(),
                 schemas: row.artifact_schema_revisions.clone(),
@@ -1396,7 +1396,7 @@ async fn validate_legacy_artifact_policy<C: ConnectionTrait>(
         )
         .await;
     }
-    // The ONLY old-row exception is a single legacy Page's textual export. It never expands
+    // The ONLY old-row exception is a single workspace Page's textual export. It never expands
     // linked/child content or contains typed fields, so current Page ACL is the full data policy.
     if matches!(row.format.as_str(), "json" | "markdown" | "csv")
         && let Some(object) = row.object_id
@@ -1411,7 +1411,7 @@ async fn validate_legacy_artifact_policy<C: ConnectionTrait>(
             .and_then(|r| r.try_get::<bool>("", "page").ok())
             .unwrap_or(false);
         if page {
-            authorize_all(db, row.workspace_id, &[object], principal, "legacy Page text export").await?;
+            authorize_all(db, row.workspace_id, &[object], principal, "workspace Page text export").await?;
             return Ok(());
         }
     }
@@ -1446,7 +1446,7 @@ async fn selection_warnings<C: ConnectionTrait>(
     Ok(warnings)
 }
 
-pub(crate) fn legacy_object_request_hash(
+pub(crate) fn workspace_object_request_hash(
     object: Uuid,
     format: &str,
     at_seq: Option<i64>,

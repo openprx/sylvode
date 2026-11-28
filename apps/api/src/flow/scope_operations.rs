@@ -118,7 +118,7 @@ pub async fn job_authority(db: &DatabaseConnection, id: Uuid) -> Result<Option<D
 pub async fn health(db: &DatabaseConnection, scope_id: Uuid, user: Uuid) -> Result<Value, ApiError> {
     let owned = scope::get(db, scope_id).await?;
     if owned.owner_user_id != Some(user) {
-        let workspace = scope::legacy_workspace(db, scope_id)
+        let workspace = scope::bound_workspace(db, scope_id)
             .await?
             .ok_or_else(|| ApiError::not_found("Flow scope not found"))?;
         if !super::scope_mounts::destination_can_manage(db, workspace, user).await? {

@@ -640,6 +640,12 @@ async fn a_fresh_database_migrates_with_flow_capabilities_on() {
         assert!(capability_flag(&row, column), "{column} is on by default: {row}");
     }
     for column in DEFAULT_ON_SINCE_0115 {
+        // 0149 renamed the first column; the list keeps the name 0115 used.
+        let column = if column == "scope_native_legacy" {
+            "workspace_editor_initialization"
+        } else {
+            column
+        };
         assert!(capability_flag(&row, column), "{column} is on by default: {row}");
     }
     ordinary_user_creates_a_personal_page(&scratch.db)

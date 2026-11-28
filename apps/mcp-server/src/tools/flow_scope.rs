@@ -342,7 +342,7 @@ pub(crate) async fn prepare_core(client: &OpenPrClient, name: &str, args: &Value
                             "Parent does not belong to the requested canonical scope",
                         ));
                     }
-                    let info = json!({"scope":{"id":scope,"kind":if parent.get("workspace_id").and_then(Value::as_str).is_some(){"legacy_managed"}else{"personal"}},"workspace_id":parent.get("workspace_id")});
+                    let info = json!({"scope":{"id":scope,"kind":if parent.get("workspace_id").and_then(Value::as_str).is_some(){"workspace"}else{"personal"}},"workspace_id":parent.get("workspace_id")});
                     parent_resource = Some(parent);
                     info
                 } else {
@@ -355,7 +355,7 @@ pub(crate) async fn prepare_core(client: &OpenPrClient, name: &str, args: &Value
                     if root.get("scope_id").and_then(Value::as_str) != Some(scope) {
                         return Err(CallToolResult::error("Flow root scope does not match requested scope"));
                     }
-                    json!({"scope":{"id":scope,"kind":if root.get("workspace_id").and_then(Value::as_str).is_some(){"legacy_managed"}else{"personal"}},"workspace_id":root.get("workspace_id")})
+                    json!({"scope":{"id":scope,"kind":if root.get("workspace_id").and_then(Value::as_str).is_some(){"workspace"}else{"personal"}},"workspace_id":root.get("workspace_id")})
                 }
             };
             let id = info
@@ -371,7 +371,7 @@ pub(crate) async fn prepare_core(client: &OpenPrClient, name: &str, args: &Value
             }
             if workspace.is_some() && personal_kind {
                 return Err(CallToolResult::error(
-                    "Workspace resolver returned a personal source instead of a legacy binding",
+                    "Workspace resolver returned a personal source instead of a workspace binding",
                 ));
             }
             let project = uuid(args, "project_id")?;
@@ -415,7 +415,7 @@ pub(crate) async fn prepare_core(client: &OpenPrClient, name: &str, args: &Value
         && args.get("unprojected").and_then(Value::as_bool) != Some(true)
     {
         return Err(CallToolResult::error(
-            "Legacy search requires project_id or unprojected:true; project policy cannot be bypassed by an all-project search",
+            "Workspace search requires project_id or unprojected:true; project policy cannot be bypassed by an all-project search",
         ));
     }
     let mut query =
@@ -886,7 +886,7 @@ async fn affected_project_ids(
         if let Some(project) = resource_project(&resource)? {
             if workspace.is_none() {
                 return Err(CallToolResult::error(
-                    "Personal target cannot supply a legacy project context",
+                    "Personal target cannot supply a workspace project context",
                 ));
             }
             projects.push(project);

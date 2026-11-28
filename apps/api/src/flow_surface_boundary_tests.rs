@@ -444,7 +444,7 @@ async fn scope_objects_uri(db: &DatabaseConnection, workspace_id: Uuid) -> Strin
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT flow_ensure_legacy_scope($1) AS id",
+            "SELECT flow_ensure_workspace_scope($1) AS id",
             vec![workspace_id.into()],
         ))
         .await
