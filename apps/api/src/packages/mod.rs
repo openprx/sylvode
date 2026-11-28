@@ -9,7 +9,7 @@ pub mod boot;
 pub mod handlers;
 mod keys;
 pub mod open;
-mod store;
+pub mod store;
 mod verify;
 
 /// Takes a share lock on an active publisher key; see `keys::lock_active`.

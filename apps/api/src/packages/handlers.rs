@@ -79,6 +79,44 @@ async fn read_file_part(mut multipart: Multipart) -> Result<Vec<u8>, ApiError> {
         .ok_or_else(|| ApiError::bad_request_coded("multipart_invalid", "the part `file` is missing or empty"))
 }
 
+/// Most private packages one workspace may store.
+const MAX_PACKAGES_PER_WORKSPACE: i64 = 200;
+/// Most blob bytes one workspace may store across its private packages (256 MiB).
+const MAX_PACKAGE_BYTES_PER_WORKSPACE: i64 = 256 * 1024 * 1024;
+
+/// Refuses an upload that would take the workspace over its package count (`409`) or its stored
+/// bytes (`413`). The workspace's uploads are serialised first, so two uploads cannot both pass.
+async fn enforce_quota(
+    db: &impl sea_orm::ConnectionTrait,
+    workspace_id: Uuid,
+    blob_digest: &str,
+    size: usize,
+) -> Result<(), ApiError> {
+    store::lock_workspace_uploads(db, workspace_id).await?;
+    let usage = store::workspace_usage(db, workspace_id).await?;
+    if usage.packages >= MAX_PACKAGES_PER_WORKSPACE {
+        return Err(ApiError::conflict_coded(
+            "package_quota_exceeded",
+            "this workspace stores the most packages it may; delete one first",
+            Some(json!({ "limit": MAX_PACKAGES_PER_WORKSPACE })),
+        ));
+    }
+    let added = if store::workspace_has_blob(db, workspace_id, blob_digest).await? {
+        0
+    } else {
+        i64::try_from(size).unwrap_or(i64::MAX)
+    };
+    if usage.bytes.saturating_add(added) > MAX_PACKAGE_BYTES_PER_WORKSPACE {
+        return Err(ApiError::Coded {
+            status: 413,
+            code: "package_storage_exceeded",
+            message: "this upload would take the workspace over its package storage limit".to_string(),
+            details: Some(json!({ "limit_bytes": MAX_PACKAGE_BYTES_PER_WORKSPACE })),
+        });
+    }
+    Ok(())
+}
+
 /// `POST /api/v1/workspaces/{w}/packages` (multipart `file`): verifies with the workspace's
 /// registered publisher keys and stores the blob by digest.
 pub async fn upload_package(
@@ -108,6 +146,7 @@ pub async fn upload_package(
                 None,
             ));
         }
+        enforce_quota(&tx, workspace_id, &package.blob_digest, bytes.len()).await?;
         store::put_blob(&tx, &package.blob_digest, bytes).await?;
         let files = verified.files_json();
         let new = NewPackage {

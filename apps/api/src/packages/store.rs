@@ -167,6 +167,85 @@ pub(super) async fn version_taken(
         .is_some())
 }
 
+/// What a workspace stores: its private package rows and the bytes of their distinct blobs.
+#[derive(Debug, Clone, Copy, FromQueryResult)]
+pub(super) struct Usage {
+    pub(super) packages: i64,
+    pub(super) bytes: i64,
+}
+
+/// Serialises the uploads of one workspace for the rest of the transaction, so the quota check
+/// and the insert cannot race another upload of the same workspace.
+pub(super) async fn lock_workspace_uploads(db: &impl ConnectionTrait, workspace_id: Uuid) -> Result<(), ApiError> {
+    db.execute(stmt(
+        "SELECT pg_advisory_xact_lock(hashtextextended('package_upload:' || $1::text, 0))",
+        vec![workspace_id.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// The workspace's stored private packages and blob bytes.
+pub(super) async fn workspace_usage(db: &impl ConnectionTrait, workspace_id: Uuid) -> Result<Usage, ApiError> {
+    Ok(Usage::find_by_statement(stmt(
+        "SELECT (SELECT count(*) FROM packages WHERE workspace_id = $1) AS packages, \
+                COALESCE((SELECT sum(b.size)::bigint FROM package_blobs b WHERE b.blob_digest IN \
+                          (SELECT blob_digest FROM packages WHERE workspace_id = $1)), 0) AS bytes",
+        vec![workspace_id.into()],
+    ))
+    .one(db)
+    .await?
+    .unwrap_or(Usage { packages: 0, bytes: 0 }))
+}
+
+/// Whether the workspace already holds a package that uses this blob (it adds no stored bytes).
+pub(super) async fn workspace_has_blob(
+    db: &impl ConnectionTrait,
+    workspace_id: Uuid,
+    blob_digest: &str,
+) -> Result<bool, ApiError> {
+    Ok(db
+        .query_one(stmt(
+            "SELECT 1 FROM packages WHERE workspace_id = $1 AND blob_digest = $2 LIMIT 1",
+            vec![workspace_id.into(), blob_digest.into()],
+        ))
+        .await?
+        .is_some())
+}
+
+/// The blob digests the workspace's packages use. The workspace teardown reads them before the
+/// workspace rows cascade away and passes them to [`delete_unreferenced_blobs`] after.
+pub async fn workspace_blob_digests(db: &impl ConnectionTrait, workspace_id: Uuid) -> Result<Vec<String>, ApiError> {
+    #[derive(FromQueryResult)]
+    struct Digest {
+        blob_digest: String,
+    }
+    Ok(Digest::find_by_statement(stmt(
+        "SELECT DISTINCT blob_digest FROM packages WHERE workspace_id = $1",
+        vec![workspace_id.into()],
+    ))
+    .all(db)
+    .await?
+    .into_iter()
+    .map(|row| row.blob_digest)
+    .collect())
+}
+
+/// Deletes the listed blobs that no package row uses any more (a blob shared with another
+/// workspace or a built-in package stays).
+pub async fn delete_unreferenced_blobs(db: &impl ConnectionTrait, digests: &[String]) -> Result<(), ApiError> {
+    if digests.is_empty() {
+        return Ok(());
+    }
+    db.execute(stmt(
+        "DELETE FROM package_blobs b WHERE b.blob_digest = ANY($1) \
+         AND NOT EXISTS (SELECT 1 FROM packages p WHERE p.blob_digest = b.blob_digest)",
+        vec![digests.to_vec().into()],
+    ))
+    .await?;
+    Ok(())
+}
+
 /// Inserts a package row; `None` when the owner already has this digest.
 pub(super) async fn insert_package(
     db: &impl ConnectionTrait,
