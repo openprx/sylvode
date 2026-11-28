@@ -193,6 +193,11 @@ name.
 
 ### Changed
 
+- Flow workspace scopes are named `workspace`: the stored scope kind `legacy_managed`, the MCP `scope.kind` value and the
+  scope authority mode now read `workspace`; the operator switch column `flow_runtime_capabilities.scope_native_legacy`, its
+  capabilities field and the `feature_disabled` reason are now `workspace_editor_initialization` (migration 0149). Operator SQL
+  that sets the old column must use the new name.
+
 - **Breaking: outbound webhook signatures carry a timestamp.** Every delivery (webhook triggers, the
   event dispatcher and the worker's AI-task dispatch) sends `X-Webhook-Timestamp` (Unix seconds) and
   `X-Webhook-Signature: v1=<hex>`, an HMAC-SHA256 over `<timestamp>.<raw body>`; the old
