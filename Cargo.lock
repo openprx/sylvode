@@ -4511,6 +4511,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
+name = "sv-index"
+version = "0.5.0"
+dependencies = [
+ "base64 0.22.1",
+ "semver",
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "sv-package",
+ "unicode-normalization",
+ "url",
+]
+
+[[package]]
 name = "sv-layout"
 version = "0.5.0"
 dependencies = [

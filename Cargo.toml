@@ -12,6 +12,7 @@ members = [
   "crates/sv-rules",
   "crates/sv-layout",
   "crates/sv-package",
+  "crates/sv-index",
   "spikes/collab-shared",
   "spikes/collab-loro",
   "spikes/collab-yrs-yjs",
