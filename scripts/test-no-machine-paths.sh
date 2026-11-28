@@ -49,7 +49,13 @@ file_exempt() {
 }
 
 exempt() {
-  local rel=$1 text=$2 e_path e_text e_reason
+  local rel=$1 text=$2 e_path e_text e_reason stripped
+  # Layout JSON pointers (`/root/children/0/type`, `/root/when`, ...) name the layout's root node, not
+  # the Linux home directory: drop them and look again for a real machine path on the same line.
+  stripped=$(printf '%s' "$text" | sed -E 's#/root/(children|type|props|on_click|when|data|actions)#<layout-pointer>#g')
+  if [[ $stripped != "$text" ]] && ! printf '%s' "$stripped" | grep -q -E "$PATTERN"; then
+    return 0
+  fi
   while IFS=$'\t' read -r e_path e_text e_reason; do
     [[ -n $e_reason ]] || continue
     if [[ $rel == "$e_path" && $text == "$e_text" ]]; then
