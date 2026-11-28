@@ -165,7 +165,7 @@ command line in [integrations/cli.md](integrations/cli.md).
 | `listen` | boolean | `true` | `false` turns push off: the server stops declaring `tools.listChanged` and `resources.subscribe` and answers `subscriptions/listen` with `-32601`. |
 | `allowed_origins` | array of strings | `[]` | `Origin` values the MCP routes accept, exact `scheme://host[:port]`. A request without `Origin` is always served; a request with an unlisted `Origin` gets `403`. |
 | `max_listen_streams` | integer | `10000` | At least 1. Open listen streams the `http` transport accepts in total (one credential may hold 1,000). |
-| `trusted_proxies` | array of strings | `["loopback"]` | Peers whose `X-Real-IP` header names the real client, for the per-address limit on refused credentials. Each entry is `loopback` (any loopback address) or an IP address. The proxy must overwrite the header (nginx: `proxy_set_header X-Real-IP $remote_addr;`). A peer not listed is the client itself and its headers are ignored; a listed peer that sends no valid header is counted only against the process-wide ceiling. |
+| `trusted_proxies` | array of strings | `["loopback"]` | Peers whose `X-Real-IP` header names the real client, for the per-address limit on refused credentials. Each entry is `loopback` (any loopback address) or an IP address. The proxy must overwrite the header (nginx: `proxy_set_header X-Real-IP $remote_addr;`). A peer not listed is the client itself and its headers are ignored; a listed peer that sends no valid header is counted only against one shared ceiling. |
 
 `oauth_issuer`, `oauth_resource` and `oauth_forward_secret` are set together or not at all; a
 partial set stops the server and names the missing keys. Without them the server accepts

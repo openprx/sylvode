@@ -4,10 +4,13 @@
 //! offered to a listen request. This limiter counts the refusals the API answers per client
 //! address; an address with too many in its window gets no further API request for a credential
 //! the server does not already know, until the window ends. Credentials with a live hub are never
-//! affected. A second, much higher ceiling counts the refusals of the whole process, so a client
-//! whose address cannot be told (a trusted proxy that sent no `X-Real-IP`) is still bounded, and so
-//! is an attacker with many addresses. Memory is bounded: a fixed number of addresses, the oldest
-//! dropped first.
+//! affected. A client whose address cannot be told (a trusted proxy that sent no `X-Real-IP`) is
+//! bounded by one shared, much higher ceiling instead; a client with an address is bound only by its
+//! own limit, so one noisy client cannot throttle the others.
+//!
+//! An attempt is counted when it is admitted, before the API is asked, and given back unless the API
+//! refuses the credential, so the limit holds however many requests arrive at once. Memory is
+//! bounded: a fixed number of addresses, the oldest dropped first.
 
 use super::RETRY_AFTER_SECS;
 use parking_lot::Mutex;
@@ -17,9 +20,8 @@ use std::time::{Duration, Instant};
 
 /// Refusals an address may collect within one window before it is throttled.
 pub const MAX_REFUSALS: u32 = 20;
-/// Refusals the whole process may collect within one window before every unknown credential is
-/// throttled.
-pub const MAX_PROCESS_REFUSALS: u32 = 600;
+/// Refusals clients without a known address may collect within one window, together.
+pub const MAX_UNATTRIBUTED_REFUSALS: u32 = 600;
 /// How long refusals count, from the first one of the window. It equals the `Retry-After` of a
 /// throttled request, so a client that waits as told is not refused again for the same window.
 pub const WINDOW: Duration = Duration::from_secs(RETRY_AFTER_SECS);
@@ -53,7 +55,7 @@ fn normalise(address: IpAddr) -> IpAddr {
 #[derive(Default)]
 struct State {
     entries: HashMap<IpAddr, (Instant, u32)>,
-    process: Option<(Instant, u32)>,
+    unattributed: Option<(Instant, u32)>,
 }
 
 #[derive(Default)]
@@ -62,56 +64,113 @@ pub struct RefusalLimiter {
 }
 
 impl RefusalLimiter {
-    /// Whether `client` has used up its refusals in the current window, or the process has.
+    /// Whether `client` has used up its attempts in the current window. A look only; [`Self::admit`]
+    /// is what counts.
+    #[allow(clippy::significant_drop_tightening)]
     pub fn throttled(&self, client: Client) -> bool {
         let state = self.state.lock();
-        if state
-            .process
-            .is_some_and(|(start, count)| start.elapsed() < WINDOW && count >= MAX_PROCESS_REFUSALS)
-        {
-            return true;
-        }
-        match client {
-            Client::Address(address) => state
-                .entries
-                .get(&normalise(address))
-                .is_some_and(|(start, count)| start.elapsed() < WINDOW && *count >= MAX_REFUSALS),
-            Client::Unattributed => false,
-        }
+        let (slot, max) = match client {
+            Client::Address(address) => (state.entries.get(&normalise(address)).copied(), MAX_REFUSALS),
+            Client::Unattributed => (state.unattributed, MAX_UNATTRIBUTED_REFUSALS),
+        };
+        slot.is_some_and(|(start, count)| start.elapsed() < WINDOW && count >= max)
     }
 
-    /// Counts one refusal for `client` and for the process.
+    /// Counts one attempt for `client` and admits it, or `None` when its window is full. The attempt
+    /// stays counted only if [`Attempt::refused`] is called; dropping it gives the place back.
     // The lookup, the eviction and the increment are one check-then-mutate under one guard.
     #[allow(clippy::significant_drop_tightening)]
-    pub fn record(&self, client: Client) {
+    pub fn admit(&self, client: Client) -> Option<Attempt<'_>> {
         let now = Instant::now();
         let mut state = self.state.lock();
-        let process = state.process.get_or_insert((now, 0));
-        if now.duration_since(process.0) >= WINDOW {
-            *process = (now, 0);
-        }
-        process.1 = process.1.saturating_add(1);
-        let Client::Address(address) = client else { return };
-        let key = normalise(address);
-        if !state.entries.contains_key(&key) && state.entries.len() >= CAPACITY {
-            state
-                .entries
-                .retain(|_, (start, _)| now.duration_since(*start) < WINDOW);
-            if state.entries.len() >= CAPACITY {
-                let oldest = state
-                    .entries
-                    .iter()
-                    .min_by_key(|(_, (start, _))| *start)
-                    .map(|(key, _)| *key);
-                if let Some(oldest) = oldest {
-                    state.entries.remove(&oldest);
+        let (slot, max) = match client {
+            Client::Unattributed => (&mut state.unattributed, MAX_UNATTRIBUTED_REFUSALS),
+            Client::Address(address) => {
+                let key = normalise(address);
+                if !state.entries.contains_key(&key) && state.entries.len() >= CAPACITY {
+                    state
+                        .entries
+                        .retain(|_, (start, _)| now.duration_since(*start) < WINDOW);
+                    if state.entries.len() >= CAPACITY {
+                        let oldest = state
+                            .entries
+                            .iter()
+                            .min_by_key(|(_, (start, _))| *start)
+                            .map(|(key, _)| *key);
+                        if let Some(oldest) = oldest {
+                            state.entries.remove(&oldest);
+                        }
+                    }
                 }
+                let entry = state.entries.entry(key).or_insert((now, 0));
+                if now.duration_since(entry.0) >= WINDOW {
+                    *entry = (now, 0);
+                }
+                return Self::take(entry, max_for(client), self, client);
             }
-        }
-        let entry = state.entries.entry(key).or_insert((now, 0));
+        };
+        let entry = slot.get_or_insert((now, 0));
         if now.duration_since(entry.0) >= WINDOW {
             *entry = (now, 0);
         }
-        entry.1 = entry.1.saturating_add(1);
+        Self::take(entry, max, self, client)
+    }
+
+    const fn take<'a>(entry: &mut (Instant, u32), max: u32, limiter: &'a Self, client: Client) -> Option<Attempt<'a>> {
+        if entry.1 >= max {
+            return None;
+        }
+        entry.1 += 1;
+        Some(Attempt {
+            limiter,
+            client,
+            window: entry.0,
+            refused: false,
+        })
+    }
+
+    /// Gives one attempt of the window that began at `window` back.
+    #[allow(clippy::significant_drop_tightening)]
+    fn release(&self, client: Client, window: Instant) {
+        let mut state = self.state.lock();
+        let entry = match client {
+            Client::Address(address) => state.entries.get_mut(&normalise(address)),
+            Client::Unattributed => state.unattributed.as_mut(),
+        };
+        if let Some(entry) = entry
+            && entry.0 == window
+        {
+            entry.1 = entry.1.saturating_sub(1);
+        }
+    }
+}
+
+const fn max_for(client: Client) -> u32 {
+    match client {
+        Client::Address(_) => MAX_REFUSALS,
+        Client::Unattributed => MAX_UNATTRIBUTED_REFUSALS,
+    }
+}
+
+/// One counted attempt. It is given back when dropped, unless the API refused the credential.
+pub struct Attempt<'a> {
+    limiter: &'a RefusalLimiter,
+    client: Client,
+    window: Instant,
+    refused: bool,
+}
+
+impl Attempt<'_> {
+    /// The API refused the credential: the attempt stays counted.
+    pub fn refused(mut self) {
+        self.refused = true;
+    }
+}
+
+impl Drop for Attempt<'_> {
+    fn drop(&mut self) {
+        if !self.refused {
+            self.limiter.release(self.client, self.window);
+        }
     }
 }

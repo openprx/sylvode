@@ -479,6 +479,12 @@ impl Hubs {
         if let Some(access) = self.known(&key)? {
             return Ok(access);
         }
+        // The attempt is counted before the API is asked, so the limit holds under concurrency; it
+        // is given back at the end of this function unless the API refuses the credential.
+        let attempt = match peer {
+            Some(client) => Some(self.limiter.admit(client).ok_or(AcquireError::Throttled)?),
+            None => None,
+        };
         match client.open_change_hints(FIRST_OPEN_TIMEOUT).await {
             Ok(stream) => {
                 let hub = Hub::new(key, Arc::clone(server));
@@ -491,8 +497,8 @@ impl Hubs {
             }
             Err(HintOpenError::Unauthorized) => {
                 self.refuse(key, Refusal::Unauthorized);
-                if let Some(client) = peer {
-                    self.limiter.record(client);
+                if let Some(attempt) = attempt {
+                    attempt.refused();
                 }
                 Err(AcquireError::Unauthorized)
             }

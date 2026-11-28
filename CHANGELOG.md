@@ -58,7 +58,8 @@ name.
   proxy every request used to come from one socket address, so one client could throttle every other.
   The new `[mcp] trusted_proxies` (default `["loopback"]`) lists the peers whose `X-Real-IP` header is
   believed; the proxy must overwrite it (nginx: `proxy_set_header X-Real-IP $remote_addr;`). A trusted
-  peer without the header is counted only against a process-wide ceiling of 600 refusals per window.
+  peer without the header is counted against one shared ceiling of 600 refusals per window; a client
+  with an address is bound only by its own limit of 20, counted before the API is asked.
   IPv4-mapped IPv6 addresses count as IPv4. The window is 30 seconds, the same as `Retry-After`.
 - **MCP: a subscription re-check that cannot decide a URI now ends its stream** (the client listens
   again) instead of keeping it, and re-checks share 32 parallel API calls across the process.
