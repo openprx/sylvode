@@ -42,7 +42,8 @@
 		"disabledReason": {
 			"admin": "Disabled by an administrator",
 			"approver_lost": "The administrator who approved it is no longer an administrator",
-			"key_revoked": "The publisher's signing key was revoked"
+			"key_revoked": "The publisher's signing key was revoked",
+			"index_revoked": "This version was revoked in the public index"
 		},
 		"reviewTitle": "Review {name}",
 		"version": "Version {version}",
@@ -297,6 +298,180 @@
 			"workspace": {
 				"name": "Workspace",
 				"desc": "The workspace itself, its members and settings."
+			}
+		},
+		"tabPublic": "Public",
+		"index": {
+			"imageFailed": "Image unavailable",
+			"loadFailed": "The public plugins could not be loaded.",
+			"thing": "public plugins",
+			"sourceLabel": "Source",
+			"allSources": "All sources",
+			"categoryLabel": "Category",
+			"anyCategory": "Any category",
+			"labelLabel": "Label",
+			"anyLabel": "Any label",
+			"compatibleOnly": "Only versions that run on this Sylvode",
+			"someStale": "{count, plural, one {# source is out of date} other {# sources are out of date}}",
+			"sources": "Sources",
+			"events": "Activity",
+			"noneTitle": "No public plugin source is configured",
+			"noneBody": "The operator has not set up a public plugin index for this server. Packages you upload still appear under Discover.",
+			"allHiddenTitle": "Every public source is hidden",
+			"allHiddenOwner": "You hid every source for this workspace. Show one again under Sources.",
+			"allHiddenMember": "The workspace owner hid every public source for this workspace.",
+			"clearFilters": "Clear filters",
+			"emptyTitle": "The source lists no plugins yet",
+			"emptyBody": "Nothing has been published to this index, or it has not been fetched yet. Open Sources to see when it was last fetched.",
+			"paging": "Public plugins pages",
+			"trustedPublisher": "Publisher trusted in this workspace",
+			"noCompatible": "No version for this Sylvode",
+			"imported": "Imported",
+			"refreshWait": "A source can be refreshed once a minute. Try again in {seconds} s.",
+			"refreshFailed": "The source could not be fetched. The last good copy is still shown.",
+			"refreshSkipped": "Another server is already refreshing this source.",
+			"refreshed": "Source refreshed.",
+			"hideFailed": "The source could not be changed.",
+			"fetchedAt": "Fetched {when}",
+			"neverFetched": "Not fetched yet",
+			"hidden": "Hidden",
+			"statusError": "Fetch failed",
+			"statusStale": "Out of date",
+			"statusFresh": "Up to date",
+			"pluginCount": "{count, plural, one {# plugin} other {# plugins}}",
+			"errorLine": "The last fetch failed: {error}.",
+			"keepingCopy": "Showing the copy from {when}.",
+			"staleLine": "The server has not been able to check this source for a while. The copy shown may be old.",
+			"warnings": "{count, plural, one {# warning from the last fetch} other {# warnings from the last fetch}}",
+			"hiddenNote": "Hidden for this workspace: not listed and nothing can be imported from it.",
+			"refreshIn": "Available again in {seconds} s",
+			"refreshNow": "Refresh now",
+			"show": "Show",
+			"hide": "Hide",
+			"hideRevocations": "A hidden source is still checked: keys and versions it revokes are still disabled in this workspace.",
+			"eventsFailed": "The activity could not be loaded.",
+			"eventsEmpty": "Nothing has happened with the public index in this workspace yet.",
+			"colWhen": "When",
+			"colAction": "Action",
+			"colSource": "Source",
+			"colDetails": "Details",
+			"action": {
+				"import": "Imported",
+				"import_refused": "Import refused",
+				"trust_key": "Key trusted",
+				"key_revoked_sync": "Key revoked by the index",
+				"version_revoked_sync": "Version revoked by the index",
+				"refresh_failed": "Refresh failed"
+			},
+			"detailFailed": "The plugin could not be loaded.",
+			"back": "Public plugins",
+			"openImported": "Open the imported package",
+			"importVersion": "Import {version}",
+			"import": "Import",
+			"memberNote": "Owners and administrators import plugins.",
+			"noCompatibleNote": "No listed version runs on this Sylvode.",
+			"source": "Source",
+			"license": "License",
+			"homepage": "Homepage",
+			"repository": "Repository",
+			"screenshots": "Screenshots",
+			"description": "About",
+			"versions": "Versions",
+			"published": "Published",
+			"size": "Size",
+			"compatible": "Runs on this Sylvode",
+			"incompatible": "Not for this Sylvode",
+			"needsSylvode": "Needs Sylvode {range}",
+			"versionStatus": {
+				"listed": "Listed",
+				"yanked": "Withdrawn: cannot be imported, imported copies keep working",
+				"revoked": "Revoked for security: imported copies are disabled"
+			},
+			"showContents": "Contents",
+			"contentsOf": "What {version} contains",
+			"projectBlock": "A project block",
+			"contentsNote": "Taken from the index for a first look. The real review reads the package after the import.",
+			"publisherKeys": "Publisher keys",
+			"keyRevoked": "Revoked",
+			"keyPinned": "Trusted here",
+			"keyNotPinned": "Not trusted here",
+			"keysNote": "A key becomes trusted only when the workspace owner confirms it on the first import.",
+			"originLine": "Imported from the {source} index: {plugin} {version}.",
+			"originBadge": "From {source}",
+			"updateAvailable": "Update {version} available",
+			"importTitle": "Import {name} {version}",
+			"downloadFrom": "Download from",
+			"sha256": "SHA-256",
+			"publisher": "Publisher",
+			"signingKey": "Signing key",
+			"keyChangeTitle": "Key change",
+			"keyChangeBody": "This workspace already trusts another key of {publisher}. This version is signed with a different one. Make sure the publisher announced the change before you trust it.",
+			"keyOld": "Trusted now:",
+			"keyNew": "New key:",
+			"untrustedTitle": "First package from this publisher",
+			"untrustedBody": "This workspace has not trusted any key of {publisher}. The owner has to confirm the fingerprint below, once, before a package signed with it can be imported.",
+			"trustTick": "I trust this key for {publisher} in this workspace",
+			"ownerOnlyNote": "Ask the workspace owner to import this version. Only the owner can trust a new publisher key.",
+			"afterImport": "Importing downloads and checks the package. Nothing is installed or run until you review and approve it.",
+			"cancel": "Cancel",
+			"importing": "Importing...",
+			"importConfirm": "Import",
+			"reasonMember": "Only owners and administrators can import.",
+			"reasonKeyRevoked": "The signing key of this version is revoked.",
+			"reasonUnknownKey": "The index does not list the signing key of this version.",
+			"reasonOwnerOnly": "Only the workspace owner can trust a new key.",
+			"reasonTick": "Confirm that you trust the key first.",
+			"importFailed": "The package could not be imported.",
+			"importedToast": "{name} imported. Review it to install.",
+			"error": {
+				"publisher_untrusted": {
+					"default": "This publisher's key is not trusted in this workspace yet. Confirm it with the checkbox."
+				},
+				"publisher_trust_owner_only": {
+					"default": "Only the workspace owner can trust a new publisher key."
+				},
+				"index_version_not_importable": {
+					"default": "This version cannot be imported.",
+					"yanked": "This version was withdrawn by its publisher.",
+					"revoked": "This version was revoked for security reasons.",
+					"incompatible": "This version does not run on this Sylvode.",
+					"sv_min": "The package needs a newer Sylvode than this one."
+				},
+				"index_download_failed": {
+					"default": "The package could not be downloaded.",
+					"timeout": "The download took too long and was stopped.",
+					"too_large": "The file is larger than the index declared and was stopped.",
+					"http_status": "The download host answered with an error.",
+					"redirect_limit": "The download was redirected too many times.",
+					"url_refused": "The download address is not allowed (not a public https address)."
+				},
+				"index_size_mismatch": {
+					"default": "The downloaded file is not the size the index declares. Nothing was stored."
+				},
+				"index_sha256_mismatch": {
+					"default": "The downloaded file does not match the checksum in the index. Nothing was stored."
+				},
+				"index_mismatch": {
+					"default": "The package does not match its index entry. Nothing was stored."
+				},
+				"index_key_conflict": {
+					"default": "This workspace registered this key for another publisher."
+				},
+				"index_key_revoked": {
+					"default": "The signing key of this version is revoked."
+				},
+				"index_import_in_progress": {
+					"default": "Another import in this workspace is still running. Try again in a moment."
+				},
+				"index_source_not_found": {
+					"default": "This source does not exist or is hidden."
+				},
+				"index_plugin_not_found": {
+					"default": "The plugin is not in the cached index. Refresh the source and try again."
+				},
+				"import_request_invalid": {
+					"default": "The import request was not valid."
+				}
 			}
 		}
 	}

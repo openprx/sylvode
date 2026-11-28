@@ -29,6 +29,8 @@
 		type PackageDetail,
 		type PackageSummary
 	} from './api';
+	import { indexApi } from './index-api';
+	import { updateAvailable } from './index-logic';
 	import { dataAccess, groupRequests, opCounts, publicPages, riskTone } from './logic';
 
 	let {
@@ -99,6 +101,50 @@
 		installations = list.data?.items ?? [];
 		packages = pkgs.data?.items ?? [];
 		loading = false;
+		void loadUpdates();
+	}
+
+	/** The newest compatible version the index lists, per `source/plugin id` of an imported package. */
+	let latestByOrigin = $state<Record<string, string | null>>({});
+
+	function originKey(origin: { source: string; plugin_id: string }): string {
+		return `${origin.source}/${origin.plugin_id}`;
+	}
+
+	/** Where the package of an installation came from, when it was imported from a public index. */
+	function originOf(installation: Installation) {
+		const generation =
+			installation.generations.find((item) => item.generation === installation.active_generation) ??
+			pendingOf(installation);
+		return packages.find((pkg) => pkg.digest === generation?.package.digest)?.origin ?? null;
+	}
+
+	/** Asks the cached index once per imported plugin; a source that is hidden or down just adds nothing. */
+	async function loadUpdates() {
+		const wanted: Record<string, { source: string; plugin_id: string }> = {};
+		for (const installation of installations) {
+			if (installation.status === 'revoked') continue;
+			const origin = originOf(installation);
+			if (origin) wanted[originKey(origin)] = origin;
+		}
+		const found: Record<string, string | null> = {};
+		await Promise.all(
+			Object.entries(wanted).map(async ([key, origin]) => {
+				const result = await indexApi.plugin(workspaceId, origin.source, origin.plugin_id);
+				found[key] = result.code === 0 ? (result.data?.latest_compatible ?? null) : null;
+			})
+		);
+		latestByOrigin = found;
+	}
+
+	function updateOf(installation: Installation): string | null {
+		const origin = originOf(installation);
+		const generation = installation.generations.find(
+			(item) => item.generation === installation.active_generation
+		);
+		if (!origin || !generation) return null;
+		const latest = latestByOrigin[originKey(origin)] ?? null;
+		return updateAvailable(generation.package.version, latest) ? latest : null;
 	}
 
 	function scopeBody() {
@@ -400,8 +446,28 @@
 						{@const active = installation.generations.find(
 							(generation) => generation.generation === installation.active_generation
 						)}
+						{@const origin = originOf(installation)}
+						{@const update = updateOf(installation)}
 						<tr>
-							<td class="px-4 py-3 text-sm text-fg">{installation.package_key}</td>
+							<td class="px-4 py-3 text-sm text-fg">
+								{installation.package_key}
+								{#if origin}
+									<div class="mt-1 flex flex-wrap items-center gap-2" data-market-origin>
+										<StatusChip
+											>{$t('market.index.originBadge', {
+												values: { source: origin.source }
+											})}</StatusChip
+										>
+										{#if update}
+											<StatusChip tone="warning" data-market-update-available
+												>{$t('market.index.updateAvailable', {
+													values: { version: update }
+												})}</StatusChip
+											>
+										{/if}
+									</div>
+								{/if}
+							</td>
 							<td class="px-4 py-3 text-sm text-fg-muted">
 								{active?.package.version ?? pendingOf(installation)?.package.version ?? ''}
 								{#if pendingOf(installation) && active}
