@@ -162,8 +162,9 @@ pub struct PluginMetadata {
 /// Channels.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Channels {
-    /// A `listed` version.
-    pub latest: String,
+    /// A `listed` version; absent while no version is listed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest: Option<String>,
 }
 
 /// Version state. Transitions are one-way: `Listed` to `Yanked` to `Revoked`.
