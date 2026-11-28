@@ -329,7 +329,8 @@ async fn mcp_object_export_of_a_secret_record_is_redacted_and_its_package_refuse
         !String::from_utf8_lossy(&artifact).contains("SECRETDIAG"),
         "the MCP json export leaked a restricted value: {body}"
     );
-    assert_eq!(body["semantic_content"], json!({}), "{body}");
+    assert_eq!(body["record"]["semantic_content"], json!({}), "{body}");
+    assert_eq!(body["values_by_field_id"], json!({}), "{body}");
 
     let refused = server
         .call_tool(
