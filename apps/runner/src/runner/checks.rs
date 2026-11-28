@@ -6,8 +6,12 @@
 //! A refusal carries a code from the design's list and a one-line reason without any path; the
 //! path goes to the runner log at `info`.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::sync::LazyLock;
+use std::time::{Duration, Instant};
+
+use parking_lot::Mutex;
 
 use serde_json::Value;
 use sylvode_prereq::{Checker, InstallKind};
@@ -404,9 +408,40 @@ fn refuse(code: &'static str, reason: impl Into<String>) -> Verdict {
     Verdict::Refused(Refusal::new(code, reason))
 }
 
+/// How long a passing tmux prerequisite check is trusted before tmux is asked its version again.
+pub(super) const TMUX_PROBE_TTL: Duration = Duration::from_secs(60);
+
+/// What a passing check was made for: the tmux executable, the socket and the minimum version.
+pub(super) type ProbeKey = (PathBuf, String, String);
+
+/// The tmux drivers whose version check passed, by what the check was made for, and when. Only a
+/// pass is stored: a failure is looked at again on the next delivery.
+#[derive(Default)]
+pub(super) struct TmuxProbeCache {
+    passed: Mutex<HashMap<ProbeKey, (Instant, super::tmux::Tmux)>>,
+}
+
+impl TmuxProbeCache {
+    /// The driver stored for `key`, when it passed less than [`TMUX_PROBE_TTL`] before `now`.
+    pub(super) fn fresh(&self, key: &ProbeKey, now: Instant) -> Option<super::tmux::Tmux> {
+        let passed = self.passed.lock();
+        let (at, tmux) = passed.get(key)?;
+        (now.saturating_duration_since(*at) < TMUX_PROBE_TTL).then(|| tmux.clone())
+    }
+
+    pub(super) fn store(&self, key: ProbeKey, now: Instant, tmux: super::tmux::Tmux) {
+        let mut passed = self.passed.lock();
+        passed.retain(|_, (at, _)| now.saturating_duration_since(*at) < TMUX_PROBE_TTL);
+        passed.insert(key, (now, tmux));
+    }
+}
+
+/// The process-wide cache of the tmux prerequisite check: `tmux -V` runs at most once a minute.
+static TMUX_PROBES: LazyLock<TmuxProbeCache> = LazyLock::new(TmuxProbeCache::default);
+
 /// tmux must be on this runner and at least the configured minimum (never below 3.2). The driver
-/// is returned for the lookups that follow.
-async fn tmux_prerequisites(runner: &super::config::RunnerConfig) -> Result<super::tmux::Tmux, Refusal> {
+/// is returned for the lookups that follow. A pass is trusted for [`TMUX_PROBE_TTL`].
+pub(super) async fn tmux_prerequisites(runner: &super::config::RunnerConfig) -> Result<super::tmux::Tmux, Refusal> {
     use sylvode_prereq::probe::parse_tmux_version;
     let unavailable = |reason: &str| Refusal::new("tmux_unavailable", reason);
     let Some(program) = Checker::new(InstallKind::RunnerTmux).locate(&runner.tmux.binary) else {
@@ -414,6 +449,14 @@ async fn tmux_prerequisites(runner: &super::config::RunnerConfig) -> Result<supe
     };
     let socket = super::tmux::SocketName::new(&runner.tmux.socket_name)
         .map_err(|_| unavailable("the tmux socket name is not valid"))?;
+    let key = (
+        program.clone(),
+        runner.tmux.socket_name.clone(),
+        runner.tmux.min_version.clone(),
+    );
+    if let Some(tmux) = TMUX_PROBES.fresh(&key, Instant::now()) {
+        return Ok(tmux);
+    }
     let tmux = super::tmux::Tmux::new(socket).with_program(program);
     let probe = tmux.clone();
     let version = tokio::task::spawn_blocking(move || probe.version())
@@ -435,6 +478,7 @@ async fn tmux_prerequisites(runner: &super::config::RunnerConfig) -> Result<supe
             format!("tmux {} is older than {}", parsed.display, runner.tmux.min_version),
         ));
     }
+    TMUX_PROBES.store(key, Instant::now(), tmux.clone());
     Ok(tmux)
 }
 

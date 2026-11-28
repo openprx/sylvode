@@ -14,7 +14,10 @@ use axum::{Json, Router};
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 
-use super::checks::{BotCreds, Channel, Context, Verdict, check_delivery, valid_project_key};
+use super::checks::{
+    BotCreds, Channel, Context, TMUX_PROBE_TTL, TmuxProbeCache, Verdict, check_delivery, tmux_prerequisites,
+    valid_project_key,
+};
 use super::files::StateDir;
 use super::paths::AllowedRoots;
 use super::registry::SessionRegistry;
@@ -1003,4 +1006,72 @@ async fn a_record_of_another_bot_without_its_session_is_no_conflict() {
     )
     .await;
     assert!(matches!(verdict, Verdict::Run(_)), "{verdict:?}");
+}
+
+/// A runner config whose tmux is a script that appends a line to `log` on every call and answers
+/// a readable version only once `ready` exists.
+fn counting_tmux(base: &Dir) -> (crate::runner::config::RunnerConfig, PathBuf, PathBuf) {
+    let (log, ready) = (base.path().join("calls"), base.path().join("ready"));
+    let script = base.path().join("tmux");
+    fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\necho x >> '{}'\nif [ -f '{}' ]; then echo 'tmux 3.7b'; else echo 'oops'; fi\n",
+            log.display(),
+            ready.display()
+        ),
+    )
+    .expect("script");
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("chmod");
+    let mut runner = crate::runner::config::RunnerConfig::default();
+    runner.tmux.binary = script.to_string_lossy().into_owned();
+    (runner, log, ready)
+}
+
+fn calls(log: &Path) -> usize {
+    fs::read_to_string(log).map_or(0, |text| text.lines().count())
+}
+
+#[tokio::test]
+async fn the_tmux_probe_runs_once_and_a_failure_is_not_remembered() {
+    let base = Dir::new();
+    let (runner, log, ready) = counting_tmux(&base);
+    // Not readable: refused, and asked again next time.
+    for expected in [1, 2] {
+        let refusal = tmux_prerequisites(&runner).await.expect_err("unreadable version");
+        assert_eq!(refusal.code, "tmux_unavailable");
+        assert_eq!(calls(&log), expected, "a failure is never cached");
+    }
+    fs::write(&ready, "").expect("ready");
+    assert!(tmux_prerequisites(&runner).await.is_ok());
+    assert_eq!(calls(&log), 3);
+    // Then the pass is trusted: no more spawns within the window.
+    for _ in 0..5 {
+        assert!(tmux_prerequisites(&runner).await.is_ok());
+    }
+    assert_eq!(calls(&log), 3, "spawned once for six deliveries");
+    // A changed minimum is a different question and asks again (and fails: nothing is 9.9).
+    let mut stricter = runner.clone();
+    stricter.tmux.min_version = "9.9".to_string();
+    assert!(tmux_prerequisites(&stricter).await.is_err());
+    assert_eq!(calls(&log), 4);
+    // A refusal for an old version is not stored either.
+    assert!(tmux_prerequisites(&stricter).await.is_err());
+    assert_eq!(calls(&log), 5);
+}
+
+#[test]
+fn a_remembered_pass_expires_after_sixty_seconds() {
+    use crate::runner::tmux::{SocketName, Tmux};
+    let cache = TmuxProbeCache::default();
+    let key = (PathBuf::from("/x/tmux"), "sock".to_string(), "3.2".to_string());
+    let tmux = Tmux::new(SocketName::new("sock").expect("socket"));
+    let start = std::time::Instant::now();
+    assert!(cache.fresh(&key, start).is_none(), "nothing stored yet");
+    cache.store(key.clone(), start, tmux);
+    assert_eq!(TMUX_PROBE_TTL, Duration::from_secs(60));
+    assert!(cache.fresh(&key, start + Duration::from_secs(59)).is_some());
+    assert!(cache.fresh(&key, start + Duration::from_secs(60)).is_none());
+    let other = (PathBuf::from("/y/tmux"), "sock".to_string(), "3.2".to_string());
+    assert!(cache.fresh(&other, start).is_none(), "keyed by the executable");
 }
