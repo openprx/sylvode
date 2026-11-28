@@ -108,6 +108,9 @@ fn decode<T: DeserializeOwned + Serialize>(bytes: &[u8], mode: Mode) -> Result<T
     let doc: T =
         serde_path_to_error::deserialize(&value).map_err(|e| one(&json_path(e.path()), e.inner().to_string()))?;
     if mode == Mode::Strict {
+        let mut names = Issues::new();
+        crate::keys::check_member_names(bytes, &mut names);
+        names.into_result()?;
         let known = serde_json::to_value(&doc).map_err(|e| one("$", format!("cannot re-encode: {e}")))?;
         let mut issues = Issues::new();
         unknown_members(&mut issues, "$", &value, &known);

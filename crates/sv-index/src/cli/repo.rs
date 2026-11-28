@@ -70,13 +70,34 @@ pub fn read_bounded(path: &Path, max: u64) -> Result<Vec<u8>, CliError> {
     Ok(out)
 }
 
-/// The committed `index.json` of a checkout, `None` when absent.
+/// True when `rel` (below `root`) can be reached without following a symbolic link: every component
+/// exists and is not a link. Nothing a checkout links to is ever opened.
+pub fn is_link_free(root: &Path, rel: &str) -> bool {
+    let mut path = root.to_path_buf();
+    for part in rel.split('/') {
+        path.push(part);
+        match fs::symlink_metadata(&path) {
+            Ok(m) if !m.file_type().is_symlink() => {}
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// Reads a repository file of at most `max` bytes, refusing any path that goes through a link.
+pub fn read_repo_file(root: &Path, rel: &str, max: u64) -> Result<Vec<u8>, CliError> {
+    if !is_link_free(root, rel) {
+        return Err(CliError(format!("{rel}: missing, or a symbolic link (refused)")));
+    }
+    read_bounded(&root.join(rel), max)
+}
+
+/// The committed `index.json` of a checkout, `None` when absent or a link.
 pub fn read_committed(root: &Path) -> Result<Option<Committed>, CliError> {
-    let path = root.join(INDEX_FILE);
-    if !path.exists() {
+    if !is_link_free(root, INDEX_FILE) {
         return Ok(None);
     }
-    let bytes = read_bounded(&path, limits::MAX_INDEX_BYTES)?;
+    let bytes = read_repo_file(root, INDEX_FILE, limits::MAX_INDEX_BYTES)?;
     let doc = serde_json::from_slice(&bytes).ok();
     Ok(Some(Committed { bytes, doc }))
 }
@@ -107,6 +128,14 @@ fn entries(dir: &Path) -> Result<Vec<(String, Kind)>, CliError> {
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(out)
+}
+
+/// Like [`entries`] for a directory below the root: a link or a non-directory lists as empty.
+fn entries_below(root: &Path, rel: &str) -> Result<Vec<(String, Kind)>, CliError> {
+    if rel.is_empty() || !is_link_free(root, rel) {
+        return Ok(Vec::new());
+    }
+    entries(&root.join(rel))
 }
 
 /// Repository-wide file rules: no package files, nothing over 1 MiB, no symbolic links.
@@ -149,7 +178,7 @@ fn scan_tree(root: &Path, findings: &mut Vec<Finding>) -> Result<(), CliError> {
                             "package files are never committed; host the package at an https URL",
                         ));
                     }
-                    let len = fs::metadata(root.join(&child)).map_or(0, |m| m.len());
+                    let len = fs::symlink_metadata(root.join(&child)).map_or(0, |m| m.len());
                     if len > limits::MAX_REPO_FILE_BYTES {
                         findings.push(Finding::new(
                             &shown,
@@ -180,7 +209,7 @@ pub fn load(root: &Path, declared: Option<&IndexMetadata>, hosts: &dyn HostPolic
         hosts,
     };
     load_publishers(root, &opts, &mut loaded)?;
-    for (publisher, kind) in entries(&root.join("plugins"))? {
+    for (publisher, kind) in entries_below(root, "plugins")? {
         if kind != Kind::Dir {
             loaded.findings.push(Finding::new(
                 &format!("plugins/{publisher}"),
@@ -190,7 +219,7 @@ pub fn load(root: &Path, declared: Option<&IndexMetadata>, hosts: &dyn HostPolic
             ));
             continue;
         }
-        for (name, kind) in entries(&root.join("plugins").join(&publisher))? {
+        for (name, kind) in entries_below(root, &format!("plugins/{publisher}"))? {
             let dir = format!("plugins/{publisher}/{name}");
             if kind != Kind::Dir {
                 loaded.findings.push(Finding::new(
@@ -208,7 +237,7 @@ pub fn load(root: &Path, declared: Option<&IndexMetadata>, hosts: &dyn HostPolic
 }
 
 fn load_publishers(root: &Path, opts: &Options<'_>, loaded: &mut Loaded) -> Result<(), CliError> {
-    for (name, kind) in entries(&root.join("publishers"))? {
+    for (name, kind) in entries_below(root, "publishers")? {
         let file = format!("publishers/{name}");
         let Some(stem) = name.strip_suffix(".json").filter(|_| kind == Kind::File) else {
             loaded.findings.push(Finding::new(
@@ -219,7 +248,7 @@ fn load_publishers(root: &Path, opts: &Options<'_>, loaded: &mut Loaded) -> Resu
             ));
             continue;
         };
-        let bytes = match read_bounded(&root.join(&file), limits::MAX_REPO_FILE_BYTES) {
+        let bytes = match read_repo_file(root, &file, limits::MAX_REPO_FILE_BYTES) {
             Ok(b) => b,
             Err(e) => {
                 loaded.broken = true;
@@ -257,7 +286,7 @@ fn load_plugin(
     loaded: &mut Loaded,
 ) -> Result<(), CliError> {
     let file = format!("{dir}/plugin.json");
-    let bytes = match read_bounded(&root.join(&file), limits::MAX_REPO_FILE_BYTES) {
+    let bytes = match read_repo_file(root, &file, limits::MAX_REPO_FILE_BYTES) {
         Ok(b) => b,
         Err(e) => {
             loaded.broken = true;
@@ -310,9 +339,15 @@ fn check_plugin_files(
             ImageRole::Icon => limits::MAX_ICON_BYTES,
             ImageRole::Screenshot => limits::MAX_SCREENSHOT_BYTES,
         };
-        match read_bounded(&root.join(dir).join(rel), max) {
-            Err(_) if !root.join(dir).join(rel).is_file() => {
-                findings.push(Finding::new(file, json_path, "image", "file not found"));
+        let image_rel = format!("{dir}/{rel}");
+        match read_repo_file(root, &image_rel, max) {
+            Err(_) if !is_link_free(root, &image_rel) || !root.join(&image_rel).is_file() => {
+                findings.push(Finding::new(
+                    file,
+                    json_path,
+                    "image",
+                    "file not found, or a symbolic link (refused)",
+                ));
             }
             Err(e) => findings.push(Finding::new(file, json_path, "image", e.0)),
             Ok(bytes) => {
@@ -323,11 +358,11 @@ fn check_plugin_files(
         }
     }
     let mut present: Vec<String> = Vec::new();
-    for (name, kind) in entries(&root.join(dir))? {
+    for (name, kind) in entries_below(root, dir)? {
         match kind {
             Kind::File => present.push(name),
             Kind::Dir if name == "screenshots" => {
-                for (inner, k) in entries(&root.join(dir).join("screenshots"))? {
+                for (inner, k) in entries_below(root, &format!("{dir}/screenshots"))? {
                     if k == Kind::File {
                         present.push(format!("screenshots/{inner}"));
                     } else {

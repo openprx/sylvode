@@ -1,18 +1,19 @@
 //! `sv-index entry`: the version entry of a local package, and the `contents` projection shared with
 //! `check`.
 
-use sv_package::{Limits, Manifest};
+use sv_package::{Limits, PackageData};
 
 use super::{CliError, EntryArgs, now_secs, repo};
 use crate::{AnyHost, ContentLayout, ContentPage, Contents, VersionEntry, VersionStatus, download_url_problem, limits};
 
-/// The display projection of a manifest (the same facts as the `analysis` of
+/// The display projection of a package (the same facts as the `analysis` of
 /// `GET .../packages/{digest}`). `forms` lists the binds that create a form from a package file;
-/// `custom_code` is the manifest's computed flag (any action or rule).
-pub fn contents_of(m: &Manifest) -> Contents {
+/// `custom_code` is the server's rule (any action or rule, or a `custom-frame` layout node).
+pub fn contents_of(pkg: &PackageData) -> Contents {
+    let m = &pkg.manifest;
     Contents {
         requests: m.requests.iter().map(|r| r.id.clone()).collect(),
-        custom_code: m.computed_custom_code(),
+        custom_code: pkg.carries_custom_code(),
         actions: m.actions.iter().map(|a| a.name.clone()).collect(),
         rules: m.rules.iter().map(|r| r.name.clone()).collect(),
         binds: m.binds.keys().cloned().collect(),
@@ -67,7 +68,7 @@ pub fn run(args: &EntryArgs) -> Result<bool, CliError> {
         publisher: m.publisher.id.clone(),
         key_id: m.publisher.key_id.clone(),
         sylvode: args.sylvode.clone().unwrap_or_else(|| format!(">={}", m.sv.min)),
-        contents: contents_of(m),
+        contents: contents_of(&pkg),
         changelog: None,
     };
     println!("{}", serde_json::to_string_pretty(&entry)?);

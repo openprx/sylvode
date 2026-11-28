@@ -22,7 +22,11 @@ Exit codes:
   0  success: no findings
   1  the index repository has findings (invalid document, stale index.json, rule violation,
      failed download or verification); each finding names its file and JSON path
-  2  usage error or an I/O problem that prevented the run (unreadable repo, missing base)";
+  2  usage error or an I/O problem that prevented the run (unreadable repo, missing base)
+
+CI: run `check` on the pull request without secrets and never pass --resolve or --ca-file there
+(they skip the public-address rule and add trust roots). Symbolic links in the checkout are refused
+and never followed.";
 
 /// A failure that is not a finding: usage or I/O (exit code 2).
 #[derive(Debug)]
@@ -100,11 +104,15 @@ pub struct CheckArgs {
     download_hosts: Vec<String>,
     /// Pin a host to an address, `host=ip[:port]` (repeatable). Pinned addresses skip the
     /// public-address rule and may use another port; for test indexes on a private network.
+    /// Never pass this in CI.
     #[arg(long = "resolve", value_name = "HOST=IP[:PORT]")]
     resolve: Vec<String>,
-    /// PEM file with extra root certificates to trust (repeatable); for test TLS.
+    /// PEM file with extra root certificates to trust (repeatable); for test TLS. Never pass this in CI.
     #[arg(long = "ca-file")]
     ca_file: Vec<PathBuf>,
+    /// Most downloads in one run; the rest are reported as not verified and the run fails.
+    #[arg(long, default_value_t = 50)]
+    max_downloads: usize,
     /// Machine-readable report.
     #[arg(long)]
     json: bool,
