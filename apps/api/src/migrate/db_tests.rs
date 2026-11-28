@@ -2133,3 +2133,31 @@ async fn record_title_cap_migration_cuts_on_characters_and_reruns() {
     }
     scratch.drop_self().await;
 }
+
+/// 0143 narrows the work item hint trigger to rows that actually changed, and re-runs as a no-op.
+#[tokio::test]
+async fn work_item_hint_trigger_fires_only_for_a_changed_row_and_reruns() {
+    let scratch = scratch_or_skip!("work_item_hint_when");
+    let db = scratch.connection();
+    run_migrations_with(db, MigrationOptions::default())
+        .await
+        .expect("a fresh database migrates cleanly");
+    let sql_0143 = MIGRATIONS
+        .iter()
+        .find(|(name, _)| name.starts_with("0143"))
+        .map(|(_, sql)| *sql)
+        .expect("0143 is registered");
+    let definition = "SELECT pg_get_triggerdef(oid) AS v FROM pg_trigger \
+                      WHERE tgname = 'trg_sv_hint_work_item_update' AND NOT tgisinternal";
+    for run in ["first", "second"] {
+        db.execute_unprepared(&format!("BEGIN; {sql_0143}\nCOMMIT;"))
+            .await
+            .unwrap_or_else(|err| panic!("the {run} run of 0143 fails: {err}"));
+        let def = scalar_text(db, definition).await;
+        assert!(
+            def.contains("WHEN") && def.contains("IS DISTINCT FROM"),
+            "after the {run} run the update trigger is conditional: {def}"
+        );
+    }
+    scratch.drop_self().await;
+}

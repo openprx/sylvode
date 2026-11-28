@@ -677,6 +677,7 @@ const MIGRATION_PROBES: &[(&str, SchemaProbe)] = &[
         SchemaProbe::RelationAbsent("scenario_templates"),
     ),
     ("0142_cap_record_titles.sql", SchemaProbe::Rerunnable),
+    ("0143_change_hints_narrow.sql", SchemaProbe::Rerunnable),
 ];
 
 /// One recorded migration outcome.
