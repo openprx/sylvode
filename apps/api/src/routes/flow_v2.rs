@@ -470,6 +470,7 @@ pub async fn post_flow_v2_command(
         ));
     }
     if let Some(workspace) = identity.workspace_id {
+        let req_command_type = req.command.command_type.clone();
         let extensions = super::build_auth_extensions(claims, bot);
         let (_, role, is_bot) = crate::flow::policy::resolve_flow_principal(&state, &extensions, workspace).await?;
         let result = crate::flow::command::execute_command(
@@ -490,7 +491,18 @@ pub async fn post_flow_v2_command(
         )
         .await?;
         let mut result = serde_json::to_value(result).map_err(|_| ApiError::internal())?;
-        *result.field_mut("object")? = scope::object_view(&state.db, object, actor).await?;
+        // A record create answers with the record it made; every other command answers with its
+        // target, as the personal-scope path does.
+        let created_record = (req_command_type == "record_create")
+            .then(|| {
+                result
+                    .get("command_result")
+                    .and_then(|r| r.get("record_id"))
+                    .and_then(Value::as_str)
+                    .and_then(|id| Uuid::parse_str(id).ok())
+            })
+            .flatten();
+        *result.field_mut("object")? = scope::object_view(&state.db, created_record.unwrap_or(object), actor).await?;
         return Ok(ApiResponse::success(result));
     }
     if req.command.command_type == "move_object" {
