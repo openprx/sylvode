@@ -930,6 +930,10 @@ struct HintStream {
     shutdown: watch::Receiver<bool>,
     tx: mpsc::Sender<Bytes>,
     readable: Readable,
+    /// The project filter as of the last time the client was told about its access (the hello, or an
+    /// `access_changed`). `deliver` and `on_overflow` replace `readable` without announcing, so the
+    /// tick compares against this, not against `readable`.
+    announced: ProjectFilter,
     expiry: Option<Instant>,
     db_failing_since: Option<Instant>,
     /// Since when the client's queue has been full, if it is.
@@ -1036,7 +1040,7 @@ impl HintStream {
                 // A permission change is an access change too: check the token (read) first.
                 self.verify_token().await?;
                 self.refresh_readable().await?;
-                self.send(frame("access_changed", &serde_json::json!({})))
+                self.announce_access()
             }
             Ok(Signal::Token(bot)) if bot == self.bot_id => self.verify_token().await,
             Ok(Signal::Access(_) | Signal::Token(_)) => Ok(()),
@@ -1066,10 +1070,9 @@ impl HintStream {
     async fn on_tick(&mut self) -> Result<(), End> {
         let outcome = async {
             self.verify_token().await?;
-            let before = self.readable.filter.clone();
             self.refresh_readable().await?;
-            if self.readable.filter != before {
-                self.send(frame("access_changed", &serde_json::json!({})))?;
+            if self.readable.filter != self.announced {
+                self.announce_access()?;
             }
             Ok(())
         }
@@ -1091,6 +1094,13 @@ impl HintStream {
             }
             other => other,
         }
+    }
+
+    /// Tells the client its access changed and records the filter it was told about.
+    fn announce_access(&mut self) -> Result<(), End> {
+        self.send(frame("access_changed", &serde_json::json!({})))?;
+        self.announced = self.readable.filter.clone();
+        Ok(())
     }
 
     /// Looks the token up again. `Err(End::Db)` is a database failure, not a verdict.
@@ -1293,6 +1303,7 @@ pub async fn change_hints(
         signals,
         shutdown: hub.shutdown.subscribe(),
         tx,
+        announced: readable.filter.clone(),
         readable,
         expiry,
         db_failing_since: None,
