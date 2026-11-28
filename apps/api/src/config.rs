@@ -68,7 +68,7 @@ impl RuntimeConfig {
             inbound: config.inbound,
             email: config.email.clone(),
             packages: config.packages.clone(),
-            site: config.site,
+            site: config.site.clone(),
             public_url: config.server.public_url.clone(),
         }
     }
