@@ -235,7 +235,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: latest
+          bun-version: 1.4.5
       - name: Install dependencies
         working-directory: frontend
         run: bun install --frozen-lockfile
@@ -246,19 +246,11 @@ jobs:
         working-directory: frontend
         run: bun run lint
       - name: Unit and contract tests
+        # Every tests/**/*.test.ts and src/**/*.test.ts file, one process each. The runner first
+        # runs canaries that must fail after an await and fails the job when Bun reports one as
+        # passed. Do not replace it with a hand-written suite list or a bare `bun test`.
         working-directory: frontend
-        run: |
-          set -e
-          for suite in record-values markdown-sanitize flow-limits flow-scope-api flow-route-scope flow-navigator-placements flow-i18n-parity i18n-parity bot-transport-surfaces \
-                       webhook-events flow-navigator-equivalence flow-cross-parent-move flow-ui-state flow-bridge flow-dangling-parent \
-                       flow-package-import flow-v0.4 flow-static-build flow-outbox flow-offline-recovery flow-apply-busy \
-                       shell-routing shell-state shell-keyboard surface-host project-nav shell-redirects surface-embed \
-                       component-adapters toast-routing workbench-tabs forms-page forms-csv-export plugin-creator-review-focus oauth workspace-role sprint-rules workflow-state due-date \
-                       agent-tasks issue-detail connection-managed connection-section connection-list uuid flow-handshake-failure features; do
-            echo "::group::test:$suite"
-            bun run "test:$suite"
-            echo "::endgroup::"
-          done
+        run: bun run test
       - name: Build
         working-directory: frontend
         run: bun run build
@@ -383,7 +375,7 @@ jobs:
         run: chmod +x target/release/api target/release/worker target/release/collab-isolated-apply-worker
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: latest
+          bun-version: 1.4.5
       - name: Build frontend
         working-directory: frontend
         run: |

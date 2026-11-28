@@ -137,7 +137,7 @@ suite.check('tree rows: collapsed project is one row; expansion lists children w
 	const open = flattenTree(tree, new Set(['p1']), { workspaceId: W });
 	assertDeepEqual(
 		open.map((r) => r.attrs?.['data-tree-kind']),
-		['project', 'overview', 'issues', 'board', 'cycles', 'forms'],
+		['project', 'overview', 'issues', 'board', 'cycles', 'forms', 'sites'],
 		'kinds in order'
 	);
 	assert(
