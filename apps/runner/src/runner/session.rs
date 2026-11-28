@@ -21,10 +21,12 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, oneshot, watch};
 use uuid::Uuid;
 
@@ -525,7 +527,10 @@ impl BotPool {
 /// design's default).
 const ITEM_AFFINITY_TTL_SECS: u64 = 3600;
 
-enum Cmd {
+/// How many commands a session's channel holds.
+const WORKER_CHANNEL: usize = 256;
+
+pub(super) enum Cmd {
     Recover {
         adopt: Option<Adopt>,
         requeue: Vec<TmuxTask>,
@@ -533,6 +538,8 @@ enum Cmd {
     Enqueue {
         task: Box<TmuxTask>,
         reply: oneshot::Sender<usize>,
+        /// Counts the task as pending until the worker has taken the command (or it is dropped).
+        pending: Pending,
     },
     Hook {
         event: HookEvent,
@@ -564,10 +571,126 @@ struct Shared {
 /// `(tmux socket path, pane id)` to the name of the session that uses the pane.
 type PaneMap = Arc<Mutex<HashMap<(String, String), String>>>;
 
+/// One enqueue that is in a session's channel and not yet in its queue. Releases its count when
+/// dropped.
+pub(super) struct Pending {
+    counter: Arc<AtomicUsize>,
+    /// The number of pending enqueues of the session, this one included, when it was counted.
+    count: usize,
+}
+
+impl Pending {
+    fn acquire(counter: &Arc<AtomicUsize>) -> Self {
+        let count = counter.fetch_add(1, Ordering::AcqRel).saturating_add(1);
+        Self {
+            counter: Arc::clone(counter),
+            count,
+        }
+    }
+}
+
+impl Drop for Pending {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// Why an enqueue was not accepted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EnqueueRefusal {
+    /// The session's command channel is full.
+    Full,
+    /// The session holds `max_queued_per_session` tasks already.
+    Capped,
+    /// The session's worker has ended.
+    Closed,
+}
+
+impl EnqueueRefusal {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Full => "channel_full",
+            Self::Capped => "queue_cap",
+            Self::Closed => "worker_closed",
+        }
+    }
+}
+
+/// What an enqueue may wait for and hold.
+#[derive(Clone, Copy, Debug)]
+pub struct EnqueueLimits {
+    /// How long to wait for the queue position; zero waits without a bound.
+    pub answer: Duration,
+    /// The most tasks one session may hold queued; zero means no limit.
+    pub max_queued: usize,
+}
+
+/// A session's command channel and what the manager may read of its state.
+#[derive(Clone)]
+pub(super) struct WorkerHandle {
+    tx: mpsc::Sender<Cmd>,
+    status: watch::Receiver<MemberStatus>,
+    pending: Arc<AtomicUsize>,
+}
+
+impl WorkerHandle {
+    pub(super) fn new(tx: mpsc::Sender<Cmd>, status: watch::Receiver<MemberStatus>) -> Self {
+        Self {
+            tx,
+            status,
+            pending: Arc::default(),
+        }
+    }
+
+    /// Hands `task` to the worker without waiting for room, then waits for its queue position for
+    /// at most `limits.answer`. `Ok(None)` means the worker did not answer in time; the task is
+    /// queued all the same, in the order it arrived.
+    pub(super) async fn enqueue(&self, task: TmuxTask, limits: EnqueueLimits) -> Result<Option<usize>, EnqueueRefusal> {
+        let pending = Pending::acquire(&self.pending);
+        if limits.max_queued > 0 {
+            let queued = self.status.borrow().queue_len;
+            if queued.saturating_add(pending.count) > limits.max_queued {
+                return Err(EnqueueRefusal::Capped);
+            }
+        }
+        let (reply, answer) = oneshot::channel();
+        match self.tx.try_send(Cmd::Enqueue {
+            task: Box::new(task),
+            reply,
+            pending,
+        }) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => return Err(EnqueueRefusal::Full),
+            Err(TrySendError::Closed(_)) => return Err(EnqueueRefusal::Closed),
+        }
+        if limits.answer.is_zero() {
+            return answer.await.map(Some).map_err(|_| EnqueueRefusal::Closed);
+        }
+        match tokio::time::timeout(limits.answer, answer).await {
+            Ok(Ok(position)) => Ok(Some(position)),
+            Ok(Err(_)) => Err(EnqueueRefusal::Closed),
+            Err(_) => Ok(None),
+        }
+    }
+
+    /// Hands a hook event to the worker without waiting: a full channel drops the event (the
+    /// screen read covers a missed turn event) so one stalled session never holds up the others.
+    pub(super) fn hook(&self, event: HookEvent, seq: u64, peer_chain: Option<Vec<u32>>) -> Result<(), EnqueueRefusal> {
+        match self.tx.try_send(Cmd::Hook { event, seq, peer_chain }) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => Err(EnqueueRefusal::Full),
+            Err(TrySendError::Closed(_)) => Err(EnqueueRefusal::Closed),
+        }
+    }
+}
+
 /// The sessions of this runner.
 pub struct SessionManager {
     shared: Arc<Shared>,
-    workers: Mutex<HashMap<String, mpsc::Sender<Cmd>>>,
+    workers: Mutex<HashMap<String, WorkerHandle>>,
+    /// Hook events dropped because a session's channel was full, since the runner started.
+    hooks_dropped: AtomicU64,
     /// The pool of each bot and CLI, by the text of its member 0 slot.
     pools: Mutex<HashMap<String, BotPool>>,
 }
@@ -599,6 +722,7 @@ impl SessionManager {
                 report_trigger,
             }),
             workers: Mutex::new(HashMap::new()),
+            hooks_dropped: AtomicU64::new(0),
             pools: Mutex::new(HashMap::new()),
         })
     }
@@ -610,16 +734,18 @@ impl SessionManager {
         Arc::new(move |message| panes.lock().contains_key(&(message.tmux.clone(), message.pane.clone())))
     }
 
-    fn sender(&self, name: &Slot) -> mpsc::Sender<Cmd> {
-        let (tx, rx) = mpsc::channel(256);
-        {
-            let mut workers = self.workers.lock();
-            if let Some(sender) = workers.get(name.as_str()) {
-                return sender.clone();
-            }
-            workers.insert(name.as_str().to_string(), tx.clone());
-        }
+    fn handle(&self, name: &Slot) -> WorkerHandle {
+        let (tx, rx) = mpsc::channel(WORKER_CHANNEL);
         let (status_tx, status_rx) = watch::channel(MemberStatus::fresh());
+        let handle = {
+            let mut workers = self.workers.lock();
+            if let Some(existing) = workers.get(name.as_str()) {
+                return existing.clone();
+            }
+            let handle = WorkerHandle::new(tx.clone(), status_rx.clone());
+            workers.insert(name.as_str().to_string(), handle.clone());
+            handle
+        };
         if name.is_bot()
             && let Ok(primary) = bot_primary(name)
         {
@@ -629,24 +755,33 @@ impl SessionManager {
                 .or_default()
                 .attach(name, status_rx);
         }
-        let worker = Worker::new(Arc::clone(&self.shared), name.clone(), rx, tx.clone(), status_tx);
+        let worker = Worker::new(Arc::clone(&self.shared), name.clone(), rx, tx, status_tx);
         tokio::spawn(worker.run());
-        tx
+        handle
+    }
+
+    /// Puts a ready-made handle in place of a worker (the channel of a session that is not run
+    /// by this manager).
+    pub(super) fn install(&self, name: &Slot, handle: WorkerHandle) {
+        self.workers.lock().insert(name.as_str().to_string(), handle);
     }
 
     /// Queues a task on its slot (the project's session, or the bot's one session shared by every
-    /// project) and returns its 1-based queue position.
-    pub async fn enqueue(&self, task: TmuxTask) -> Option<usize> {
-        let (reply, answer) = oneshot::channel();
+    /// project) and returns its 1-based queue position, or `None` when the session's worker did
+    /// not answer within `[runner] enqueue_answer_ms`.
+    ///
+    /// # Errors
+    ///
+    /// [`EnqueueRefusal`]: the channel is full, the session holds `max_queued_per_session` tasks,
+    /// or the worker has ended. The first two are back-pressure (HTTP 503).
+    pub async fn enqueue(&self, task: TmuxTask) -> Result<Option<usize>, EnqueueRefusal> {
         let slot = self.choose_slot(&task);
-        self.sender(&slot)
-            .send(Cmd::Enqueue {
-                task: Box::new(task),
-                reply,
-            })
-            .await
-            .ok()?;
-        answer.await.ok()
+        let runner = &self.shared.config.runner;
+        let limits = EnqueueLimits {
+            answer: Duration::from_millis(runner.enqueue_answer_ms),
+            max_queued: usize::try_from(runner.max_queued_per_session).unwrap_or(usize::MAX),
+        };
+        self.handle(&slot).enqueue(task, limits).await
     }
 
     /// The slot that takes `task`: the project's own, or the member of the bot's pool chosen by
@@ -659,7 +794,7 @@ impl SessionManager {
             return task.slot.clone();
         };
         // The worker of the slot attaches to the pool when it is created.
-        drop(self.sender(&task.slot));
+        drop(self.handle(&task.slot));
         let input = SelectInput {
             task_id: Some(&task.task_id),
             item: None,
@@ -681,8 +816,8 @@ impl SessionManager {
         slot
     }
 
-    /// A hook event from a CLI.
-    pub async fn hook(&self, message: HookMessage) {
+    /// A hook event from a CLI. Never waits: see [`Self::deliver_hook`].
+    pub fn hook(&self, message: HookMessage) {
         // Only a pane a session worker recorded takes events.
         let name = self
             .shared
@@ -693,15 +828,28 @@ impl SessionManager {
         // codex may import claude's hooks (and the reverse): a message applies only to the
         // session of its own CLI.
         let name = name.filter(|name| hook_is_for_session(name, &message.cli));
-        let sender = name.and_then(|name| self.workers.lock().get(&name).cloned());
-        if let Some(sender) = sender {
-            let _ = sender
-                .send(Cmd::Hook {
-                    event: message.event,
-                    seq: message.seq,
-                    peer_chain: message.peer_chain,
-                })
-                .await;
+        if let Some(name) = name {
+            self.deliver_hook(&name, message.event, message.seq, message.peer_chain);
+        }
+    }
+
+    /// The hook events dropped so far because a session's channel was full.
+    pub(super) fn hooks_dropped(&self) -> u64 {
+        self.hooks_dropped.load(Ordering::Relaxed)
+    }
+
+    /// Hands a hook event to the worker of session `name`. A full channel drops the event with a
+    /// warning and a running count; the other sessions are not affected.
+    pub(super) fn deliver_hook(&self, name: &str, event: HookEvent, seq: u64, peer_chain: Option<Vec<u32>>) {
+        let handle = self.workers.lock().get(name).cloned();
+        let Some(handle) = handle else { return };
+        match handle.hook(event, seq, peer_chain) {
+            Ok(()) => {}
+            Err(EnqueueRefusal::Closed) => tracing::debug!(slot = name, "hook dropped: the worker has ended"),
+            Err(why) => {
+                let count = self.hooks_dropped.fetch_add(1, Ordering::Relaxed).saturating_add(1);
+                tracing::warn!(slot = name, reason = why.as_str(), count, "hook dropped");
+            }
         }
     }
 
@@ -759,7 +907,7 @@ impl SessionManager {
     /// Hands recovered tasks to the worker of `name`: the pushed one is supervised again, the rest
     /// are queued in the order given.
     pub async fn recover(&self, name: Slot, adopt: Option<Adopt>, requeue: Vec<TmuxTask>) {
-        let _ = self.sender(&name).send(Cmd::Recover { adopt, requeue }).await;
+        let _ = self.handle(&name).tx.send(Cmd::Recover { adopt, requeue }).await;
     }
 }
 
@@ -1075,7 +1223,11 @@ impl Worker {
                 }
                 actions
             }
-            Cmd::Enqueue { task, reply } => {
+            Cmd::Enqueue {
+                task,
+                reply,
+                pending: _pending,
+            } => {
                 let id = task.task_id.clone();
                 if self
                     .machine

@@ -611,7 +611,7 @@ fn start_sessions(
     let router = Arc::clone(&manager);
     tokio::spawn(async move {
         while let Some(message) = rx.recv().await {
-            router.hook(message).await;
+            router.hook(message);
         }
     });
     Some(manager)

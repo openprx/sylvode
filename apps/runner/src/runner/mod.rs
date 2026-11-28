@@ -56,6 +56,8 @@ pub mod sanitize;
 pub mod tmux;
 
 #[cfg(test)]
+mod admission_tests;
+#[cfg(test)]
 mod checks_tests;
 #[cfg(test)]
 mod cli_tests;
@@ -346,8 +348,33 @@ pub fn write_bot_files_at_start(state: &AppState) {
     }
 }
 
+/// The answer to the worker for an enqueue on the tmux channel. Back-pressure (a full channel or
+/// a session at its queue cap) is HTTP 503 with no body: it says nothing about the session or its
+/// queue. `queue_position` is `null` when the session's worker did not answer in time.
+fn enqueue_answer(
+    agent: &crate::config::AgentConfig,
+    session: &str,
+    queued: Result<Option<usize>, session::EnqueueRefusal>,
+) -> Result<Value, StatusCode> {
+    match queued {
+        Ok(position) => Ok(json!({
+            "status": "dispatched",
+            "channel": "tmux",
+            "agent": agent.id,
+            "session": session,
+            "queue_position": position,
+        })),
+        Err(session::EnqueueRefusal::Closed) => Ok(refused(
+            agent,
+            "runner_agent_disabled",
+            "the session of this project could not take the task",
+        )),
+        Err(session::EnqueueRefusal::Full | session::EnqueueRefusal::Capped) => Err(StatusCode::SERVICE_UNAVAILABLE),
+    }
+}
+
 /// The one HTTP client of the runner agents: no redirect is ever followed.
-/// The pool settings come from `[runner.http]`; at their defaults the client is the library's own.
+/// The pool settings come from `[runner.http]`.
 pub fn build_http_client(settings: &config::RunnerHttpConfig) -> Result<reqwest::Client, String> {
     let mut builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -511,24 +538,10 @@ async fn decide(
             let enqueue_started = Instant::now();
             let queued = sessions.enqueue(session::TmuxTask::from_accepted(&accepted)).await;
             times.enqueue_ms = timing::millis(enqueue_started.elapsed());
-            Ok(queued.map_or_else(
-                || {
-                    refused(
-                        agent,
-                        "runner_agent_disabled",
-                        "the session of this project could not take the task",
-                    )
-                },
-                |position| {
-                    json!({
-                        "status": "dispatched",
-                        "channel": "tmux",
-                        "agent": agent.id,
-                        "session": session,
-                        "queue_position": position,
-                    })
-                },
-            ))
+            if let Err(why @ (session::EnqueueRefusal::Full | session::EnqueueRefusal::Capped)) = &queued {
+                tracing::warn!(slot = times.slot.as_str(), reason = why.as_str(), "enqueue refused");
+            }
+            enqueue_answer(agent, &session, queued)
         }
         Verdict::Run(accepted) => {
             let (Ok(files), Ok(roots)) = (&state.runner.state, state.runner.roots_for(agent)) else {
