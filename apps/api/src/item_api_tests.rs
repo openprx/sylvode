@@ -15,7 +15,7 @@
 )]
 
 use crate::migrate::db_tests::{Scratch, scratch};
-use crate::migrate::{MigrationOptions, run_migrations_with};
+use crate::migrate::run_migrations;
 use crate::router::build_router;
 use axum::Router;
 use axum::body::Body;
@@ -71,9 +71,7 @@ impl Api {
             return None;
         };
         let db = scratch.connection().clone();
-        run_migrations_with(&db, MigrationOptions::default())
-            .await
-            .expect("migrations apply");
+        run_migrations(&db).await.expect("migrations apply");
         let state = AppState {
             cfg: AppConfig {
                 app_name: "api-test".to_string(),

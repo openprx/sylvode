@@ -126,16 +126,17 @@ backend switches by editing one line. Switching does not copy existing files.
 
 Sylvode runs on PostgreSQL 18 only. The migrations are compiled into the `api` binary and applied
 at every start: each migration runs once under a lock, in a transaction that also records it in
-the `schema_migrations` ledger, so several API replicas can start together. After the run the API
-checks the ledger and stops if a migration failed or is missing.
+the `schema_migrations` ledger, so several API replicas can start together. The API refuses to
+start when a migration fails, when a recorded migration file changed, or when the ledger records a
+migration the build does not ship. There is no setting that changes this.
 
-Two switches in `[migrations]` change this, for inspecting a damaged database; turn them back off
-afterwards:
-
-- `replay = true` runs every migration again, reports failures without stopping, and never
-  downgrades a recorded success.
-- `continue_on_error = true` starts the API although a migration failed or the check found a gap.
-  The failures are recorded and retried at the next start.
+If the API refuses to start for one of the last two reasons, the database and the binary do not
+belong together. A changed file means the binary was built from different migration sources than
+the one that applied it; a recorded file the build does not ship means the binary is older than the
+database. Deploy the build that applied the migration or a newer one, or restore the backup taken
+before the upgrade. Never edit `schema_migrations` to make the check pass: the ledger is what says
+which schema the database has. The error names the file and, for a changed file, shows the recorded
+and the shipped checksum.
 
 The Compose database is created by the `postgres` image with `POSTGRES_DB: openpr` and
 `POSTGRES_USER: openpr`, and is reachable only inside the Compose network. Do not publish its port
@@ -251,9 +252,8 @@ content stays readable to its owner and the people it is shared with, and owners
 shares. Turning `external_mounts` off stops new mounts and level changes but keeps the access that
 existing mounts grant; remove those mounts to withdraw it.
 
-The defaults are applied to the row only once, and the fact is recorded in
-`flow_runtime_capability_rollouts`. Do not delete rows from that table: a missing row lets the next
-migration run switch the capabilities on again, over the values you set.
+The defaults were applied to the singleton row once, when the migrations that introduced them ran;
+no later start changes the row, so the values you set stay.
 
 ### Flow reader leases
 

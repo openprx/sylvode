@@ -113,6 +113,7 @@ const TREE_GLYPHS: Record<TreeKind, GlyphName> = {
 	form: 'file-text',
 	'all-forms': 'table-2',
 	apps: 'app-window',
+	sites: 'globe',
 	app: 'puzzle',
 	link: 'link',
 	caption: 'link',

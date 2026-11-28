@@ -368,9 +368,11 @@ mod tests {
             code,
             [(
                 "main".to_string(),
-                ["overview", "issues", "board", "cycles", "forms", "apps", "settings"]
-                    .map(String::from)
-                    .to_vec()
+                [
+                    "overview", "issues", "board", "cycles", "forms", "apps", "sites", "settings"
+                ]
+                .map(String::from)
+                .to_vec()
             )]
         );
         let forms = run(
@@ -381,7 +383,10 @@ mod tests {
         );
         assert_eq!(
             forms,
-            [("main".to_string(), ["forms", "apps"].map(String::from).to_vec())]
+            [(
+                "main".to_string(),
+                ["forms", "apps", "sites"].map(String::from).to_vec()
+            )]
         );
     }
 
@@ -457,6 +462,7 @@ mod tests {
             "project.cycles",
             "project.forms",
             "project.apps",
+            "project.sites",
             "project.settings",
         ]
         .iter()
@@ -464,7 +470,7 @@ mod tests {
         .map(|(i, page)| entry(&format!("e{i}"), page, json!({"pinned": true})))
         .collect();
         let d = doc_of(many);
-        assert_eq!(run(&d, ADMIN, None, None)[0].1.len(), 7);
+        assert_eq!(run(&d, ADMIN, None, None)[0].1.len(), 8);
     }
 
     #[test]

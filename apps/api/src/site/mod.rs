@@ -8,12 +8,15 @@ pub mod admin;
 pub(crate) mod drafts;
 pub mod http;
 pub mod layouts;
+mod link;
+#[cfg(test)]
+mod package_pages_tests;
 mod projection;
 pub mod public;
 mod records;
 mod session;
 pub mod static_assets;
-mod store;
+pub(crate) mod store;
 
 pub use store::SiteRow;
 

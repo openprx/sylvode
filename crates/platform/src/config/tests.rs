@@ -69,10 +69,6 @@ operation_log_retention_days = 45
 [ai_tasks]
 processing_timeout_secs = 7200
 
-[migrations]
-replay = true
-continue_on_error = true
-
 [outbound]
 allowed_hosts = ["worker.internal", "hooks.example.com:8443"]
 allow_private = true
@@ -125,9 +121,6 @@ fn a_complete_file_parses_into_every_section() {
     );
     assert_eq!(config.audit.operation_log_retention_days, 45);
     assert_eq!(config.ai_tasks.processing_timeout_secs, 7200);
-
-    assert!(config.migrations.replay);
-    assert!(config.migrations.continue_on_error);
 
     assert_eq!(
         config.outbound.allowed_hosts,
@@ -185,8 +178,6 @@ jwt_secret = "0123456789abcdef0123456789abcdef"
     assert_eq!(config.storage.dir, Path::new("./uploads"));
     assert_eq!(config.audit.operation_log_retention_days, 30);
     assert_eq!(config.ai_tasks.processing_timeout_secs, 3600);
-    assert!(!config.migrations.replay);
-    assert!(!config.migrations.continue_on_error);
     assert!(config.outbound.allowed_hosts.is_empty());
     assert!(!config.outbound.allow_private);
     assert_eq!(config.mcp.transport, McpTransport::Stdio);
@@ -1558,6 +1549,17 @@ fn the_retired_unused_settings_are_unknown_keys() {
     );
 }
 
+/// The `[migrations]` section is gone: a file that still has it is refused as an unknown section.
+#[test]
+fn the_retired_migrations_section_is_refused() {
+    let error = parse(
+        "[database]\nurl = \"postgres://localhost/openpr\"\n\n[auth]\njwt_secret = \"0123456789abcdef0123456789abcdef\"\n\n[migrations]\ncontinue_on_error = false\n",
+    )
+    .expect_err("the migrations section is refused");
+    let text = error.to_string();
+    assert!(text.contains("unknown field") && text.contains("migrations"), "{text}");
+}
+
 #[test]
 fn an_unknown_oauth_key_is_refused() {
     let error = parse(&oauth_file(
@@ -1954,4 +1956,61 @@ fn a_password_needs_a_username_and_unknown_email_keys_are_refused() {
     let reported = issues(&(EMAIL_ON.to_string() + "password = \"abc\"\n"));
     assert!(reported.iter().any(|i| i.contains("email.password")), "{reported:?}");
     assert!(parse("[email]\nbogus = 1\n").is_err());
+}
+
+// ---- site.mount_path ----
+
+fn site_mount_file(mount_path: &str) -> String {
+    format!(
+        r#"
+[server]
+bind_addr = "127.0.0.1:8081"
+
+[database]
+url = "postgres://localhost/openpr"
+
+[auth]
+jwt_secret = "0123456789abcdef0123456789abcdef"
+
+[site]
+mount_path = "{mount_path}"
+"#
+    )
+}
+
+#[test]
+fn site_mount_path_defaults_to_site() {
+    let source = site_mount_file("/x").replace("mount_path = \"/x\"", "");
+    assert_eq!(parse(&source).expect("minimal file").site.mount_path, "/site");
+}
+
+#[test]
+fn site_mount_path_accepts_a_custom_path() {
+    assert_eq!(
+        parse(&site_mount_file("/portal")).expect("valid").site.mount_path,
+        "/portal"
+    );
+}
+
+#[test]
+fn site_mount_path_refuses_bad_values_naming_the_key() {
+    for bad in [
+        "/",
+        "portal",
+        "/portal/",
+        "/a/../b",
+        "/api",
+        "/api/site",
+        "/uploads",
+        "/health",
+    ] {
+        let error = parse(&site_mount_file(bad)).expect_err(bad);
+        let ConfigError::Invalid { issues, .. } = error else {
+            panic!("expected ConfigError::Invalid for {bad}, got {error}");
+        };
+        assert!(
+            issues.iter().any(|issue| issue.contains("site.mount_path")),
+            "{bad}: {issues:?}"
+        );
+    }
 }

@@ -216,6 +216,7 @@ mod tests {
             nav: None,
             position: 0,
             installation_id: None,
+            generation: None,
         }
     }
 

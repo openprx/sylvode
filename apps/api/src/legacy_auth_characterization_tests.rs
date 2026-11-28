@@ -10,7 +10,7 @@
 #![allow(clippy::print_stderr, clippy::indexing_slicing)]
 
 use crate::migrate::db_tests::scratch;
-use crate::migrate::{MigrationOptions, run_migrations_with};
+use crate::migrate::run_migrations;
 use crate::router::build_router;
 use axum::body::Body;
 use axum::http::{Request, header};
@@ -186,9 +186,7 @@ async fn bot_and_jwt_requests_answer_exactly_as_recorded_before_connected_applic
         return;
     };
     let db = scratch.connection().clone();
-    run_migrations_with(&db, MigrationOptions::default())
-        .await
-        .expect("migrations apply");
+    run_migrations(&db).await.expect("migrations apply");
 
     for (id, active) in [(MEMBER, true), (DISABLED_MEMBER, true)] {
         exec(

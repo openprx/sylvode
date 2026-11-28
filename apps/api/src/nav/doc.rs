@@ -59,6 +59,7 @@ pub const PROJECT_BUILTINS: &[&str] = &[
     "project.cycles",
     "project.forms",
     "project.apps",
+    "project.sites",
     "project.settings",
 ];
 
@@ -429,6 +430,7 @@ pub fn defaults(scope: NavScope, project_type: Option<&str>) -> NavDoc {
                 ("cycles", "project.cycles"),
                 ("forms", "project.forms"),
                 ("apps", "project.apps"),
+                ("sites", "project.sites"),
                 ("settings", "project.settings"),
             ] {
                 if builtin_applies(page, project_type) {
@@ -483,7 +485,10 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(pages, ["project.forms", "project.apps", "project.settings"]);
+        assert_eq!(
+            pages,
+            ["project.forms", "project.apps", "project.sites", "project.settings"]
+        );
     }
 
     #[test]

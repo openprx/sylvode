@@ -39,7 +39,11 @@ suite.check('code project: overview, issues, board, cycles, forms', () => {
 	assertEqual(tree.kind, 'project', 'kind');
 	assertEqual(tree.label, 'Core', 'label');
 	assertEqual(tree.href, base('p1'), 'row goes to the overview');
-	assertDeepEqual(kinds(tree), ['overview', 'issues', 'board', 'cycles', 'forms'], 'children');
+	assertDeepEqual(
+		kinds(tree),
+		['overview', 'issues', 'board', 'cycles', 'forms', 'sites'],
+		'children'
+	);
 	assertEqual(tree.children?.[0].label, 'T(shell.projectNav.overview)', 'translated');
 	assertEqual(tree.children?.[1].href, `${base('p1')}/issues`, 'issues href');
 });
@@ -47,7 +51,7 @@ suite.check('code project: overview, issues, board, cycles, forms', () => {
 suite.check('custom_form project has no overview and opens on forms', () => {
 	const tree = projectTree({ ...input, project: forms });
 	assertEqual(tree.href, `${base('p2')}/forms`, 'row href');
-	assertDeepEqual(kinds(tree), ['forms'], 'children');
+	assertDeepEqual(kinds(tree), ['forms', 'sites'], 'children');
 	assertEqual(projectHome(W, forms), `${base('p2')}/forms`, 'projectHome');
 	assertEqual(projectHome(W, code), base('p1'), 'projectHome code');
 });
@@ -92,9 +96,14 @@ suite.check('Apps row: count or admin; Settings row: admin only', () => {
 		'shown with apps'
 	);
 	const admin = projectTree({ ...input, project: forms, isWorkspaceAdmin: true });
-	assertDeepEqual(kinds(admin), ['forms', 'apps', 'settings'], 'admin sees both');
+	assertDeepEqual(kinds(admin), ['forms', 'apps', 'sites', 'settings'], 'admin sees all');
 	assertEqual(admin.children?.[1].href, `${base('p2')}/apps`, 'apps href');
-	assertEqual(admin.children?.[2].href, `${base('p2')}/settings`, 'settings href');
+	assertEqual(admin.children?.[2].href, `${base('p2')}/sites`, 'sites href');
+	assertEqual(admin.children?.[3].href, `${base('p2')}/settings`, 'settings href');
+	assert(
+		kinds(projectTree({ ...input, project: forms })).includes('sites'),
+		'Sites row shows for a member'
+	);
 	assert(
 		!kinds(projectTree({ ...input, project: forms, appsCount: 3 })).includes('settings'),
 		'member has no settings'

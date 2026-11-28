@@ -106,12 +106,15 @@ pub async fn create_layouts(
 
 /// Creates the site pages of `manifest` for generation `generation` in a site of the installation.
 ///
-/// A new `draft` site holds its first pages. A page serves nothing until the site is published
+/// Pages of earlier generations of the installation are deleted: the site serves the active generation
+/// only, so an upgrade of a published site changes what it serves at once. A new `draft` site holds the
+/// first pages. A page serves nothing until the site is published
 /// and a binding gives its form visitor access (contract C3 §6): the package never opens a form to
 /// the public by itself.
 ///
 /// # Errors
-/// `pages_need_project` for a workspace scope, `page_route_taken` when the site already has a page
+/// `pages_need_project` for a workspace scope, `site_route_taken` (409, names the route) when a page of
+/// the site's own has a route of the package, `page_route_taken` when the site already has a page
 /// with a route of the package at this generation, or a database failure.
 pub async fn create_pages(
     tx: &impl ConnectionTrait,
@@ -122,13 +125,39 @@ pub async fn create_pages(
     generation: i32,
     created_by: Uuid,
 ) -> Result<(), ApiError> {
+    let delete_old = Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "DELETE FROM site_pages WHERE installation_id = $1 AND generation IS DISTINCT FROM $2",
+        vec![installation_id.into(), generation.into()],
+    );
     if manifest.pages.is_empty() {
+        // The latest generation has no pages: the earlier ones go and the site stays, empty.
+        tx.execute(delete_old).await?;
         return Ok(());
     }
     let project_id = scope
         .project_id
         .ok_or_else(|| ApiError::bad_request_coded("pages_need_project", "site pages are installed into a project"))?;
     let site_id = site_of_installation(tx, scope.workspace_id, project_id, installation_id, created_by).await?;
+    // The site serves the active generation only: an upgrade replaces the earlier generations' pages.
+    tx.execute(delete_old).await?;
+    for page in &manifest.pages {
+        let taken = tx
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT 1 AS one FROM site_pages WHERE site_id = $1 AND route = $2 AND installation_id IS NULL",
+                vec![site_id.into(), page.route.clone().into()],
+            ))
+            .await?
+            .is_some();
+        if taken {
+            return Err(ApiError::conflict_coded(
+                "site_route_taken",
+                format!("the site already has a page of its own at {}", page.route),
+                Some(serde_json::json!({ "route": page.route })),
+            ));
+        }
+    }
     for (position, page) in manifest.pages.iter().enumerate() {
         let layout_id = layouts.get(&page.layout).ok_or_else(ApiError::internal)?;
         let nav = page.nav.as_ref().and_then(|nav| serde_json::to_value(nav).ok());
@@ -164,9 +193,10 @@ pub async fn create_pages(
     Ok(())
 }
 
-/// The `draft` site that already holds pages of this installation (an upgrade adds its pages beside the
-/// earlier generation's), or a new `draft` site named after the project. A package never adds pages
-/// to a site that is not a draft (published or disabled, which a person runs) and never publishes one.
+/// The installation's site (`installations.site_id`, read under a row lock), whatever its status: an
+/// upgrade replaces the earlier generation's pages there, so a published site serves the new
+/// generation at once. Without one (a first install, or the site was deleted) a new `draft` site named
+/// after the project is created and linked. A package never publishes a site.
 async fn site_of_installation(
     tx: &impl ConnectionTrait,
     workspace_id: Uuid,
@@ -176,8 +206,7 @@ async fn site_of_installation(
 ) -> Result<Uuid, ApiError> {
     let existing = Id::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT p.site_id AS id FROM site_pages p JOIN sites s ON s.id = p.site_id \
-         WHERE p.installation_id = $1 AND s.status = 'draft' ORDER BY p.generation DESC, p.id LIMIT 1",
+        "SELECT site_id AS id FROM installations WHERE id = $1 AND site_id IS NOT NULL FOR UPDATE",
         vec![installation_id.into()],
     ))
     .one(tx)
@@ -187,7 +216,7 @@ async fn site_of_installation(
     }
     // Slugs are global and the project key is not: a random suffix keeps the insert from colliding.
     let slug = format!("site-{}", &Uuid::new_v4().simple().to_string()[..12]);
-    Id::find_by_statement(Statement::from_sql_and_values(
+    let site = Id::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "INSERT INTO sites (workspace_id, project_id, slug, title, created_by) \
          SELECT $1, p.id, $3, jsonb_build_object('en', left(p.name, 80)), $4 FROM projects p WHERE p.id = $2 \
@@ -197,7 +226,14 @@ async fn site_of_installation(
     .one(tx)
     .await?
     .map(|row| row.id)
-    .ok_or_else(|| ApiError::not_found("project not found"))
+    .ok_or_else(|| ApiError::not_found("project not found"))?;
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE installations SET site_id = $2 WHERE id = $1",
+        vec![installation_id.into(), site.into()],
+    ))
+    .await?;
+    Ok(site)
 }
 
 async fn place(

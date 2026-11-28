@@ -12,12 +12,32 @@ name.
 
 ### Removed
 
+- **Migration runner: adoption, replay and the `[migrations]` section are gone.** The API applies
+  every migration file the ledger does not record, in file name order, each in its own transaction,
+  and refuses to start when one fails, when a recorded file changed, or when the ledger records a
+  file the build does not ship. A configuration that still contains `[migrations]` (`replay`,
+  `continue_on_error`) is refused at start as an unknown section, so remove it before upgrading.
+- **Flow capability rollout markers.** Migration `0146` drops `flow_runtime_capability_rollouts`; the
+  column defaults stay and no start re-applies them.
+- **`project_types.default_connectors`.** Nothing read the column; migration `0144` drops it.
 - **Worker: `[ai_tasks] delivery_pool` is gone.** The worker always delivers through the checked
   connection pool; a configuration that still sets `delivery_pool` is refused at start, so remove the
   key before upgrading.
 
 ### Added
 
+- **Sites: console fields and rules.** A site answers `url` and `url_mode` (`separate`: its own
+  `allowed_origin`; `same_origin`: served by the API from `[site] assets_dir`, `public_url` + `mount_path`
+  + `/?site=<slug>`; both null when nothing serves it), `published_at` (set when the site goes from
+  not published to published, kept on unpublish; sites published earlier stay null; migration `0145`) and
+  `installation` (`{id, package_key}` of the package that created its pages). An installation answers
+  `site_id`. `PATCH /sites/{id}` takes `slug` as well (people who own or administer the workspace; only
+  while the site is a draft, else `409 site_not_draft`; `409 slug_taken` on a collision). `DELETE
+  /sites/{id}` is refused with `409 site_published` while the site is published. The project navigation
+  gets a built-in `project.sites` row between Apps and Settings.
+- **Config: `[site] mount_path`.** The URL path the API serves the built site app at (default `/site`,
+  no trailing `/`; paths that start with a top-level API route are refused at start). Build the site
+  app with `VITE_SV_SITE_BASE` set to `mount_path` plus `/`; both must match.
 - **Project templates are built-in packages.** The six scenario templates are signed packages
   (`packages/builtin/`, `sv/contract-review` and so on, plus `sv/service-request` and `sv/service-desk`)
   that go through the installation flow. `POST /workspaces/{id}/projects` takes `template_package`

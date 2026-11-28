@@ -34,7 +34,6 @@
       "pool_max_idle_per_host",
       "tcp_keepalive_secs"
     ],
-    "migrations": ["replay", "continue_on_error"],
     "outbound": ["allowed_hosts", "allow_private"],
     "mcp": [
       "api_url",
@@ -79,7 +78,7 @@
       "followup_interval_secs"
     ],
     "packages": ["builtin_public_key", "builtin_dir"],
-    "site": ["same_origin_trial", "cookie_insecure", "assets_dir"]
+    "site": ["same_origin_trial", "cookie_insecure", "assets_dir", "mount_path"]
   },
   "retired": {}
 }

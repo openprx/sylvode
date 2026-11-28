@@ -83,13 +83,15 @@ async fn main() -> anyhow::Result<()> {
         );
     }
     match config.site.served_assets_dir() {
-        Some(dir) => tracing::info!(assets_dir = %dir.display(), "site assets are served at /site"),
+        Some(dir) => {
+            tracing::info!(assets_dir = %dir.display(), mount_path = %config.site.mount_path, "site assets are served");
+        }
         None => {
             tracing::info!("site assets are not served (site.same_origin_trial and site.assets_dir are both required)");
         }
     }
     let db = connect_db(&config.database_runtime()?).await?;
-    migrate::run_migrations(&db, config.migrations).await?;
+    migrate::run_migrations(&db).await?;
     migrate::verify_governance_schema(&db).await?;
     // Every router route has exactly one catalogue entry, or the API does not start.
     match api::catalogue::boot::check(router::ROUTER_SOURCES, &db).await {
@@ -224,6 +226,9 @@ mod admin_setup_api_tests;
 
 #[cfg(test)]
 mod plugin_template_api_tests;
+
+#[cfg(test)]
+mod site_admin_api_tests;
 
 #[cfg(test)]
 mod legacy_auth_characterization_tests;

@@ -248,10 +248,6 @@ backend = "local"
 # Must match the ./uploads bind mount of the api and worker services in docker-compose.yml.
 dir = "/app/uploads"
 
-[migrations]
-replay = false
-continue_on_error = false
-
 [outbound]
 # Webhook and other outbound endpoints resolving to a private address are refused unless the host is
 # listed here. These are the in-compose services, including the optional runner.

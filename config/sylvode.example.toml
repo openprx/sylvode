@@ -207,20 +207,6 @@ tcp_keepalive_secs = 30
 
 
 # ---------------------------------------------------------------------------------------------
-# [migrations] — escape hatches of the migration runner. Both default to false, which is the
-# setting a healthy deployment runs with. Turn one on deliberately, then turn it back off.
-# ---------------------------------------------------------------------------------------------
-[migrations]
-# Re-execute every migration once, reporting failures without aborting. Safe on a live database:
-# a failure never downgrades a ledger row that already records a success.
-replay = false
-
-# Start even though a migration failed or the schema check found a gap. The degraded path for
-# getting a service up to inspect it. The failure is still recorded and logged.
-continue_on_error = false
-
-
-# ---------------------------------------------------------------------------------------------
 # [outbound] — what the webhook and AI-task delivery paths are allowed to call.
 #
 # Outbound requests to private and loopback addresses are blocked by default, so a webhook
@@ -450,13 +436,17 @@ enabled = false
 # HTTP; like auth.allow_insecure_cookies it is accepted only when server.bind_addr is a loopback
 # address (the API behind a local proxy).
 # assets_dir is the directory of the built site app (`site/dist`); with same_origin_trial on, the API
-# serves it at `/site` (the app is built for the base path `/site/`). Without both keys `/site`
-# answers 404.
+# serves it at mount_path. Without both keys the mount path answers 404.
+# mount_path is the URL path of the site app (default `/site`): it starts with `/`, has no trailing
+# `/`, uses only letters, digits, `-`, `_`, `.` and `/`, and may not start with a top-level API route
+# (`/api`, `/uploads`, `/mcp`, `/health`, `/ready`, `/.well-known`). Build the site app with
+# VITE_SV_SITE_BASE set to mount_path plus `/` (for `/portal`: `/portal/`); both must match.
 # ---------------------------------------------------------------------------------------------
 [site]
 # same_origin_trial = false
 # cookie_insecure = false
 # assets_dir = "/path/to/site-dist"
+# mount_path = "/site"
 
 # ---------------------------------------------------------------------------------------------
 # [email] — notification e-mails over SMTP (plain text only). Optional; off by default.

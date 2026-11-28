@@ -302,12 +302,14 @@ async fn resolve(
         .filter(|site| site.workspace_id == workspace_id && site.project_id == project_id)
         .ok_or_else(|| ApiError::not_found("site not found"))?;
     let page = match target.page_id {
-        Some(page_id) => Some(
-            store::load_page(db, page_id)
+        Some(page_id) => {
+            let page = store::load_page(db, page_id)
                 .await?
                 .filter(|page| page.site_id == site.id)
-                .ok_or_else(|| ApiError::not_found("page not found"))?,
-        ),
+                .ok_or_else(|| ApiError::not_found("page not found"))?;
+            super::admin::refuse_package_page(&page)?;
+            Some(page)
+        }
         None => None,
     };
     let fits = match (target.op, page.is_some()) {
@@ -804,6 +806,7 @@ mod tests {
             nav: None,
             position: 4,
             installation_id: None,
+            generation: None,
         };
         let update = PageTarget::update(page.site_id, &page, 7);
         let stored = serde_json::to_value(&update).unwrap();
