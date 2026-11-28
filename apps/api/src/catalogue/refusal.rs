@@ -43,6 +43,8 @@ pub enum RefusalCode {
     PluginHostCallLimit,
     /// Plugin host: too many plugin runs at the same time.
     PluginConcurrencyLimit,
+    /// Plugin host: the installation made too many write calls in the last minute.
+    PluginWriteRateLimited,
     /// Plugin host: the plugin reported an error.
     PluginGuestError,
     /// Plugin host: the plugin failed.
@@ -107,6 +109,7 @@ impl RefusalCode {
             Self::PluginMemoryLimit => "plugin_memory_limit",
             Self::PluginHostCallLimit => "plugin_host_call_limit",
             Self::PluginConcurrencyLimit => "plugin_concurrency_limit",
+            Self::PluginWriteRateLimited => "plugin_write_rate_limited",
             Self::PluginGuestError => "plugin_guest_error",
             Self::PluginFailed => "plugin_failed",
             Self::PluginActionUnknown => "plugin_action_unknown",
@@ -150,7 +153,10 @@ impl RefusalCode {
             | Self::PluginGuestError
             | Self::PluginFailed => 422,
             Self::PluginComponentTooLarge | Self::PluginInputTooLarge | Self::PluginOutputTooLarge => 413,
-            Self::LegacyPluginBusy | Self::PluginConcurrencyLimit | Self::InstallationRateLimited => 429,
+            Self::LegacyPluginBusy
+            | Self::PluginConcurrencyLimit
+            | Self::PluginWriteRateLimited
+            | Self::InstallationRateLimited => 429,
             Self::InstallationNotActive
             | Self::InstallationRevoked
             | Self::InstallationPackageRevoked
@@ -181,8 +187,9 @@ impl RefusalCode {
             Self::PluginDeadlineExceeded => "the plugin ran past its time limit",
             Self::PluginFuelExhausted => "the plugin used up its compute budget",
             Self::PluginMemoryLimit => "the plugin asked for more memory than the limit",
-            Self::PluginHostCallLimit => "the plugin made more host calls than the limit",
+            Self::PluginHostCallLimit => "the plugin made more host calls or destructive calls than the limit",
             Self::PluginConcurrencyLimit => "too many plugin runs at the same time",
+            Self::PluginWriteRateLimited => "this installation made too many write calls in the last minute",
             Self::PluginGuestError => "the plugin reported an error",
             Self::PluginFailed => "the plugin failed",
             Self::PluginActionUnknown => "the plugin has no such action",

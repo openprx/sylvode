@@ -105,6 +105,13 @@ pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
             )),
         )
         .route(
+            "/api/v1/installations/{installation_id}/calls",
+            get(handlers::list_calls).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::auth::jwt_auth_middleware,
+            )),
+        )
+        .route(
             "/api/v1/installations/{installation_id}/actions/{action}",
             post(invoke::invoke_action)
                 .layer(DefaultBodyLimit::max(invoke::BODY_LIMIT))

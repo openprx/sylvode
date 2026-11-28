@@ -26,3 +26,4 @@ until the owning batch adds the real migration.
 | 0149 | flow_workspace_scope_naming (landed: scope kind `legacy_managed` -> `workspace`, `flow_ensure_legacy_scope` -> `flow_ensure_workspace_scope`, column `scope_native_legacy` -> `workspace_editor_initialization`) |
 | 0150 | package_upload_drafts (added: `0150_package_upload_drafts.sql`; draft kind `package_upload`, nullable `artefact_drafts.project_id`, table `package_upload_blobs`) |
 | 0153 | package_upload_draft_hints (added: `0153_package_upload_draft_hints.sql`; `sv_hint_draft` names the bot of a project-less draft and sends nothing for a person's) |
+| 0151 | extension_invocation_calls (added: `0151_extension_invocation_calls.sql`; per-call plugin audit table and `extension_invocations.read_calls`; design M10 §3.6, which names 0150) |

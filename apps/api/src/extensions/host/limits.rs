@@ -76,6 +76,13 @@ pub struct Limits {
 
 /// A request or response of a host call.
 pub const CALL_BODY_MAX: usize = MIB;
+/// Destructive catalogue calls (risk `destructive`) one invocation may attempt; the next ends it with
+/// `plugin_host_call_limit`.
+pub const DESTRUCTIVE_CALLS_MAX: u32 = 20;
+/// Write and destructive catalogue calls one installation may attempt per [`WRITE_WINDOW`], all its
+/// invocations together; past it the invocation ends with `plugin_write_rate_limited` (429).
+pub const WRITES_PER_WINDOW: usize = 600;
+pub const WRITE_WINDOW: Duration = Duration::from_mins(1);
 /// Counted guest log lines; more are dropped.
 pub const LOG_LINES_MAX: u32 = 50;
 /// Instances running at once, all installations.

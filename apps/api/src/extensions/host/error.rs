@@ -14,12 +14,41 @@ pub struct HostError {
     pub code: RefusalCode,
     /// `details.guest_code` of `plugin_guest_error`, validated `[a-z0-9_]{1,64}`.
     pub guest_code: Option<String>,
+    /// Fixed, value-free details of the refusal: the capabilities a missing grant names, or when a
+    /// rate limit allows the next attempt.
+    pub details: Option<serde_json::Value>,
 }
 
 impl HostError {
     #[must_use]
     pub const fn new(code: RefusalCode) -> Self {
-        Self { code, guest_code: None }
+        Self {
+            code,
+            guest_code: None,
+            details: None,
+        }
+    }
+
+    /// The same error with `details` (shown to the caller beside the code).
+    #[must_use]
+    pub fn with_details(mut self, details: serde_json::Value) -> Self {
+        self.details = Some(details);
+        self
+    }
+
+    /// A component imports an interface its grants do not unlock: `capability_not_granted`, naming
+    /// the interface and the capability ids of which at least one must be granted and requested
+    /// (none named: any granted capability unlocks it).
+    #[must_use]
+    pub fn not_granted(interface: &str, capabilities: &[&str]) -> Self {
+        Self::new(RefusalCode::CapabilityNotGranted)
+            .with_details(json!({ "interface": interface, "capabilities": capabilities }))
+    }
+
+    /// The installation's write window is full; the next write may come after `retry_after_ms`.
+    #[must_use]
+    pub fn write_rate_limited(retry_after_ms: u64) -> Self {
+        Self::new(RefusalCode::PluginWriteRateLimited).with_details(json!({ "retry_after_ms": retry_after_ms }))
     }
 
     #[must_use]
@@ -27,6 +56,7 @@ impl HostError {
         Self {
             code: RefusalCode::PluginGuestError,
             guest_code: Some(code),
+            details: None,
         }
     }
 
@@ -40,6 +70,7 @@ impl HostError {
             | RefusalCode::PluginFuelExhausted
             | RefusalCode::PluginMemoryLimit
             | RefusalCode::PluginHostCallLimit
+            | RefusalCode::PluginWriteRateLimited
             | RefusalCode::PluginOutputTooLarge => "limit",
             RefusalCode::PluginGuestError => "guest_error",
             RefusalCode::PluginFailed => "trap",
@@ -62,7 +93,10 @@ impl From<HostError> for ApiError {
             status: error.code.status(),
             code: error.code.as_str(),
             message: error.code.message().to_string(),
-            details: error.guest_code.map(|code| json!({ "guest_code": code })),
+            details: error
+                .guest_code
+                .map(|code| json!({ "guest_code": code }))
+                .or(error.details),
         }
     }
 }

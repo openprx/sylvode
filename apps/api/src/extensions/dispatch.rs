@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::{
     Router,
@@ -29,7 +29,9 @@ use super::InternalCall;
 use super::host::limits::CALL_BODY_MAX;
 use super::install::live::{self, LoadError};
 use super::resource::{canonical_uuid, primary_param, resolve_resource};
-use crate::catalogue::{Entry, Exposure, Method, Principal, Refusal, RefusalCode, allowed_pre, allowed_target, by_op};
+use crate::catalogue::{
+    Entry, Exposure, Method, Principal, Refusal, RefusalCode, Risk, allowed_pre, allowed_target, by_op,
+};
 
 static ROUTER: OnceLock<Router> = OnceLock::new();
 
@@ -134,6 +136,81 @@ const STRIPPED_BODY_KEYS: [&str; 3] = ["source", "metadata", "idempotency_key"];
 ///   set a value, change it and set it again, so only a token makes two updates one.
 const IDEMPOTENT_OPS: [(&str, bool); 2] = [("forms.records.create", true), ("forms.records.update", false)];
 
+/// The risk of the operation `op` if it is one plugins may call, else `None`.
+#[must_use]
+pub fn plugin_risk(op: &str) -> Option<Risk> {
+    by_op(op)
+        .filter(|entry| entry.exposure.contains(Exposure::PLUGIN))
+        .map(|entry| entry.risk)
+}
+
+/// One audited host call: a write or destructive operation, as the audit table of migration 0151
+/// stores it. Holds no input and no output, only the ids of the path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CallAudit {
+    pub call_index: u32,
+    pub capability: &'static str,
+    pub op: &'static str,
+    pub method: &'static str,
+    pub risk: &'static str,
+    /// Path parameter name to canonical UUID, for the parameters that are ids.
+    pub target_ids: Value,
+    pub project_id: Option<Uuid>,
+    /// `ok`, `denied`, `not_found`, `invalid`, `conflict`, `limit` or `unavailable`.
+    pub outcome: &'static str,
+    pub error_code: Option<String>,
+    pub duration_ms: u64,
+}
+
+/// What a call learns on its way, for the audit row.
+#[derive(Default)]
+struct Trace {
+    entry: Option<&'static Entry>,
+    target_ids: Map<String, Value>,
+    project_id: Option<Uuid>,
+}
+
+impl Trace {
+    fn finish(self, call_index: u32, started: Instant, result: &Result<Value, CallError>) -> Option<CallAudit> {
+        let entry = self
+            .entry
+            .filter(|entry| matches!(entry.risk, Risk::Write | Risk::Destructive))?;
+        let (outcome, error_code) = match result {
+            Ok(_) => ("ok", None),
+            Err(error) => (
+                match error {
+                    CallError::Denied(_) | CallError::Ended(_) => "denied",
+                    CallError::NotFound => "not_found",
+                    CallError::Invalid(_) => "invalid",
+                    CallError::Conflict(_) => "conflict",
+                    CallError::Limit(_) => "limit",
+                    CallError::Unavailable => "unavailable",
+                },
+                Some(error.code().to_string()),
+            ),
+        };
+        Some(CallAudit {
+            call_index,
+            capability: entry.capability(),
+            op: entry.op,
+            method: entry.method.as_str(),
+            risk: entry.risk.as_str(),
+            target_ids: Value::Object(self.target_ids),
+            project_id: self.project_id,
+            outcome,
+            error_code,
+            duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        })
+    }
+}
+
+/// The result of [`call`] and, for a write or destructive operation that got as far as its catalogue
+/// entry, the audit row of the call.
+pub struct Called {
+    pub result: Result<Value, CallError>,
+    pub audit: Option<CallAudit>,
+}
+
 /// Runs the operation `op` for the invocation `env`.
 ///
 /// The order is fixed so that a guest learns nothing it is not granted: the operation must exist and
@@ -141,18 +218,29 @@ const IDEMPOTENT_OPS: [(&str, bool); 2] = [("forms.records.create", true), ("for
 /// ([`allowed_pre`]); only then are the path parameters checked and the target resolved, and an
 /// unresolvable target is refused like one outside the workspace ([`allowed_target`]).
 ///
-/// # Errors
-/// A [`CallError`]; see its variants.
-pub async fn call(
+/// The failure is a [`CallError`]; see its variants.
+pub async fn call(env: &CallEnv, call_index: u32, op: &str, request: &str, timeout: Duration) -> Called {
+    let started = Instant::now();
+    let mut trace = Trace::default();
+    let result = run(env, call_index, op, request, timeout, &mut trace).await;
+    Called {
+        audit: trace.finish(call_index, started, &result),
+        result,
+    }
+}
+
+async fn run(
     env: &CallEnv,
     call_index: u32,
     op: &str,
     request: &str,
     timeout: Duration,
+    trace: &mut Trace,
 ) -> Result<Value, CallError> {
     let entry = by_op(op)
         .filter(|entry| entry.exposure.contains(Exposure::PLUGIN))
         .ok_or_else(|| CallError::Denied("capability_not_exposed".to_string()))?;
+    trace.entry = Some(entry);
     if request.len() > CALL_BODY_MAX {
         return Err(CallError::Limit("payload_too_large".to_string()));
     }
@@ -161,6 +249,11 @@ pub async fn call(
     let principal = fresh_principal(env).await?;
     allowed_pre(&principal, entry)?;
     let params = path_params(entry, &request.path)?;
+    trace.target_ids = params
+        .iter()
+        .filter(|(_, value)| canonical_uuid(value).is_some())
+        .map(|(name, value)| (name.clone(), Value::String(value.clone())))
+        .collect();
     let query = query_string(&request.query)?;
     let resource = resolve_resource(
         &env.state.db,
@@ -175,6 +268,7 @@ pub async fn call(
     let Some(resource) = resource else {
         return Err(CallError::Denied("capability_scope_mismatch".to_string()));
     };
+    trace.project_id = resource.project_id;
     allowed_target(&principal, entry, &resource)?;
     let internal = InternalCall {
         op: entry.op,

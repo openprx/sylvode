@@ -302,13 +302,13 @@ async fn an_interface_without_a_usable_grant_is_not_linked() {
     // The sample action imports `records`; with no grant at all the host provides nothing.
     let input = json!({"record_id": RECORD}).to_string();
     let none = run(ACTION, World::Action, "close_request", &input, &grants(&[])).await;
-    assert_eq!(code(&none).0, RefusalCode::PluginUnknownImport);
+    assert_eq!(code(&none).0, RefusalCode::CapabilityNotGranted);
     assert_eq!(none.record.outcome, "refused");
     // A grant that the manifest did not request does not count.
     let mut unrequested = grants(&["forms.records.update"]);
     unrequested.requested.clear();
     let unrequested = run(ACTION, World::Action, "close_request", &input, &unrequested).await;
-    assert_eq!(code(&unrequested).0, RefusalCode::PluginUnknownImport);
+    assert_eq!(code(&unrequested).0, RefusalCode::CapabilityNotGranted);
 }
 
 #[tokio::test]
