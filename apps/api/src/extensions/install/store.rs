@@ -49,8 +49,9 @@ pub async fn load_installation(db: &impl ConnectionTrait, id: Uuid) -> Result<Op
 /// 2. the `installations` row: this lock, and the `UPDATE` of `disable_for_revoked_key` that a
 ///    revocation runs after step 1.
 ///
-/// A writer that needs both takes the key first. Writers that take only the installation row
-/// (disable, revoke, reject, upgrade) cannot take part in a cycle.
+/// A writer that needs both takes the key first; the package delete takes key (`FOR SHARE`, no
+/// status filter), then installations in id order, then the package row. Writers that take only the
+/// installation row (disable, revoke, reject, upgrade) cannot take part in a cycle.
 pub async fn lock_installation(db: &impl ConnectionTrait, id: Uuid) -> Result<Option<InstallationRow>, ApiError> {
     Ok(InstallationRow::find_by_statement(stmt(
         format!("SELECT {INSTALLATION_COLUMNS} FROM installations WHERE id = $1 FOR UPDATE"),

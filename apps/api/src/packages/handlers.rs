@@ -228,6 +228,8 @@ pub async fn delete_package(
             package_not_found()
         });
     };
+    // Lock order: upload lock, publisher key, installations, package row.
+    store::lock_package_key(&tx, row.id).await?;
     if store::has_live_generation(&tx, row.id).await? {
         return Err(package_in_use());
     }

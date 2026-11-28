@@ -272,6 +272,21 @@ pub(super) async fn has_live_generation(db: &impl ConnectionTrait, package_row_i
         .is_some())
 }
 
+/// Takes the publisher key row of the package `FOR SHARE`, with no status filter. A key revocation
+/// updates the key first and then the packages and installations it signed, so a delete that takes
+/// the installations before the key could deadlock with it; the shared key lock makes the two
+/// finish one after the other. The package row is read through a subquery because the key id
+/// never changes and every package has one. Call it first in the delete transaction, right after
+/// the workspace upload lock.
+pub(super) async fn lock_package_key(db: &impl ConnectionTrait, package_row_id: Uuid) -> Result<(), ApiError> {
+    db.execute(stmt(
+        "SELECT 1 FROM publisher_keys WHERE id = (SELECT publisher_key_id FROM packages WHERE id = $1) FOR SHARE",
+        vec![package_row_id.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
 /// Deletes the non-live generations that reference the package row, with the grants and layouts
 /// that hang on them (their foreign keys cascade) and the site pages those layouts serve. A
 /// revoked installation may still name such a generation as its last active one; that pointer is
@@ -285,8 +300,8 @@ pub(super) async fn delete_history_generations(
 ) -> Result<(), ApiError> {
     // Lock every installation that has a generation of this package, in id order, so a concurrent
     // revoke either commits before the statements below (and is seen by them) or waits until this
-    // transaction ends. Lock order: publisher key, then installation; the package delete takes no
-    // publisher-key lock.
+    // transaction ends. Lock order of the package delete: publisher key ([`lock_package_key`]), then
+    // installation, then the package row, the same key-first order as `install::store::lock_installation`.
     db.execute(stmt(
         "SELECT i.id FROM installations i WHERE EXISTS (SELECT 1 FROM installation_generations g \
          WHERE g.installation_id = i.id AND g.package_row_id = $1) ORDER BY i.id FOR UPDATE OF i",
