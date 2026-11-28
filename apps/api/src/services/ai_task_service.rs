@@ -1472,6 +1472,16 @@ pub async fn queue_vote_requested_tasks_for_project<C: ConnectionTrait>(
     let proposal_uuid = Uuid::parse_str(proposal_id).ok();
     let mut created = 0usize;
     for bot in bots {
+        // A participant limited away from the project is asked for no vote; the others still are.
+        if bot_cannot_read_project(db, project_id, bot.user_id).await? {
+            tracing::info!(
+                %project_id,
+                bot_id = %bot.user_id,
+                reason = "project_not_readable",
+                "vote request queued no task"
+            );
+            continue;
+        }
         let idempotency_key = Some(format!("vote_requested:{project_id}:{proposal_id}:{}", bot.user_id));
         let task = create_ai_task(
             db,

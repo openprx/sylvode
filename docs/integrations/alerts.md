@@ -242,6 +242,9 @@ Saving a rule whose bot was made by a project bot connection but has no enabled 
 project succeeds with the warning `bot_not_connected_to_project`: such a bot gets no alert tasks
 until it is connected.
 
+A bot limited to other projects, which cannot read this one, gives the warning `bot_cannot_read_project`:
+it gets no alert tasks until its access is widened.
+
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/api/v1/projects/{project_id}/alert-rules` | The rules in evaluation order. |

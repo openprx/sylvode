@@ -507,6 +507,14 @@ async fn the_central_guard_refuses_every_agent_task_creation_under_a_delegated_r
         vec![bot.into(), format!("{bot}@example.test").into()],
     )
     .await;
+    // The bot's access row, which the dispatch guard reads: an unlimited bot of the workspace.
+    exec(
+        db,
+        "INSERT INTO workspace_bots (id, workspace_id, name, token_hash, token_prefix) \
+         VALUES ($1, $2, 'central bot', md5($1::text), 'svb_test')",
+        vec![bot.into(), one.workspace_id.into()],
+    )
+    .await;
     exec(
         db,
         "INSERT INTO ai_participants (id, project_id, name, registered_by) \

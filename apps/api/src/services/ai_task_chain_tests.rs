@@ -507,6 +507,42 @@ async fn a_project_limited_bot_gets_a_mention_task_only_where_it_can_read() {
     scratch.drop_self().await;
 }
 
+/// A vote request skips a participant that cannot read the project and still reaches the others.
+#[tokio::test]
+async fn a_vote_request_skips_a_participant_that_cannot_read_the_project() {
+    let scratch = scratch_or_skip!("vote_scope");
+    let db = &scratch.db;
+    let c = cast(db, "vs", 2).await;
+    let (blind, reader) = (c.bots[0], c.bots[1]);
+    for bot in [blind, reader] {
+        exec(
+            db,
+            "INSERT INTO ai_participants (id, project_id, name, registered_by) VALUES ($1, $2, 'voter', $3)",
+            vec![bot.to_string().into(), c.w.tenant.project_id.into(), c.w.owner.into()],
+        )
+        .await;
+    }
+    exec(
+        db,
+        "UPDATE workspace_bots SET project_scope = 'projects', default_project_level = 'none' WHERE id = $1",
+        vec![blind.into()],
+    )
+    .await;
+    let made = super::ai_task_service::queue_vote_requested_tasks_for_project(
+        db,
+        DispatchOrigin::System,
+        c.w.tenant.project_id,
+        "proposal-1",
+        json!({}),
+    )
+    .await
+    .expect("one refused participant does not fail the request");
+    assert_eq!(made, 1);
+    assert_eq!(tasks_of(db, blind).await, 0);
+    assert_eq!(tasks_of(db, reader).await, 1);
+    scratch.drop_self().await;
+}
+
 /// Every task is inserted by the guard: no other non-test source of the API or the worker writes
 /// the table's rows.
 #[test]

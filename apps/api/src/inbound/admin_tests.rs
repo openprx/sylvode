@@ -581,7 +581,10 @@ pub(super) async fn connect_the_bot(w: &World) {
     for (sql, values) in [
         (
             "INSERT INTO workspace_bots (id, workspace_id, name, token_hash, token_prefix, permissions, transport_surface) \
-             VALUES ($1, $2, 'alert bot', md5($1::text), 'opr_test', '[\"read\",\"write\"]'::jsonb, 'mcp_stdio')",
+             VALUES ($1, $2, 'alert bot', md5($1::text), 'opr_test', '[\"read\",\"write\"]'::jsonb, 'mcp_stdio') \
+             ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, token_hash = EXCLUDED.token_hash, \
+             token_prefix = EXCLUDED.token_prefix, permissions = EXCLUDED.permissions, \
+             transport_surface = EXCLUDED.transport_surface",
             vec![w.bot.into(), w.tenant.workspace_id.into()],
         ),
         (
@@ -659,6 +662,38 @@ async fn the_rule_warning_follows_the_bots_connection_to_the_rules_project() {
     let enabled_again = w.as_admin(Method::PUT, &uri, Some(&body(Some(3)))).await;
     assert_eq!(enabled_again["data"]["warnings"], json!([]), "{enabled_again}");
 
+    w.scratch.drop_self().await;
+}
+
+/// A bot limited to other projects warns on a rule of a project it cannot read.
+#[tokio::test]
+async fn the_rule_warns_when_the_bot_cannot_read_the_rules_project() {
+    let w = world!("adm_rule_unreadable");
+    connect_the_bot(&w).await;
+    exec(
+        w.db(),
+        "UPDATE workspace_bots SET project_scope = 'projects', default_project_level = 'none' WHERE id = $1",
+        vec![w.bot.into()],
+    )
+    .await;
+    let created = w
+        .as_admin(
+            Method::POST,
+            &w.rules_uri(),
+            Some(&json!({
+                "name": "WAF critical",
+                "kind_patterns": ["waf.*"],
+                "min_severity": "critical",
+                "bot_user_id": w.bot,
+                "notify_user_ids": [w.tenant.member_id],
+            })),
+        )
+        .await;
+    assert_eq!(
+        created["data"]["warnings"],
+        json!(["bot_cannot_read_project"]),
+        "{created}"
+    );
     w.scratch.drop_self().await;
 }
 
