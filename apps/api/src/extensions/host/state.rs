@@ -8,9 +8,10 @@ use wasmtime::ResourceLimiter;
 
 use super::bindings::action::sv::plugin::{catalogue as wit_catalogue, clock, ctx, log, records, types};
 use super::error::HostError;
-use super::limits::{CALL_BODY_MAX, LOG_LINES_MAX, Limits};
-use crate::catalogue::RefusalCode;
-use crate::extensions::dispatch::{self, CallEnv, CallError};
+use super::limits::{CALL_BODY_MAX, DESTRUCTIVE_CALLS_MAX, LOG_LINES_MAX, Limits};
+use super::quota;
+use crate::catalogue::{RefusalCode, Risk};
+use crate::extensions::dispatch::{self, CallAudit, CallEnv, CallError};
 
 /// Table elements a guest may hold.
 const TABLE_ELEMENTS: usize = 65_536;
@@ -74,6 +75,12 @@ pub struct HostState {
     deadline: Instant,
     max_host_calls: u32,
     pub host_calls: u32,
+    /// Destructive catalogue calls attempted; the 21st ends the invocation.
+    destructive_calls: u32,
+    /// Catalogue calls to a read operation.
+    pub read_calls: u32,
+    /// The write and destructive calls, for the audit table.
+    pub audit: Vec<CallAudit>,
     pub log_lines: u32,
     pub denials: u32,
     pub last_denial: Option<String>,
@@ -92,6 +99,9 @@ impl HostState {
             deadline,
             max_host_calls: limits.host_calls,
             host_calls: 0,
+            destructive_calls: 0,
+            read_calls: 0,
+            audit: Vec::new(),
             log_lines: 0,
             denials: 0,
             last_denial: None,
@@ -117,7 +127,25 @@ impl HostState {
         let Some(env) = self.env.as_deref() else {
             return Ok(Err(types::CallError::Unavailable));
         };
-        let outcome = dispatch::call(env, self.host_calls, op, request, remaining).await;
+        // The quotas count attempts of exposed write and destructive operations, refused or not.
+        match dispatch::plugin_risk(op) {
+            Some(Risk::Read) => self.read_calls += 1,
+            Some(risk @ (Risk::Write | Risk::Destructive)) => {
+                if risk == Risk::Destructive {
+                    self.destructive_calls += 1;
+                    if self.destructive_calls > DESTRUCTIVE_CALLS_MAX {
+                        return Err(wasmtime::Error::new(HostError::new(RefusalCode::PluginHostCallLimit)));
+                    }
+                }
+                quota::writes()
+                    .hit(env.installation_id, Instant::now())
+                    .map_err(wasmtime::Error::new)?;
+            }
+            _ => {}
+        }
+        let dispatch::Called { result: outcome, audit } =
+            dispatch::call(env, self.host_calls, op, request, remaining).await;
+        self.audit.extend(audit);
         // A disabled installation, a lost approver or an ended session stops the invocation: the
         // guest does not get a result it could handle and carry on with.
         if let Err(CallError::Ended(code)) = outcome {

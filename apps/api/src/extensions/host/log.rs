@@ -5,14 +5,18 @@
 //! low-entropy input cannot be brute-forced without the server's secret.
 //!
 //! The record is written to `extension_invocations` (migration 0138; readable by the workspace's
-//! owners and admins, deleted after 30 days) and to `tracing` (target `sv::extensions`), and returned
+//! owners and admins, deleted after 30 days, together with their call audit rows of migration 0151) and to `tracing` (target `sv::extensions`), and returned
 //! to the caller of [`super::invoke`].
+
+use std::fmt::Write as _;
 
 use platform::app::AppState;
 use ring::{hkdf, hmac};
 use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use serde::Serialize;
 use uuid::Uuid;
+
+use crate::extensions::dispatch::CallAudit;
 
 const INFO: &[u8] = b"sv-ext-log-digest-v1";
 
@@ -67,6 +71,8 @@ pub struct InvocationRecord {
     pub duration_ms: u64,
     pub fuel_used: Option<u64>,
     pub host_calls: u32,
+    /// Catalogue calls to read operations; the write calls are in the call audit.
+    pub read_calls: u32,
     pub log_lines: u32,
     /// Host calls the checker or a handler refused as `denied`, and the last such code. These are
     /// not part of the table of 0138; they show a denied call that the guest then handled.
@@ -93,6 +99,7 @@ pub fn emit(record: &InvocationRecord) {
         duration_ms = record.duration_ms,
         fuel_used = record.fuel_used.unwrap_or(0),
         host_calls = record.host_calls,
+        read_calls = record.read_calls,
         log_lines = record.log_lines,
         host_denials = record.host_denials,
         "extension invocation"
@@ -116,8 +123,8 @@ pub async fn store(state: &AppState, record: &InvocationRecord) {
             "INSERT INTO extension_invocations \
                (id, workspace_id, installation_id, generation, world, entry, principal_kind, principal_id, \
                 input_digest, input_size, output_digest, output_size, outcome, error_code, duration_ms, \
-                fuel_used, host_calls, log_lines) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)",
+                fuel_used, host_calls, log_lines, read_calls) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)",
             vec![
                 record.id.into(),
                 record.workspace_id.into(),
@@ -137,11 +144,65 @@ pub async fn store(state: &AppState, record: &InvocationRecord) {
                 record.fuel_used.and_then(|fuel| i64::try_from(fuel).ok()).into(),
                 i32::try_from(record.host_calls).unwrap_or(i32::MAX).into(),
                 i32::try_from(record.log_lines).unwrap_or(i32::MAX).into(),
+                i32::try_from(record.read_calls).unwrap_or(i32::MAX).into(),
             ],
         ))
         .await;
     if let Err(error) = result {
         tracing::warn!(target: "sv::extensions", invocation = %record.id, %error, "the invocation record was not stored");
+    }
+}
+
+/// Writes the call audit rows of an invocation (migration 0151), one multi-row insert. Call after
+/// [`store`]: the rows reference the invocation row and go with it. A failure is logged only.
+pub async fn store_calls(state: &AppState, record: &InvocationRecord, calls: &[CallAudit]) {
+    if record.installation_id.is_nil() || calls.is_empty() {
+        return;
+    }
+    let mut sql = String::from(
+        "INSERT INTO extension_invocation_calls \
+           (invocation_id, installation_id, call_index, capability, op, method, risk, target_ids, project_id, \
+            outcome, error_code, duration_ms) VALUES ",
+    );
+    let mut values: Vec<sea_orm::Value> = Vec::with_capacity(calls.len() * 10 + 2);
+    values.push(record.id.into());
+    values.push(record.installation_id.into());
+    for (index, call) in calls.iter().enumerate() {
+        let base = 3 + index * 10;
+        if index > 0 {
+            sql.push(',');
+        }
+        let _ = write!(
+            sql,
+            "($1,$2,${},${},${},${},${},${}::jsonb,${},${},${},${})",
+            base,
+            base + 1,
+            base + 2,
+            base + 3,
+            base + 4,
+            base + 5,
+            base + 6,
+            base + 7,
+            base + 8,
+            base + 9
+        );
+        values.push(i32::try_from(call.call_index).unwrap_or(i32::MAX).into());
+        values.push(call.capability.to_string().into());
+        values.push(call.op.to_string().into());
+        values.push(call.method.to_string().into());
+        values.push(call.risk.to_string().into());
+        values.push(call.target_ids.to_string().into());
+        values.push(call.project_id.into());
+        values.push(call.outcome.to_string().into());
+        values.push(call.error_code.clone().into());
+        values.push(i32::try_from(call.duration_ms).unwrap_or(i32::MAX).into());
+    }
+    if let Err(error) = state
+        .db
+        .execute(Statement::from_sql_and_values(DbBackend::Postgres, sql, values))
+        .await
+    {
+        tracing::warn!(target: "sv::extensions", invocation = %record.id, %error, "the call audit was not stored");
     }
 }
 

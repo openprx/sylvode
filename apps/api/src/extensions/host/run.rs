@@ -15,11 +15,11 @@ use super::bindings::{action, rule};
 use super::engine::{compile_cache, deadline_ticks, engine};
 use super::error::{HostError, valid_guest_code};
 use super::limits::{World, gates};
-use super::log::{InvocationRecord, digest, digest_key, emit, store};
+use super::log::{InvocationRecord, digest, digest_key, emit, store, store_calls};
 use super::state::{HostState, InvocationInfo};
 use super::{GrantSet, Invocation};
 use crate::catalogue::{Grant, InstallationView, Invoker, Principal, RefusalCode};
-use crate::extensions::dispatch::{CallEnv, Live};
+use crate::extensions::dispatch::{CallAudit, CallEnv, Live};
 
 /// The package of the interfaces a plugin may import.
 const IMPORT_PREFIX: &str = "sv:plugin/";
@@ -32,6 +32,8 @@ const RECORD_CAPABILITIES: [&str; 3] = ["forms.records.read", "forms.records.cre
 struct Telemetry {
     fuel_used: Option<u64>,
     host_calls: u32,
+    read_calls: u32,
+    calls: Vec<CallAudit>,
     log_lines: u32,
     denials: u32,
     last_denial: Option<String>,
@@ -210,6 +212,7 @@ async fn invoke_source(
         duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
         fuel_used: telemetry.fuel_used,
         host_calls: telemetry.host_calls,
+        read_calls: telemetry.read_calls,
         log_lines: telemetry.log_lines,
         host_denials: telemetry.denials,
         last_denial: telemetry.last_denial,
@@ -223,6 +226,7 @@ async fn invoke_source(
             tokio::spawn(async move { store(&state, &record).await });
         } else {
             store(state, &record).await;
+            store_calls(state, &record, &telemetry.calls).await;
         }
     }
     Invocation { result, record }
@@ -255,9 +259,13 @@ fn plan(grants: &GrantSet) -> Plan {
     }
 }
 
+fn interface_name(interface: &str) -> String {
+    format!("{IMPORT_PREFIX}{interface}@{VERSION}")
+}
+
 /// The imports a component of `world` may have, as full names.
 fn allowed_imports(world: World, plan: Plan) -> Vec<String> {
-    let name = |interface: &str| format!("{IMPORT_PREFIX}{interface}@{VERSION}");
+    let name = interface_name;
     match world {
         // `types` and `rule-types` only declare types; they have no functions to provide.
         World::FieldRule => vec![name("types"), name("rule-types")],
@@ -295,6 +303,16 @@ fn check_shape(
     for (name, _) in kind.imports(engine) {
         if allowed.iter().any(|known| known == name) {
             continue;
+        }
+        // An interface of this host that the grants do not unlock is a missing grant, not an unknown
+        // import: the author sees which capability to request, the approver which one was not granted.
+        if world == World::Action {
+            if name == interface_name("records") {
+                return Err(HostError::not_granted("records", &RECORD_CAPABILITIES));
+            }
+            if name == interface_name("catalogue") {
+                return Err(HostError::not_granted("catalogue", &[]));
+            }
         }
         let other_version = name.starts_with(IMPORT_PREFIX) && !name.ends_with(&format!("@{VERSION}"));
         return Err(HostError::new(if other_version {
@@ -463,6 +481,8 @@ async fn execute(
     telemetry.fuel_used = store.get_fuel().ok().map(|left| limits.fuel.saturating_sub(left));
     let data = store.data();
     telemetry.host_calls = data.host_calls;
+    telemetry.read_calls = data.read_calls;
+    telemetry.calls.clone_from(&data.audit);
     telemetry.log_lines = data.log_lines;
     telemetry.denials = data.denials;
     telemetry.last_denial.clone_from(&data.last_denial);

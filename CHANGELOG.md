@@ -70,6 +70,10 @@ name.
 
 ### Changed
 
+- **A plugin action without its grant reports the missing grant.** A component that imports the
+  `records` or `catalogue` interface while no granted and requested capability unlocks it now fails
+  with `capability_not_granted` (details name the interface and the capability ids) instead of
+  `plugin_unknown_import`.
 - **Worker and runner delivery.** The worker checks that a task still holds its lease right before it
   sends it, so a task swept while it waited in a lane is neither delivered nor logged as delivered. A
   rebalance never moves a queued task onto a member already at `max_queued_per_session`, and leaves
@@ -86,6 +90,17 @@ name.
   again) instead of keeping it, and re-checks share 32 parallel API calls across the process.
 
 ### Added
+
+- **Plugin call quotas and call audit.** An installed plugin may attempt at most 20 destructive
+  catalogue calls per invocation (the 21st ends the invocation with `plugin_host_call_limit`) and
+  600 write or destructive calls per minute per installation across its invocations (past that the
+  invocation ends with `plugin_write_rate_limited`, status 429, `details.retry_after_ms`). Reads stay
+  bounded by the 200 host calls per invocation and are counted in `read_calls` of the invocation log.
+  Every write or destructive call is recorded (installation, capability id, operation, method, target
+  ids of the path, project, outcome code, duration; no request or response data) in the new table
+  `extension_invocation_calls` (migration 0151), kept 30 days with its invocation, and listed for
+  workspace owners and admins by `GET /api/v1/installations/{installation_id}/calls` (`limit`,
+  `invocation_id`). No configuration; the limits are fixed.
 
 - **OpenAPI description of the API.** `GET /api/v1/openapi.json` returns an OpenAPI 3.1 document
   generated from the operation catalogue: one operation per catalogued route with its tag, path

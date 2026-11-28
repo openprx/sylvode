@@ -22,6 +22,7 @@ pub static ENTRIES: &[Entry] = &[
     console("extensions.installations.disable/enable", Post, "/api/v1/installations/{installation_id}/enable", WorkspaceAdmin, Admin),
     console("extensions.installations.revoke", Post, "/api/v1/installations/{installation_id}/revoke", WorkspaceAdmin, Admin),
     console("extensions.invocations.read", Get, "/api/v1/installations/{installation_id}/invocations", WorkspaceAdmin, Read),
+    console("extensions.invocations.read/calls", Get, "/api/v1/installations/{installation_id}/calls", WorkspaceAdmin, Read),
     console("extensions.actions.invoke", Post, "/api/v1/installations/{installation_id}/actions/{action}", Own, Write),
 ];
 

@@ -458,3 +458,22 @@ python3 docs/plugins/extension-example/verify_extension.py \
 After it passes, restart that API with `SV_FORM_PLUGIN_EXTENSIONS_ENABLED=0` and run
 `--phase gate-off` with the same `--context` file to check that the switch refuses installs,
 discovery, entry and binding while still allowing a binding to be disabled.
+
+## Installed plugins: call quotas and audit
+
+This applies to plugins installed through the installation flow (catalogue grants), not to the
+module plugins above.
+
+- Per invocation: 200 host calls, of which at most 20 may be destructive operations. The 21st
+  destructive call ends the invocation with `plugin_host_call_limit`.
+- Per installation: at most 600 write or destructive calls per minute over all its invocations. Past
+  that the invocation ends with `plugin_write_rate_limited` (status 429, `details.retry_after_ms`).
+  The window is kept per API process. The limits are fixed and have no configuration key.
+- Every write or destructive call is recorded in `extension_invocation_calls` with the capability id,
+  operation, method, the ids in the request path, the project, the outcome code and the duration; no
+  request or response data. Rows are deleted after 30 days with their invocation.
+  `GET /api/v1/installations/{installation_id}/calls` (workspace owners and admins; `limit` up to 200,
+  optional `invocation_id`) lists them, newest first. Reads are counted in `read_calls` of the
+  invocation log (`GET /api/v1/installations/{installation_id}/invocations`).
+- A component that imports an interface its grants do not unlock fails with `capability_not_granted`;
+  `details` names the interface and the capability ids.

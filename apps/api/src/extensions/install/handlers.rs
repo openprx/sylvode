@@ -694,6 +694,7 @@ struct InvocationRow {
     duration_ms: i32,
     fuel_used: Option<i64>,
     host_calls: i32,
+    read_calls: i32,
     log_lines: i32,
     created_at: platform::timestamp::Timestamp,
 }
@@ -710,7 +711,7 @@ pub async fn list_invocations(
     let rows = InvocationRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "SELECT id, generation, world, entry, principal_kind, principal_id, input_digest, input_size, \
-                output_digest, output_size, outcome, error_code, duration_ms, fuel_used, host_calls, log_lines, \
+                output_digest, output_size, outcome, error_code, duration_ms, fuel_used, host_calls, read_calls, log_lines, \
                 created_at \
          FROM extension_invocations WHERE installation_id = $1 ORDER BY created_at DESC, id LIMIT $2",
         vec![row.id.into(), limit.into()],
@@ -726,7 +727,71 @@ pub async fn list_invocations(
                 "input_digest": row.input_digest, "input_size": row.input_size,
                 "output_digest": row.output_digest, "output_size": row.output_size,
                 "outcome": row.outcome, "error_code": row.error_code, "duration_ms": row.duration_ms,
-                "fuel_used": row.fuel_used, "host_calls": row.host_calls, "log_lines": row.log_lines,
+                "fuel_used": row.fuel_used, "host_calls": row.host_calls, "read_calls": row.read_calls, "log_lines": row.log_lines,
+                "created_at": row.created_at,
+            })
+        })
+        .collect();
+    Ok(ApiResponse::success(json!({ "items": items })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CallsQuery {
+    #[serde(default)]
+    limit: Option<i64>,
+    /// Only the calls of this invocation.
+    #[serde(default)]
+    invocation_id: Option<Uuid>,
+}
+
+#[derive(FromQueryResult)]
+struct CallRow {
+    id: i64,
+    invocation_id: Uuid,
+    call_index: i32,
+    capability: String,
+    op: String,
+    method: String,
+    risk: String,
+    target_ids: Value,
+    project_id: Option<Uuid>,
+    outcome: String,
+    error_code: Option<String>,
+    duration_ms: i32,
+    created_at: platform::timestamp::Timestamp,
+}
+
+/// `GET /api/v1/installations/{installation_id}/calls`: the plugin's write calls, newest first.
+///
+/// Write and destructive catalogue calls (migration 0151): ids and outcome codes only, no request
+/// or response data.
+pub async fn list_calls(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    Path(installation_id): Path<Uuid>,
+    Query(query): Query<CallsQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let (row, _) = access::installation_for_admin(&state, &claims, installation_id).await?;
+    let limit = query.limit.unwrap_or(50).clamp(1, 200);
+    let rows = CallRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id, invocation_id, call_index, capability, op, method, risk, target_ids, project_id, outcome, \
+                error_code, duration_ms, created_at \
+         FROM extension_invocation_calls \
+         WHERE installation_id = $1 AND ($2::uuid IS NULL OR invocation_id = $2) \
+         ORDER BY created_at DESC, id DESC LIMIT $3",
+        vec![row.id.into(), query.invocation_id.into(), limit.into()],
+    ))
+    .all(&state.db)
+    .await?;
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|row| {
+            json!({
+                "id": row.id, "invocation_id": row.invocation_id, "call_index": row.call_index,
+                "capability": row.capability, "op": row.op, "method": row.method, "risk": row.risk,
+                "target_ids": row.target_ids, "project_id": row.project_id,
+                "outcome": row.outcome, "error_code": row.error_code, "duration_ms": row.duration_ms,
                 "created_at": row.created_at,
             })
         })
