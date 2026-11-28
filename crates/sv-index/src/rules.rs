@@ -110,7 +110,7 @@ pub fn digest_ok(s: &str) -> bool {
 }
 
 /// Unicode general category Cf plus the line and paragraph separators: invisible or direction-changing.
-fn is_format_char(c: char) -> bool {
+pub(crate) fn is_format_char(c: char) -> bool {
     matches!(
         u32::from(c),
         0x00AD

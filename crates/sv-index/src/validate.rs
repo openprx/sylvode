@@ -164,11 +164,13 @@ fn validate_contents(issues: &mut Issues, path: &str, c: &Contents) {
     }
     for (i, page) in c.pages.iter().enumerate() {
         let p = element(&pp, i);
-        if !page.route.starts_with('/') || page.route.chars().count() > 200 || page.route.chars().any(char::is_control)
+        if !page.route.starts_with('/')
+            || page.route.chars().count() > 200
+            || page.route.chars().any(|c| c.is_control() || rules::is_format_char(c))
         {
             issues.push(
                 &member(&p, "route"),
-                "must start with `/`, at most 200 characters, no control characters",
+                "must start with `/`, at most 200 characters, no control, bidi or invisible characters",
             );
         }
         if !matches!(page.audience.as_str(), "visitor" | "operator") {
@@ -441,11 +443,14 @@ pub fn validate_index(doc: &IndexDoc, hosts: &dyn HostPolicy) -> Issues {
             continue;
         };
         for (j, v) in plugin.versions.iter().enumerate() {
-            if !publisher.keys.iter().any(|k| k.key_id == v.key_id) {
-                issues.push(
-                    &member(&element(&member(&p, "versions"), j), "key_id"),
-                    format!("key is not one of publisher `{prefix}`'s keys"),
-                );
+            let kp = member(&element(&member(&p, "versions"), j), "key_id");
+            match publisher.keys.iter().find(|k| k.key_id == v.key_id) {
+                None => issues.push(&kp, format!("key is not one of publisher `{prefix}`'s keys")),
+                Some(k) if k.status == KeyStatus::Revoked && v.status == VersionStatus::Listed => issues.push(
+                    &kp,
+                    "a listed version must not use a revoked key; yank or revoke the version",
+                ),
+                Some(_) => {}
             }
         }
     }

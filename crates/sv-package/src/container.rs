@@ -110,6 +110,33 @@ pub struct PackageData {
     pub blob_digest: String,
 }
 
+/// Whether a layout value contains a `custom-frame` node anywhere under its root.
+#[must_use]
+pub fn has_custom_frame(value: &Value) -> bool {
+    match value {
+        Value::Object(map) => {
+            map.get("type").and_then(Value::as_str) == Some("custom-frame") || map.values().any(has_custom_frame)
+        }
+        Value::Array(items) => items.iter().any(has_custom_frame),
+        _ => false,
+    }
+}
+
+impl PackageData {
+    /// Whether the package carries custom code: any action or rule, or a `custom-frame` node in a
+    /// layout file. The same rule the server applies when it stores a package.
+    #[must_use]
+    pub fn carries_custom_code(&self) -> bool {
+        self.manifest.computed_custom_code()
+            || self.manifest.layouts.iter().any(|entry| {
+                self.files
+                    .get(&entry.path)
+                    .and_then(|bytes| serde_json::from_slice::<Value>(bytes).ok())
+                    .is_some_and(|v| has_custom_frame(&v))
+            })
+    }
+}
+
 /// A package whose structure and file digests are checked but whose signature is not.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnverifiedPackage(PackageData);

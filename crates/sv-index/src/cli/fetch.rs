@@ -76,7 +76,7 @@ impl Fetcher {
         let mut redirects = 0usize;
         loop {
             let host = self.check_hop(&url)?;
-            let addrs = self.addresses(&host)?;
+            let addrs = self.addresses(&host, deadline)?;
             let remaining = deadline
                 .checked_duration_since(Instant::now())
                 .ok_or(FetchError::Timeout)?;
@@ -150,7 +150,7 @@ impl Fetcher {
     }
 
     /// The addresses to connect to: the pinned ones, or the resolved ones, all of them public.
-    fn addresses(&self, host: &str) -> Result<Vec<SocketAddr>, FetchError> {
+    fn addresses(&self, host: &str, deadline: Instant) -> Result<Vec<SocketAddr>, FetchError> {
         let pinned: Vec<SocketAddr> = self
             .pins
             .iter()
@@ -160,10 +160,7 @@ impl Fetcher {
         if !pinned.is_empty() {
             return Ok(pinned);
         }
-        let resolved: Vec<SocketAddr> = (host, 443u16)
-            .to_socket_addrs()
-            .map_err(|e| FetchError::Network(format!("cannot resolve {host}: {e}")))?
-            .collect();
+        let resolved = resolve_within(host, deadline)?;
         if resolved.is_empty() {
             return Err(FetchError::Network(format!("{host} has no address")));
         }
@@ -187,6 +184,27 @@ fn chain(e: &dyn std::error::Error) -> String {
         source = inner.source();
     }
     out
+}
+
+/// Resolves `host` on a helper thread so a slow resolver cannot outlast the total time limit.
+fn resolve_within(host: &str, deadline: Instant) -> Result<Vec<SocketAddr>, FetchError> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let name = host.to_owned();
+    std::thread::spawn(move || {
+        let found = (name.as_str(), 443u16)
+            .to_socket_addrs()
+            .map(Iterator::collect::<Vec<SocketAddr>>)
+            .map_err(|e| e.to_string());
+        let _ = tx.send(found);
+    });
+    let wait = deadline
+        .checked_duration_since(Instant::now())
+        .ok_or(FetchError::Timeout)?;
+    match rx.recv_timeout(wait) {
+        Ok(Ok(addrs)) => Ok(addrs),
+        Ok(Err(e)) => Err(FetchError::Network(format!("cannot resolve {host}: {e}"))),
+        Err(_) => Err(FetchError::Timeout),
+    }
 }
 
 fn read_body(mut resp: reqwest::blocking::Response, cap: u64, deadline: Instant) -> Result<Vec<u8>, FetchError> {
@@ -242,6 +260,7 @@ fn public_v4(ip: Ipv4Addr) -> bool {
         || a == 0
         || (a == 100 && (64..=127).contains(&b))
         || (a == 192 && b == 0 && c == 0)
+        || (a == 192 && b == 88 && c == 99)
         || (a == 198 && (b == 18 || b == 19))
         || a >= 240)
 }
@@ -252,9 +271,15 @@ fn public_v6(ip: Ipv6Addr) -> bool {
     }
     let seg = ip.segments();
     let first = seg.first().copied().unwrap_or(0);
+    let second = seg.get(1).copied().unwrap_or(0);
     !(ip.is_unspecified()
         || ip.is_loopback()
         || ip.is_multicast()
+        || seg.iter().take(6).all(|s| *s == 0)
+        || first == 0x2002
+        || (first == 0x2001 && second == 0)
+        || (first == 0x0064 && second == 0xff9b && seg.get(2) == Some(&1))
+        || (first == 0x3fff && second < 0x1000)
         || (first & 0xfe00) == 0xfc00
         || (first & 0xffc0) == 0xfe80
         || (first & 0xffc0) == 0xfec0

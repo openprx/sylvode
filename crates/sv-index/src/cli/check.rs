@@ -17,8 +17,8 @@ use super::repo::{self, Loaded, Meta, PluginFile};
 use super::report::{Download, Finding, Report};
 use super::{CheckArgs, CliError, DownloadMode};
 use crate::{
-    Changes, ExactHosts, HostPolicy, IndexDoc, IndexMetadata, KeyStatus, Options, PublisherDoc, VersionEntry,
-    VersionStatus, compare, limits, lowest_admitted, parse_compat, parse_index, validate_index,
+    Changes, ExactHosts, HostPolicy, IndexDoc, IndexMetadata, Options, PublisherDoc, VersionEntry, VersionStatus,
+    compare, limits, lowest_admitted, parse_compat, parse_index, validate_index,
 };
 
 pub fn run(args: &CheckArgs) -> Result<bool, CliError> {
@@ -105,7 +105,14 @@ pub fn run(args: &CheckArgs) -> Result<bool, CliError> {
                 cmp.changes
             });
             if let Some(fetcher) = &fetcher {
-                verify_packages(&loaded, mode, changes.as_ref(), fetcher, &mut report);
+                verify_packages(
+                    &loaded,
+                    mode,
+                    changes.as_ref(),
+                    fetcher,
+                    args.max_downloads,
+                    &mut report,
+                );
             }
         }
         _ => report.notes.push(
@@ -265,6 +272,7 @@ fn verify_packages(
     mode: DownloadMode,
     changes: Option<&Changes>,
     fetcher: &Fetcher,
+    cap: usize,
     report: &mut Report,
 ) {
     let selected: BTreeSet<(&str, &str)> = changes
@@ -276,6 +284,8 @@ fn verify_packages(
                 .collect()
         })
         .unwrap_or_default();
+    let mut attempted = 0usize;
+    let mut over_cap = 0usize;
     for plugin in &loaded.plugins {
         for (j, v) in plugin.doc.versions.iter().enumerate() {
             if mode == DownloadMode::Changed && !selected.contains(&(plugin.doc.id.as_str(), v.version.as_str())) {
@@ -291,7 +301,12 @@ fn verify_packages(
             if v.status != VersionStatus::Listed {
                 download.outcome = "skipped";
                 download.note = Some("version is not listed".to_owned());
+            } else if attempted >= cap {
+                over_cap += 1;
+                download.outcome = "skipped";
+                download.note = Some(format!("download cap of {cap} reached"));
             } else if let Some(publisher) = loaded.publishers.iter().map(|(_, p)| p).find(|p| p.id == v.publisher) {
+                attempted += 1;
                 let before = report.findings.len();
                 check_version(fetcher, plugin, j, v, publisher, &mut report.findings);
                 if report.findings.len() > before {
@@ -304,6 +319,14 @@ fn verify_packages(
             }
             report.downloads.push(download);
         }
+    }
+    if over_cap > 0 {
+        report.findings.push(Finding::new(
+            "index.json",
+            "$",
+            "download_cap",
+            format!("{over_cap} versions were not verified: the run is capped at {cap} downloads (--max-downloads)"),
+        ));
     }
 }
 
@@ -329,14 +352,6 @@ fn check_version(
         );
         return;
     };
-    if key.status == KeyStatus::Revoked {
-        add(
-            "key_id",
-            "key_revoked",
-            "a listed version is signed by a revoked key; yank or revoke the version".to_owned(),
-        );
-        return;
-    }
     let bytes = match fetcher.fetch(&v.url, v.size) {
         Ok(b) => b,
         Err(e) => {
@@ -445,7 +460,7 @@ fn compare_manifest(
         ),
     }
     let listed = serde_json::to_value(&v.contents).unwrap_or(Value::Null);
-    let actual = serde_json::to_value(contents_of(m)).unwrap_or(Value::Null);
+    let actual = serde_json::to_value(contents_of(pkg)).unwrap_or(Value::Null);
     if let (Value::Object(l), Value::Object(a)) = (&listed, &actual) {
         for (name, want) in a {
             if l.get(name) != Some(want) {

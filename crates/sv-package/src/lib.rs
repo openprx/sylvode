@@ -13,8 +13,8 @@ mod strict;
 mod zipcheck;
 
 pub use container::{
-    KeyLookup, Limits, MANIFEST_NAME, PackageData, SIGNATURE_NAME, UnverifiedPackage, VerifiedPackage, pack, unpack,
-    validate_entry_path,
+    KeyLookup, Limits, MANIFEST_NAME, PackageData, SIGNATURE_NAME, UnverifiedPackage, VerifiedPackage,
+    has_custom_frame, pack, unpack, validate_entry_path,
 };
 pub use error::{ErrorCode, PackageError, Result};
 pub use manifest::{

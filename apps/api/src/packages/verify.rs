@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use serde_json::{Value, json};
 use sv_layout::{Context, Options};
-use sv_package::{ErrorCode, KeyLookup, Limits, VerifiedPackage};
+use sv_package::{ErrorCode, KeyLookup, Limits, VerifiedPackage, has_custom_frame};
 use tokio::sync::Semaphore;
 use uuid::Uuid;
 
@@ -152,17 +152,6 @@ async fn find_key(db: &impl ConnectionTrait, key_id: &str, scope: KeyScope) -> R
             .one(db)
             .await?,
     )
-}
-
-/// Whether a layout value contains a `custom-frame` node anywhere under `root`.
-fn has_custom_frame(value: &Value) -> bool {
-    match value {
-        Value::Object(map) => {
-            map.get("type").and_then(Value::as_str) == Some("custom-frame") || map.values().any(has_custom_frame)
-        }
-        Value::Array(items) => items.iter().any(has_custom_frame),
-        _ => false,
-    }
 }
 
 /// Validates every layout file of the manifest with `sv-layout`; a layout used by a page and

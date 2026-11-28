@@ -18,6 +18,7 @@ pub mod cli;
 pub mod compare;
 pub mod error;
 pub mod image;
+mod keys;
 pub mod limits;
 pub mod model;
 pub mod parse;

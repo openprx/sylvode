@@ -62,6 +62,17 @@ pub fn run(args: &BuildArgs) -> Result<bool, CliError> {
             limits::MAX_INDEX_BYTES
         )));
     }
+    for name in ["index.json.tmp", "index.json"] {
+        if root
+            .join(name)
+            .symlink_metadata()
+            .is_ok_and(|m| m.file_type().is_symlink())
+        {
+            return Err(CliError(format!(
+                "{name} is a symbolic link; refusing to write through it"
+            )));
+        }
+    }
     let tmp = root.join("index.json.tmp");
     fs::write(&tmp, &bytes).map_err(|e| CliError(format!("cannot write {}: {e}", tmp.display())))?;
     fs::rename(&tmp, root.join("index.json")).map_err(|e| CliError(format!("cannot replace index.json: {e}")))?;
