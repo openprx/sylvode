@@ -407,6 +407,13 @@ pub async fn require_workspace_access_from_auth(
         return Ok((delegated.user_id, "member".to_string(), false));
     }
 
+    // A plugin call works in its installation's workspace only, as a bot token does.
+    if let Some(cover) = crate::extensions::current_cover()
+        && cover.workspace_id() != workspace_id
+    {
+        return Err(ApiError::Forbidden("outside the installation's workspace".to_string()));
+    }
+
     if let Some(bot_ctx) = bot {
         if bot_ctx.workspace_id != workspace_id {
             return Err(ApiError::Forbidden("bot not authorized for this workspace".to_string()));

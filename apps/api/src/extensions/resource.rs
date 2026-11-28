@@ -26,11 +26,45 @@ pub const fn primary_param(entry: &Entry) -> Option<&'static str> {
     }
 }
 
-/// Whether the target of the entry is named in the request body, which the host must hand to
-/// [`resolve_resource`].
+/// Whether the host must read the request body and hand it to [`resolve_resource`]: the target is
+/// named there, or the route works on a workspace the body may name ([`workspace_pinned`]).
 #[must_use]
 pub const fn resolves_from_body(entry: &Entry) -> bool {
-    matches!(entry.scope, Scope::Project(Find::Body | Find::Conversion))
+    matches!(entry.scope, Scope::Project(Find::Body | Find::Conversion)) || workspace_wide(entry)
+}
+
+/// Whether the entry names no project (`Global`, `Own`, `Filtered`), so the workspace it works in
+/// is whatever the request says: [`workspace_pinned`] holds that to the installation's.
+#[must_use]
+pub const fn workspace_wide(entry: &Entry) -> bool {
+    matches!(entry.scope, Scope::Global | Scope::Own | Scope::Filtered)
+}
+
+/// Whether every workspace the request names is the installation's.
+///
+/// The names are the `workspace_id` path parameter, query key and top-level body field. A value
+/// that is not a UUID does not match, so a malformed id fails closed.
+#[must_use]
+pub fn workspace_pinned(
+    workspace_id: Uuid,
+    params: &[(String, String)],
+    query: Option<&str>,
+    body: Option<&serde_json::Value>,
+) -> bool {
+    let matches = |value: &str| Uuid::parse_str(value).is_ok_and(|id| id == workspace_id);
+    let in_path = params
+        .iter()
+        .filter(|(key, _)| key == "workspace_id")
+        .all(|(_, value)| matches(value));
+    let in_query = query.is_none_or(|query| {
+        url::form_urlencoded::parse(query.as_bytes())
+            .filter(|(key, _)| key == "workspace_id")
+            .all(|(_, value)| matches(&value))
+    });
+    let in_body = body
+        .and_then(|body| body.get("workspace_id"))
+        .is_none_or(|value| value.is_null() || value.as_str().is_some_and(matches));
+    in_path && in_query && in_body
 }
 
 /// The parameter in canonical UUID form (lowercase, hyphenated), or `None`.

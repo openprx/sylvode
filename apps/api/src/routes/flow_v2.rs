@@ -22,25 +22,37 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-/// The human principal of a request. A workspace bot is refused: the caller is on a surface that only
-/// a person reaches (a personal scope, a collaboration ticket, a bootstrap).
+/// The user of the token, without the automation refusal of [`user`].
+fn token_user(claims: &JwtClaims) -> Result<Uuid, ApiError> {
+    Uuid::parse_str(&claims.sub).map_err(|_| ApiError::unauthenticated("invalid user identity"))
+}
+
+/// The human principal of a request. A workspace bot is refused, and so is a plugin call, which acts
+/// for a person but is code: the caller is on a surface that only a person reaches (a personal
+/// scope, a collaboration ticket, a bootstrap), and these handlers run no project check a plugin
+/// could be held to.
 pub(super) fn user(claims: &JwtClaims, bot: Option<&Extension<BotAuthContext>>) -> Result<Uuid, ApiError> {
-    if bot.is_some() {
+    if automated(bot) {
         return Err(ApiError::unsupported_protocol(
             "this Flow operation does not accept workspace bot credentials",
         ));
     }
-    Uuid::parse_str(&claims.sub).map_err(|_| ApiError::unauthenticated("invalid user identity"))
+    token_user(claims)
 }
 
-/// The human principal on the fallback path after a workspace branch: a bot that gets here named
-/// something that is not workspace content, and is told only that it is absent, so a personal object
-/// and a missing one answer alike.
+/// Whether the caller is a bot or a plugin call.
+fn automated(bot: Option<&Extension<BotAuthContext>>) -> bool {
+    crate::extensions::automated(bot.is_some())
+}
+
+/// The human principal on the fallback path after a workspace branch: a bot or a plugin call that
+/// gets here named something that is not workspace content, and is told only that it is absent, so
+/// a personal object and a missing one answer alike.
 pub(super) fn user_or_absent(claims: &JwtClaims, bot: Option<&Extension<BotAuthContext>>) -> Result<Uuid, ApiError> {
-    if bot.is_some() {
+    if automated(bot) {
         return Err(ApiError::not_found("flow resource not found"));
     }
-    user(claims, None)
+    token_user(claims)
 }
 
 /// What a request names, to find the workspace a bot is judged against.
@@ -63,12 +75,21 @@ pub(super) async fn principal(
     bot: Option<&Extension<BotAuthContext>>,
     subject: Subject,
 ) -> Result<Uuid, ApiError> {
-    let Some(Extension(context)) = bot else {
-        return user(claims, None);
-    };
+    let plugin = crate::extensions::current_cover();
+    if bot.is_none() && plugin.is_none() {
+        return token_user(claims);
+    }
     let workspace = match subject {
         Subject::Object(object) => scope::identity(&state.db, object).await?.workspace_id,
         Subject::Scope(scope_id) => scope::bound_workspace(&state.db, scope_id).await?,
+    };
+    let Some(Extension(context)) = bot else {
+        // A plugin call works on workspace content of its installation only; the host has checked
+        // the project, and a personal target or one of another workspace is absent.
+        return match plugin {
+            Some(cover) if workspace == Some(cover.workspace_id()) => token_user(claims),
+            _ => Err(ApiError::not_found("flow resource not found")),
+        };
     };
     // A personal target and a missing one answer alike, and so does a target of another workspace.
     let Some(workspace) = workspace else {

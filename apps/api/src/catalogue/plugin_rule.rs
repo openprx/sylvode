@@ -5,7 +5,7 @@
 //! closed lists below, is not a `purge`, and carries no `.no_plugin()` mark. `golden/plugin_ops.txt`
 //! pins the result; any change of it needs an audit.
 
-use super::types::{Entry, Exposure, PluginMark, Risk, Scope};
+use super::types::{Entry, Exposure, Method, PluginMark, Risk, Scope};
 
 /// Areas none of whose ids a plugin can call.
 ///
@@ -67,10 +67,10 @@ pub fn allowed_by_rule(entry: &Entry) -> bool {
     let pair = format!("{area}.{resource}");
     entry.exposure.contains(Exposure::BOT)
         && matches!(entry.risk, Risk::Read | Risk::Write | Risk::Destructive)
-        && matches!(
-            entry.scope,
-            Scope::Project(_) | Scope::Global | Scope::Own | Scope::Filtered
-        )
+        && matches!(entry.scope, Scope::Project(_) | Scope::Global | Scope::Own | Scope::Filtered)
+        // A `Filtered` route is held to the caller's projects by its handler, which is checked for
+        // reads only: a future unsafe `Filtered` route stays closed until it is audited.
+        && (entry.scope != Scope::Filtered || entry.method == Method::Get)
         && verb != "purge"
         && !CLOSED_AREAS.contains(&area)
         && !CLOSED_RESOURCES.contains(&pair.as_str())

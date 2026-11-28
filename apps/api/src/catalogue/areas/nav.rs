@@ -14,8 +14,8 @@ use crate::catalogue::types::dsl::{
 pub static ENTRIES: &[Entry] = &[
     bot("nav.workspace_menu.read", Get, "/api/v1/workspaces/{workspace_id}/nav", Global, Read),
     bot("nav.workspace_config.read", Get, "/api/v1/workspaces/{workspace_id}/nav/config", Global, Read),
-    bot("nav.workspace_config.update", Put, "/api/v1/workspaces/{workspace_id}/nav/config", Global, Write),
-    bot("nav.workspace_config.delete", Delete, "/api/v1/workspaces/{workspace_id}/nav/config", Global, Destructive),
+    bot("nav.workspace_config.update", Put, "/api/v1/workspaces/{workspace_id}/nav/config", Global, Write).no_plugin(),
+    bot("nav.workspace_config.delete", Delete, "/api/v1/workspaces/{workspace_id}/nav/config", Global, Destructive).no_plugin(),
     bot("nav.project_menu.read", Get, "/api/v1/projects/{project_id}/nav", Project(Find::Project("project_id")), Read),
     bot("nav.project_config.read", Get, "/api/v1/projects/{project_id}/nav/config", Project(Find::Project("project_id")), Read),
     bot("nav.project_config.update", Put, "/api/v1/projects/{project_id}/nav/config", Project(Find::Project("project_id")), Write),

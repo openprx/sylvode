@@ -163,11 +163,13 @@ export const marketApi = {
 	approve(
 		installationId: string,
 		generation: number,
-		grants: ApproveGrant[]
+		grants: ApproveGrant[],
+		confirm: string[] = []
 	): Promise<ApiResult<Installation>> {
 		return apiClient.post(`/api/v1/installations/${enc(installationId)}/approve`, {
 			generation,
-			grants
+			grants,
+			confirm
 		});
 	},
 	reject(installationId: string, generation: number): Promise<ApiResult<Installation>> {
@@ -206,9 +208,17 @@ export function grantsFor(requests: PreviewRequest[], ticked: readonly boolean[]
 		});
 }
 
-/** Everything the package asks for is ticked by default. */
+/** Everything the package asks for is ticked by default, except a destructive id: the server
+ * refuses it without an explicit confirm, which is its tick. */
 export function allRequests(requests: PreviewRequest[]): boolean[] {
-	return requests.map(() => true);
+	return requests.map((request) => request.risk !== 'destructive');
+}
+
+/** The destructive ids the administrator ticked: the approval's explicit confirm. */
+export function confirmedFor(requests: PreviewRequest[], ticked: readonly boolean[]): string[] {
+	return requests
+		.filter((request, index) => ticked[index] === true && request.risk === 'destructive')
+		.map((request) => request.capability);
 }
 
 export interface PackageDetail extends PackageSummary {

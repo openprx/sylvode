@@ -132,12 +132,12 @@ pub async fn site_context_bindings(
 pub async fn draft_bot_layout_update_on_published_site(
     state: &AppState,
     tx: &impl ConnectionTrait,
-    bot_id: Option<Uuid>,
+    author: Option<(&'static str, Uuid)>,
     layout_id: Uuid,
     spec: &Value,
     expected_version: i32,
 ) -> Result<Option<Uuid>, ApiError> {
-    let Some(bot_id) = bot_id else {
+    let Some(author) = author else {
         return Ok(None);
     };
     let Some(page) = store::published_pages_with_layout(tx, layout_id, true)
@@ -171,7 +171,7 @@ pub async fn draft_bot_layout_update_on_published_site(
     );
     let draft_id = crate::drafts::handlers::create_site_page_draft(
         state,
-        bot_id,
+        author,
         site.workspace_id,
         site.project_id,
         &target,

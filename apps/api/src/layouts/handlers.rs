@@ -202,11 +202,11 @@ pub async fn update_layout(
     let validated = console_validate(&req.spec, None)?;
 
     let tx = state.db.begin().await?;
-    // A bot's edit of a layout a published site page shows becomes a draft (LEAD C3-6).
+    // A bot's or plugin call's edit of a layout a published site page shows becomes a draft (LEAD C3-6).
     if let Some(draft_id) = crate::site::layouts::draft_bot_layout_update_on_published_site(
         &state,
         &tx,
-        who.bot_id(),
+        who.draft_author()?,
         id,
         &req.spec,
         req.expected_version,

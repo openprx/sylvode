@@ -573,7 +573,8 @@ const MAX_PAGE_SIDE_LINKS: usize = 500;
 /// The work items linked to `object`, for a caller who may read the page.
 ///
 /// A person reads the items of every workspace they belong to; a bot those of its own workspace
-/// in the projects where its level reaches `read`.
+/// in the projects where its level reaches `read`; a plugin call those of the projects its grants
+/// cover.
 ///
 /// # Errors
 /// A database failure.
@@ -629,7 +630,11 @@ pub async fn work_items_of_page(
                 && crate::middleware::scoped_bot::bot_level_in_project(db, caller.actor_id, row.project_id).await?
                     >= crate::middleware::scoped_bot::Level::Read
         } else {
+            // A plugin call reads the items of the projects its grants cover, like a bot.
             member_of.contains(&row.workspace_id)
+                && ensure_bot_level(db, None, Secondary::Project(row.project_id), Level::Read)
+                    .await
+                    .is_ok()
         };
         if readable {
             items.push(PageWorkItem {

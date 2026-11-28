@@ -37,6 +37,10 @@ pub struct ApproveRequest {
     pub generation: i32,
     #[serde(default)]
     pub grants: Vec<GrantInput>,
+    /// The destructive capabilities the administrator confirmed (`confirm_required` in the review);
+    /// a destructive grant whose id is not here is refused.
+    #[serde(default)]
+    pub confirm: Vec<String>,
 }
 
 fn refuse(code: RefusalCode) -> ApiError {
@@ -83,6 +87,22 @@ pub async fn validate_grants(
         }
     }
     Ok(out)
+}
+
+/// A destructive grant needs its capability id in `confirm`: the review's `confirm_required` is
+/// held on the server, so a client that skips the confirm step cannot approve one.
+///
+/// # Errors
+/// `grant_confirm_required`.
+fn ensure_confirmed(grants: &[ValidGrant], confirm: &[String]) -> Result<(), ApiError> {
+    let unconfirmed = grants.iter().any(|(capability, _, _)| {
+        validate::capability_info(capability).is_some_and(|info| info.risk == "destructive")
+            && !confirm.contains(capability)
+    });
+    if unconfirmed {
+        return Err(refuse(RefusalCode::GrantConfirmRequired));
+    }
+    Ok(())
 }
 
 async fn normalise_selector(
@@ -398,6 +418,7 @@ async fn write(
         }
     }
     let grants = validate_grants(tx, &installation, &generation, &request.grants, &forms_of_binds).await?;
+    ensure_confirmed(&grants, &request.confirm)?;
 
     if !reapproval {
         tx.execute(Statement::from_sql_and_values(

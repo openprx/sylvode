@@ -536,8 +536,18 @@ async fn resolve_new_proposal_workspace(
     .map(|row| row.workspace_id)
     .collect::<Vec<_>>();
 
+    // A plugin call creates a proposal in its installation's workspace only: other workspaces of
+    // the user do not exist for it, and an instance admin role does not widen that.
+    let pinned = crate::extensions::current_cover().map(|cover| cover.workspace_id());
+    let memberships = match pinned {
+        Some(pinned) => memberships.into_iter().filter(|id| *id == pinned).collect(),
+        None => memberships,
+    };
+    let outside = |workspace_id: Uuid| pinned.is_some_and(|pinned| pinned != workspace_id);
+    let is_admin = actor.is_admin && pinned.is_none();
+
     if let Some(workspace_id) = requested {
-        if !actor.is_admin && !memberships.contains(&workspace_id) {
+        if outside(workspace_id) || (!is_admin && !memberships.contains(&workspace_id)) {
             return Err(ApiError::Forbidden("workspace access denied".to_string()));
         }
         return Ok(workspace_id);
@@ -546,6 +556,9 @@ async fn resolve_new_proposal_workspace(
     if let Some(project_id) = template_project_id
         && let Some(workspace_id) = resolve_workspace_id_for_project(state, project_id).await?
     {
+        if outside(workspace_id) {
+            return Err(ApiError::Forbidden("workspace access denied".to_string()));
+        }
         return Ok(workspace_id);
     }
 

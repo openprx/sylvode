@@ -16,6 +16,7 @@
 	import Modal from '#lib/components/Modal.svelte';
 	import {
 		allRequests,
+		confirmedFor,
 		grantsFor,
 		marketApi,
 		marketDetailApi,
@@ -196,7 +197,8 @@
 		const response = await marketApi.approve(
 			reviewing.id,
 			review.generation,
-			grantsFor(review.requests, ticked)
+			grantsFor(review.requests, ticked),
+			confirmedFor(review.requests, ticked)
 		);
 		busy = false;
 		if (response.code !== 0) {

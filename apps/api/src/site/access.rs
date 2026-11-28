@@ -48,6 +48,18 @@ impl Who {
         self.bot.as_ref().map(|bot| bot.bot_id)
     }
 
+    /// The author of a draft the request stores: the bot, or the person behind a plugin call;
+    /// `None` for a person acting directly.
+    pub(crate) fn draft_author(&self) -> Result<Option<(&'static str, Uuid)>, ApiError> {
+        if let Some(bot_id) = self.bot_id() {
+            return Ok(Some(("bot", bot_id)));
+        }
+        if crate::extensions::current().is_some() {
+            return Ok(self.user_id()?.map(|user| ("user", user)));
+        }
+        Ok(None)
+    }
+
     /// The person behind the request; `None` for a bot.
     pub(crate) fn user_id(&self) -> Result<Option<Uuid>, ApiError> {
         if self.bot.is_some() {
