@@ -26,6 +26,42 @@ test('a draft names its target in one line', () => {
 	);
 });
 
+test('a site page draft says whether it is a title, a new page or a page change', () => {
+	const words = (key: string, values?: Record<string, string>): string =>
+		`${key}${values?.route ? ` ${values.route}` : ''}`;
+	const title = {
+		kind: 'site_page',
+		target: { site_id: 's', page_id: null, op: 'update' }
+	} as const;
+	nodeAssert.equal(targetLine(title, words), 'drafts.target.siteTitle');
+	nodeAssert.equal(
+		targetLine({ kind: 'site_page', target: { site_id: 's', page_id: null, op: 'create' } }, words),
+		'drafts.target.pageCreate'
+	);
+	nodeAssert.equal(
+		targetLine(
+			{
+				kind: 'site_page',
+				target: { site_id: 's', page_id: 'p', op: 'delete', base_page: { route: '/help' } }
+			},
+			words
+		),
+		'drafts.target.page_delete /help'
+	);
+	nodeAssert.equal(
+		targetLine(
+			{
+				kind: 'site_page',
+				target: { site_id: 's', page_id: 'p', op: 'update', base_page: { route: '/a' } }
+			},
+			words
+		),
+		'drafts.target.page_update /a'
+	);
+	// Without words the kind is the line, as before.
+	nodeAssert.equal(targetLine(title), 'site_page');
+});
+
 test('only an administrator approves a valid pending draft', () => {
 	const pending = { status: 'pending', valid: true } as const;
 	nodeAssert.equal(canApprove(pending, true), true);

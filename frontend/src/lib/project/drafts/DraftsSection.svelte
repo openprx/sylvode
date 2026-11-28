@@ -10,14 +10,17 @@
 	import StatusChip from '#lib/ui/status-chip/StatusChip.svelte';
 	import { draftsApi } from './api';
 	import DraftReviewDialog from './DraftReviewDialog.svelte';
-	import { STATUS_FILTERS, statusTone, targetLine } from './view';
+	import { STATUS_FILTERS, statusTone, targetLine, type Words } from './view';
 	import type { DraftStatus, DraftSummary } from './wire';
 
 	/**
 	 * Drafts written by agents for one project. A person who administers the workspace opens a
-	 * pending draft to review it; everyone else can read the list.
+	 * pending draft to review it; everyone else can read the list. With `siteId` the list is that
+	 * site's page and title drafts, and the page heading is left to the caller.
 	 */
-	let { projectId }: { projectId: string } = $props();
+	let { projectId, siteId }: { projectId: string; siteId?: string } = $props();
+
+	const words: Words = (key, values) => $t(key, { values });
 
 	// Whether the viewer administers the workspace; the server decides again on every approval.
 	const adminGate = getContext<(() => boolean) | undefined>(PLUGIN_ADMIN_CONTEXT);
@@ -31,9 +34,14 @@
 
 	async function load(): Promise<void> {
 		phase = 'loading';
-		const result = await draftsApi.list(projectId, { status });
+		const result = await draftsApi.list(
+			projectId,
+			siteId ? { status, kind: 'site_page', perPage: 200 } : { status }
+		);
 		if (result.code === 0 && result.data) {
-			items = result.data.items;
+			items = siteId
+				? result.data.items.filter((draft) => draft.target.site_id === siteId)
+				: result.data.items;
 			phase = 'ready';
 		} else {
 			problem = describeResult(result);
@@ -65,10 +73,12 @@
 </script>
 
 <div class="drafts" data-testid="drafts-section">
-	<header class="head">
-		<h1>{$t('drafts.title')}</h1>
-		<p class="lead">{$t('drafts.lead')}</p>
-	</header>
+	{#if !siteId}
+		<header class="head">
+			<h1>{$t('drafts.title')}</h1>
+			<p class="lead">{$t('drafts.lead')}</p>
+		</header>
+	{/if}
 
 	<Segmented
 		label={$t('drafts.filter')}
@@ -108,7 +118,7 @@
 								{$t(`drafts.kind.${draft.kind}`)}
 							</button>
 						</td>
-						<td>{targetLine(draft)}</td>
+						<td>{targetLine(draft, words)}</td>
 						<td>{author(draft)}</td>
 						<td>
 							<StatusChip tone={statusTone(draft.status)}

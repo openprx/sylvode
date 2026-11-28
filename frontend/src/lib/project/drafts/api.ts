@@ -6,9 +6,12 @@ const enc = encodeURIComponent;
 export const draftsApi = {
 	list(
 		projectId: string,
-		filter: { status?: DraftStatus; kind?: DraftKind; page?: number } = {}
+		filter: { status?: DraftStatus; kind?: DraftKind; page?: number; perPage?: number } = {}
 	): Promise<ApiResult<PaginatedData<DraftSummary>>> {
-		const query = new URLSearchParams({ project_id: projectId, per_page: '50' });
+		const query = new URLSearchParams({
+			project_id: projectId,
+			per_page: String(filter.perPage ?? 50)
+		});
 		if (filter.status) query.set('status', filter.status);
 		if (filter.kind) query.set('kind', filter.kind);
 		if (filter.page) query.set('page', String(filter.page));

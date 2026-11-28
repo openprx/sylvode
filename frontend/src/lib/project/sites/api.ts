@@ -1,5 +1,13 @@
 import { apiClient, type ApiResult, type PaginatedData } from '#lib/api/client.js';
-import type { SettingsInput, Site, SiteBinding, SitePage, SiteRole, SiteText } from './wire';
+import type {
+	PageInput,
+	SettingsInput,
+	Site,
+	SiteBinding,
+	SitePage,
+	SiteRole,
+	SiteText
+} from './wire';
 
 const enc = encodeURIComponent;
 
@@ -37,6 +45,15 @@ export const sitesApi = {
 	pages(id: string): Promise<ApiResult<{ items: SitePage[] }>> {
 		return apiClient.get<{ items: SitePage[] }>(`/api/v1/sites/${enc(id)}/pages`);
 	},
+	createPage(id: string, body: PageInput): Promise<ApiResult<SitePage>> {
+		return apiClient.post<SitePage>(`/api/v1/sites/${enc(id)}/pages`, body);
+	},
+	updatePage(pageId: string, body: PageInput): Promise<ApiResult<SitePage>> {
+		return apiClient.patch<SitePage>(`/api/v1/site-pages/${enc(pageId)}`, body);
+	},
+	removePage(pageId: string): Promise<ApiResult<{ id: string }>> {
+		return apiClient.delete<{ id: string }>(`/api/v1/site-pages/${enc(pageId)}`);
+	},
 	bindings(id: string): Promise<ApiResult<{ items: SiteBinding[] }>> {
 		return apiClient.get<{ items: SiteBinding[] }>(`/api/v1/sites/${enc(id)}/bindings`);
 	},
@@ -45,5 +62,10 @@ export const sitesApi = {
 	},
 	putRole(id: string, userId: string, role: SiteRole['role']): Promise<ApiResult<SiteRole>> {
 		return apiClient.put<SiteRole>(`/api/v1/sites/${enc(id)}/roles/${enc(userId)}`, { role });
+	},
+	removeRole(id: string, userId: string): Promise<ApiResult<{ site_id: string; user_id: string }>> {
+		return apiClient.delete<{ site_id: string; user_id: string }>(
+			`/api/v1/sites/${enc(id)}/roles/${enc(userId)}`
+		);
 	}
 };

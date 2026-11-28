@@ -10,6 +10,7 @@
 	import { describeResult } from '#lib/i18n/describe.js';
 	import { PLUGIN_ADMIN_CONTEXT } from '#lib/plugins/context.js';
 	import { authStore } from '#lib/stores/auth.js';
+	import { draftsApi } from '#lib/project/drafts/api.js';
 	import { toast } from '#lib/stores/toast.js';
 	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import PageHeader from '#lib/ui/page-header/PageHeader.svelte';
@@ -19,10 +20,20 @@
 	import StatusChip from '#lib/ui/status-chip/StatusChip.svelte';
 	import TipBar from '#lib/ui/tip-bar/TipBar.svelte';
 	import { sitesApi } from './api';
+	import DraftsTab from './DraftsTab.svelte';
 	import { errorText } from './errors';
+	import PagesTab from './PagesTab.svelte';
 	import PublishDialog from './PublishDialog.svelte';
+	import RolesTab from './RolesTab.svelte';
 	import SettingsTab from './SettingsTab.svelte';
-	import { SITE_TABS, siteTitle, statusTone, type SiteTab } from './view';
+	import {
+		SITE_TABS,
+		canEditPages,
+		draftOfSite,
+		siteTitle,
+		statusTone,
+		type SiteTab
+	} from './view';
 	import type { Site, SiteRole } from './wire';
 
 	/** One site: header with its status actions, then the tab the address names. */
@@ -50,10 +61,11 @@
 	let roles = $state.raw<SiteRole[]>([]);
 	let busy = $state(false);
 	let publishing = $state(false);
+	let waiting = $state(0);
 
 	const myId = $derived($authStore.user?.id ?? '');
 	const myRole = $derived(roles.find((role) => role.user_id === myId)?.role ?? null);
-	const canTitle = $derived(isAdmin || myRole === 'site_editor');
+	const canTitle = $derived(canEditPages(isAdmin, myRole));
 	const name = $derived(site ? siteTitle(site.title, $locale) : '');
 	const listHref = $derived(
 		`/workspace/${encodeURIComponent(workspaceId)}/projects/${encodeURIComponent(projectId)}/sites`
@@ -76,6 +88,23 @@
 		const result = await sitesApi.roles(siteId);
 		if (result.code === 0 && result.data) roles = result.data.items;
 	}
+
+	/** Agent changes of this site that wait for review; the Drafts tab label shows the count. */
+	async function loadWaiting(): Promise<void> {
+		const result = await draftsApi.list(projectId, {
+			status: 'pending',
+			kind: 'site_page',
+			perPage: 200
+		});
+		if (result.code === 0 && result.data)
+			waiting = result.data.items.filter((draft) => draftOfSite(draft, siteId)).length;
+	}
+
+	// Re-read the count when the tab changes: a review in the Drafts tab changes it.
+	$effect(() => {
+		void tab;
+		void loadWaiting();
+	});
 
 	onMount(() => {
 		void load();
@@ -258,12 +287,24 @@
 				label={$t('sites.tabs.label')}
 				width="fill"
 				value={tab}
-				options={SITE_TABS.map((value) => ({ value, label: $t(`sites.tabs.${value}`) }))}
+				options={SITE_TABS.map((value) => ({
+					value,
+					label:
+						value === 'drafts' && waiting > 0
+							? $t('sites.tabs.draftsWaiting', { values: { count: waiting } })
+							: $t(`sites.tabs.${value}`)
+				}))}
 				onchange={ontab}
 			/>
 		{/if}
 
-		{#if tab === 'settings'}
+		{#if tab === 'pages'}
+			<PagesTab {site} {projectId} canEdit={canTitle} />
+		{:else if tab === 'roles'}
+			<RolesTab {siteId} {workspaceId} {isAdmin} onchanged={() => void loadRoles()} />
+		{:else if tab === 'drafts'}
+			<DraftsTab {projectId} {siteId} />
+		{:else if tab === 'settings'}
 			<SettingsTab
 				{site}
 				{isAdmin}

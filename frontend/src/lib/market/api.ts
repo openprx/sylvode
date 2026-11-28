@@ -28,6 +28,8 @@ export interface Installation {
 	workspace_id: string;
 	scope: { kind: 'workspace' | 'project'; project_id: string | null };
 	package_key: string;
+	/** The site that holds the pages of the newest generation; `null` when the package has none. */
+	site_id: string | null;
 	status: InstallationStatus;
 	disabled_reason: 'admin' | 'approver_lost' | 'key_revoked' | null;
 	active_generation: number | null;
@@ -216,7 +218,12 @@ export interface PackageDetail extends PackageSummary {
 		actions: { name: string; label: Record<string, string> | null }[];
 		rules: { name: string; stages: string[]; field_types: string[] }[];
 		layouts: { key: string; slots: string[] }[];
-		pages: { route: string; layout: string; audience: string }[];
+		pages: {
+			route: string;
+			layout: string;
+			audience: string;
+			nav: Record<string, string> | null;
+		}[];
 	};
 }
 

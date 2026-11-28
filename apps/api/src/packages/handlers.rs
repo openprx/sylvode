@@ -336,7 +336,7 @@ fn analysis(manifest: &Manifest) -> Value {
             .collect::<Vec<_>>(),
         "layouts": manifest.layouts.iter().map(|l| json!({"key": l.key, "slots": l.slots})).collect::<Vec<_>>(),
         "pages": manifest.pages.iter()
-            .map(|p| json!({"route": p.route, "layout": p.layout, "audience": p.audience}))
+            .map(|p| json!({"route": p.route, "layout": p.layout, "audience": p.audience, "nav": p.nav}))
             .collect::<Vec<_>>(),
         "forms": manifest.binds.iter()
             .map(|(name, b)| json!({"bind": name, "create": b.create_from.is_some(), "requires_fields": b.requires_fields}))
@@ -480,7 +480,34 @@ pub async fn revoke_publisher_key(
 
 #[cfg(test)]
 mod tests {
-    use super::{is_digest, publisher_ok};
+    use super::{analysis, is_digest, publisher_ok};
+    use serde_json::json;
+    use sv_package::Manifest;
+
+    #[test]
+    fn the_analysis_lists_each_page_with_its_menu_label() {
+        let manifest: Manifest = serde_json::from_value(json!({
+            "schema": "sv.package.v1",
+            "kind": "page-template",
+            "id": "acme/desk",
+            "version": "1.0.0",
+            "publisher": { "id": "acme", "key_id": "ed25519:00" },
+            "sv": { "min": "0.5.0" },
+            "summary": { "en": "Desk" },
+            "license": "MIT",
+            "layouts": [{ "key": "home", "path": "layouts/home.json" }],
+            "pages": [
+                { "route": "/", "layout": "home", "audience": "visitor", "nav": { "en": "Home", "zh": "首页" } },
+                { "route": "/inbox", "layout": "home", "audience": "operator" }
+            ],
+            "files": {}
+        }))
+        .expect("manifest parses");
+        let pages = analysis(&manifest)["pages"].clone();
+        assert_eq!(pages[0]["nav"], json!({ "en": "Home", "zh": "首页" }));
+        assert_eq!(pages[0]["audience"], "visitor");
+        assert!(pages[1]["nav"].is_null());
+    }
 
     #[test]
     fn digests_and_publishers_are_checked_strictly() {

@@ -59,6 +59,12 @@
 			"publicWarning": "这会展示给已发布站点的访客",
 			"spec": "内容",
 			"comment": "审阅意见"
+		},
+		"target": {
+			"siteTitle": "站点标题",
+			"pageCreate": "新页面",
+			"page_update": "页面 {route}（修改）",
+			"page_delete": "页面 {route}（删除）"
 		}
 	}
 }

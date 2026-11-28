@@ -1,5 +1,5 @@
 /** Pure helpers of the sites console: titles, slugs, origins, the publish summary and error codes. */
-import type { SiteBinding, SitePage, SiteSettings, SiteStatus, SiteText } from './wire';
+import type { SiteBinding, SitePage, SiteRole, SiteSettings, SiteStatus, SiteText } from './wire';
 
 export type Tone = 'neutral' | 'success' | 'warning' | 'danger';
 
@@ -192,17 +192,153 @@ export const KNOWN_ERRORS: ReadonlySet<string> = new Set([
 	'allowed_origin_invalid',
 	'frame_ancestors_invalid',
 	'update_empty',
-	'user_not_member'
+	'user_not_member',
+	'role_invalid',
+	'route_invalid',
+	'route_taken',
+	'audience_invalid',
+	'nav_invalid',
+	'layout_required',
+	'layout_invalid',
+	'package_page_readonly',
+	'site_route_taken'
 ]);
 
 export function knownError(code: string | undefined): string | null {
 	return code && KNOWN_ERRORS.has(code) ? code : null;
 }
 
-/** Tabs of the site page. Only Settings exists in this batch; the others join with their screens. */
-export const SITE_TABS = ['settings'] as const;
+/** Tabs of the site page. Form bindings join with their screen. */
+export const SITE_TABS = ['pages', 'roles', 'settings', 'drafts'] as const;
 export type SiteTab = (typeof SITE_TABS)[number];
 
 export function tabOf(raw: string | null): SiteTab {
 	return (SITE_TABS as readonly string[]).includes(raw ?? '') ? (raw as SiteTab) : SITE_TABS[0];
+}
+
+/** Whether the viewer changes pages: owners and admins, and the site's own editors. */
+export function canEditPages(isAdmin: boolean, role: SiteRole['role'] | null): boolean {
+	return isAdmin || role === 'site_editor';
+}
+
+/**
+ * A route as the server accepts it: `/`, or lowercase segments of letters, digits and hyphens;
+ * a segment `:name` (lowercase letters and `_`) takes a record id and cannot be the first.
+ */
+export function isRoute(route: string): boolean {
+	if (route === '/') return true;
+	if (!route.startsWith('/') || [...route].length > 200) return false;
+	return route
+		.slice(1)
+		.split('/')
+		.every((part, index) =>
+			part.startsWith(':')
+				? index > 0 && /^[a-z_]+$/.test(part.slice(1))
+				: /^[a-z0-9-]+$/.test(part)
+		);
+}
+
+export const isPackagePage = (page: Pick<SitePage, 'installation_id'>): boolean =>
+	page.installation_id !== null;
+
+/** The text of the menu label to send: `null` (not in the menu) when both fields are empty. */
+export function navValue(en: string, zh: string): SiteText | null {
+	return en.trim() === '' && zh.trim() === '' ? null : titleValue(en, zh);
+}
+
+/** The form fields of a stored menu label. */
+export function navFields(nav: SiteText | null): { en: string; zh: string } {
+	return nav === null ? { en: '', zh: '' } : titleFields(nav);
+}
+
+/** A menu label needs an English text when any is given (the server requires `en`). */
+export function navProblem(en: string, zh: string): boolean {
+	if (en.trim() === '' && zh.trim() === '') return false;
+	return !validText(en) || (zh.trim() !== '' && !validText(zh));
+}
+
+export type PageField = 'route' | 'audience' | 'nav' | 'layout';
+
+/** The page dialog field an error code belongs under; `null` for a code that fits no field. */
+export function pageErrorField(code: string | undefined): PageField | null {
+	switch (code) {
+		case 'route_invalid':
+		case 'route_taken':
+			return 'route';
+		case 'audience_invalid':
+			return 'audience';
+		case 'nav_invalid':
+			return 'nav';
+		case 'layout_required':
+		case 'layout_invalid':
+			return 'layout';
+		default:
+			return null;
+	}
+}
+
+/** The paths a `layout_invalid` refusal lists (`details.errors[].path`), for the line under the select. */
+export function layoutIssues(details: unknown): string[] {
+	const errors = (details as { errors?: unknown } | null | undefined)?.errors;
+	if (!Array.isArray(errors)) return [];
+	return errors.flatMap((entry: unknown) => {
+		const issue = entry as { path?: unknown; code?: unknown } | null;
+		if (!issue || typeof issue.code !== 'string') return [];
+		const path = typeof issue.path === 'string' && issue.path !== '' ? issue.path : '/';
+		return [`${path}  ${issue.code}`];
+	});
+}
+
+/**
+ * The position changes that move one of the site's own pages one step up (-1) or down (1) among
+ * the own pages. Own pages are renumbered from the lowest position they hold, so equal positions
+ * (every new page starts at 0) still order. A package page cannot be changed and is left out.
+ */
+export function moveUpdates(
+	pages: SitePage[],
+	id: string,
+	step: -1 | 1
+): { id: string; position: number }[] {
+	const own = pages.filter((page) => !isPackagePage(page));
+	const at = own.findIndex((page) => page.id === id);
+	const to = at + step;
+	if (at < 0 || to < 0 || to >= own.length) return [];
+	const order = [...own];
+	const moved = order[at];
+	const other = order[to];
+	if (!moved || !other) return [];
+	order[at] = other;
+	order[to] = moved;
+	const base = Math.min(...own.map((page) => page.position));
+	return order.flatMap((page, index) =>
+		page.position === base + index ? [] : [{ id: page.id, position: base + index }]
+	);
+}
+
+/** Pending `site_page` drafts per site, from one project-wide list. */
+export function pendingBySite(drafts: { target: Record<string, unknown> }[]): Map<string, number> {
+	const counts = new Map<string, number>();
+	for (const draft of drafts) {
+		const site = draft.target.site_id;
+		if (typeof site === 'string') counts.set(site, (counts.get(site) ?? 0) + 1);
+	}
+	return counts;
+}
+
+/** Whether a draft targets the site. */
+export function draftOfSite(draft: { target: Record<string, unknown> }, siteId: string): boolean {
+	return draft.target.site_id === siteId;
+}
+
+export interface MemberLike {
+	user_id: string;
+	name: string;
+	email: string;
+	entity_type?: string;
+}
+
+/** Active people who hold no role on the site yet; agents cannot sign in on a site. */
+export function roleCandidates(members: MemberLike[], roles: SiteRole[]): MemberLike[] {
+	const held = new Set(roles.map((role) => role.user_id));
+	return members.filter((member) => member.entity_type !== 'bot' && !held.has(member.user_id));
 }

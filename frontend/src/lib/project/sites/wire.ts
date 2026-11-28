@@ -41,9 +41,21 @@ export interface SitePage {
 	route: string;
 	layout_id: string;
 	audience: PageAudience;
-	nav: unknown;
+	/** The menu label; `null` keeps the page out of the menu. */
+	nav: SiteText | null;
 	position: number;
+	/** Set for a page a package brings: read-only here. */
 	installation_id: string | null;
+	generation: number | null;
+}
+
+/** What `POST /sites/{id}/pages` and `PATCH /site-pages/{id}` take; absent members stay on update. */
+export interface PageInput {
+	route?: string;
+	audience?: PageAudience;
+	nav?: SiteText | null;
+	layout_id?: string;
+	position?: number;
 }
 
 export interface SiteBinding {

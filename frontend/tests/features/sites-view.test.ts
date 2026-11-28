@@ -6,7 +6,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+	canEditPages,
+	draftOfSite,
 	isHttpsOrigin,
+	isPackagePage,
+	isRoute,
+	layoutIssues,
+	moveUpdates,
+	navFields,
+	navProblem,
+	navValue,
+	pageErrorField,
+	pendingBySite,
+	roleCandidates,
 	isSlug,
 	knownError,
 	layoutBindingKeys,
@@ -32,7 +44,8 @@ const page = (id: string, route: string, audience: SitePage['audience'] = 'visit
 	audience,
 	nav: null,
 	position: 0,
-	installation_id: null
+	installation_id: null,
+	generation: null
 });
 
 const binding = (key: string, projection: SiteBinding['projection']): SiteBinding => ({
@@ -169,6 +182,121 @@ test('status tones, known error codes and tabs', () => {
 	assert.equal(knownError('internal'), null);
 	assert.equal(knownError(undefined), null);
 	assert.equal(tabOf('settings'), 'settings');
-	assert.equal(tabOf('pages'), 'settings');
-	assert.equal(tabOf(null), 'settings');
+	assert.equal(tabOf('drafts'), 'drafts');
+	assert.equal(tabOf('roles'), 'roles');
+	assert.equal(tabOf('nonsense'), 'pages');
+	assert.equal(tabOf(null), 'pages');
+});
+
+test('routes follow the server grammar', () => {
+	for (const ok of ['/', '/help', '/a-b/c1', '/requests/:id', '/x/:record_id'])
+		assert.equal(isRoute(ok), true, ok);
+	for (const bad of [
+		'',
+		'help',
+		'/help/',
+		'//',
+		'/Help',
+		'/:id',
+		'/a/:',
+		'/a/:Id',
+		'/a b',
+		'/a/:b1'
+	])
+		assert.equal(isRoute(bad), false, bad);
+	assert.equal(isRoute(`/${'a'.repeat(200)}`), false);
+});
+
+test('a menu label is empty, or has an English text', () => {
+	assert.equal(navValue(' ', ''), null);
+	assert.equal(navValue('Help', ''), 'Help');
+	assert.deepEqual(navValue('Help', '帮助'), { en: 'Help', zh: '帮助' });
+	assert.deepEqual(navFields(null), { en: '', zh: '' });
+	assert.deepEqual(navFields({ en: 'Help', zh: '帮助' }), { en: 'Help', zh: '帮助' });
+	assert.equal(navProblem('', ''), false);
+	assert.equal(navProblem('', '帮助'), true);
+	assert.equal(navProblem('Help', ''), false);
+	assert.equal(navProblem('x'.repeat(201), ''), true);
+});
+
+test('page errors land under their field', () => {
+	assert.equal(pageErrorField('route_taken'), 'route');
+	assert.equal(pageErrorField('route_invalid'), 'route');
+	assert.equal(pageErrorField('nav_invalid'), 'nav');
+	assert.equal(pageErrorField('audience_invalid'), 'audience');
+	assert.equal(pageErrorField('layout_invalid'), 'layout');
+	assert.equal(pageErrorField('layout_required'), 'layout');
+	assert.equal(pageErrorField('package_page_readonly'), null);
+	assert.equal(pageErrorField(undefined), null);
+	for (const code of ['route_taken', 'site_route_taken', 'package_page_readonly', 'role_invalid'])
+		assert.equal(knownError(code), code);
+});
+
+test('layout issues list the path and the code', () => {
+	assert.deepEqual(
+		layoutIssues({ errors: [{ path: '/data/a/form', code: 'binding_unknown' }, { code: 'x' }, 7] }),
+		['/data/a/form  binding_unknown', '/  x']
+	);
+	assert.deepEqual(layoutIssues(undefined), []);
+	assert.deepEqual(layoutIssues({ errors: 'no' }), []);
+});
+
+test('package pages are told apart and cannot move', () => {
+	const own = (id: string, position: number): SitePage => ({ ...page(id, `/${id}`), position });
+	const pkg: SitePage = { ...page('pk', '/pk'), installation_id: 'i', generation: 2 };
+	assert.equal(isPackagePage(pkg), true);
+	assert.equal(isPackagePage(own('a', 0)), false);
+	// Equal positions are renumbered so the order exists.
+	assert.deepEqual(moveUpdates([own('a', 0), own('b', 0), own('c', 0)], 'b', -1), [
+		{ id: 'a', position: 1 },
+		{ id: 'c', position: 2 }
+	]);
+	assert.deepEqual(moveUpdates([own('a', 3), own('b', 4)], 'a', 1), [
+		{ id: 'b', position: 3 },
+		{ id: 'a', position: 4 }
+	]);
+	assert.deepEqual(moveUpdates([own('a', 3), own('b', 4)], 'a', -1), []);
+	assert.deepEqual(moveUpdates([own('a', 3), own('b', 4)], 'b', 1), []);
+	// A package page between two own pages is skipped over.
+	assert.deepEqual(moveUpdates([own('a', 0), pkg, own('b', 1)], 'b', -1), [
+		{ id: 'b', position: 0 },
+		{ id: 'a', position: 1 }
+	]);
+	assert.deepEqual(moveUpdates([pkg], 'pk', 1), []);
+});
+
+test('only admins and site editors change pages', () => {
+	assert.equal(canEditPages(true, null), true);
+	assert.equal(canEditPages(false, 'site_editor'), true);
+	assert.equal(canEditPages(false, 'site_operator'), false);
+	assert.equal(canEditPages(false, null), false);
+});
+
+test('pending drafts are counted per site', () => {
+	const drafts = [
+		{ target: { site_id: 's1' } },
+		{ target: { site_id: 's1' } },
+		{ target: { site_id: 's2' } },
+		{ target: {} }
+	];
+	const counts = pendingBySite(drafts);
+	assert.equal(counts.get('s1'), 2);
+	assert.equal(counts.get('s2'), 1);
+	assert.equal(counts.size, 2);
+	assert.equal(draftOfSite(drafts[0] as { target: Record<string, unknown> }, 's1'), true);
+	assert.equal(draftOfSite(drafts[2] as { target: Record<string, unknown> }, 's1'), false);
+});
+
+test('role candidates are active people without a role', () => {
+	const members = [
+		{ user_id: 'u1', name: 'A', email: 'a@x' },
+		{ user_id: 'u2', name: 'B', email: 'b@x' },
+		{ user_id: 'u3', name: 'Bot', email: 'bot@x', entity_type: 'bot' },
+		{ user_id: 'u4', name: 'D', email: 'd@x', entity_type: 'human' }
+	];
+	const roles = [{ site_id: 's', user_id: 'u1', role: 'site_operator' as const }];
+	assert.deepEqual(
+		roleCandidates(members, roles).map((member) => member.user_id),
+		['u2', 'u4']
+	);
 });
