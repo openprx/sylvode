@@ -140,9 +140,10 @@ impl RegisteredRoute {
     fn flow_handlers(&self) -> bool {
         let flow = |module: &String| module == "flow" || module == "collab";
         // The liveness and readiness probes are functions of this file, not of a `routes`
-        // module; every other route names its handlers in full.
+        // module, and the areas outside the Flow surface (drafts, layouts, nav, ...) name their
+        // own modules; a Flow path names `routes::flow` / `routes::collab` handlers in full.
         assert!(
-            !self.handler_modules.is_empty() || ["/health", "/ready"].contains(&self.path.as_str()),
+            !self.handler_modules.is_empty() || !self.flow_path(),
             "{} names no `routes::<module>::<handler>`",
             self.path
         );
@@ -259,10 +260,15 @@ async fn probe_route(state: &AppState, user_token: &str, path: &str, flow: bool,
                 Caller::Bot => Some(BOT_TOKEN),
             };
             let answer = call(state, &method, &uri, token, body).await;
+            // The catalogue guard sits outside the boundary and answers a method that has no
+            // catalogue entry with a bare `405` (no body, no database access), so a refused
+            // method of a Flow path carries no marker; every answer a handler gives does.
+            let guard_refusal = answer.status == StatusCode::METHOD_NOT_ALLOWED && answer.body.is_empty();
             assert_eq!(
-                answer.behind_boundary, flow,
-                "{method} {path}: a Flow path must answer behind the Flow surface boundary on every method, \
-                 accepted or not, and no other path may"
+                answer.behind_boundary || (flow && guard_refusal),
+                flow,
+                "{method} {path}: a Flow path must answer behind the Flow surface boundary on every method \
+                 (a bare 405 of the catalogue guard excepted), and no other path may"
             );
             if answer.status != StatusCode::METHOD_NOT_ALLOWED {
                 accepted += 1;

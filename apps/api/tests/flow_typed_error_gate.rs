@@ -426,6 +426,26 @@ fn handler_module(handler: &str) -> Option<&str> {
 /// that kind.
 const LOCAL_HANDLERS: &[(&str, &str)] = &[("/health", "crate::health"), ("/ready", "crate::ready")];
 
+/// Handlers of the areas that are not part of the Flow surface and are written in full from their
+/// own module (the router file imports the module, not a `routes` alias), as path prefixes. A Flow
+/// handler can never hide behind one of these: `routes::flow` / `routes::collab` imports and
+/// aliases are reported separately, and a Flow path accepts `routes::flow` / `routes::collab`
+/// handlers only.
+const NON_FLOW_HANDLER_PREFIXES: &[&str] = &[
+    "api::events::",
+    "api::forms::endpoints::",
+    "drafts::handlers::",
+    "handler::",
+    "handlers::",
+    "invoke::",
+    "layouts::handlers::",
+    "layouts::placements::",
+    "nav::handlers::",
+    "packages::handlers::",
+    "site::admin::",
+    "site::public::",
+];
+
 fn is_flow_module(module: &str) -> bool {
     module == "flow" || module == "collab"
 }
@@ -574,6 +594,9 @@ fn flow_wiring_findings(files: &[(String, String)]) -> Vec<String> {
         for handler in &route.handlers {
             let Some(module) = handler_module(handler) else {
                 if LOCAL_HANDLERS.contains(&(route.path.as_str(), handler.as_str())) && !route.flow_path() {
+                    continue;
+                }
+                if NON_FLOW_HANDLER_PREFIXES.iter().any(|prefix| handler.starts_with(prefix)) && !route.flow_path() {
                     continue;
                 }
                 findings.push(format!(
@@ -815,6 +838,9 @@ fn every_flow_route_is_registered_behind_the_typed_database_failure_boundary() {
         // A `#[cfg(test)]` module of the binary (declared in `main.rs`) whose own fixture router is not
         // the application router.
         .filter(|path| path != "flow_surface_boundary_tests.rs")
+        // Database test files (`#[cfg(test)]` modules declared in a parent file) with their own
+        // fixture routers.
+        .filter(|path| !path.ends_with("db_tests.rs"))
         .collect();
     assert!(
         !outside_oauth.is_empty() && outside_oauth.iter().all(|path| path.starts_with("router/")),
