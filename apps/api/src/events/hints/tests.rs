@@ -13,8 +13,8 @@ use uuid::Uuid;
 
 use super::TokenState;
 use super::{
-    CachedToken, End, Hint, HintHub, HintLimits, HintStream, HintTuning, LimitExceeded, ProjectFilter, Readable, Scope,
-    Signal, frames_for, hello_frame, normalized, parse_bot, parse_hint, project_to_check,
+    CachedReadable, CachedToken, End, Hint, HintHub, HintLimits, HintStream, HintTuning, LimitExceeded, ProjectFilter,
+    Readable, Scope, Signal, frames_for, hello_frame, normalized, parse_bot, parse_hint, project_to_check,
 };
 
 fn id() -> Uuid {
@@ -814,7 +814,8 @@ async fn a_bulk_write_in_one_project_sends_a_burst_then_one_overflow_and_spares_
     let mut rx = hub.signals.subscribe();
     let (workspace, noisy, quiet) = (id(), id(), id());
     let window = hub.tuning.tick;
-    for _ in 0..1_000 {
+    // Well under the workspace ceiling: the blast radius stays the one project.
+    for _ in 0..(super::WORKSPACE_BURST - 56) {
         hub.dispatch(super::HINT_CHANNEL, &issue_hint(workspace, noisy));
     }
     // Another project's hint (same workspace) still goes through while the noisy one is held back.
@@ -911,4 +912,129 @@ async fn an_overflow_ends_only_the_streams_that_could_have_received_the_held_bac
         stream.on_signal(Ok(bot(l.workspace, l.bot))).await,
         Err(End::Lagged)
     ));
+}
+
+#[tokio::test]
+async fn writes_spread_over_many_projects_are_bounded_per_workspace_and_spare_other_workspaces() {
+    let hub = HintHub::new(HintLimits::from_runtime(), coalescing_tuning());
+    let mut rx = hub.signals.subscribe();
+    let (noisy, quiet) = (id(), id());
+    // 200 projects of 20 hints each: every project is under its burst, the workspace is not.
+    let projects: Vec<Uuid> = (0..200).map(|_| id()).collect();
+    for _ in 0..20 {
+        for project in &projects {
+            hub.dispatch(super::HINT_CHANNEL, &issue_hint(noisy, *project));
+        }
+    }
+    // Another workspace is not held back by the noisy one.
+    hub.dispatch(super::HINT_CHANNEL, &issue_hint(quiet, id()));
+    let first = drain(&mut rx);
+    assert_eq!(first.len(), super::WORKSPACE_BURST + 1);
+    assert!(matches!(
+        first.last(),
+        Some(Signal::Hint(Hint::Issue { workspace, .. })) if *workspace == quiet
+    ));
+    tokio::time::sleep(hub.tuning.tick + Duration::from_millis(100)).await;
+    let later = drain(&mut rx);
+    assert_eq!(later.len(), 1, "one workspace overflow, no project overflow");
+    assert!(matches!(later[0], Signal::Overflow(Scope::Workspace(w)) if w == noisy));
+}
+
+#[tokio::test]
+async fn a_workspace_overflow_ends_every_stream_of_that_workspace_only() {
+    let mut l = stream_loop(quiet_tuning(), 16);
+    let mut stream = l.stream.take().expect("stream");
+    stream.readable.filter = ProjectFilter::Only(vec![id()]);
+    assert!(
+        stream
+            .on_signal(Ok(Signal::Overflow(Scope::Workspace(id()))))
+            .await
+            .is_ok()
+    );
+    assert!(matches!(
+        stream
+            .on_signal(Ok(Signal::Overflow(Scope::Workspace(l.workspace))))
+            .await,
+        Err(End::Lagged)
+    ));
+}
+
+#[test]
+fn the_window_map_is_pruned_at_most_once_per_window() {
+    let window = Duration::from_millis(100);
+    let t0 = Instant::now();
+    let mut windows = super::Windows::default();
+    for _ in 0..1_100 {
+        let ws = id();
+        assert!(
+            windows
+                .admit(
+                    ws,
+                    Scope::Project {
+                        workspace: ws,
+                        project: id()
+                    },
+                    t0,
+                    window
+                )
+                .is_none()
+        );
+    }
+    assert_eq!(windows.1, Some(t0), "the first admit over the size pruned");
+    let big = windows.0.len();
+    assert!(big > 1_024, "nothing had expired yet");
+    // Inside the same window: no second prune, even though the map is still large.
+    let ws = id();
+    windows.admit(
+        ws,
+        Scope::Project {
+            workspace: ws,
+            project: id(),
+        },
+        t0 + window / 2,
+        window,
+    );
+    assert_eq!(windows.1, Some(t0));
+    // A window later the expired entries are pruned, once.
+    let later = t0 + window;
+    windows.admit(
+        ws,
+        Scope::Project {
+            workspace: ws,
+            project: id(),
+        },
+        later,
+        window,
+    );
+    assert_eq!(windows.1, Some(later));
+    assert!(windows.0.len() < 10, "expired windows were removed");
+}
+
+#[tokio::test]
+async fn an_overflow_decides_on_a_set_refreshed_when_stale_and_a_failed_lookup_ends_the_stream() {
+    let mut l = stream_loop(quiet_tuning(), 16);
+    let mut stream = l.stream.take().expect("stream");
+    let (a, b) = (id(), id());
+    let stale = Instant::now() - stream.tuning.readable_ttl * 4;
+    stream.readable = Readable {
+        filter: ProjectFilter::All,
+        fetched: stale,
+    };
+    let overflow = Signal::Overflow(Scope::Project {
+        workspace: l.workspace,
+        project: a,
+    });
+    // No cached lookup and no database: the stale set is not used, the stream ends with Db.
+    assert!(matches!(stream.on_signal(Ok(overflow)).await, Err(End::Db)));
+    // A fresh shared lookup (the bot can now read only B): the stale All is replaced before the
+    // decision, so the overflow of A does not end this stream. Without the refresh it would.
+    *l.hub.shared_for(l.bot).readable.lock().await = Some(CachedReadable {
+        readable: Readable {
+            filter: ProjectFilter::Only(vec![b]),
+            fetched: Instant::now(),
+        },
+        generation: 0,
+    });
+    assert!(stream.on_signal(Ok(overflow)).await.is_ok());
+    assert_eq!(stream.readable.filter, ProjectFilter::Only(vec![b]));
 }
