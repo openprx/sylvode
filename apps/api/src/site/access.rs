@@ -11,8 +11,9 @@ use platform::{app::AppState, auth::JwtClaims};
 use sea_orm::{FromQueryResult, Statement};
 use uuid::Uuid;
 
-use super::store::{self, SiteRow};
+use super::store::{self, LayoutRow, SiteRow};
 use crate::error::ApiError;
+use crate::layouts::access::require_form_view;
 use crate::middleware::bot_auth::{
     BotAuthContext, BotPermission, ensure_bot_permission, require_workspace_access_from_auth,
 };
@@ -175,5 +176,43 @@ pub async fn admin_site(state: &AppState, who: &Who, site_id: Uuid) -> Result<Si
         Ok(site)
     } else {
         Err(ApiError::forbidden("only workspace owners and admins administer sites"))
+    }
+}
+
+/// A page may show a form-scope layout only to a caller who holds `form.view` on that form (person
+/// or bot, by the workspace role; bots are bound by their project level first). A caller without it
+/// gets the same `not_found` as for a missing layout. Layouts of other scopes pass.
+pub async fn require_layout_viewable(
+    state: &AppState,
+    who: &Who,
+    site: &SiteRow,
+    layout: &LayoutRow,
+) -> Result<(), ApiError> {
+    if layout.scope_kind != "form" {
+        return Ok(());
+    }
+    let denied = || ApiError::not_found("layout not found");
+    bot_level(state, who, site.project_id, Level::Read)
+        .await
+        .map_err(|_| denied())?;
+    let role = member(state, who, site.workspace_id).await.map_err(|_| denied())?;
+    require_form_view(state, &role, layout.scope_id)
+        .await
+        .map_err(|_| denied())
+}
+
+/// The draft-path form of [`require_layout_viewable`]: judges the layout a draft names by id; an
+/// id that does not resolve is left to the draft's own review report.
+pub async fn require_layout_id_viewable(
+    state: &AppState,
+    who: &Who,
+    site: &SiteRow,
+    layout_id: Uuid,
+) -> Result<(), ApiError> {
+    match store::load_layout(&state.db, layout_id).await? {
+        Some(layout) if layout.workspace_id == site.workspace_id => {
+            require_layout_viewable(state, who, site, &layout).await
+        }
+        _ => Ok(()),
     }
 }

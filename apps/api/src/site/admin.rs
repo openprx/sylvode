@@ -16,7 +16,10 @@ use serde_json::{Value, json};
 use sv_layout::Validated;
 use uuid::Uuid;
 
-use super::access::{Who, admin_site, page_writable_site, readable_site, require_project_read, require_project_write};
+use super::access::{
+    Who, admin_site, page_writable_site, readable_site, require_layout_id_viewable, require_layout_viewable,
+    require_project_read, require_project_write,
+};
 use super::drafts::{PageTarget, submit};
 use super::layouts::{binding_keys, validate_site_layout};
 use super::projection::Projection;
@@ -369,13 +372,13 @@ pub(super) fn check_page_values(route: &str, audience: &str, nav: Option<&Value>
     Ok(())
 }
 
-/// Checks a layout a page may show: an active user layout at this site's scope or in the site's
-/// project (or one of its forms), valid in site context. Returns the layout row and the verdict.
-pub(super) async fn check_page_layout(
+/// Loads a layout a page may show: an active user layout at this site's scope or in the site's
+/// project (or one of its forms). Anything else is `not_found`.
+async fn load_page_layout(
     db: &impl ConnectionTrait,
     site: &SiteRow,
     layout_id: Uuid,
-) -> Result<(store::LayoutRow, Validated), ApiError> {
+) -> Result<store::LayoutRow, ApiError> {
     let not_found = || ApiError::not_found("layout not found");
     let layout = store::load_layout(db, layout_id).await?.ok_or_else(not_found)?;
     if layout.workspace_id != site.workspace_id || layout.status != "active" || layout.installation_id.is_some() {
@@ -390,8 +393,33 @@ pub(super) async fn check_page_layout(
     if !in_scope {
         return Err(not_found());
     }
+    Ok(layout)
+}
+
+/// Checks a layout a page may show: in reach (see `load_page_layout`) and valid in site context.
+/// Returns the layout row and the verdict. This is the caller-less judgement of a draft review.
+pub(super) async fn check_page_layout(
+    db: &impl ConnectionTrait,
+    site: &SiteRow,
+    layout_id: Uuid,
+) -> Result<(store::LayoutRow, Validated), ApiError> {
+    let layout = load_page_layout(db, site, layout_id).await?;
     let validated = validate_site_layout(&layout.spec, binding_keys(db, site.id).await?)?;
     Ok((layout, validated))
+}
+
+/// `check_page_layout` for a caller who saves the page now: a form-scope layout also needs
+/// `form.view` of the caller, judged before the spec is validated so a refusal leaks nothing.
+async fn check_page_layout_as(
+    state: &AppState,
+    who: &Who,
+    site: &SiteRow,
+    layout_id: Uuid,
+) -> Result<store::LayoutRow, ApiError> {
+    let layout = load_page_layout(&state.db, site, layout_id).await?;
+    require_layout_viewable(state, who, site, &layout).await?;
+    validate_site_layout(&layout.spec, binding_keys(&state.db, site.id).await?)?;
+    Ok(layout)
 }
 
 /// Stores a layout spec at the site's scope (a new layout, or the page's own site layout).
@@ -438,6 +466,9 @@ pub async fn create_page(
     let tx = state.db.begin().await?;
     if drafted(&tx, &who, &site).await? {
         drop(tx);
+        if let Some(layout_id) = req.layout_id {
+            require_layout_id_viewable(&state, &who, &site, layout_id).await?;
+        }
         let target = PageTarget::create(site.id);
         let spec = page_spec(
             &route,
@@ -450,7 +481,7 @@ pub async fn create_page(
         return submit(&state, &who, &site, &target, spec).await;
     }
     let layout_id = match (req.layout_id, req.layout_spec.as_ref()) {
-        (Some(layout_id), _) => check_page_layout(&state.db, &site, layout_id).await?.0.id,
+        (Some(layout_id), _) => check_page_layout_as(&state, &who, &site, layout_id).await?.id,
         (None, Some(spec)) => save_site_layout(&tx, &site, who.user_id()?, spec, None).await?,
         (None, None) => return Err(ApiError::internal()),
     };
@@ -547,6 +578,9 @@ pub async fn update_page(
                 "give at most one of layout_id and layout_spec",
             ));
         }
+        if let Some(layout_id) = req.layout_id {
+            require_layout_id_viewable(&state, &who, &site, layout_id).await?;
+        }
         // Without a layout change the draft names the page's current layout, so the reviewer sees it.
         let layout_id = req
             .layout_id
@@ -571,7 +605,7 @@ pub async fn update_page(
                 "give at most one of layout_id and layout_spec",
             ));
         }
-        (Some(layout_id), None) => check_page_layout(&state.db, &site, layout_id).await?.0.id,
+        (Some(layout_id), None) => check_page_layout_as(&state, &who, &site, layout_id).await?.id,
         (None, Some(spec)) => save_site_layout(&tx, &site, who.user_id()?, spec, own_site_layout).await?,
         (None, None) => page.layout_id,
     };
