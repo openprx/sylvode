@@ -622,7 +622,10 @@ async fn a_proposal_template_of_an_unreadable_project_is_refused() {
         vec![],
     )
     .await;
-    assert!(made <= 2, "only proposals of the control template can exist: {made}");
+    assert_eq!(
+        made, 0,
+        "no proposal is made from the template text (the control fails its own validation)"
+    );
     scratch.drop_self().await;
 }
 

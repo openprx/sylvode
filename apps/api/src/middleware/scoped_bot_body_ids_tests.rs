@@ -405,6 +405,23 @@ const ACCOUNTED: &[(&str, &str, Account)] = &[
             "the middleware requires and judges project_id; the listing ANDs it with parent_id, so only rows of the judged project return",
         ),
     ),
+    (
+        "SearchQuery",
+        "project_id",
+        Exempt(
+            "a filter ANDed in SCOPE_FILTER_SQL with p.id = ANY(readable_projects) for a bot: a project it cannot read matches nothing (scoped_bot_filtered_tests)",
+        ),
+    ),
+    (
+        "CreateCommentRequest",
+        "mentions",
+        Exempt("user ids, not project objects (audit F5)"),
+    ),
+    (
+        "UpdateCommentRequest",
+        "mentions",
+        Exempt("user ids, not project objects (audit F5)"),
+    ),
     // Fields typed `Value` that the ids scan cannot see into.
     (
         "ConversionPreviewInput",
@@ -668,7 +685,7 @@ fn sources() -> BTreeMap<PathBuf, String> {
     out
 }
 
-/// The `(method, pattern)` -> handler name map of the router files.
+/// The `(method, pattern)` -> handler path map of the router files (`routes::proposal::create_proposal`).
 fn handlers() -> BTreeMap<(String, String), String> {
     let source = crate::router_source::text();
     let bytes = source.as_bytes();
@@ -713,7 +730,6 @@ fn handlers() -> BTreeMap<(String, String), String> {
                     .chars()
                     .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == ':')
                     .collect();
-                let name = name.rsplit("::").next().unwrap_or_default().to_string();
                 found.insert((method.to_ascii_uppercase(), pattern.to_string()), name);
             }
         }
@@ -721,15 +737,83 @@ fn handlers() -> BTreeMap<(String, String), String> {
     found
 }
 
-/// The text of `fn name(` up to the end of its parameter list, and the file it is in.
-fn signature_in<'a>(sources: &'a BTreeMap<PathBuf, String>, name: &str) -> Option<(&'a Path, &'a str)> {
+/// A file that holds tests or fixtures: never a handler, never a request type of the product.
+fn is_test_file(path: &Path) -> bool {
+    let text = path.to_string_lossy();
+    text.ends_with("tests.rs")
+        || text.contains("_tests/")
+        || text.contains("/tests/")
+        || text.contains("fixture")
+        || text.contains("/examples/")
+        || text.contains("/bin/")
+}
+
+/// The bare name of a handler path (`routes::proposal::create_proposal` is `create_proposal`).
+fn handler_name(path: &str) -> &str {
+    path.rsplit("::").next().unwrap_or(path)
+}
+
+/// The text of the handler's `fn name(` up to the end of its parameter list, and its file. The
+/// handler is found through the module its router registration names (`routes::proposal::name` is
+/// in `proposal.rs` or `proposal/mod.rs`); a name the module path does not settle (a re-export, a
+/// bare import) must be defined once outside test files. Panics when it is still ambiguous: reading
+/// the wrong function would account for the wrong request type.
+fn signature_in<'a>(sources: &'a BTreeMap<PathBuf, String>, path: &str) -> Option<(&'a Path, &'a str)> {
+    let name = handler_name(path);
+    let module = path.rsplit("::").nth(1);
     let needle = format!("fn {name}(");
-    sources.iter().find_map(|(path, text)| {
-        let at = text.find(&needle)?;
-        let rest = &text[at..];
-        let end = rest.find(") ->").or_else(|| rest.find("){"))?;
-        Some((path.as_path(), &rest[..end]))
-    })
+    let mut candidates: Vec<(&Path, &str)> = sources
+        .iter()
+        .filter(|(file, text)| !is_test_file(file) && text.contains(&needle))
+        .map(|(file, text)| (file.as_path(), text.as_str()))
+        .collect();
+    // The module a file stands for, with the directory above it: `routes/search.rs` is
+    // `("routes", "search")` and so is `routes/search/mod.rs`.
+    let place = |file: &Path| {
+        let mut parts: Vec<String> = file
+            .with_extension("")
+            .components()
+            .map(|part| part.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        if parts.last().is_some_and(|last| last == "mod") {
+            parts.pop();
+        }
+        let module = parts.pop().unwrap_or_default();
+        (parts.pop().unwrap_or_default(), module)
+    };
+    let segments: Vec<&str> = path.rsplit("::").collect();
+    if candidates.len() > 1
+        && let Some(module) = module
+    {
+        let above = segments.get(2).copied();
+        for exact in [true, false] {
+            let named: Vec<_> = candidates
+                .iter()
+                .copied()
+                .filter(|(file, _)| {
+                    let (dir, stem) = place(file);
+                    stem == module && (!exact || above.is_none_or(|above| above == dir))
+                })
+                .collect();
+            if !named.is_empty() {
+                candidates = named;
+                break;
+            }
+        }
+    }
+    assert!(
+        candidates.len() <= 1,
+        "handler {path} is defined in several files ({}): the router path does not settle which",
+        candidates
+            .iter()
+            .map(|(file, _)| file.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let (file, text) = candidates.first()?;
+    let rest = &text[text.find(&needle)?..];
+    let end = rest.find(") ->").or_else(|| rest.find("){"))?;
+    Some((file, &rest[..end]))
 }
 
 fn signature<'a>(sources: &'a BTreeMap<PathBuf, String>, name: &str) -> Option<&'a str> {
@@ -793,6 +877,7 @@ fn struct_bodies<'a>(sources: &'a BTreeMap<PathBuf, String>, name: &str) -> Vec<
     let needle = format!("struct {name} {{");
     sources
         .iter()
+        .filter(|(path, _)| !is_test_file(path))
         .filter_map(|(path, text)| {
             let at = text.find(&needle)?;
             let rest = &text[at + needle.len()..];
@@ -1007,11 +1092,12 @@ fn every_id_of_a_bot_reachable_request_is_accounted_for() {
             continue;
         }
         let key = (entry.method.to_string(), entry.pattern.to_string());
-        let Some(handler) = handlers.get(&key) else {
+        let Some(handler_path) = handlers.get(&key) else {
             panic!("no handler found for {} {}", entry.method, entry.pattern);
         };
-        let Some((home, signature)) = signature_in(&sources, handler) else {
-            if !ALIASED_HANDLERS.iter().any(|(name, _)| name == handler) {
+        let handler = handler_name(handler_path);
+        let Some((home, signature)) = signature_in(&sources, handler_path) else {
+            if !ALIASED_HANDLERS.iter().any(|(name, _)| *name == handler) {
                 unaccounted.insert(format!(
                     "{} {}: no fn {handler} found (a re-exported alias?): list it in ALIASED_HANDLERS",
                     entry.method, entry.pattern
@@ -1025,7 +1111,7 @@ fn every_id_of_a_bot_reachable_request_is_accounted_for() {
             };
             let (module, type_name) = split_path(&type_path);
             let untyped = |unaccounted: &mut BTreeSet<String>, what: &str| {
-                if !UNTYPED_BODIES.iter().any(|(name, _)| name == handler) {
+                if !UNTYPED_BODIES.iter().any(|(name, _)| *name == handler) {
                     unaccounted.insert(format!(
                         "{} {}: {what} {wrapper}{type_name}>; list handler {handler} in UNTYPED_BODIES with its reason",
                         entry.method, entry.pattern
@@ -1165,14 +1251,19 @@ fn the_accounting_is_true() {
             }
             Exempt(reason) | Open(reason) => assert!(!reason.is_empty(), "{name}.{field} needs a reason"),
             ScopeNative(handler) => {
-                let text = sources
-                    .values()
-                    .find_map(|text| function_body(text, handler))
-                    .unwrap_or_else(|| panic!("no fn {handler}"));
-                assert!(
-                    text.contains("user(&claims") || text.contains("user_or_absent(&claims"),
-                    "{name}.{field} is marked scope-native, but {handler} does not call user()"
-                );
+                // Every non-test definition of the name must refuse bot credentials.
+                let bodies: Vec<_> = sources
+                    .iter()
+                    .filter(|(path, _)| !is_test_file(path))
+                    .filter_map(|(_, text)| function_body(text, handler))
+                    .collect();
+                assert!(!bodies.is_empty(), "no fn {handler}");
+                for text in bodies {
+                    assert!(
+                        text.contains("user(&claims") || text.contains("user_or_absent(&claims"),
+                        "{name}.{field} is marked scope-native, but {handler} does not call user()"
+                    );
+                }
             }
         }
     }
@@ -1200,7 +1291,7 @@ fn request_type_names_are_unique() {
     for entry in bot_routes() {
         let Some((home, signature)) = handlers
             .get(&(entry.method.to_string(), entry.pattern.to_string()))
-            .and_then(|handler| signature_in(&sources, handler))
+            .and_then(|handler_path| signature_in(&sources, handler_path))
         else {
             continue;
         };

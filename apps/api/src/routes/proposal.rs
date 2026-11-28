@@ -1417,9 +1417,6 @@ pub async fn create_proposal(
         .await?
         .ok_or_else(|| ApiError::NotFound("proposal template not found".to_string()))?;
 
-        if !template.is_active {
-            return Err(ApiError::BadRequest("proposal template is inactive".to_string()));
-        }
         // The template's text is copied into the proposal: a scoped bot needs read in its project.
         ensure_bot_level(
             &state.db,
@@ -1430,6 +1427,11 @@ pub async fn create_proposal(
         .await?;
         if !actor.is_admin && !is_project_member(&state.db, template.project_id, actor.user_id).await? {
             return Err(ApiError::Forbidden("project access denied".to_string()));
+        }
+        // After the access checks, so a template of a project the caller cannot reach answers the
+        // same whether it is active or not.
+        if !template.is_active {
+            return Err(ApiError::BadRequest("proposal template is inactive".to_string()));
         }
 
         template_project_id = Some(template.project_id);
