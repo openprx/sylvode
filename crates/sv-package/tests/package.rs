@@ -320,7 +320,7 @@ fn eocd_comment_and_zip64_markers_are_refused() {
     assert_eq!(code(unpack(&z64, &Limits::default())), ErrorCode::ZipInvalid);
 }
 
-fn template_manifest(project: Value) -> Value {
+fn template_manifest(project: &Value) -> Value {
     json!({
       "schema": "sv.package.v1", "kind": "form-template",
       "id": "sv/sample-form", "version": "1.0.0",
@@ -343,60 +343,60 @@ fn states() -> Value {
     ])
 }
 
-fn packs(project: Value) -> bool {
+fn packs(project: &Value) -> bool {
     pack(template_manifest(project), &template_contents(), &key()).is_ok()
 }
 
 #[test]
 fn a_project_block_in_range_packs() {
-    assert!(packs(json!({
+    assert!(packs(&json!({
       "type_key": "custom_form", "workflow_states": states(),
       "labels": [{"name": {"en": "Risk", "zh": "风险"}, "color": "#dc2626"}]
     })));
-    assert!(packs(json!({"type_key": "custom_form"})));
+    assert!(packs(&json!({"type_key": "custom_form"})));
 }
 
 #[test]
 fn a_project_block_out_of_range_is_refused() {
     let with_states = |states: Value| json!({"workflow_states": states});
     // Unknown member, type grammar, upper-case colours, one initial state, one completed state.
-    assert!(!packs(json!({"governance": {}})));
-    assert!(!packs(json!({"type_key": "Custom-Form"})));
+    assert!(!packs(&json!({"governance": {}})));
+    assert!(!packs(&json!({"type_key": "Custom-Form"})));
     assert!(!packs(
-        json!({"labels": [{"name": {"en": "Risk"}, "color": "#DC2626"}]})
+        &json!({"labels": [{"name": {"en": "Risk"}, "color": "#DC2626"}]})
     ));
-    assert!(!packs(json!({"labels": [{"name": {"en": "Risk"}, "color": "red"}]})));
+    assert!(!packs(&json!({"labels": [{"name": {"en": "Risk"}, "color": "red"}]})));
     assert!(!packs(
-        json!({"labels": [{"name": {"en": "Risk"}, "color": "#dc2626"}, {"name": {"en": "RISK"}, "color": "#dc2626"}]})
+        &json!({"labels": [{"name": {"en": "Risk"}, "color": "#dc2626"}, {"name": {"en": "RISK"}, "color": "#dc2626"}]})
     ));
     assert!(!packs(
-        json!({"labels": [{"name": {"zh": "风险"}, "color": "#dc2626"}]})
+        &json!({"labels": [{"name": {"zh": "风险"}, "color": "#dc2626"}]})
     ));
-    assert!(!packs(with_states(json!([states()[0].clone()]))));
+    assert!(!packs(&with_states(json!([states()[0].clone()]))));
     let mut two_initial = states();
     two_initial[1]["initial"] = json!(true);
-    assert!(!packs(with_states(two_initial)));
+    assert!(!packs(&with_states(two_initial)));
     let mut none_completed = states();
     none_completed[1]["category"] = json!("active");
-    assert!(!packs(with_states(none_completed)));
+    assert!(!packs(&with_states(none_completed)));
     let mut bad_category = states();
     bad_category[1]["category"] = json!("done");
-    assert!(!packs(with_states(bad_category)));
+    assert!(!packs(&with_states(bad_category)));
     let mut padded = states();
     padded[0]["name"]["en"] = json!(" Draft");
-    assert!(!packs(with_states(padded)));
+    assert!(!packs(&with_states(padded)));
     let mut bidi = states();
     bidi[0]["name"]["en"] = json!("Dra\u{202e}ft");
-    assert!(!packs(with_states(bidi)));
+    assert!(!packs(&with_states(bidi)));
     let mut invisible = states();
     invisible[0]["name"]["en"] = json!("Dra\u{200b}ft");
-    assert!(!packs(with_states(invisible)));
+    assert!(!packs(&with_states(invisible)));
     let mut soft_hyphen = states();
     soft_hyphen[0]["name"]["en"] = json!("Dra\u{ad}ft");
-    assert!(!packs(with_states(soft_hyphen)));
+    assert!(!packs(&with_states(soft_hyphen)));
     let mut repeated = states();
     repeated[1]["key"] = json!("draft");
-    assert!(!packs(with_states(repeated)));
+    assert!(!packs(&with_states(repeated)));
 }
 
 #[test]

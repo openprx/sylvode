@@ -368,13 +368,12 @@ fn is_format_char(c: char) -> bool {
 /// An i18n map of a project block: at most 8 keys of the form `xx` or `xx-XX`, `en` present, every
 /// value a display text of at most `max_chars`.
 fn check_display_map(what: &str, map: &BTreeMap<String, String>, max_chars: usize) -> Result<()> {
-    let lang_ok = |lang: &str| {
-        let b = lang.as_bytes();
-        match b.len() {
-            2 => b.iter().all(u8::is_ascii_lowercase),
-            5 => b[..2].iter().all(u8::is_ascii_lowercase) && b[2] == b'-' && b[3..].iter().all(u8::is_ascii_uppercase),
-            _ => false,
+    let lang_ok = |lang: &str| match lang.as_bytes() {
+        [a, b] => a.is_ascii_lowercase() && b.is_ascii_lowercase(),
+        [a, b, b'-', c, d] => {
+            a.is_ascii_lowercase() && b.is_ascii_lowercase() && c.is_ascii_uppercase() && d.is_ascii_uppercase()
         }
+        _ => false,
     };
     if map.len() > 8 || !map.contains_key("en") || !map.keys().all(|lang| lang_ok(lang)) {
         return Err(bad(format!(

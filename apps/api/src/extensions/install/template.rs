@@ -473,7 +473,7 @@ mod tests {
             let custom_code = package.manifest.computed_custom_code();
             out.push((
                 dir.file_name().expect("name").to_string_lossy().into_owned(),
-                Opened { custom_code, package },
+                Opened { package, custom_code },
             ));
         }
         out
