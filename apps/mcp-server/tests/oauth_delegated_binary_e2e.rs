@@ -21,6 +21,12 @@ use tokio::sync::Mutex;
 
 type TestResult = Result<(), Box<dyn Error>>;
 
+/// The number of tools in the registry, read from the registry itself so that adding or removing a
+/// tool never leaves a stale constant here.
+fn registry_len() -> usize {
+    mcp_server::get_all_tool_definitions().len()
+}
+
 const WORKSPACE: &str = "11111111-1111-4111-8111-111111111111";
 const GRANT_WORKSPACE: &str = "77777777-7777-4777-8777-777777777777";
 /// The workspace the stand-in API reports for `BOT_TOKEN` on `GET /api/v1/auth/me`.
@@ -355,7 +361,7 @@ async fn the_http_transport_serves_metadata_challenges_and_delegated_calls() -> 
     assert_eq!(tool_names(&body).len(), 9, "{body}");
     let (status, _, body) = rpc_at(&server, "/mcp/rpc?tools=full", Some(BOT_TOKEN), list).await?;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(tool_names(&body).len(), 163);
+    assert_eq!(tool_names(&body).len(), registry_len());
     let call_projects = json!({
         "jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "projects.list", "arguments": {}}
     });

@@ -39,6 +39,12 @@ type Answer = (StatusCode, Option<String>, String);
 /// What the stand-in endpoint saw: method, URI, authorization, forwarded-by, forward-auth.
 type ContextRequest = (String, String, Option<String>, Option<String>, Option<String>);
 
+/// The number of tools in the registry, read from the registry itself so that adding or removing a
+/// tool never leaves a stale constant here.
+fn registry_len() -> usize {
+    mcp_server::get_all_tool_definitions().len()
+}
+
 const CONFIGURED_WORKSPACE: &str = "11111111-1111-4111-8111-111111111111";
 /// The workspace the stand-in API reports for `BOT_TOKEN` on `GET /api/v1/auth/me`.
 const BOT_WORKSPACE: &str = "55555555-5555-4555-8555-555555555555";
@@ -661,7 +667,7 @@ async fn a_legacy_caller_gets_search_mode_and_the_registry_on_request() -> TestR
         assert_eq!(listed(&reply)?, search_mode, "{token}");
         let full = server.post_full(Some(token), &list()).await?;
         assert_eq!(full.status, StatusCode::OK);
-        assert_eq!(listed(&full)?.len(), 163, "{token}");
+        assert_eq!(listed(&full)?.len(), registry_len(), "{token}");
         assert!(
             !listed(&full)?.contains("sylvode_search"),
             "entry tools exist in search mode only"

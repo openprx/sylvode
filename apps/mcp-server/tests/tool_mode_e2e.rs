@@ -19,6 +19,12 @@ use tokio::process::{Child, Command};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
+/// The number of tools in the registry, read from the registry itself so that adding or removing a
+/// tool never leaves a stale constant here.
+fn registry_len() -> usize {
+    mcp_server::get_all_tool_definitions().len()
+}
+
 const WORKSPACE: &str = "11111111-1111-4111-8111-111111111111";
 const BOT_TOKEN: &str = "opr_tool_mode_bot_token";
 const API_URL: &str = "http://127.0.0.1:1";
@@ -98,7 +104,7 @@ async fn stdio_lists_search_mode_by_default_and_the_registry_when_configured() -
     assert_eq!(stdio_listing("", &[]).await?.len(), 9);
     assert_eq!(stdio_listing("tool_mode = \"search\"\n", &[]).await?.len(), 9);
     let full = stdio_listing("tool_mode = \"full\"\n", &[]).await?;
-    assert_eq!(full.len(), 162);
+    assert_eq!(full.len(), registry_len());
     assert!(!full.contains(&"sylvode_search".to_string()));
     Ok(())
 }
@@ -111,12 +117,12 @@ async fn the_tools_flag_overrides_the_configured_mode_in_both_directions() -> Te
             .len(),
         9
     );
-    assert_eq!(stdio_listing("", &["--tools", "full"]).await?.len(), 162);
+    assert_eq!(stdio_listing("", &["--tools", "full"]).await?.len(), registry_len());
     assert_eq!(
         stdio_listing("tool_mode = \"search\"\n", &["--tools", "full"])
             .await?
             .len(),
-        162
+        registry_len()
     );
     Ok(())
 }
@@ -328,17 +334,17 @@ async fn http_lists_search_mode_unless_the_connection_asks_for_the_registry() ->
     let server = Http::spawn("").await?;
     assert_eq!(server.listing("", None).await?, 9);
     assert_eq!(server.listing("?tools=search", None).await?, 9);
-    assert_eq!(server.listing("?tools=full", None).await?, 162);
-    assert_eq!(server.listing("", Some("full")).await?, 162);
+    assert_eq!(server.listing("?tools=full", None).await?, registry_len());
+    assert_eq!(server.listing("", Some("full")).await?, registry_len());
     assert_eq!(server.listing("", Some("search")).await?, 9);
-    assert_eq!(server.listing("?tools=full", Some("full")).await?, 162);
+    assert_eq!(server.listing("?tools=full", Some("full")).await?, registry_len());
     Ok(())
 }
 
 #[tokio::test]
 async fn the_configured_mode_is_the_http_default_and_a_connection_can_still_choose() -> TestResult {
     let server = Http::spawn("tool_mode = \"full\"\n").await?;
-    assert_eq!(server.listing("", None).await?, 162);
+    assert_eq!(server.listing("", None).await?, registry_len());
     assert_eq!(server.listing("?tools=search", None).await?, 9);
     assert_eq!(server.listing("", Some("search")).await?, 9);
     Ok(())
@@ -527,12 +533,12 @@ async fn http_mode_spellings_and_repeats() -> TestResult {
     let ok = reqwest::StatusCode::OK;
     let bad = reqwest::StatusCode::BAD_REQUEST;
     for (query, lines, expected) in [
-        ("?tools=FULL", vec![], (ok, 162)),
-        ("?tools=%20full%20", vec![], (ok, 162)),
-        ("?tools=full&tools=full", vec![], (ok, 162)),
+        ("?tools=FULL", vec![], (ok, registry_len())),
+        ("?tools=%20full%20", vec![], (ok, registry_len())),
+        ("?tools=full&tools=full", vec![], (ok, registry_len())),
         ("?other=1&tools=search&x=2", vec![], (ok, 9)),
-        ("", vec!["full", "FULL"], (ok, 162)),
-        ("?tools=full", vec!["full", "full"], (ok, 162)),
+        ("", vec!["full", "FULL"], (ok, registry_len())),
+        ("?tools=full", vec!["full", "full"], (ok, registry_len())),
         ("?tools=search&tools=full", vec![], (bad, 0)),
         ("?tools=full&tools=search", vec![], (bad, 0)),
         ("?tools=", vec![], (bad, 0)),
