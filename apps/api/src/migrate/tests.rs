@@ -542,6 +542,10 @@ fn only_the_intended_routes_are_reachable_without_authentication() {
         if starts_route {
             block = Some(String::new());
         }
+        // A comment between two calls may mention `route_layer`; it is not a layer.
+        if line.trim_start().starts_with("//") {
+            continue;
+        }
         if let Some(current) = block.as_mut() {
             current.push_str(line);
             current.push('\n');
