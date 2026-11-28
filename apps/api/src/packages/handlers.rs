@@ -48,6 +48,9 @@ const fn kind_name(kind: Kind) -> &'static str {
 }
 
 /// Reads the `file` part of the upload, never holding more than the zip limit.
+/// Total time a bot submission may take to send its body while it holds the bot verify slot.
+const BOT_UPLOAD_READ_DEADLINE: std::time::Duration = std::time::Duration::from_mins(2);
+
 async fn read_file_part(mut multipart: Multipart) -> Result<Vec<u8>, ApiError> {
     let limit = Limits::default().max_zip_bytes;
     let mut bytes: Option<Vec<u8>> = None;
@@ -289,7 +292,15 @@ pub async fn submit_package_upload(
     let Some(slot) = try_bot_slot() else {
         return Ok(package_verify_busy());
     };
-    let bytes = read_file_part(multipart).await?;
+    // The bot slot is held while the body is read; bound the read so a trickling body can't hold it.
+    let bytes = tokio::time::timeout(BOT_UPLOAD_READ_DEADLINE, read_file_part(multipart))
+        .await
+        .map_err(|_| ApiError::Coded {
+            status: 408,
+            code: "upload_read_timeout",
+            message: "the upload was not received in time".to_owned(),
+            details: None,
+        })??;
     let prepared = PreparedUpload::verify(&state.db, workspace_id, bytes, Requester::Bot(slot)).await?;
     let draft =
         crate::drafts::handlers::create_package_upload_draft(&state, workspace_id, caller.user_id, prepared).await?;
