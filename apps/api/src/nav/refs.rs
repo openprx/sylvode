@@ -152,15 +152,16 @@ pub fn locate(target: &Target, at: &Where, refs: &Refs) -> Option<Place> {
 /// document, and a layout page fits the `page` slot. Reads nothing of the writer's own access.
 ///
 /// # Errors
-/// `nav_invalid` with reason `target_not_found` or `target_out_of_scope` and the entry's path.
+/// `nav_invalid` with reason `target_not_found` (for an object that is missing or out of reach of
+/// the document's scope; the two are not told apart) or `target_out_of_scope` (a reachable layout
+/// that does not fit the `page` slot), and the entry's path.
 pub fn validate_targets(doc: &NavDoc, at: &Where, refs: &Refs) -> Result<(), NavError> {
     for (s, section) in doc.sections.iter().enumerate() {
         for (e, entry) in section.entries.iter().enumerate() {
             let path = format!("/sections/{s}/entries/{e}/target");
             match locate(&entry.target, at, refs) {
                 None | Some(Place::Found { .. }) => {}
-                Some(Place::Missing) => return Err(NavError::invalid(path, "target_not_found")),
-                Some(Place::OutOfScope) => return Err(NavError::invalid(path, "target_out_of_scope")),
+                Some(Place::Missing | Place::OutOfScope) => return Err(NavError::invalid(path, "target_not_found")),
             }
             if let Target::LayoutPage { layout_id } = &entry.target
                 && let Some(layout) = refs.layouts.get(layout_id)
@@ -232,24 +233,31 @@ struct LayoutRow {
     spec: Value,
 }
 
-async fn rows<T: FromQueryResult>(db: &impl ConnectionTrait, sql: &str, ids: Vec<Uuid>) -> Result<Vec<T>, ApiError> {
+async fn rows<T: FromQueryResult>(
+    db: &impl ConnectionTrait,
+    sql: &str,
+    workspace_id: Uuid,
+    ids: Vec<Uuid>,
+) -> Result<Vec<T>, ApiError> {
     if ids.is_empty() {
         return Ok(Vec::new());
     }
     Ok(T::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         sql,
-        vec![ids.into()],
+        vec![ids.into(), workspace_id.into()],
     ))
     .all(db)
     .await?)
 }
 
-/// Loads every object the document names, wherever it lives; [`locate`] decides what is in scope.
+/// Loads every object the document names that lies in the given workspace; objects of other
+/// workspaces are never read, so they look the same as missing ones. [`locate`] decides what is in
+/// the scope of the document within the workspace.
 ///
 /// # Errors
 /// A database failure.
-pub async fn load(db: &impl ConnectionTrait, doc: &NavDoc) -> Result<Refs, ApiError> {
+pub async fn load(db: &impl ConnectionTrait, workspace_id: Uuid, doc: &NavDoc) -> Result<Refs, ApiError> {
     let mut refs = Refs::default();
     let projects = ids_of(doc, |t| match t {
         Target::Project { project_id } => Some(*project_id),
@@ -257,7 +265,8 @@ pub async fn load(db: &impl ConnectionTrait, doc: &NavDoc) -> Result<Refs, ApiEr
     });
     for row in rows::<ProjectRow>(
         db,
-        "SELECT id, workspace_id, name, COALESCE(type_key, 'code_project') AS type_key FROM projects WHERE id = ANY($1)",
+        "SELECT id, workspace_id, name, COALESCE(type_key, 'code_project') AS type_key FROM projects WHERE id = ANY($1) AND workspace_id = $2",
+        workspace_id,
         projects,
     )
     .await?
@@ -277,7 +286,8 @@ pub async fn load(db: &impl ConnectionTrait, doc: &NavDoc) -> Result<Refs, ApiEr
     });
     for row in rows::<FormRow>(
         db,
-        "SELECT id, workspace_id, project_id, name FROM project_forms WHERE id = ANY($1)",
+        "SELECT id, workspace_id, project_id, name FROM project_forms WHERE id = ANY($1) AND workspace_id = $2",
+        workspace_id,
         forms,
     )
     .await?
@@ -300,7 +310,8 @@ pub async fn load(db: &impl ConnectionTrait, doc: &NavDoc) -> Result<Refs, ApiEr
         "SELECT o.id, o.workspace_id, o.project_id, COALESCE(p.title, '') AS title, \
                 (o.lifecycle_status <> 'active') AS archived \
          FROM flow_objects o LEFT JOIN flow_object_projections p ON p.object_id = o.id \
-         WHERE o.id = ANY($1) AND o.object_type = 'page'",
+         WHERE o.id = ANY($1) AND o.workspace_id = $2 AND o.object_type = 'page'",
+        workspace_id,
         flows,
     )
     .await?
@@ -322,7 +333,8 @@ pub async fn load(db: &impl ConnectionTrait, doc: &NavDoc) -> Result<Refs, ApiEr
     for row in rows::<LayoutRow>(
         db,
         "SELECT id, workspace_id, scope_kind, scope_id, layout_key, status, installation_id, spec \
-         FROM layouts WHERE id = ANY($1)",
+         FROM layouts WHERE id = ANY($1) AND workspace_id = $2",
+        workspace_id,
         layouts,
     )
     .await?
