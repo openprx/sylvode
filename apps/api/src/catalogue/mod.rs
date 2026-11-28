@@ -17,6 +17,7 @@ pub mod coverage;
 pub mod guard;
 pub mod handler;
 pub mod openapi;
+pub mod plugin_rule;
 pub mod principal;
 pub mod refusal;
 pub mod types;
@@ -28,13 +29,20 @@ use std::sync::LazyLock;
 pub use check::{allowed, allowed_pre, allowed_target};
 pub use principal::{Grant, InstallationView, Invoker, Principal, Resource, SiteRole};
 pub use refusal::{Refusal, RefusalCode};
-pub use types::{Entry, Exposure, Find, Method, Risk, Scope, SiteFind, Stability};
+pub use types::{Entry, Exposure, Find, Method, PluginMark, Risk, Scope, SiteFind, Stability};
 
 use crate::middleware::scoped_bot::{Class, RunnerRoute};
 
-/// Every entry of every area table.
+/// Every entry of every area table, with the computed `PLUGIN` bit ([`plugin_rule`]).
 pub fn entries() -> impl Iterator<Item = &'static Entry> {
-    areas::TABLES.iter().flat_map(|table| table.iter())
+    static DERIVED: LazyLock<Vec<Entry>> = LazyLock::new(|| {
+        areas::TABLES
+            .iter()
+            .flat_map(|table| table.iter())
+            .map(|entry| entry.derived())
+            .collect()
+    });
+    DERIVED.iter()
 }
 
 /// The entries of a path, in table order; a path has at most one per method.

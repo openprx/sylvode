@@ -52,11 +52,15 @@ pub fn preview(
                 _ => None,
             });
             let info = capability_info(&request.id);
+            // A destructive id is unticked by default and needs a confirm in the review (contract M10).
+            let destructive = info.as_ref().is_some_and(|info| info.risk == "destructive");
             json!({
                 "capability": request.id,
                 "selector": {"form": selector_form},
                 "form_bind": bind,
                 "risk": info.as_ref().map_or("unknown", |info| info.risk),
+                "default_ticked": !destructive,
+                "confirm_required": destructive,
                 "label_key": format!("cap.{}", request.id),
                 "new": !existing.active_requests.contains(&request.id),
             })
