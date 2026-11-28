@@ -165,6 +165,7 @@ dependencies = [
  "serde_jcs",
  "serde_json",
  "sha2",
+ "sv-index",
  "sv-layout",
  "sv-package",
  "sv-rules",

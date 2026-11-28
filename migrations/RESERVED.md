@@ -25,5 +25,6 @@ until the owning batch adds the real migration.
 | 0148 | change_hints_work_item_insert (work_items AFTER INSERT hint trigger) |
 | 0149 | flow_workspace_scope_naming (landed: scope kind `legacy_managed` -> `workspace`, `flow_ensure_legacy_scope` -> `flow_ensure_workspace_scope`, column `scope_native_legacy` -> `workspace_editor_initialization`) |
 | 0150 | package_upload_drafts (added: `0150_package_upload_drafts.sql`; draft kind `package_upload`, nullable `artefact_drafts.project_id`, table `package_upload_blobs`) |
+| 0152 | package_index (added: `0152_package_index.sql`; M15-3: `publisher_keys.origin`, `packages.origin`, tables `package_index_cache`, `workspace_index_sources`, `package_index_events`, installation disabled reason `index_revoked`; the contract's 0150 was taken) |
 | 0153 | package_upload_draft_hints (added: `0153_package_upload_draft_hints.sql`; `sv_hint_draft` names the bot of a project-less draft and sends nothing for a person's) |
 | 0151 | extension_invocation_calls (added: `0151_extension_invocation_calls.sql`; per-call plugin audit table and `extension_invocations.read_calls`; design M10 §3.6, which names 0150) |

@@ -23,6 +23,7 @@ image.workspace = true
 jsonwebtoken.workspace = true
 parking_lot = "0.12"
 platform = { path = "../../crates/platform" }
+sv-index = { path = "../../crates/sv-index", default-features = false }
 sv-layout = { path = "../../crates/sv-layout" }
 sv-package = { path = "../../crates/sv-package" }
 sv-rules = { path = "../../crates/sv-rules" }

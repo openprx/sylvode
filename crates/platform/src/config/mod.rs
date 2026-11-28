@@ -68,7 +68,7 @@ pub use oauth::{
     DEFAULT_MAX_ACTIVE_GRANTS_PER_USER_CLIENT, DEFAULT_MAX_STREAMS_PER_PROCESS, DEFAULT_REFRESH_TOKEN_IDLE_DAYS,
     MIN_FORWARD_SECRET_LEN, OAuthConfig,
 };
-pub use packages::PackagesConfig;
+pub use packages::{IndexSource, PackagesConfig};
 pub use secret::{REDACTED, Secret};
 pub use site::SiteConfig;
 

@@ -349,3 +349,38 @@ pub async fn disable_for_revoked_key(db: &impl ConnectionTrait, key_row_id: Uuid
     .map(|row| row.id)
     .collect())
 }
+
+/// An installation `disable_for_index_revoked` stopped.
+#[derive(Debug, Clone, FromQueryResult)]
+pub struct IndexRevokedStop {
+    pub id: Uuid,
+    pub workspace_id: Uuid,
+    /// Digest of the package of its active generation.
+    pub digest: String,
+    pub package_key: String,
+    pub version: String,
+}
+
+/// Disables the live installations that run a package the index revoked.
+///
+/// The package came from the index source `source_id` (`packages.origin`) and has one of `digests`;
+/// the installation becomes `disabled` with reason `index_revoked` (contract M15, decision O3).
+///
+/// # Errors
+/// A database failure.
+pub async fn disable_for_index_revoked(
+    db: &impl ConnectionTrait,
+    source_id: &str,
+    digests: &[String],
+) -> Result<Vec<IndexRevokedStop>, ApiError> {
+    Ok(IndexRevokedStop::find_by_statement(stmt(
+        "UPDATE installations i SET status = 'disabled', disabled_reason = 'index_revoked', updated_at = now() \
+         FROM installation_generations g JOIN packages p ON p.id = g.package_row_id \
+         WHERE g.installation_id = i.id AND g.generation = i.active_generation AND i.status = 'active' \
+           AND p.origin ->> 'source' = $1 AND p.digest = ANY($2) \
+         RETURNING i.id, i.workspace_id, p.digest, p.package_key, p.version",
+        vec![source_id.to_owned().into(), digests.to_vec().into()],
+    ))
+    .all(db)
+    .await?)
+}

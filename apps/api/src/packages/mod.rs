@@ -7,6 +7,7 @@
 mod access;
 pub mod boot;
 pub mod handlers;
+pub mod index;
 mod keys;
 pub mod open;
 pub mod store;

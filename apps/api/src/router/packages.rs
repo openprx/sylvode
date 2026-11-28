@@ -5,7 +5,7 @@
 //! draft, never a package. Listing and reading also admit a bot of the whole
 //! workspace (a project-scoped bot is refused by its class in `bot_routes/packages.rs`).
 
-use api::{middleware, packages};
+use api::{middleware, packages, packages::index};
 use axum::{
     Router,
     extract::DefaultBodyLimit,
@@ -71,6 +71,36 @@ pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
         .route(
             "/api/v1/workspaces/{workspace_id}/publisher-keys/{key_id}/revoke",
             post(packages::handlers::revoke_publisher_key).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::auth::jwt_auth_middleware,
+            )),
+        )
+        // The public plugin index (contract M15): reads from the cache, for members and bots of the
+        // whole workspace; the image route is for a console session only.
+        .route(
+            "/api/v1/workspaces/{workspace_id}/market/index/sources",
+            get(index::handlers::list_sources).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/market/index/plugins",
+            get(index::handlers::list_plugins).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/market/index/plugins/{source}/{publisher}/{name}",
+            get(index::handlers::get_plugin).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/market/index/assets/{source}/{publisher}/{name}/{*asset_path}",
+            get(index::handlers::get_asset).route_layer(axum_middleware::from_fn_with_state(
                 auth_state.clone(),
                 middleware::auth::jwt_auth_middleware,
             )),

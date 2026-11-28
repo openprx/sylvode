@@ -126,8 +126,10 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(api::flow::bridge::run_conversion_reaper(
         state.clone(),
         Duration::from_secs(config.flow.conversion_reap_interval_secs),
-        reaper_stop_rx,
+        reaper_stop_rx.clone(),
     ));
+    // The public plugin index: one process at a time refreshes each configured source.
+    api::packages::index::spawn_refresher(state.clone(), reaper_stop_rx);
 
     let app = router::build_router(state);
     // Host calls of the plugin host go through this router, in process.
