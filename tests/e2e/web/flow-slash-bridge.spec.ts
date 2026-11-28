@@ -143,7 +143,7 @@ async function setup(request: APIRequestContext): Promise<Fixture> {
 		})
 	);
 	const schema = {
-		version: 'openpr.form.schema.v1',
+		version: 'sv.form.schema.v2',
 		fields: [{ field_id: 'fld_note', key: 'note', label: 'Note', type: 'text' }]
 	};
 	const form = await unwrap<{ id: string }>(

@@ -182,7 +182,7 @@ test('owner converts a Page into a Forms record through source, mapping, preview
 				key: 'plans',
 				name: 'Plans',
 				schema: {
-					version: 'openpr.form.schema.v1',
+					version: 'sv.form.schema.v2',
 					fields: [
 						{ field_id: 'fld_note', key: 'note', label: 'Note', type: 'text', required: true },
 						{ field_id: 'fld_budget', key: 'budget', label: 'Budget', type: 'number' },
@@ -531,7 +531,7 @@ async function conversionSetup(
 				key: 'plans',
 				name: 'Plans',
 				schema: {
-					version: 'openpr.form.schema.v1',
+					version: 'sv.form.schema.v2',
 					fields: [{ field_id: 'fld_note', key: 'note', label: 'Note', type: 'text' }]
 				}
 			}
@@ -934,7 +934,7 @@ test('a failed job is retried only after confirmation, with one key per job, ind
 			headers: setup.auth,
 			data: {
 				schema: {
-					version: 'openpr.form.schema.v1',
+					version: 'sv.form.schema.v2',
 					fields: [
 						{ field_id: 'fld_note', key: 'note', label: 'Note', type: 'text' },
 						{ field_id: 'fld_extra', key: 'extra', label: 'Extra', type: 'text' }
@@ -1122,7 +1122,7 @@ test('changing the destination workspace resets the wizard and converts into the
 				key: 'targets',
 				name: 'Targets',
 				schema: {
-					version: 'openpr.form.schema.v1',
+					version: 'sv.form.schema.v2',
 					fields: [{ field_id: 'fld_note', key: 'note', label: 'Note', type: 'text' }]
 				}
 			}
