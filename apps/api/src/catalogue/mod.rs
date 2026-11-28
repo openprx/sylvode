@@ -127,7 +127,7 @@ pub(crate) fn bot_class_counts(entries: &[Entry]) -> std::collections::BTreeMap<
 mod tests {
     use super::{bot_class, bot_routes, by_op, by_route, entries};
     use crate::catalogue::boot::findings;
-    use crate::catalogue::coverage::scan;
+    use crate::catalogue::coverage::{non_literal_routes, scan};
     use crate::middleware::scoped_bot::Class;
 
     /// A route cannot be added to a router file without an entry, and no entry names a route that
@@ -142,6 +142,19 @@ mod tests {
             .map(|route| (route.method, route.pattern))
             .collect();
         let found = findings(&entries().copied().collect::<Vec<_>>(), &facts, &delegated);
+        assert!(found.is_empty(), "{found:#?}");
+    }
+
+    /// Every router route has a literal path: the scan cannot see any other, and the guard would
+    /// refuse an unseen route at run time.
+    #[test]
+    fn every_router_route_has_a_literal_path() {
+        let files = crate::router_source::files();
+        let sources: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(name, text)| (name.as_str(), text.as_str()))
+            .collect();
+        let found = non_literal_routes(&sources);
         assert!(found.is_empty(), "{found:#?}");
     }
 

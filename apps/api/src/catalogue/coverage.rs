@@ -89,6 +89,43 @@ pub fn scan_paths(sources: &[(&str, &str)]) -> std::collections::BTreeSet<String
     paths
 }
 
+/// Every `.route(` call of non-test code whose path argument is not a string literal, as
+/// `file: .route(<text>`.
+///
+/// [`scan`] reads literal paths only, so a route registered with a constant or an expression would
+/// be invisible to the coverage check (and refused by the catalogue guard at run time). Comment
+/// lines are not calls.
+#[must_use]
+pub fn non_literal_routes(sources: &[(&str, &str)]) -> Vec<String> {
+    const CALL: &str = ".route(";
+    let mut found = Vec::new();
+    for (file, source) in sources {
+        let source = without_tests(source);
+        let mut from = 0;
+        while let Some(at) = source.get(from..).and_then(|rest| rest.find(CALL)) {
+            let call = from + at;
+            let open = call + CALL.len();
+            from = open;
+            let line_start = source
+                .get(..call)
+                .and_then(|head| head.rfind('\n'))
+                .map_or(0, |n| n + 1);
+            if source
+                .get(line_start..call)
+                .is_some_and(|prefix| prefix.trim_start().starts_with("//"))
+            {
+                continue;
+            }
+            let rest = source.get(open..).map_or("", str::trim_start);
+            if !rest.starts_with('"') {
+                let shown: String = rest.chars().take_while(|c| *c != ',' && *c != '\n').take(60).collect();
+                found.push(format!("{file}: .route({shown} is not a string literal path"));
+            }
+        }
+    }
+    found
+}
+
 const METHOD_CALLS: [(&str, Method); 5] = [
     ("get(", Method::Get),
     ("post(", Method::Post),
@@ -183,7 +220,7 @@ fn has_call(body: &str, needle: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{AuthKind, scan};
+    use super::{AuthKind, non_literal_routes, scan};
     use crate::catalogue::types::Method;
 
     const SOURCE: &str = r#"
@@ -214,5 +251,31 @@ mod tests {
                 (Method::Put, "/d", AuthKind::Admin),
             ]
         );
+    }
+
+    /// A route whose path is not a literal is reported; literals, comments and test modules are not.
+    #[test]
+    fn a_non_literal_route_path_is_reported() {
+        let found = non_literal_routes(&[("a.rs", SOURCE)]);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(
+            found.first().is_some_and(|line| line.contains("SOME_CONST")),
+            "{found:?}"
+        );
+        let clean = r#"
+            /// Registers no `.route(` call.
+            Router::new().route("/ok", get(h::one))
+            .route(
+                "/multi-line",
+                get(h::two),
+            )
+#[cfg(test)]
+mod tests {
+    fn t() { Router::new().route(PATH, get(h::x)); }
+}
+        "#;
+        assert!(non_literal_routes(&[("b.rs", clean)]).is_empty());
+        let by_expression = r#"Router::new().route(&format!("/x/{}", 1), get(h::x))"#;
+        assert_eq!(non_literal_routes(&[("c.rs", by_expression)]).len(), 1);
     }
 }
