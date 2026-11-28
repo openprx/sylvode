@@ -249,8 +249,21 @@ pub struct Entry {
     pub risk: Risk,
     /// A bot needs the `comment` level instead of `write`.
     pub comment: bool,
+    /// Always without the `PLUGIN` bit in the area tables; [`Entry::derived`] sets it (see
+    /// [`super::plugin_rule`]).
     pub exposure: Exposure,
     pub stability: Stability,
+    /// Whether the route may be reachable for plugins at all.
+    pub plugin: PluginMark,
+}
+
+/// The author's say on plugin exposure; the rest is computed from the entry (contract M10).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PluginMark {
+    /// Reachable when the rule of [`super::plugin_rule`] says so.
+    Derived,
+    /// Never reachable: the route does not speak JSON envelopes (multipart, file streams).
+    Never,
 }
 
 impl Entry {
@@ -290,10 +303,21 @@ impl Entry {
         self
     }
 
-    /// The route is dispatchable for plugin and installation principals.
+    /// The route is never reachable for plugins: it takes a multipart body or answers a file or
+    /// stream instead of a JSON envelope, which the host cannot carry.
     #[must_use]
-    pub const fn plugin(mut self) -> Self {
-        self.exposure = self.exposure.union(Exposure::PLUGIN);
+    pub const fn no_plugin(mut self) -> Self {
+        self.plugin = PluginMark::Never;
+        self
+    }
+
+    /// The entry with the `PLUGIN` bit the rule of [`super::plugin_rule`] computes for it.
+    #[must_use]
+    pub fn derived(mut self) -> Self {
+        self.exposure = Exposure(self.exposure.0 & !Exposure::PLUGIN.0);
+        if super::plugin_rule::reachable(&self) {
+            self.exposure = self.exposure.union(Exposure::PLUGIN);
+        }
         self
     }
 
@@ -321,6 +345,7 @@ const fn entry(
         comment: false,
         exposure,
         stability: Stability::Stable,
+        plugin: PluginMark::Derived,
     }
 }
 

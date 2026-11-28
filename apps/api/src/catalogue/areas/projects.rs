@@ -65,7 +65,7 @@ pub static ENTRIES: &[Entry] = &[
     bot("projects.project_types.update", Patch, "/api/v1/project-types/{key}", WorkspaceAdmin, Admin),
     bot("projects.projects.create", Post, "/api/v1/workspaces/{workspace_id}/projects", WorkspaceAdmin, Admin),
     bot("projects.projects.delete", Delete, "/api/v1/projects/{id}", WorkspaceAdmin, Admin),
-    bot("projects.projects.read", Get, "/api/v1/projects/{id}", Project(Find::Project("id")), Read).oauth().plugin(),
+    bot("projects.projects.read", Get, "/api/v1/projects/{id}", Project(Find::Project("id")), Read).oauth(),
     bot("projects.projects.read/agent_policy", Get, "/api/v1/projects/{project_id}/agent-policy", Project(Find::Project("project_id")), Read).oauth(),
     bot("projects.projects.read/context", Get, "/api/v1/projects/{project_id}/context", Project(Find::Project("project_id")), Read).oauth(),
     bot("projects.projects.read/governance_context", Get, "/api/v1/projects/{project_id}/governance-context", Project(Find::Project("project_id")), Read),

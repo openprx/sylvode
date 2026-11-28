@@ -158,7 +158,11 @@ mod tests {
     use crate::catalogue::types::dsl::*;
     use crate::entities::workspace_member::WorkspaceRole;
 
-    const PLUGIN_READ: Entry = bot("forms.records.read", Get, "/x/{id}", Project(Find::Project("id")), Read).plugin();
+    const PLUGIN_READ: Entry = {
+        let mut entry = bot("forms.records.read", Get, "/x/{id}", Project(Find::Project("id")), Read);
+        entry.exposure = entry.exposure.union(crate::catalogue::Exposure::PLUGIN);
+        entry
+    };
     const CONSOLE_ONLY: Entry = console(
         "forms.records.delete",
         Delete,

@@ -103,7 +103,7 @@ mod tests {
             .as_array()
             .map(|list| list.iter().filter_map(|c| c["id"].as_str()).collect())
             .unwrap_or_default();
-        assert_eq!(plugin_ids.len(), 12, "{plugin_ids:?}");
+        assert_eq!(plugin_ids.len(), 139, "{plugin_ids:?}");
         assert_ne!(all["version"], plugin["version"]);
         assert!(
             all["version"]

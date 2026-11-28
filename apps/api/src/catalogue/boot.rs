@@ -11,7 +11,8 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement, 
 use sha2::{Digest, Sha256};
 
 use super::coverage::{AuthKind, RouteFact, non_literal_routes, scan};
-use super::types::{Entry, Exposure, Method, Risk, Scope};
+use super::plugin_rule::{allowed_by_rule, reachable};
+use super::types::{Entry, Exposure, Method, PluginMark, Risk, Scope};
 use super::uncatalogued::{OAUTH_SOURCES, findings as oauth_findings, is_uncatalogued};
 
 /// What the boot check saw.
@@ -67,21 +68,6 @@ const VERBS: [&str; 32] = [
     "refresh",
     "import",
     "publish",
-];
-
-/// Areas whose ids are never dispatchable for a plugin (contract C1 §2.4, check 6).
-const NO_PLUGIN_AREAS: [&str; 11] = [
-    "account",
-    "workspace",
-    "system",
-    "integrations",
-    "extensions",
-    "packages",
-    "market",
-    "drafts",
-    "legacy_plugins",
-    "alerts",
-    "tasks",
 ];
 
 const SITE_PREFIX: &str = "/api/site/v1/";
@@ -299,14 +285,17 @@ fn check_oauth(entries: &[Entry], delegated: &[(&str, &str)], found: &mut Vec<St
     }
 }
 
-/// Check 6: `PLUGIN` only with risk read or write, scope project and an area that may be exposed.
+/// Check 6: `PLUGIN` only where the rule of [`super::plugin_rule`] allows it (risk read, write or
+/// destructive, a scope the host resolves, no closed area, resource or operation, no `purge`), and
+/// never on an entry marked `.no_plugin()`; and a route that satisfies the rule and has no mark must
+/// carry it (the bit is computed, so a hand-set or a missing bit is a finding).
 fn check_plugin_exposure(entries: &[Entry], found: &mut Vec<String>) {
-    for entry in entries.iter().filter(|entry| entry.exposure.contains(Exposure::PLUGIN)) {
-        let area = entry.id_parts().map_or("", |(area, _, _)| area);
-        let area_closed = NO_PLUGIN_AREAS.contains(&area);
-        let project = matches!(entry.scope, Scope::Project(_));
-        if !matches!(entry.risk, Risk::Read | Risk::Write) || !project || area_closed {
+    for entry in entries {
+        let has = entry.exposure.contains(Exposure::PLUGIN);
+        if has && (entry.plugin == PluginMark::Never || !allowed_by_rule(entry)) {
             found.push(format!("PLUGIN exposure not allowed here: {}", label(entry)));
+        } else if !has && reachable(entry) {
+            found.push(format!("PLUGIN exposure missing, it is computed: {}", label(entry)));
         }
     }
 }
@@ -408,8 +397,14 @@ async fn sync_ids(db: &DatabaseConnection, ids: &[CapabilityId]) -> Result<(), B
 mod tests {
     use super::{capability_ids, findings};
     use crate::catalogue::coverage::{AuthKind, RouteFact};
-    use crate::catalogue::types::Method;
     use crate::catalogue::types::dsl::*;
+    use crate::catalogue::types::{Exposure, Method};
+
+    /// The entry with the `PLUGIN` bit set by hand, as the rule would never give it.
+    fn forced(mut entry: Entry) -> Entry {
+        entry.exposure = entry.exposure.union(Exposure::PLUGIN);
+        entry
+    }
 
     fn fact(method: Method, path: &str, auth: AuthKind) -> RouteFact {
         RouteFact {
@@ -431,14 +426,15 @@ mod tests {
                 Read,
             )
             .oauth()
-            .plugin(),
+            .derived(),
             bot(
                 "forms.records.update",
                 Patch,
                 "/api/v1/r/{id}",
                 Project(Find::Project("id")),
                 Write,
-            ),
+            )
+            .derived(),
             console("account.sessions.create", Post, "/api/v1/login", Public, Secret),
             console("system.stats.read", Get, "/api/v1/stats", InstanceAdmin, Admin),
             console("legacy_plugins.packages.read/mine", Get, "/api/v1/me/p", Own, Read),
@@ -551,14 +547,29 @@ mod tests {
                 "OAUTH exposure",
             ),
             (
-                bot("account.me.read", Get, "/p", Own, Read).plugin(),
+                forced(bot("account.me.read", Get, "/p", Own, Read)),
                 AuthKind::BotOrUser,
-                "PLUGIN exposure",
+                "PLUGIN exposure not allowed",
             ),
             (
-                bot("forms.records.delete", Delete, "/p", project, Destructive).plugin(),
+                forced(bot("forms.records.purge", Delete, "/p", project, Destructive)),
                 AuthKind::BotOrUser,
-                "PLUGIN exposure",
+                "PLUGIN exposure not allowed",
+            ),
+            (
+                forced(bot("forms.records.read", Get, "/p", project, Read).no_plugin()),
+                AuthKind::BotOrUser,
+                "PLUGIN exposure not allowed",
+            ),
+            (
+                forced(bot("forms.records.read", Get, "/p", Workspace, Read)),
+                AuthKind::BotOrUser,
+                "PLUGIN exposure not allowed",
+            ),
+            (
+                bot("forms.records.read", Get, "/p", project, Read),
+                AuthKind::BotOrUser,
+                "PLUGIN exposure missing",
             ),
             (
                 bot("forms.records.read", Get, "/api/site/v1/p", project, Read),
@@ -603,9 +614,13 @@ mod tests {
     fn ids_are_the_distinct_capabilities() {
         let project = Project(Find::Project("id"));
         let entries = [
-            bot("forms.records.read", Get, "/p", project, Read).plugin(),
-            bot("forms.records.read/list", Get, "/q", project, Read),
-            bot("forms.records.update", Patch, "/p", project, Write),
+            bot("forms.records.read", Get, "/p", project, Read).derived(),
+            bot("forms.records.read/list", Get, "/q", project, Read)
+                .no_plugin()
+                .derived(),
+            bot("forms.records.update", Patch, "/p", project, Write)
+                .no_plugin()
+                .derived(),
         ];
         let ids = capability_ids(&entries);
         assert_eq!(ids.len(), 2);
@@ -620,7 +635,11 @@ mod tests {
                 .is_some_and(|id| id.plugin_ops_digest.as_deref().is_some_and(|d| d.len() == 71))
         );
         assert_eq!(ids.get(1).and_then(|id| id.plugin_ops_digest.clone()), None);
-        let widened = [entries[0], entries[1].plugin(), entries[2]];
+        let widened = [
+            entries[0],
+            bot("forms.records.read/list", Get, "/q", project, Read).derived(),
+            entries[2],
+        ];
         assert_ne!(
             capability_ids(&widened)
                 .first()

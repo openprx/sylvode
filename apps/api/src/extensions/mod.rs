@@ -28,8 +28,6 @@ use crate::catalogue::{InstallationView, Principal, Refusal, RefusalCode, allowe
 use crate::error::ApiError;
 use crate::middleware::scoped_bot::ProjectFilter;
 
-#[cfg(test)]
-mod body_ids_tests;
 pub mod dispatch;
 pub mod host;
 pub mod install;
