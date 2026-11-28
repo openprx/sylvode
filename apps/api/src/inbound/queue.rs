@@ -34,7 +34,10 @@ use super::{
     severity::Severity,
     tasks::{AlertScope, Cap, TaskStart, cap_state, note_suppression, start_task, valid_bot},
 };
-use crate::{error::ApiError, services::ai_task_service::runner_bot_block};
+use crate::{
+    error::ApiError,
+    services::ai_task_service::{bot_cannot_read_project, runner_bot_block},
+};
 
 /// How long a task waits for capacity before it is suppressed, as a duration and in the seconds
 /// the SQL takes.
@@ -320,7 +323,9 @@ async fn try_start(db: &DatabaseConnection, id: Uuid, workspace_limit: u32, now:
     };
     // A runner bot the project does not (or no longer) has enabled is a settled outcome like a bot
     // that left: waiting an hour would not change it. The guard in `create_ai_task` checks the same.
-    if runner_bot_block(&tx, waiting.project_id, bot).await?.is_some() {
+    if runner_bot_block(&tx, waiting.project_id, bot).await?.is_some()
+        || bot_cannot_read_project(&tx, waiting.project_id, bot).await?
+    {
         suppress(&tx, &waiting, Some(&rule), "bot_unavailable", true).await?;
         tx.commit().await?;
         return Ok(Step::Dropped);

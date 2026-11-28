@@ -43,7 +43,7 @@ use super::{
 use crate::{
     error::ApiError,
     services::{
-        ai_task_service::runner_bot_block,
+        ai_task_service::{bot_cannot_read_project, runner_bot_block},
         issues::write_activity,
         work_item_service::{NewWorkItem, insert_work_item},
         workflow_service::{EffectiveWorkflow, resolve_effective_workflow_for_project},
@@ -801,7 +801,9 @@ async fn decide_task<C: ConnectionTrait>(
     // still opened and the event records why (the rule warns about this when it is saved). The
     // central guard in `create_ai_task` refuses it too; this settles the outcome before a cap
     // can park the alert in the queue.
-    if runner_bot_block(tx, source.project_id, bot).await?.is_some() {
+    if runner_bot_block(tx, source.project_id, bot).await?.is_some()
+        || bot_cannot_read_project(tx, source.project_id, bot).await?
+    {
         return Ok(TaskDecision::BotUnavailable);
     }
     let caps = cap_state(tx, rule.id, source.workspace_id).await?;

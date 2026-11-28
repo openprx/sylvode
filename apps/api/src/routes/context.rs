@@ -1132,6 +1132,15 @@ pub mod tenant_fixture {
             vec![tenant.workspace_id.into(), bot_id.into()],
         )
         .await;
+        // The bot's access row, as every created bot has one: an unlimited (workspace-wide) bot.
+        exec(
+            db,
+            "INSERT INTO workspace_bots (id, workspace_id, name, token_hash, token_prefix) \
+             VALUES ($1, $2, 'tenant bot', replace($1::text, '-', '') || replace($1::text, '-', ''), 'svb_test') \
+             ON CONFLICT (id) DO NOTHING",
+            vec![bot_id.into(), tenant.workspace_id.into()],
+        )
+        .await;
         bot_id
     }
 

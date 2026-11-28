@@ -470,6 +470,43 @@ async fn a_task_from_before_the_migration_is_its_own_root_at_depth_zero() {
     scratch.drop_self().await;
 }
 
+/// A mentioned bot limited to projects gets a task only in a project it can read; the commenter
+/// is told nothing either way.
+#[tokio::test]
+async fn a_project_limited_bot_gets_a_mention_task_only_where_it_can_read() {
+    let scratch = scratch_or_skip!("mention_scope");
+    let db = &scratch.db;
+    let c = cast(db, "ms", 2).await;
+    let (blind, reader) = (c.bots[0], c.bots[1]);
+    for bot in [blind, reader] {
+        exec(
+            db,
+            "UPDATE workspace_bots SET project_scope = 'projects', default_project_level = 'none' WHERE id = $1",
+            vec![bot.into()],
+        )
+        .await;
+    }
+    // `blind` can read only another project; `reader` can read this one.
+    let other = super::bot_connection_tests::second_project(db, &c.w, "MS2").await;
+    exec(
+        db,
+        "INSERT INTO bot_project_grants (bot_id, project_id, level) VALUES ($1, $2, 'read'), ($3, $4, 'read')",
+        vec![blind.into(), other.into(), reader.into(), c.w.tenant.project_id.into()],
+    )
+    .await;
+
+    comment(&c.w, c.w.owner, c.issue, vec![blind, reader])
+        .await
+        .expect("the comment is accepted whoever is mentioned");
+    assert_eq!(
+        tasks_of(db, blind).await,
+        0,
+        "no task for a bot that cannot read the project"
+    );
+    assert_eq!(tasks_of(db, reader).await, 1, "a task for a bot that can");
+    scratch.drop_self().await;
+}
+
 /// Every task is inserted by the guard: no other non-test source of the API or the worker writes
 /// the table's rows.
 #[test]

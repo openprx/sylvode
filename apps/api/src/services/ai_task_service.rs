@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::{
     error::ApiError,
     events::{BusinessEventInput, insert_business_event},
+    middleware::scoped_bot::{Level, Secondary, ensure_bot_level},
     webhook_trigger::{TriggerContext, WebhookEvent, trigger_webhooks},
 };
 
@@ -493,6 +494,23 @@ pub async fn runner_bot_block<C: ConnectionTrait>(
     })
 }
 
+/// Whether `bot_id` is limited away from `project_id`.
+///
+/// True for a project-limited bot (or one the workspace does not hold) that cannot read the project:
+/// the same test as the guard in [`dispatch_ai_task`]. A caller that must not fail on it (a mention, an assignment, an alert) asks first and starts no
+/// task.
+pub async fn bot_cannot_read_project<C: ConnectionTrait>(
+    db: &C,
+    project_id: Uuid,
+    bot_id: Uuid,
+) -> Result<bool, ApiError> {
+    match ensure_bot_level(db, Some(bot_id), Secondary::Project(project_id), Level::Read).await {
+        Ok(()) => Ok(false),
+        Err(ApiError::Forbidden(_)) => Ok(true),
+        Err(err) => Err(err),
+    }
+}
+
 /// Why the guard refused a task that a bot's action would have caused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChainRefusal {
@@ -704,6 +722,15 @@ pub async fn dispatch_ai_task<C: ConnectionTrait>(
     if let Some(block) = runner_bot_block(db, input.project_id, input.ai_participant_id).await? {
         return Err(ApiError::Conflict(block.message().to_string()));
     }
+    // A project-limited bot takes a task only in a project it can read: the task view carries the
+    // work item and the request text. A bot that is not limited passes.
+    ensure_bot_level(
+        db,
+        Some(input.ai_participant_id),
+        Secondary::Project(input.project_id),
+        Level::Read,
+    )
+    .await?;
     let task_id = Uuid::new_v4();
     let parent = acting_task(db, &input).await?;
     let (chain_root_id, chain_parent_id, chain_depth) = match &parent {

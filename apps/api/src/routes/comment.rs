@@ -21,7 +21,10 @@ use crate::{
     middleware::bot_auth::{BotAuthContext, require_workspace_access},
     response::{ApiResponse, PageQuery, PaginatedData},
     services::{
-        ai_task_service::{CreateAiTaskInput, DispatchOrigin, DispatchOutcome, dispatch_ai_task, runner_bot_block},
+        ai_task_service::{
+            CreateAiTaskInput, DispatchOrigin, DispatchOutcome, bot_cannot_read_project, dispatch_ai_task,
+            runner_bot_block,
+        },
         comments::insert_comment,
         issue_view::identifier,
         issues::write_activity,
@@ -266,6 +269,12 @@ pub async fn create_comment(
         // A runner bot this project has not enabled is mentioned like any member, but starts nothing.
         if let Some(block) = runner_bot_block(&state.db, issue_context.project_id, bot_id).await? {
             tracing::info!(%comment_id, %bot_id, reason = block.code(), "mention queued no task");
+            continue;
+        }
+        // A bot limited to other projects cannot read this one: it is mentioned like any member,
+        // but starts nothing and the commenter is told nothing.
+        if bot_cannot_read_project(&state.db, issue_context.project_id, bot_id).await? {
+            tracing::info!(%comment_id, %bot_id, reason = "project_not_readable", "mention queued no task");
             continue;
         }
         // A mention a bot's chain rules refuse queues no task, and the bot is still listed: the
