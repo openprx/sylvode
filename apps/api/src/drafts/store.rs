@@ -200,15 +200,20 @@ pub(super) async fn list(
     limit: i64,
     offset: i64,
 ) -> Result<(Vec<DraftRow>, i64), ApiError> {
-    const WHERE: &str = "d.workspace_id = $1 \
+    // The form a draft is about: the one a form_schema draft changes, or the one a layout is placed on.
+    const FORM_OF: &str = "(CASE WHEN d.kind = 'form_schema' THEN d.target->>'form_id' \
+         WHEN d.kind = 'layout' AND d.target->>'scope_kind' = 'form' THEN d.target->>'scope_id' END)";
+    let where_clause = format!(
+        "d.workspace_id = $1 \
          AND ($2::uuid IS NULL OR d.project_id = $2) \
          AND ($3::uuid[] IS NULL OR d.project_id = ANY($3)) \
          AND ($4::text IS NULL OR d.status = $4) \
          AND ($5::text IS NULL OR d.kind = $5) \
-         AND ($6::boolean OR d.kind <> 'form_schema' OR (d.target->>'form_id') IS NULL OR COALESCE(( \
+         AND ($6::boolean OR {FORM_OF} IS NULL OR COALESCE(( \
                SELECT (fp.policy -> 'actions' ->> 'form.view')::boolean FROM form_permissions fp \
-               WHERE fp.form_id = (d.target->>'form_id')::uuid AND fp.subject_type = 'role' \
-                 AND fp.subject_id = $7 LIMIT 1), true))";
+               WHERE fp.form_id = {FORM_OF}::uuid AND fp.subject_type = 'role' \
+                 AND fp.subject_id = $7 LIMIT 1), true))"
+    );
     let values = || -> Vec<sea_orm::Value> {
         vec![
             filter.workspace_id.into(),
@@ -222,7 +227,7 @@ pub(super) async fn list(
     };
     let total = Count::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        format!("SELECT COUNT(*)::bigint AS total FROM artefact_drafts d WHERE {WHERE}"),
+        format!("SELECT COUNT(*)::bigint AS total FROM artefact_drafts d WHERE {where_clause}"),
         values(),
     ))
     .one(db)
@@ -234,7 +239,7 @@ pub(super) async fn list(
     let rows = DraftRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         format!(
-            "SELECT {COLUMNS} FROM artefact_drafts d WHERE {WHERE} \
+            "SELECT {COLUMNS} FROM artefact_drafts d WHERE {where_clause} \
              ORDER BY d.created_at DESC, d.id LIMIT $8 OFFSET $9"
         ),
         page_values,

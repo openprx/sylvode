@@ -64,6 +64,26 @@ fn reads_as_not_found(error: ApiError) -> ApiError {
     }
 }
 
+/// The form whose `form.view` guards a draft: the form a `form_schema` draft changes, or the form a
+/// `layout` draft is placed on. `None` for drafts that name no existing form. A stored target that
+/// does not name its form properly is refused as not found (fail closed).
+fn guarded_form(row: &DraftRow) -> Result<Option<Uuid>, ApiError> {
+    let id_of = |field: &str| -> Result<Uuid, ApiError> {
+        row.target
+            .get(field)
+            .and_then(Value::as_str)
+            .and_then(|id| id.parse().ok())
+            .ok_or_else(draft_not_found)
+    };
+    match row.kind.as_str() {
+        KIND_FORM_SCHEMA if row.target.get("form_id").is_some_and(|id| !id.is_null()) => id_of("form_id").map(Some),
+        KIND_LAYOUT if row.target.get("scope_kind").and_then(Value::as_str) == Some("form") => {
+            id_of("scope_id").map(Some)
+        }
+        _ => Ok(None),
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct Author {
     kind: String,
@@ -542,14 +562,9 @@ pub async fn get_draft(
         project_id: Some(row.project_id),
     };
     require_read(&state, &who, &project).await.map_err(reads_as_not_found)?;
-    // The proposed schema of a form is as private as the form: whoever may not view it gets nothing.
-    if row.kind == KIND_FORM_SCHEMA
-        && let Some(form_id) = row
-            .target
-            .get("form_id")
-            .and_then(Value::as_str)
-            .and_then(|id| id.parse().ok())
-    {
+    // The proposed schema of a form, and a layout placed on a form, are as private as the form:
+    // whoever may not view it gets nothing, and learns nothing about whether the draft exists.
+    if let Some(form_id) = guarded_form(&row)? {
         let form = find_form(&state, form_id).await.map_err(reads_as_not_found)?;
         require_form_action(&state, &claims, bot_context.as_ref(), &form, "form.view")
             .await
