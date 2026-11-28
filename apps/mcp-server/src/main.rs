@@ -3,7 +3,7 @@
 
 use axum::{
     Extension, Json, Router,
-    extract::{Query, RawQuery, State},
+    extract::{DefaultBodyLimit, Query, RawQuery, State},
     http::{HeaderMap, StatusCode},
     middleware,
     response::{
@@ -462,6 +462,11 @@ fn serve_router(state: SseState, protected: Router<SseState>) -> Router {
     router.route("/health", get(health_check)).with_state(state)
 }
 
+/// Largest JSON-RPC body of the HTTP transports: a 32 MiB package is 44.7 MiB of base64 in
+/// `packages.upload`. The limit sits on the routes behind the inbound authentication and the
+/// `Origin` check, so only an authenticated caller can make the server read that much.
+const RPC_BODY_LIMIT: usize = 48 * 1024 * 1024;
+
 async fn run_http(
     bind_addr: &str,
     client: OpenPrClient,
@@ -481,9 +486,15 @@ async fn run_http(
     };
 
     let protected = Router::new()
-        .route("/mcp/rpc", post(handle_jsonrpc))
+        .route(
+            "/mcp/rpc",
+            post(handle_jsonrpc).layer(DefaultBodyLimit::max(RPC_BODY_LIMIT)),
+        )
         .route("/sse", get(handle_sse_connect))
-        .route("/messages", post(handle_sse_message));
+        .route(
+            "/messages",
+            post(handle_sse_message).layer(DefaultBodyLimit::max(RPC_BODY_LIMIT)),
+        );
     let app = serve_router(state, protected);
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
@@ -697,9 +708,10 @@ async fn run_sse(
         net,
     };
 
-    let protected = Router::new()
-        .route("/sse", get(handle_sse_connect))
-        .route("/messages", post(handle_sse_message));
+    let protected = Router::new().route("/sse", get(handle_sse_connect)).route(
+        "/messages",
+        post(handle_sse_message).layer(DefaultBodyLimit::max(RPC_BODY_LIMIT)),
+    );
     let app = serve_router(state, protected);
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;

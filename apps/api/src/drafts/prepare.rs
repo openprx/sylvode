@@ -412,6 +412,13 @@ async fn judge_stored(tx: &DatabaseTransaction, row: &DraftRow) -> Result<(Prepa
         }
         KIND_PACKAGE_UPLOAD => {
             let target: PackageUploadTarget = stored(&row.target)?;
+            if store::upload_expired(tx, row.id).await? {
+                return Err(ApiError::conflict_coded(
+                    "draft_expired",
+                    "the package upload waited too long; ask the bot to submit it again",
+                    None,
+                ));
+            }
             // The kept bytes are verified again with the workspace's keys as they are now: a key
             // revoked since the submission refuses the package here.
             let bytes = store::upload_blob(tx, row.id)

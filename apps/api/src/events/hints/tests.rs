@@ -89,6 +89,25 @@ fn the_payloads_the_triggers_write_parse() {
 }
 
 #[test]
+fn a_draft_hint_without_a_project_names_its_bot_and_never_resets() {
+    let (draft, workspace, bot, other) = (id(), id(), id(), id());
+    let payload = format!(r#"{{"k":"draft","id":"{draft}","p":null,"w":"{workspace}","b":"{bot}"}}"#);
+    let hint = parse_hint(&payload).expect("a project-less draft hint parses");
+    assert_eq!(
+        hint,
+        Hint::UploadDraft {
+            id: draft,
+            workspace,
+            bot
+        }
+    );
+    // Only the submitting bot of that workspace is told, with an id and nothing else.
+    assert_eq!(text(&frames_for(hint, bot, workspace, |_| false)).len(), 1);
+    assert!(frames_for(hint, other, workspace, |_| true).is_empty());
+    assert!(frames_for(hint, bot, id(), |_| true).is_empty());
+}
+
+#[test]
 fn payloads_the_triggers_never_write_are_rejected() {
     let (a, b) = (id(), id());
     for payload in [

@@ -7,6 +7,9 @@ use uuid::Uuid;
 
 use crate::error::ApiError;
 
+/// Days a package upload draft may wait for a person before it expires.
+const UPLOAD_TTL_DAYS: i32 = 7;
+
 const COLUMNS: &str = "d.id, d.workspace_id, d.project_id, d.kind, d.target, d.spec, d.author_kind, d.author_id, \
      CASE d.author_kind \
        WHEN 'bot' THEN (SELECT b.name::text FROM workspace_bots b WHERE b.id = d.author_id) \
@@ -174,6 +177,59 @@ pub(super) async fn count_pending_uploads(db: &impl ConnectionTrait, workspace_i
     .one(db)
     .await?
     .map_or(0, |row| row.total))
+}
+
+/// Pending package upload drafts of one bot in a workspace.
+pub(super) async fn count_pending_uploads_of_bot(
+    db: &impl ConnectionTrait,
+    workspace_id: Uuid,
+    bot_id: Uuid,
+) -> Result<i64, ApiError> {
+    Ok(Count::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT COUNT(*)::bigint AS total FROM artefact_drafts \
+         WHERE workspace_id = $1 AND kind = 'package_upload' AND status = 'pending' \
+           AND author_kind = 'bot' AND author_id = $2",
+        vec![workspace_id.into(), bot_id.into()],
+    ))
+    .one(db)
+    .await?
+    .map_or(0, |row| row.total))
+}
+
+/// Closes the workspace's pending package upload drafts older than [`UPLOAD_TTL_DAYS`] days as
+/// rejected and deletes their kept bytes. Runs when uploads are submitted or listed.
+pub(super) async fn expire_uploads(db: &impl ConnectionTrait, workspace_id: Uuid) -> Result<(), ApiError> {
+    let expired = db
+        .execute(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE artefact_drafts SET status = 'rejected', reviewed_at = now(), \
+               review_comment = 'expired: not approved in time' \
+             WHERE workspace_id = $1 AND kind = 'package_upload' AND status = 'pending' \
+               AND created_at < now() - make_interval(days => $2::int)",
+            vec![workspace_id.into(), UPLOAD_TTL_DAYS.into()],
+        ))
+        .await?;
+    if expired.rows_affected() > 0 {
+        delete_closed_blobs(db).await?;
+    }
+    Ok(())
+}
+
+/// Whether a pending package upload draft is older than [`UPLOAD_TTL_DAYS`] days.
+pub(super) async fn upload_expired(db: &impl ConnectionTrait, id: Uuid) -> Result<bool, ApiError> {
+    #[derive(FromQueryResult)]
+    struct Expired {
+        expired: bool,
+    }
+    Ok(Expired::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT created_at < now() - make_interval(days => $2::int) AS expired FROM artefact_drafts WHERE id = $1",
+        vec![id.into(), UPLOAD_TTL_DAYS.into()],
+    ))
+    .one(db)
+    .await?
+    .is_some_and(|row| row.expired))
 }
 
 /// Keeps the uploaded bytes of a pending `package_upload` draft.
