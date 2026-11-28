@@ -77,8 +77,8 @@ pub async fn dispatch(
 ) -> Dispatched {
     let dispatched = match agent.agent_type.as_str() {
         "openclaw" => dispatch_openclaw(config, background, agent, payload).await,
-        "openprx" => dispatch_openprx(config, background, agent, payload).await,
-        "webhook" => dispatch_webhook(config, agent, payload).await,
+        "openprx" => dispatch_openprx(config, background, http, agent, payload).await,
+        "webhook" => dispatch_webhook(config, http, agent, payload).await,
         "custom" => dispatch_custom(config, background, agent, payload).await,
         other => Dispatched::refused(format!("unknown agent type: {other}")),
     };
@@ -390,9 +390,23 @@ async fn dispatch_openclaw(
     }
 }
 
+/// The client of a forwarding request: the runner's shared one when it has one, else a client of
+/// its own (the runner's could not be built, or a test passes none).
+fn forwarding_client(config: &Config, shared: Option<&reqwest::Client>) -> Result<reqwest::Client, reqwest::Error> {
+    shared.map_or_else(
+        || {
+            reqwest::Client::builder()
+                .timeout(Duration::from_secs(config.runtime.http_timeout_secs))
+                .build()
+        },
+        |client| Ok(client.clone()),
+    )
+}
+
 async fn dispatch_openprx(
     config: &Config,
     background: &Background,
+    http: Option<&reqwest::Client>,
     agent: &AgentConfig,
     payload: &Value,
 ) -> Dispatched {
@@ -411,14 +425,17 @@ async fn dispatch_openprx(
             "message": message
         });
 
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(config.runtime.http_timeout_secs))
-            .build();
-        let Ok(client) = client else {
+        let Ok(client) = forwarding_client(config, http) else {
             return Dispatched::failed("error: failed to build http client");
         };
 
-        return match client.post(&url).json(&body).send().await {
+        return match client
+            .post(&url)
+            .timeout(Duration::from_secs(config.runtime.http_timeout_secs))
+            .json(&body)
+            .send()
+            .await
+        {
             Ok(resp) if resp.status().is_success() => {
                 tracing::info!("openprx signal ok");
                 Dispatched::ok("ok")
@@ -470,19 +487,24 @@ fn outbound_signature_header_value(payload: &Value, secret: Option<&str>) -> Opt
     })
 }
 
-async fn dispatch_webhook(config: &Config, agent: &AgentConfig, payload: &Value) -> Dispatched {
+async fn dispatch_webhook(
+    config: &Config,
+    http: Option<&reqwest::Client>,
+    agent: &AgentConfig,
+    payload: &Value,
+) -> Dispatched {
     let Some(cfg) = &agent.webhook else {
         return Dispatched::refused("missing webhook config");
     };
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(config.runtime.http_timeout_secs))
-        .build();
-    let Ok(client) = client else {
+    let Ok(client) = forwarding_client(config, http) else {
         return Dispatched::failed("webhook_error: failed to build http client");
     };
 
-    let mut request = client.post(&cfg.url).json(payload);
+    let mut request = client
+        .post(&cfg.url)
+        .timeout(Duration::from_secs(config.runtime.http_timeout_secs))
+        .json(payload);
     if let Some(signature_value) = outbound_signature_header_value(payload, cfg.secret.as_deref()) {
         request = request.header(crate::signature::OUTBOUND_SIGNATURE_HEADER, signature_value);
     }
@@ -752,6 +774,29 @@ webhook_secrets = []
                 }
                 None => assert_eq!(header, None),
             }
+        }
+    }
+
+    /// A forwarding agent uses the runner's one shared client when it is given, and forwards the
+    /// same way with it.
+    #[tokio::test]
+    async fn webhook_agent_forwards_through_the_shared_client() {
+        let payload = json!({"event": "issue.assigned", "n": 2});
+        let shared =
+            crate::runner::build_http_client(&crate::runner::config::RunnerHttpConfig::default()).expect("client");
+        let mut server = crate::test_support::Recorder::start().await;
+        let agent: crate::config::AgentConfig = toml::from_str(&format!(
+            "id = 'w'\nname = 'W'\nagent_type = 'webhook'\n[webhook]\nurl = '{}'\n",
+            server.url
+        ))
+        .expect("parse agent");
+        for _ in 0..2 {
+            let answer = dispatch(&base_config(), &Background::new(1), Some(&shared), &agent, &payload).await;
+            assert_eq!(answer.summary, "webhook: 200 OK");
+            assert_eq!(
+                server.next(Duration::from_secs(5)).await.expect("forwarded").body,
+                payload
+            );
         }
     }
 
