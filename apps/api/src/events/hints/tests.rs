@@ -2,6 +2,7 @@
 //! limits, and the stream loop driven directly (a slow consumer, a lagging fan-out, shutdown).
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::Bytes;
@@ -10,9 +11,10 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::time::Instant;
 use uuid::Uuid;
 
+use super::TokenState;
 use super::{
-    End, Hint, HintHub, HintLimits, HintStream, HintTuning, LimitExceeded, ProjectFilter, Readable, Signal, frames_for,
-    hello_frame, normalized, parse_bot, parse_hint, project_to_check,
+    CachedToken, End, Hint, HintHub, HintLimits, HintStream, HintTuning, LimitExceeded, ProjectFilter, Readable,
+    Signal, frames_for, hello_frame, normalized, parse_bot, parse_hint, project_to_check,
 };
 
 fn id() -> Uuid {
@@ -298,8 +300,13 @@ fn the_contract_limits_are_the_defaults() {
     let tuning = HintTuning::default();
     assert_eq!(tuning.channel_capacity, 256);
     assert_eq!(tuning.lag_timeout, Duration::from_secs(30));
-    assert_eq!(tuning.tick, Duration::from_secs(3));
+    assert_eq!(tuning.tick, Duration::from_secs(2));
+    assert!(
+        tuning.tick + tuning.shared_ttl <= Duration::from_secs(3),
+        "worst-case revocation latency with LISTEN off is the contract's 3 s"
+    );
     assert_eq!(tuning.readable_ttl, Duration::from_secs(2));
+    assert_eq!(tuning.shared_ttl, Duration::from_secs(1));
     assert_eq!(tuning.keepalive, Duration::from_secs(15));
     assert_eq!(super::BROADCAST_CAPACITY, 4_096);
 }
@@ -323,6 +330,7 @@ fn stream_loop(tuning: HintTuning, broadcast_capacity: usize) -> Loop {
     let (tx, rx) = mpsc::channel(tuning.channel_capacity);
     let (bot, workspace) = (id(), id());
     let stream = HintStream {
+        hub: Arc::clone(&hub),
         db: DatabaseConnection::Disconnected,
         bot_id: bot,
         workspace_id: workspace,
@@ -337,6 +345,8 @@ fn stream_loop(tuning: HintTuning, broadcast_capacity: usize) -> Loop {
         },
         expiry: None,
         db_failing_since: None,
+        full_since: None,
+        lost: false,
         sent: 0,
     };
     Loop {
@@ -584,4 +594,131 @@ async fn a_database_that_keeps_failing_ends_the_stream_only_after_the_give_up_ti
         .expect("ends");
     assert_eq!(end, End::Db, "a database failure is not a revocation");
     assert!(started.elapsed() >= Duration::from_millis(400));
+}
+
+#[tokio::test]
+async fn shutdown_and_expiry_are_not_held_back_by_a_consumer_that_does_not_drain() {
+    // A long lag timeout: only a loop that never waits on the client can end in time.
+    let tuning = HintTuning {
+        channel_capacity: 2,
+        lag_timeout: Duration::from_mins(1),
+        ..quiet_tuning()
+    };
+    let mut l = stream_loop(tuning, 4_096);
+    for _ in 0..50 {
+        l.signals.send(task_signal(&l)).expect("a receiver exists");
+    }
+    l.hub.shutdown();
+    let stream = l.stream.take().expect("stream");
+    let (end, _) = tokio::time::timeout(Duration::from_secs(2), stream.run())
+        .await
+        .expect("shutdown is not queued behind the client");
+    assert_eq!(end, End::Shutdown);
+
+    let mut l = stream_loop(tuning, 4_096);
+    for _ in 0..50 {
+        l.signals.send(task_signal(&l)).expect("a receiver exists");
+    }
+    let mut stream = l.stream.take().expect("stream");
+    stream.expiry = Some(Instant::now());
+    let (end, _) = tokio::time::timeout(Duration::from_secs(2), stream.run())
+        .await
+        .expect("expiry is not queued behind the client");
+    assert_eq!(end, End::Revoked(Some("expired")));
+}
+
+#[tokio::test]
+async fn a_frame_dropped_on_a_full_queue_ends_the_stream_at_the_lag_deadline_even_after_a_drain() {
+    let tuning = HintTuning {
+        channel_capacity: 2,
+        lag_timeout: Duration::from_millis(300),
+        ..quiet_tuning()
+    };
+    let mut l = stream_loop(tuning, 4_096);
+    for _ in 0..3 {
+        l.signals.send(task_signal(&l)).expect("a receiver exists");
+    }
+    let stream = l.stream.take().expect("stream");
+    let task = tokio::spawn(stream.run());
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    // The client wakes up and drains everything that was queued; one frame was already lost.
+    while l.rx.try_recv().is_ok() {}
+    let (end, sent) = tokio::time::timeout(Duration::from_secs(3), task)
+        .await
+        .expect("the stream ends")
+        .expect("joined");
+    assert_eq!(end, End::Lagged, "a client that missed a frame has to re-read");
+    assert_eq!(sent, 2);
+}
+
+#[test]
+fn a_cached_token_lookup_loses_the_time_it_has_been_cached_and_is_dropped_when_it_ran_out() {
+    let cached = |state, age: Duration| CachedToken {
+        hash: String::new(),
+        state,
+        fetched: Instant::now() - age,
+        generation: 0,
+    };
+    let left = cached(TokenState::Valid(Some(Duration::from_secs(10))), Duration::from_secs(4))
+        .aged()
+        .expect("still valid");
+    match left {
+        TokenState::Valid(Some(rest)) => assert!(rest <= Duration::from_secs(6) && rest > Duration::from_secs(5)),
+        other => panic!("unexpected state {other:?}"),
+    }
+    assert_eq!(
+        cached(TokenState::Valid(Some(Duration::from_secs(1))), Duration::from_secs(2)).aged(),
+        None,
+        "a lookup whose token would have expired meanwhile is read again"
+    );
+    assert_eq!(
+        cached(TokenState::Valid(None), Duration::from_mins(1)).aged(),
+        Some(TokenState::Valid(None))
+    );
+    assert_eq!(
+        cached(TokenState::Revoked, Duration::ZERO).aged(),
+        Some(TokenState::Revoked)
+    );
+}
+
+#[tokio::test]
+async fn a_token_or_access_notification_makes_the_shared_lookups_of_that_bot_unusable() {
+    let hub = HintHub::new(HintLimits::from_runtime(), quiet_tuning());
+    let (a, b) = (id(), id());
+    let (shared_a, shared_b) = (hub.shared_for(a), hub.shared_for(b));
+    let generation = |s: &Arc<super::BotShared>| s.generation.load(std::sync::atomic::Ordering::Acquire);
+    assert_eq!((generation(&shared_a), generation(&shared_b)), (0, 0));
+    hub.signal(Signal::Token(a));
+    assert_eq!((generation(&shared_a), generation(&shared_b)), (1, 0));
+    hub.signal(Signal::Access(b));
+    assert_eq!((generation(&shared_a), generation(&shared_b)), (1, 1));
+    hub.signal(Signal::Hint(Hint::Tools {
+        project: None,
+        workspace: None,
+    }));
+    assert_eq!(
+        (generation(&shared_a), generation(&shared_b)),
+        (1, 1),
+        "a plain hint keeps them"
+    );
+    hub.signal(Signal::Reset);
+    assert_eq!((generation(&shared_a), generation(&shared_b)), (2, 2));
+}
+
+#[test]
+fn a_place_is_released_with_its_permit_and_takes_the_bots_shared_lookups_with_it() {
+    let hub = HintHub::new(
+        HintLimits {
+            per_bot: 2,
+            per_process: 4,
+        },
+        quiet_tuning(),
+    );
+    let bot = id();
+    let permit = hub.try_acquire(bot).expect("a place");
+    let _ = hub.shared_for(bot);
+    assert_eq!(hub.shared.lock().len(), 1);
+    drop(permit);
+    assert_eq!(hub.open_streams(), 0);
+    assert!(hub.shared.lock().is_empty(), "no stream left, nothing shared is kept");
 }

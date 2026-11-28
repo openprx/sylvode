@@ -1020,15 +1020,19 @@ async fn every_way_of_revoking_a_token_ends_the_stream_at_once_and_a_reconnect_i
 
 #[tokio::test]
 async fn revocation_is_found_by_the_tick_when_listen_is_off() {
+    // Default timing, LISTEN off, two streams of one bot (they share the token lookup): the worst
+    // case is `tick` (2 s) plus a lookup up to `shared_ttl` (1 s) old, the contract's 3 s.
     let tuning = HintTuning {
         listen: false,
         ..HintTuning::default()
     };
+    assert!(tuning.tick + tuning.shared_ttl <= Duration::from_secs(3));
     let Some(rig) = Rig::start("hints_revoked_tick", HintLimits::from_runtime(), tuning).await else {
         return;
     };
     let bot = rig.bot().await;
-    let mut sse = rig.open(&bot).await;
+    let mut first = rig.open(&bot).await;
+    let mut second = rig.open(&bot).await;
     exec(
         rig.db(),
         "UPDATE workspace_bots SET is_active = false WHERE id = $1",
@@ -1036,14 +1040,18 @@ async fn revocation_is_found_by_the_tick_when_listen_is_off() {
     )
     .await;
     let started = Instant::now();
-    let messages = sse.read_to_end(Duration::from_secs(5)).await;
-    assert_eq!(
-        messages.last().expect("closing frame").event.as_deref(),
-        Some("revoked")
-    );
+    // 250 ms of scheduling slack on top of the 3 s bound.
+    let bound = Duration::from_millis(3250);
+    for sse in [&mut first, &mut second] {
+        let messages = sse.read_to_end(bound).await;
+        assert_eq!(
+            messages.last().expect("closing frame").event.as_deref(),
+            Some("revoked")
+        );
+    }
     assert!(
-        started.elapsed() <= Duration::from_secs(4),
-        "within the 3 s tick plus slack: {:?}",
+        started.elapsed() <= bound,
+        "both streams end within the 3 s contract bound: {:?}",
         started.elapsed()
     );
     rig.finish().await;

@@ -22,11 +22,17 @@
 //!   ([`readable_projects`], the rule every read path uses; cached at most
 //!   [`HintTuning::readable_ttl`] per stream and refreshed at once on an access notification).
 //!   A task hint is sent only to the bot that owns the task.
-//! * **Revocation.** The token is looked up again by its hash every [`HintTuning::tick`] (3 s)
-//!   and at once on a token notification for this bot; when it fails the stream sends `revoked`
+//! * **Revocation.** The token is looked up again by its hash every [`HintTuning::tick`] (2 s)
+//!   and at once on a token notification for this bot (the lookups of one bot are shared by its
+//!   streams, see [`HintTuning::shared_ttl`]); when it fails the stream sends `revoked`
 //!   and ends. At `expires_at` it sends `revoked` with `{"reason":"expired"}` and ends.
-//! * **Bounded memory.** Per stream: [`HintTuning::channel_capacity`] queued frames; a client that
-//!   does not drain for [`HintTuning::lag_timeout`] is sent `lagged` and ended. Per process: one
+//! * **Bounded memory, never blocking.** Per stream: [`HintTuning::channel_capacity`] queued
+//!   frames. A stream never waits for its client: a frame that finds the queue full is dropped,
+//!   the time is recorded, and a client whose queue stays full for [`HintTuning::lag_timeout`] (or
+//!   that lost a frame and did not drain by then) is sent `lagged` and ended. Shutdown, expiry,
+//!   revocation and the lag deadline are polled before the signals. A client that lost a frame
+//!   (a dropped hint, a lagging broadcast) is therefore told it must re-read: it learns this
+//!   within [`HintTuning::lag_timeout`] (30 s), when the stream sends `lagged` and ends. Per process: one
 //!   broadcast of [`BROADCAST_CAPACITY`] hints. Per bot: [`STREAMS_PER_BOT`] streams; per process:
 //!   `[api] max_change_hint_streams`.
 //!
@@ -39,7 +45,7 @@ mod tests;
 
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
@@ -80,6 +86,9 @@ pub const BROADCAST_CAPACITY: usize = 4_096;
 const LIMIT_RETRY_AFTER_SECS: u64 = 30;
 /// Longest a new stream waits for the shared `LISTEN` to be established before it starts.
 const LISTENER_READY_WAIT: Duration = Duration::from_secs(5);
+/// Longest the spawned task of a finished stream waits for the response body to read the closing
+/// frame. The stream's place in the limits is released before this wait.
+const CLOSE_GRACE: Duration = Duration::from_secs(10);
 
 const KEEPALIVE_FRAME: &str = ": keep-alive\n\n";
 
@@ -111,6 +120,9 @@ pub struct HintTuning {
     pub tick: Duration,
     /// Oldest readable-project set a hint may be delivered on.
     pub readable_ttl: Duration,
+    /// How long one stream's token or readable-set lookup is reused by the other streams of the
+    /// same bot on their ticks. A token or access notification discards it at once.
+    pub shared_ttl: Duration,
     /// Frames a stream may have queued for its client.
     pub channel_capacity: usize,
     /// How long a full queue is waited on before the client is declared lagging.
@@ -124,8 +136,11 @@ impl Default for HintTuning {
         Self {
             listen: true,
             keepalive: Duration::from_secs(15),
-            tick: Duration::from_secs(3),
+            // With LISTEN off a revocation is found by the next tick, which may read a lookup
+            // up to `shared_ttl` old: worst case `tick + shared_ttl` = 3 s, the contract bound.
+            tick: Duration::from_secs(2),
             readable_ttl: Duration::from_secs(2),
+            shared_ttl: Duration::from_secs(1),
             channel_capacity: 256,
             lag_timeout: Duration::from_secs(30),
             db_give_up: Duration::from_secs(30),
@@ -270,8 +285,8 @@ pub enum LimitExceeded {
     Process,
 }
 
-/// One open stream's place in the limits. Released when dropped, which happens when the response
-/// body is dropped: a connection counts for as long as its socket does.
+/// One open stream's place in the limits. Released when dropped. The stream's own task owns it, so
+/// it is released when the stream ends, not when (or whether) a client reads the end.
 pub struct Permit {
     hub: Arc<HintHub>,
     bot_id: Uuid,
@@ -281,11 +296,16 @@ impl Drop for Permit {
     fn drop(&mut self) {
         let mut registry = self.hub.registry.lock();
         registry.total = registry.total.saturating_sub(1);
-        if let Some(count) = registry.bots.get_mut(&self.bot_id) {
+        let last = registry.bots.get_mut(&self.bot_id).is_some_and(|count| {
             *count = count.saturating_sub(1);
-            if *count == 0 {
-                registry.bots.remove(&self.bot_id);
-            }
+            *count == 0
+        });
+        if last {
+            registry.bots.remove(&self.bot_id);
+        }
+        drop(registry);
+        if last {
+            self.hub.shared.lock().remove(&self.bot_id);
         }
     }
 }
@@ -295,6 +315,8 @@ pub struct HintHub {
     limits: HintLimits,
     tuning: HintTuning,
     registry: Mutex<Registry>,
+    /// Lookups shared by the open streams of one bot; an entry lives while the bot has a stream.
+    shared: Mutex<HashMap<Uuid, Arc<BotShared>>>,
     signals: broadcast::Sender<Signal>,
     shutdown: watch::Sender<bool>,
     ready: watch::Sender<bool>,
@@ -322,6 +344,7 @@ impl HintHub {
             limits,
             tuning,
             registry: Mutex::new(Registry::default()),
+            shared: Mutex::new(HashMap::new()),
             signals: broadcast::channel(BROADCAST_CAPACITY).0,
             shutdown: watch::channel(false).0,
             ready: watch::channel(false).0,
@@ -364,7 +387,93 @@ impl HintHub {
         self.shutdown.send_replace(true);
     }
 
+    fn shared_for(&self, bot_id: Uuid) -> Arc<BotShared> {
+        Arc::clone(self.shared.lock().entry(bot_id).or_default())
+    }
+
+    /// Makes the cached lookups of `bot_id` (every bot for `None`) unusable, so the next check of
+    /// each stream reads the database.
+    fn invalidate(&self, bot_id: Option<Uuid>) {
+        let shared = self.shared.lock();
+        match bot_id {
+            Some(bot_id) => {
+                if let Some(entry) = shared.get(&bot_id) {
+                    entry.generation.fetch_add(1, Ordering::AcqRel);
+                }
+            }
+            None => {
+                for entry in shared.values() {
+                    entry.generation.fetch_add(1, Ordering::AcqRel);
+                }
+            }
+        }
+    }
+
+    /// [`check_token`], reused for `max_age` across the streams of `bot_id`. A zero `max_age`
+    /// always reads the database.
+    async fn shared_token(
+        &self,
+        db: &DatabaseConnection,
+        token_hash: &str,
+        bot_id: Uuid,
+        max_age: Duration,
+    ) -> Result<TokenState, DbErr> {
+        let shared = self.shared_for(bot_id);
+        let mut slot = shared.token.lock().await;
+        let generation = shared.generation.load(Ordering::Acquire);
+        if let Some(cached) = slot.as_ref()
+            && cached.generation == generation
+            && cached.hash == token_hash
+            && cached.fetched.elapsed() < max_age
+            && let Some(state) = cached.aged()
+        {
+            return Ok(state);
+        }
+        let fetched = Instant::now();
+        let state = check_token(db, token_hash, bot_id).await?;
+        *slot = Some(CachedToken {
+            hash: token_hash.to_string(),
+            state,
+            fetched,
+            generation,
+        });
+        drop(slot);
+        Ok(state)
+    }
+
+    /// [`fetch_readable`], reused for `max_age` across the streams of `bot_id`.
+    async fn shared_readable(
+        &self,
+        db: &DatabaseConnection,
+        bot_id: Uuid,
+        max_age: Duration,
+    ) -> Result<Readable, ApiError> {
+        let shared = self.shared_for(bot_id);
+        let mut slot = shared.readable.lock().await;
+        let generation = shared.generation.load(Ordering::Acquire);
+        if let Some(cached) = slot.as_ref()
+            && cached.generation == generation
+            && cached.readable.fetched.elapsed() < max_age
+        {
+            return Ok(cached.readable.clone());
+        }
+        let readable = fetch_readable(db, bot_id).await?;
+        *slot = Some(CachedReadable {
+            readable: readable.clone(),
+            generation,
+        });
+        drop(slot);
+        Ok(readable)
+    }
+
     fn signal(&self, signal: Signal) {
+        // A change of access or token makes what the streams of that bot looked up unusable
+        // before any of them is woken, so none of them reads a lookup older than the change.
+        match signal {
+            Signal::Access(bot) | Signal::Token(bot) => self.invalidate(Some(bot)),
+            Signal::Reset => self.invalidate(None),
+            Signal::Hint(_) => {}
+        }
         // No receiver means no stream is open; there is nobody to wake.
         let _ = self.signals.send(signal);
     }
@@ -455,11 +564,46 @@ impl HintHub {
     }
 }
 
+/// What the streams of one bot share: the last token lookup and the last readable set, each
+/// valid only for the generation it was read in.
+#[derive(Default)]
+struct BotShared {
+    generation: AtomicU64,
+    token: tokio::sync::Mutex<Option<CachedToken>>,
+    readable: tokio::sync::Mutex<Option<CachedReadable>>,
+}
+
+struct CachedToken {
+    hash: String,
+    state: TokenState,
+    fetched: Instant,
+    generation: u64,
+}
+
+impl CachedToken {
+    /// The cached state with the time it has been cached taken off the time left; `None` when the
+    /// token would have expired meanwhile, so that the expiry is read from the database.
+    fn aged(&self) -> Option<TokenState> {
+        match self.state {
+            TokenState::Valid(Some(left)) => left
+                .checked_sub(self.fetched.elapsed())
+                .filter(|left| !left.is_zero())
+                .map(|left| TokenState::Valid(Some(left))),
+            other => Some(other),
+        }
+    }
+}
+
+struct CachedReadable {
+    readable: Readable,
+    generation: u64,
+}
+
 // -----------------------------------------------------------------------------------------------
 // Token validity
 // -----------------------------------------------------------------------------------------------
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TokenState {
     /// Still valid; the time left, when the token expires.
     Valid(Option<Duration>),
@@ -552,6 +696,7 @@ impl End {
 }
 
 /// The readable-project set of the bot, as of `fetched`.
+#[derive(Clone)]
 struct Readable {
     filter: ProjectFilter,
     fetched: Instant,
@@ -576,6 +721,7 @@ async fn fetch_readable(db: &DatabaseConnection, bot_id: Uuid) -> Result<Readabl
 }
 
 struct HintStream {
+    hub: Arc<HintHub>,
     db: DatabaseConnection,
     bot_id: Uuid,
     workspace_id: Uuid,
@@ -587,6 +733,11 @@ struct HintStream {
     readable: Readable,
     expiry: Option<Instant>,
     db_failing_since: Option<Instant>,
+    /// Since when the client's queue has been full, if it is.
+    full_since: Option<Instant>,
+    /// A frame was dropped because the queue was full: the client missed something and has to
+    /// re-read, whether or not it drains afterwards.
+    lost: bool,
     sent: u64,
 }
 
@@ -598,15 +749,51 @@ async fn wait_deadline(deadline: Option<Instant>) {
 }
 
 impl HintStream {
-    /// Queues a frame. A client that does not drain within the lag timeout is declared lagging.
-    async fn send(&mut self, frame: Bytes) -> Result<(), End> {
-        match tokio::time::timeout(self.tuning.lag_timeout, self.tx.send(frame)).await {
-            Ok(Ok(())) => {
+    /// Queues a frame without waiting. A full queue drops the frame and starts the lag clock; the
+    /// client is ended with `lagged` by [`Self::on_lag_deadline`], never by blocking here.
+    fn send(&mut self, frame: Bytes) -> Result<(), End> {
+        match self.tx.try_send(frame) {
+            Ok(()) => {
                 self.sent += 1;
+                if !self.lost {
+                    self.full_since = None;
+                }
                 Ok(())
             }
-            Ok(Err(_)) => Err(End::ClientGone),
-            Err(_) => Err(End::Lagged),
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                self.full_since.get_or_insert_with(Instant::now);
+                self.lost = true;
+                Ok(())
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => Err(End::ClientGone),
+        }
+    }
+
+    /// A keep-alive comment carries nothing, so a full queue only starts the lag clock.
+    fn send_keepalive(&mut self) -> Result<(), End> {
+        match self.tx.try_send(Bytes::from_static(KEEPALIVE_FRAME.as_bytes())) {
+            Ok(()) => {
+                if !self.lost {
+                    self.full_since = None;
+                }
+                Ok(())
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                self.full_since.get_or_insert_with(Instant::now);
+                Ok(())
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => Err(End::ClientGone),
+        }
+    }
+
+    /// The queue has been full for the lag timeout: a client that lost a frame or still does not
+    /// drain is ended; one that drained without losing anything keeps its stream.
+    fn on_lag_deadline(&mut self) -> Result<(), End> {
+        if self.lost || self.tx.capacity() == 0 {
+            Err(End::Lagged)
+        } else {
+            self.full_since = None;
+            Ok(())
         }
     }
 
@@ -620,13 +807,18 @@ impl HintStream {
                 break End::Shutdown;
             }
             let expiry = self.expiry;
+            let lag_deadline = self.full_since.map(|since| since + self.tuning.lag_timeout);
+            // Biased: what ends a stream is polled before what feeds it, and nothing here awaits
+            // the client, so one slow consumer cannot hold any arm back.
             let step = tokio::select! {
-                signal = self.signals.recv() => self.on_signal(signal).await,
-                _ = tick.tick() => self.on_tick().await,
-                _ = keepalive.tick() => self.send(Bytes::from_static(KEEPALIVE_FRAME.as_bytes())).await,
-                () = wait_deadline(expiry) => Err(End::Revoked(Some("expired"))),
+                biased;
                 _ = self.shutdown.changed() => Err(End::Shutdown),
+                () = wait_deadline(expiry) => Err(End::Revoked(Some("expired"))),
                 () = self.tx.closed() => Err(End::ClientGone),
+                () = wait_deadline(lag_deadline) => self.on_lag_deadline(),
+                _ = tick.tick() => self.on_tick().await,
+                _ = keepalive.tick() => self.send_keepalive(),
+                signal = self.signals.recv() => self.on_signal(signal).await,
             };
             if let Err(end) = step {
                 break end;
@@ -644,7 +836,7 @@ impl HintStream {
                 // A permission change is an access change too: check the token (read) first.
                 self.verify_token().await?;
                 self.refresh_readable().await?;
-                self.send(frame("access_changed", &serde_json::json!({}))).await
+                self.send(frame("access_changed", &serde_json::json!({})))
             }
             Ok(Signal::Token(bot)) if bot == self.bot_id => self.verify_token().await,
             Ok(Signal::Access(_) | Signal::Token(_)) => Ok(()),
@@ -657,7 +849,7 @@ impl HintStream {
             let before = self.readable.filter.clone();
             self.refresh_readable().await?;
             if self.readable.filter != before {
-                self.send(frame("access_changed", &serde_json::json!({}))).await?;
+                self.send(frame("access_changed", &serde_json::json!({})))?;
             }
             Ok(())
         }
@@ -683,7 +875,11 @@ impl HintStream {
 
     /// Looks the token up again. `Err(End::Db)` is a database failure, not a verdict.
     async fn verify_token(&mut self) -> Result<(), End> {
-        match check_token(&self.db, &self.token_hash, self.bot_id).await {
+        match self
+            .hub
+            .shared_token(&self.db, &self.token_hash, self.bot_id, self.tuning.shared_ttl)
+            .await
+        {
             Ok(TokenState::Valid(remaining)) => {
                 self.expiry = remaining.map(|left| Instant::now() + left);
                 Ok(())
@@ -698,7 +894,11 @@ impl HintStream {
     }
 
     async fn refresh_readable(&mut self) -> Result<(), End> {
-        match fetch_readable(&self.db, self.bot_id).await {
+        self.refresh_readable_within(self.tuning.shared_ttl).await
+    }
+
+    async fn refresh_readable_within(&mut self, max_age: Duration) -> Result<(), End> {
+        match self.hub.shared_readable(&self.db, self.bot_id, max_age).await {
             Ok(readable) => {
                 self.readable = readable;
                 Ok(())
@@ -716,13 +916,13 @@ impl HintStream {
         {
             // Never deliver on a set older than the cache bound. A failed lookup ends the stream
             // rather than delivering on stale access.
-            self.refresh_readable().await?;
+            self.refresh_readable_within(self.tuning.readable_ttl).await?;
         }
         let frames = frames_for(hint, self.bot_id, self.workspace_id, |project| {
             self.readable.filter.allows(project)
         });
         for frame in frames {
-            self.send(frame).await?;
+            self.send(frame)?;
         }
         Ok(())
     }
@@ -744,21 +944,15 @@ fn project_to_check(hint: Hint, workspace_id: Uuid) -> Option<Uuid> {
     }
 }
 
-/// The response body: queued frames in order, then the closing frame. The permit rides along so
-/// the open-stream count follows the life of the connection.
-fn body(rx: mpsc::Receiver<Bytes>, close: watch::Receiver<Option<Bytes>>, permit: Permit) -> Body {
+/// The response body: queued frames in order, then the closing frame. It owns no place in the
+/// limits: the stream's task does.
+fn body(rx: mpsc::Receiver<Bytes>, close: watch::Receiver<Option<Bytes>>) -> Body {
     struct State {
         rx: mpsc::Receiver<Bytes>,
         close: watch::Receiver<Option<Bytes>>,
         done: bool,
-        _permit: Permit,
     }
-    let state = State {
-        rx,
-        close,
-        done: false,
-        _permit: permit,
-    };
+    let state = State { rx, close, done: false };
     Body::from_stream(futures_util::stream::unfold(state, |mut state| async move {
         if state.done {
             return None;
@@ -834,7 +1028,8 @@ pub async fn change_hints(
     // Subscribe before the first lookups, so nothing committed after them is missed.
     let signals = hub.signals.subscribe();
     let token_hash = sha256_hex(&token);
-    let expiry = match check_token(&state.db, &token_hash, bot.bot_id)
+    let expiry = match hub
+        .shared_token(&state.db, &token_hash, bot.bot_id, Duration::ZERO)
         .await
         .map_err(ApiError::internal_database_failure)?
     {
@@ -843,7 +1038,7 @@ pub async fn change_hints(
             return Err(ApiError::Unauthorized("bot token is no longer valid".to_string()));
         }
     };
-    let readable = fetch_readable(&state.db, bot.bot_id).await?;
+    let readable = hub.shared_readable(&state.db, bot.bot_id, Duration::ZERO).await?;
 
     let (tx, rx) = mpsc::channel(hub.tuning.channel_capacity.max(2));
     let (close_tx, close_rx) = watch::channel(None);
@@ -851,6 +1046,7 @@ pub async fn change_hints(
     let _ = tx.try_send(hello_frame(bot.bot_id, bot.workspace_id));
 
     let stream = HintStream {
+        hub: Arc::clone(&hub),
         db: state.db.clone(),
         bot_id: bot.bot_id,
         workspace_id: bot.workspace_id,
@@ -862,20 +1058,26 @@ pub async fn change_hints(
         readable,
         expiry,
         db_failing_since: None,
+        full_since: None,
+        lost: false,
         sent: 0,
     };
     let bot_id = bot.bot_id;
     tracing::debug!(bot_id = %bot_id, "change hint stream opened");
+    // The task owns the place in the limits: it is released when the stream ends, whether or not
+    // the client ever reads the end.
     tokio::spawn(async move {
         let (end, sent) = stream.run().await;
+        drop(permit);
         tracing::info!(bot_id = %bot_id, reason = end.code(), events_sent = sent, "change hint stream closed");
         // The receiver is gone when the client left; nothing is left to tell it then.
         let _ = close_tx.send(end.final_frame());
-        // Keep the sender alive until the body has read the closing frame.
-        close_tx.closed().await;
+        // Keep the sender alive until the body has read the closing frame, but not for a client
+        // that never reads it.
+        let _ = tokio::time::timeout(CLOSE_GRACE, close_tx.closed()).await;
     });
 
-    let mut response = Response::new(body(rx, close_rx, permit));
+    let mut response = Response::new(body(rx, close_rx));
     let headers = response.headers_mut();
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
