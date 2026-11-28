@@ -58,20 +58,31 @@ export interface PageInput {
 	position?: number;
 }
 
+/** What visitors or operators may read through a binding. */
+export interface BindingRead {
+	fields: string[];
+	/** Visitors: `own` or `none`; operators: `all` or `none`. */
+	scope: string;
+	filter?: string[];
+	sort?: string[];
+}
+
+export interface BindingProjection {
+	visitor?: {
+		read?: BindingRead;
+		submit?: { fields: string[]; max_per_hour?: number; captcha?: boolean };
+	};
+	operator?: {
+		read?: BindingRead;
+		update?: { fields: string[] };
+	};
+}
+
 export interface SiteBinding {
 	site_id: string;
 	binding_key: string;
 	form_id: string;
-	projection: {
-		visitor?: {
-			read?: { fields: string[]; scope: string };
-			submit?: { fields: string[] };
-		};
-		operator?: {
-			read?: { fields: string[]; scope: string };
-			update?: { fields: string[] };
-		};
-	};
+	projection: BindingProjection;
 }
 
 export interface SiteRole {

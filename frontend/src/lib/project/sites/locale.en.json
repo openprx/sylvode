@@ -61,7 +61,8 @@
 			"pages": "Pages",
 			"roles": "Roles",
 			"drafts": "Drafts",
-			"draftsWaiting": "Drafts ({count})"
+			"draftsWaiting": "Drafts ({count})",
+			"bindings": "Form bindings"
 		},
 		"publish": {
 			"title": "Publish {title}?",
@@ -139,7 +140,10 @@
 			"layout_required": "Choose a layout.",
 			"layout_invalid": "This layout cannot be shown on a site.",
 			"package_page_readonly": "This page belongs to a package. Upgrade or remove the package to change it.",
-			"site_route_taken": "A page of this site already uses a route of the package. Rename or delete that page, then approve again."
+			"site_route_taken": "A page of this site already uses a route of the package. Rename or delete that page, then approve again.",
+			"binding_key_invalid": "Use 1-40 lowercase letters, digits or _, starting with a letter.",
+			"binding_key_taken": "This site already has a binding with this key.",
+			"projection_invalid": "The chosen fields do not fit the form."
 		},
 		"pages": {
 			"title": "Pages",
@@ -227,6 +231,79 @@
 				"form_on_published_site": "An agent tried to archive a form that a published site uses. Only a person can do that.",
 				"public_site_text_requires_human": "An agent's form change would alter text that visitors see. A person must make or approve it.",
 				"draft_stale": "The page changed after the agent wrote the draft. Review the current state again before you approve."
+			}
+		},
+		"bindings": {
+			"title": "Form bindings",
+			"thing": "form bindings",
+			"lead": "A binding lets this site use one form of the project: what visitors may submit and read, and what operators may read and change. Layouts refer to a binding by its key.",
+			"readOnlyLead": "Owners and admins change form bindings.",
+			"add": "Add binding",
+			"addTitle": "Add binding",
+			"editTitle": "Binding {key}",
+			"edit": "Change binding",
+			"delete": "Remove binding",
+			"save": "Save binding",
+			"empty": "No bindings yet. Add one so pages can show or collect form data.",
+			"saved": "Binding saved.",
+			"deleted": "Binding removed.",
+			"publishedTip": "This site is published. Saving changes what visitors see now.",
+			"col": {
+				"key": "Key",
+				"form": "Form",
+				"visitors": "Visitors",
+				"operators": "Operators"
+			},
+			"summary": {
+				"none": "No access",
+				"submit": "submit {count, plural, one {# field} other {# fields}}",
+				"readOwn": "read own {count, plural, one {# field} other {# fields}}",
+				"readAll": "read all {count, plural, one {# field} other {# fields}}",
+				"update": "update {count, plural, one {# field} other {# fields}}"
+			},
+			"key": "Key",
+			"keyHelper": "1-40 lowercase letters, digits or _, starting with a letter. Layouts refer to the binding by this key. It cannot change later.",
+			"form": "Form",
+			"formPlaceholder": "Choose a form",
+			"noForms": "This project has no forms you can view.",
+			"formRequired": "Choose a form.",
+			"formNotUsable": "This form cannot be bound: it is archived, in another project, or you cannot view it.",
+			"formGone": "The form of this binding is archived or hidden from you. Choose another form to change the binding.",
+			"formUnavailable": "Not available",
+			"submitTitle": "Visitors can submit",
+			"submitOn": "Let visitors submit records",
+			"maxPerHour": "Most submissions per hour",
+			"maxPerHourHelper": "A whole number from 1 to 1000.",
+			"captchaOff": "Captcha is not offered yet.",
+			"visitorReadTitle": "Visitors can read",
+			"operatorReadTitle": "Operators can read",
+			"updateTitle": "Operators can update",
+			"updateOn": "Let operators change records",
+			"scopeNone": "None",
+			"scopeOwn": "Own records",
+			"scopeAll": "All records",
+			"filterable": "Filter",
+			"sortable": "Sort",
+			"column": {
+				"created_at": "Created at",
+				"updated_at": "Updated at"
+			},
+			"cannotShow": "Cannot be shown on a site: {fields}.",
+			"deleteTitle": "Remove binding {key}?",
+			"deleteBody": "Pages that use it stop showing its data. Form records stay in the form.",
+			"deleteUsed": "Used by pages at: {routes}.",
+			"deleteConfirm": "Remove binding",
+			"issue": {
+				"shape_invalid": "The projection is malformed.",
+				"field_unknown": "This form has no such field.",
+				"field_not_allowed": "This field cannot be used here.",
+				"derived_input_not_listed": "A computed field needs the fields it is computed from in the same list.",
+				"field_duplicate": "This field is listed twice.",
+				"limit_invalid": "Enter a whole number from 1 to 1000.",
+				"scope_invalid": "Choose a valid scope.",
+				"field_not_readable": "Filter and sort fields must be read fields too.",
+				"field_not_filterable": "This field cannot be used for filtering or sorting.",
+				"captcha_unsupported": "Captcha is not offered yet."
 			}
 		}
 	}

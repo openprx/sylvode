@@ -30,6 +30,19 @@ import {
 	slugFromTitle,
 	statusTone,
 	tabOf,
+	SITE_TABS,
+	accessOf,
+	bindingFields,
+	draftOf,
+	emptyDraft,
+	inFieldOrder,
+	isBindingKey,
+	issuesAt,
+	pagesUsing,
+	parseMaxPerHour,
+	placeIssues,
+	projectionOf,
+	withReadField,
 	titleFields,
 	titleValue,
 	validText
@@ -184,6 +197,8 @@ test('status tones, known error codes and tabs', () => {
 	assert.equal(tabOf('settings'), 'settings');
 	assert.equal(tabOf('drafts'), 'drafts');
 	assert.equal(tabOf('roles'), 'roles');
+	assert.equal(tabOf('bindings'), 'bindings');
+	assert.deepEqual([...SITE_TABS], ['pages', 'bindings', 'roles', 'settings', 'drafts']);
 	assert.equal(tabOf('nonsense'), 'pages');
 	assert.equal(tabOf(null), 'pages');
 });
@@ -299,4 +314,226 @@ test('role candidates are active people without a role', () => {
 		roleCandidates(members, roles).map((member) => member.user_id),
 		['u2', 'u4']
 	);
+});
+
+// Form bindings
+
+const outlets = {
+	text: { site_read: 'value', site_submit: 'value', filter: 'value', sort: 'value' },
+	member: { site_read: 'reject', site_submit: 'reject', filter: 'reject', sort: 'reject' },
+	formula: { site_read: 'value', site_submit: 'value', filter: 'value', sort: 'value' },
+	file: { site_read: 'reject', site_submit: 'reject', filter: 'reject', sort: 'reject' },
+	textarea: { site_read: 'value', site_submit: 'value', filter: 'reject', sort: 'reject' }
+};
+const schema = {
+	fields: [
+		{ key: 'name', label: 'Name', type: 'text' },
+		{ key: 'note', type: 'textarea' },
+		{ key: 'owner', label: 'Owner', type: 'member' },
+		{ key: 'total', label: 'Total', type: 'formula', formula: { op: 'sum', args: [] } },
+		{ key: 'created_at', label: 'Created', type: 'text' }
+	]
+};
+
+test('binding keys follow the server rule', () => {
+	assert.equal(isBindingKey('requests'), true);
+	assert.equal(isBindingKey('a_1'), true);
+	assert.equal(isBindingKey('1a'), false);
+	assert.equal(isBindingKey('Req'), false);
+	assert.equal(isBindingKey(''), false);
+	assert.equal(isBindingKey('a'.repeat(41)), false);
+	assert.equal(isBindingKey('a'.repeat(40)), true);
+});
+
+test('field facts come from the type outlets; derived and opaque types are held back', () => {
+	const fields = bindingFields(schema, outlets);
+	const by = Object.fromEntries(fields.map((field) => [field.key, field]));
+	assert.deepEqual(
+		[by.name?.read, by.name?.submit, by.name?.filter, by.name?.sort],
+		[true, true, true, true]
+	);
+	assert.equal(by.note?.label, 'note');
+	assert.deepEqual([by.note?.read, by.note?.filter], [true, false]);
+	assert.deepEqual([by.owner?.read, by.owner?.submit], [false, false]);
+	assert.deepEqual([by.total?.read, by.total?.submit], [true, false]);
+	// A form field with a record column's key wins; the other column is appended.
+	assert.equal(by.created_at?.column, false);
+	assert.deepEqual(
+		[by.updated_at?.column, by.updated_at?.read, by.updated_at?.sort, by.updated_at?.filter],
+		[true, true, true, false]
+	);
+	assert.deepEqual(
+		bindingFields(null, outlets).map((field) => field.key),
+		['created_at', 'updated_at']
+	);
+});
+
+test('an unknown type grants nothing', () => {
+	const [field] = bindingFields({ fields: [{ key: 'x', type: 'mystery' }] }, outlets);
+	assert.deepEqual(
+		[field?.read, field?.submit, field?.filter, field?.sort],
+		[false, false, false, false]
+	);
+});
+
+test('max per hour is a whole number from 1 to 1000', () => {
+	assert.equal(parseMaxPerHour('20'), 20);
+	assert.equal(parseMaxPerHour(' 1000 '), 1000);
+	assert.equal(parseMaxPerHour('0'), null);
+	assert.equal(parseMaxPerHour('1001'), null);
+	assert.equal(parseMaxPerHour('2.5'), null);
+	assert.equal(parseMaxPerHour(''), null);
+	assert.equal(parseMaxPerHour('-3'), null);
+});
+
+test('the projection leaves out sections that are off and orders lists by schema', () => {
+	const fields = bindingFields(schema, outlets);
+	const draft = emptyDraft();
+	assert.deepEqual(projectionOf(draft, fields), {});
+	draft.submit = { on: true, fields: ['note', 'name'], maxPerHour: '5' };
+	draft.visitorRead = {
+		scope: 'own',
+		fields: ['updated_at', 'name'],
+		filter: ['name', 'gone'],
+		sort: ['updated_at']
+	};
+	draft.operatorRead = { scope: 'all', fields: ['name'], filter: [], sort: [] };
+	draft.update = { on: true, fields: ['name'] };
+	assert.deepEqual(projectionOf(draft, fields), {
+		visitor: {
+			read: {
+				fields: ['name', 'updated_at'],
+				scope: 'own',
+				filter: ['name'],
+				sort: ['updated_at']
+			},
+			submit: { fields: ['name', 'note'], max_per_hour: 5 }
+		},
+		operator: {
+			read: { fields: ['name'], scope: 'all', filter: [], sort: [] },
+			update: { fields: ['name'] }
+		}
+	});
+	draft.submit.on = false;
+	draft.visitorRead.scope = 'none';
+	const off = projectionOf(draft, fields);
+	assert.equal(off.visitor, undefined);
+	assert.deepEqual(Object.keys(off), ['operator']);
+});
+
+test('a stored binding round-trips through the draft', () => {
+	const fields = bindingFields(schema, outlets);
+	const binding: SiteBinding = {
+		site_id: 's',
+		binding_key: 'req',
+		form_id: 'f1',
+		projection: {
+			visitor: {
+				read: { fields: ['name'], scope: 'own', filter: ['name'], sort: [] },
+				submit: { fields: ['name', 'note'], max_per_hour: 7, captcha: false }
+			},
+			operator: { update: { fields: ['name'] } }
+		}
+	};
+	const draft = draftOf(binding);
+	assert.equal(draft.submit.maxPerHour, '7');
+	assert.equal(draft.operatorRead.scope, 'none');
+	const sent = projectionOf(draft, fields);
+	assert.deepEqual(sent.visitor?.submit, { fields: ['name', 'note'], max_per_hour: 7 });
+	assert.deepEqual(sent.operator, { update: { fields: ['name'] } });
+});
+
+test('dropping a read field drops its filter and sort', () => {
+	const read = { scope: 'own', fields: ['a', 'b'], filter: ['a'], sort: ['a', 'b'] };
+	assert.deepEqual(withReadField(read, 'a', false), {
+		scope: 'own',
+		fields: ['b'],
+		filter: [],
+		sort: ['b']
+	});
+	assert.deepEqual(withReadField(read, 'c', true).fields, ['a', 'b', 'c']);
+	assert.deepEqual(inFieldOrder(['note', 'zzz', 'name'], bindingFields(schema, outlets)), [
+		'name',
+		'note',
+		'zzz'
+	]);
+});
+
+test('access counts show what each audience gets', () => {
+	assert.deepEqual(accessOf({}), { submit: 0, visitorRead: 0, operatorRead: 0, update: 0 });
+	assert.deepEqual(
+		accessOf({
+			visitor: { read: { fields: ['a', 'b'], scope: 'none' }, submit: { fields: ['a'] } },
+			operator: { read: { fields: ['a', 'b', 'c'], scope: 'all' }, update: { fields: ['a'] } }
+		}),
+		{ submit: 1, visitorRead: 0, operatorRead: 3, update: 1 }
+	);
+});
+
+test('projection issues are placed at the field the path names', () => {
+	const sent = {
+		visitor: {
+			read: { fields: ['name', 'owner', 'note'], scope: 'own', filter: ['note'], sort: [] },
+			submit: { fields: ['name', 'total'], max_per_hour: 5000 }
+		},
+		operator: { update: { fields: ['owner'] } }
+	};
+	const placed = placeIssues(
+		{
+			errors: [
+				{ path: '/visitor/read/fields/1', code: 'field_not_allowed' },
+				{ path: '/visitor/read/filter/0', code: 'field_not_filterable' },
+				{ path: '/visitor/submit/fields/1', code: 'field_not_allowed' },
+				{ path: '/visitor/submit/max_per_hour', code: 'limit_invalid' },
+				{ path: '/visitor/read/scope', code: 'scope_invalid' },
+				{ path: '/operator/update/fields/0', code: 'field_unknown' },
+				{ path: '', code: 'shape_invalid' },
+				{ path: '/visitor/read/fields/9', code: 'field_unknown' },
+				{ code: 'broken' },
+				'junk'
+			]
+		},
+		sent
+	);
+	assert.deepEqual(
+		placed.map((issue) => [issue.section, issue.part, issue.key, issue.code]),
+		[
+			['visitorRead', 'fields', 'owner', 'field_not_allowed'],
+			['visitorRead', 'filter', 'note', 'field_not_filterable'],
+			['visitorSubmit', 'fields', 'total', 'field_not_allowed'],
+			['visitorSubmit', 'limit', null, 'limit_invalid'],
+			['visitorRead', 'scope', null, 'scope_invalid'],
+			['operatorUpdate', 'fields', 'owner', 'field_unknown'],
+			[null, 'fields', null, 'shape_invalid'],
+			['visitorRead', 'fields', null, 'field_unknown'],
+			[null, 'fields', null, 'broken']
+		]
+	);
+	assert.deepEqual(
+		issuesAt(placed, 'visitorRead', 'owner').map((issue) => issue.code),
+		['field_not_allowed']
+	);
+	assert.deepEqual(
+		issuesAt(placed, 'visitorRead').map((issue) => issue.code),
+		['scope_invalid', 'field_unknown']
+	);
+	assert.deepEqual(placeIssues(undefined, sent), []);
+	assert.deepEqual(placeIssues({ errors: 'x' }, sent), []);
+});
+
+test('pages that use a binding key are found from their layouts', () => {
+	const pages = [page('p1', '/'), page('p2', '/a'), page('p3', '/b')];
+	const keys = { p1: ['req'], p2: ['other'], p3: ['req', 'other'] };
+	assert.deepEqual(
+		pagesUsing('req', pages, keys).map((p) => p.route),
+		['/', '/b']
+	);
+	assert.deepEqual(pagesUsing('none', pages, keys), []);
+	assert.deepEqual(pagesUsing('req', pages, {}), []);
+});
+
+test('binding refusal codes are worded by the console', () => {
+	assert.equal(knownError('projection_invalid'), 'projection_invalid');
+	assert.equal(knownError('binding_key_invalid'), 'binding_key_invalid');
+	assert.equal(knownError('binding_key_taken'), 'binding_key_taken');
 });

@@ -1,5 +1,6 @@
 import { apiClient, type ApiResult, type PaginatedData } from '#lib/api/client.js';
 import type {
+	BindingProjection,
 	PageInput,
 	SettingsInput,
 	Site,
@@ -56,6 +57,21 @@ export const sitesApi = {
 	},
 	bindings(id: string): Promise<ApiResult<{ items: SiteBinding[] }>> {
 		return apiClient.get<{ items: SiteBinding[] }>(`/api/v1/sites/${enc(id)}/bindings`);
+	},
+	putBinding(
+		id: string,
+		key: string,
+		body: { form_id: string; projection: BindingProjection }
+	): Promise<ApiResult<SiteBinding>> {
+		return apiClient.put<SiteBinding>(`/api/v1/sites/${enc(id)}/bindings/${enc(key)}`, body);
+	},
+	removeBinding(
+		id: string,
+		key: string
+	): Promise<ApiResult<{ site_id: string; binding_key: string }>> {
+		return apiClient.delete<{ site_id: string; binding_key: string }>(
+			`/api/v1/sites/${enc(id)}/bindings/${enc(key)}`
+		);
 	},
 	roles(id: string): Promise<ApiResult<{ items: SiteRole[] }>> {
 		return apiClient.get<{ items: SiteRole[] }>(`/api/v1/sites/${enc(id)}/roles`);
