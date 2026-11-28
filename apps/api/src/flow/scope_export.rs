@@ -145,7 +145,7 @@ async fn create_inner(
     let identity = scope::identity(db, object).await?;
     if identity.workspace_id.is_some() && identity.object_type != "record" {
         return Err(ApiError::invalid_update(
-            "legacy export requires legacy application adapter",
+            "workspace export requires the workspace application adapter",
         ));
     }
     let proof = scope::authorize(db, object, user, PermissionLevel::View).await?;
@@ -206,7 +206,7 @@ async fn create_inner(
             if row.workspace_id.is_some()
                 && !uses_scoped_access(&row)
                 && row.request_hash
-                    == super::export::legacy_object_request_hash(object, format, at_seq, include_history)?
+                    == super::export::workspace_object_request_hash(object, format, at_seq, include_history)?
             {
                 let result = receipt(&row);
                 tx.commit().await?;

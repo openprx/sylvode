@@ -422,7 +422,7 @@ async fn populate(state: &AppState, label: &str) -> Fixture {
     let ids = (workspace, owner);
     let (project_page, project_doc) = page(state, ids, Some(project), "Project page").await;
     let (workspace_page, workspace_doc) = page(state, ids, None, "Workspace page").await;
-    let legacy = scope::legacy_scope(db, workspace).await.expect("legacy scope");
+    let legacy = scope::workspace_scope(db, workspace).await.expect("legacy scope");
     exec(
         db,
         "INSERT INTO flow_page_assets (id, scope_id, object_id, kind, filename, content_type, byte_size, \

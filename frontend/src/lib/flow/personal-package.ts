@@ -1,5 +1,5 @@
 import type { FlowCapabilities } from '../api/flow';
-/** Rollout capabilities are independent of ordinary personal writes and legacy workspace flags. */
+/** Rollout capabilities are independent of ordinary personal writes and workspace flags. */
 export function personalPackageReadiness(capabilities: Partial<FlowCapabilities> | null) {
 	return {
 		imports: capabilities?.personal_package_imports === true,

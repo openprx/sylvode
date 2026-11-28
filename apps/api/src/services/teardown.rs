@@ -118,7 +118,7 @@ pub async fn delete_workspace_content(tx: &DatabaseTransaction, workspace_id: Uu
     // settings, revisions and receipts.
     run(
         tx,
-        "DELETE FROM flow_scopes WHERE id = ANY($1) AND kind = 'legacy_managed'",
+        "DELETE FROM flow_scopes WHERE id = ANY($1) AND kind = 'workspace'",
         vec![scopes.into()],
     )
     .await

@@ -1,5 +1,5 @@
 //! Personal grant/inheritance commands share one authority lock and one transactional receipt.
-//! Legacy authority mutations continue through their original workspace adapter/fence.
+//! Workspace authority mutations continue through their original workspace adapter/fence.
 use super::{collab::authz::PermissionLevel, grants::GrantRequest, scope};
 use crate::error::{ApiError, ApiErrorKind};
 use crate::flow::json_value::FlowJson;
@@ -33,7 +33,7 @@ pub async fn mutate(db: &DatabaseConnection, object: Uuid, user: Uuid, input: Mu
     let identity = scope::identity(db, object).await?;
     if identity.workspace_id.is_some() {
         return Err(ApiError::invalid_update(
-            "legacy authority changes require their integration adapter",
+            "workspace authority changes require their integration adapter",
         ));
     }
     if input

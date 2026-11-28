@@ -147,7 +147,7 @@ async fn world(db: &DatabaseConnection, tag: &str) -> World {
     let scope: Uuid = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT flow_ensure_legacy_scope($1) AS id",
+            "SELECT flow_ensure_workspace_scope($1) AS id",
             vec![workspace.into()],
         ))
         .await

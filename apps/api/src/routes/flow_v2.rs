@@ -1,4 +1,4 @@
-//! Scope-native transport. Legacy resources delegate business commands to the existing service.
+//! Scope-native transport. Workspace resources delegate business commands to the existing service.
 use crate::flow::json_value::FlowJson;
 use crate::middleware::bot_auth::BotAuthContext;
 use crate::{
@@ -68,7 +68,7 @@ pub(super) async fn principal(
     };
     let workspace = match subject {
         Subject::Object(object) => scope::identity(&state.db, object).await?.workspace_id,
-        Subject::Scope(scope_id) => scope::legacy_workspace(&state.db, scope_id).await?,
+        Subject::Scope(scope_id) => scope::bound_workspace(&state.db, scope_id).await?,
     };
     // A personal target and a missing one answer alike, and so does a target of another workspace.
     let Some(workspace) = workspace else {
@@ -114,7 +114,7 @@ pub async fn get_flow_v2_workspace_scope(
     let bot_id = bot.as_ref().map(|Extension(context)| context.bot_id);
     let extensions = super::build_auth_extensions(claims, bot);
     crate::flow::policy::require_flow_workspace_access(&state, &extensions, workspace).await?;
-    let scope = scope::legacy_scope(&state.db, workspace).await?;
+    let scope = scope::workspace_scope(&state.db, workspace).await?;
     let mut roots = scope::roots(&state.db, scope.id).await?;
     // A bot limited to some projects learns the roots of those projects only.
     if let Some(bot_id) = bot_id {
@@ -168,11 +168,11 @@ pub async fn post_flow_v2_object(
     bot: Option<Extension<BotAuthContext>>,
     Json(input): Json<scope::CreateInput>,
 ) -> Result<Response, ApiError> {
-    if let Some(workspace) = scope::legacy_workspace(&state.db, input.scope_id).await? {
+    if let Some(workspace) = scope::bound_workspace(&state.db, input.scope_id).await? {
         let extensions = super::build_auth_extensions(claims, bot);
         let (actor, _, is_bot) =
             crate::flow::policy::require_flow_workspace_access(&state, &extensions, workspace).await?;
-        let legacy = crate::flow::command::CreateObjectInput {
+        let workspace_input = crate::flow::command::CreateObjectInput {
             workspace_id: workspace,
             actor_id: actor,
             actor_is_bot: is_bot,
@@ -185,11 +185,11 @@ pub async fn post_flow_v2_object(
             origin: super::request_origin(&extensions),
         };
         let accepted = if input.initial_fields.is_empty() && input.initial_view.is_none() {
-            crate::flow::command::create_object_with_editor_model(&state, legacy, input.editor_model).await?
+            crate::flow::command::create_object_with_editor_model(&state, workspace_input, input.editor_model).await?
         } else {
             crate::flow::command::create_object_with_collection_schema(
                 &state,
-                legacy,
+                workspace_input,
                 json!({"initial_fields":input.initial_fields,"initial_view":input.initial_view}),
             )
             .await?
@@ -234,7 +234,7 @@ async fn accessible_scope(state: &AppState, scope_id: Uuid, user: Uuid) -> Resul
     if scope.kind == "personal" && scope.owner_user_id != Some(user) {
         return Err(ApiError::not_found("flow scope not found"));
     }
-    if let Some(workspace) = scope::legacy_workspace(&state.db, scope_id).await? {
+    if let Some(workspace) = scope::bound_workspace(&state.db, scope_id).await? {
         #[derive(FromQueryResult)]
         struct Member {
             present: bool,
@@ -374,7 +374,7 @@ pub async fn get_flow_v2_navigator(
     for (fallback_index, row) in rows.into_iter().enumerate() {
         match scope::object_view(&state.db,row.id,actor).await{Ok(view)=>nodes.push(json!({"object_id":view.field("id"),"parent_id":view.field("parent_id"),"position":crate::flow::scope_move::position_for(&positions,row.id,fallback_index)?,"title":view.field("title"),"type":view.field("object_type"),"appearance":view.field("appearance")})),Err(err)if err.kind()==crate::error::ApiErrorKind::NotFound=>{},Err(err)=>return Err(err)}
     }
-    if let Some(destination) = scope::legacy_workspace(&state.db, scope_id).await? {
+    if let Some(destination) = scope::bound_workspace(&state.db, scope_id).await? {
         let mounts=state.db.query_all(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT m.id,m.source_object_id,o.scope_id FROM flow_mounts m JOIN flow_objects o ON o.id=m.source_object_id WHERE m.destination_workspace_id=$1 AND m.destination_project_id IS NOT DISTINCT FROM $2 ORDER BY m.created_at,m.id LIMIT 1000",vec![destination.into(),params.project_id.into()])).await?;
         for mount in mounts {
             let source: Uuid = mount.try_get("", "source_object_id")?;
@@ -992,14 +992,14 @@ pub async fn get_flow_v2_search(
     let owner_scope = accessible_scope(&state, scope_id, actor).await?;
     let selectors =
         usize::from(query.project_id.is_some()) + usize::from(query.unprojected) + usize::from(query.all_visible);
-    if selectors > 1 || owner_scope.kind == "legacy_managed" && selectors == 0 {
+    if selectors > 1 || owner_scope.kind == "workspace" && selectors == 0 {
         return Err(ApiError::invalid_update(
-            "select exactly one of project_id, unprojected=true, or all_visible=true for legacy search",
+            "select exactly one of project_id, unprojected=true, or all_visible=true for workspace search",
         ));
     }
     if owner_scope.kind == "personal" && query.project_id.is_some() {
         return Err(ApiError::invalid_update(
-            "a personal scope has no legacy project partition",
+            "a personal scope has no workspace project partition",
         ));
     }
     if query
@@ -1021,7 +1021,7 @@ pub async fn get_flow_v2_search(
     if query.q.is_empty() || query.q.chars().count() > 256 {
         return Err(ApiError::invalid_update("q must contain1..256 characters"));
     }
-    if let Some(workspace) = scope::legacy_workspace(&state.db, scope_id).await? {
+    if let Some(workspace) = scope::bound_workspace(&state.db, scope_id).await? {
         return Ok(super::get_flow_search(
             State(state),
             Extension(claims),
@@ -1119,7 +1119,7 @@ pub async fn get_flow_v2_projection_lag(
     Query(params): Query<crate::flow::scope_navigation_query::QueryParams>,
 ) -> Result<Response, ApiError> {
     let actor = principal(&state, &claims, bot.as_ref(), Subject::Scope(scope_id)).await?;
-    if let Some(workspace) = scope::legacy_workspace(&state.db, scope_id).await? {
+    if let Some(workspace) = scope::bound_workspace(&state.db, scope_id).await? {
         return Ok(super::get_flow_projection_lag(
             State(state),
             Extension(claims),
@@ -1148,7 +1148,7 @@ pub async fn get_flow_v2_trash(
     Query(params): Query<crate::flow::scope_navigation_query::QueryParams>,
 ) -> Result<Response, ApiError> {
     let actor = principal(&state, &claims, bot.as_ref(), Subject::Scope(scope_id)).await?;
-    if let Some(workspace) = scope::legacy_workspace(&state.db, scope_id).await? {
+    if let Some(workspace) = scope::bound_workspace(&state.db, scope_id).await? {
         return Ok(super::get_flow_trash(
             State(state),
             Extension(claims),
@@ -1846,7 +1846,7 @@ pub async fn get_flow_v2_relations(
 }
 
 /// Import artifacts keep streaming/body limits from the outer Flow router. Ownership is checked
-/// before parsing a personal upload; legacy requests reuse their actual workspace handler.
+/// before parsing a personal upload; workspace requests reuse their actual workspace handler.
 pub async fn post_flow_v2_import_artifact(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
@@ -1855,7 +1855,7 @@ pub async fn post_flow_v2_import_artifact(
     request: axum::extract::Request,
 ) -> Result<Response, ApiError> {
     use axum::extract::{FromRequest, Multipart};
-    if let Some(workspace) = scope::legacy_workspace(&state.db, scope_id).await? {
+    if let Some(workspace) = scope::bound_workspace(&state.db, scope_id).await? {
         return Ok(
             super::post_flow_import_artifact(State(state), Extension(claims), bot, Path(workspace), request)
                 .await?
@@ -1976,7 +1976,7 @@ pub async fn post_flow_v2_import_preview(
     Path(scope_id): Path<Uuid>,
     Json(input): Json<super::PackageImportPreviewRequest>,
 ) -> Result<Response, ApiError> {
-    if let Some(workspace) = scope::legacy_workspace(&state.db, scope_id).await? {
+    if let Some(workspace) = scope::bound_workspace(&state.db, scope_id).await? {
         return Ok(
             super::post_flow_import_preview(State(state), Extension(claims), bot, Path(workspace), Json(input))
                 .await?
@@ -2003,7 +2003,7 @@ pub async fn post_flow_v2_import_commit(
     Path((scope_id, preview)): Path<(Uuid, Uuid)>,
     Json(input): Json<super::PackageImportCommitRequest>,
 ) -> Result<Response, ApiError> {
-    if let Some(workspace) = scope::legacy_workspace(&state.db, scope_id).await? {
+    if let Some(workspace) = scope::bound_workspace(&state.db, scope_id).await? {
         return Ok(super::post_flow_import_commit(
             State(state),
             Extension(claims),
@@ -2039,7 +2039,7 @@ pub async fn get_flow_v2_import(
     bot: Option<Extension<BotAuthContext>>,
     Path((scope_id, job)): Path<(Uuid, Uuid)>,
 ) -> Result<Response, ApiError> {
-    if let Some(workspace) = scope::legacy_workspace(&state.db, scope_id).await? {
+    if let Some(workspace) = scope::bound_workspace(&state.db, scope_id).await? {
         let (principal, _) = super::package_workspace_principal(&state, claims, bot, workspace).await?;
         let report = crate::flow::package_import::get_import_report(&state.db, workspace, job, &principal).await?;
         let mut report = serde_json::to_value(report).map_err(|_| ApiError::internal())?;
@@ -2059,7 +2059,7 @@ pub async fn post_flow_v2_scope_export(
     Path(scope_id): Path<Uuid>,
     Json(input): Json<super::PackageExportRequest>,
 ) -> Result<Response, ApiError> {
-    if let Some(workspace) = scope::legacy_workspace(&state.db, scope_id).await? {
+    if let Some(workspace) = scope::bound_workspace(&state.db, scope_id).await? {
         return Ok(super::post_flow_workspace_export(
             State(state),
             Extension(claims),

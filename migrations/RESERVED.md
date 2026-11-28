@@ -23,3 +23,4 @@ until the owning batch adds the real migration. 0128 and 0129 are reserved by an
 - 0147 installation_site (`installations.site_id`, the site holding an installation's pages)
 - 0128 retire_reader_floor (landed: drops `flow_runtime_readers` and `flow_runtime_capabilities.minimum_reader_version`; sorts below 0144-0147, the runner applies unrecorded files in name order)
 - 0148 change_hints_work_item_insert (work_items AFTER INSERT hint trigger)
+- 0149 flow_workspace_scope_naming (landed: scope kind `legacy_managed` -> `workspace`, `flow_ensure_legacy_scope` -> `flow_ensure_workspace_scope`, column `scope_native_legacy` -> `workspace_editor_initialization`)

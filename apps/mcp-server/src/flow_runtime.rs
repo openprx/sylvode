@@ -1,4 +1,4 @@
-//! Explicit Flow-only process settings. Legacy MCP configuration validation is unchanged.
+//! Explicit Flow-only process settings. Workspace-bot MCP configuration validation is unchanged.
 use crate::client::{ClientConfig, OpenPrClient, transport_label};
 use platform::config::{McpTransport, OpenPrConfig, Secret};
 use std::path::Path;
@@ -26,8 +26,7 @@ pub fn access_token(value: &str) -> Result<Secret, String> {
     }
     if value.starts_with("opr_") {
         return Err(
-            "--access-token is for the current global user; workspace OPR tokens retain the legacy bot configuration"
-                .into(),
+            "--access-token is for the current global user; workspace bot tokens keep the bot configuration".into(),
         );
     }
     Ok(Secret::new(value))

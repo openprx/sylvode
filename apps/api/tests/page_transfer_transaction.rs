@@ -1006,7 +1006,7 @@ async fn workspace_transfer_keeps_admission_and_write_guards() {
         vec![workspace.into()],
     )
     .await;
-    let workspace_scope = scope::legacy_scope(db, workspace).await.unwrap();
+    let workspace_scope = scope::workspace_scope(db, workspace).await.unwrap();
     let parent = scope::roots(db, workspace_scope.id)
         .await
         .unwrap()
@@ -1101,7 +1101,7 @@ async fn workspace_transfer_keeps_admission_and_write_guards() {
         };
         async move { page_transfers::prepare(db, actor, source.0, &Uuid::new_v4().to_string(), input).await }
     };
-    db.execute_unprepared("UPDATE flow_runtime_capabilities SET scope_native_legacy=false WHERE singleton")
+    db.execute_unprepared("UPDATE flow_runtime_capabilities SET workspace_editor_initialization=false WHERE singleton")
         .await
         .unwrap();
     assert_eq!(
@@ -1176,6 +1176,6 @@ async fn workspace_transfer_keeps_admission_and_write_guards() {
         .await
         .unwrap();
     assert_eq!(*accepted.pointer("/state").expect("response has /state"), "accepted");
-    assert!(!scope::capabilities(db).await.unwrap().scope_native_legacy);
+    assert!(!scope::capabilities(db).await.unwrap().workspace_editor_initialization);
     scratch.drop_self().await;
 }

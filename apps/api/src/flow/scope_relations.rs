@@ -43,7 +43,7 @@ pub async fn execute(
     let source_proof = scope::authorize(&state.db, object, user, PermissionLevel::Edit).await?;
     if source.workspace_id.is_some() {
         return Err(ApiError::invalid_update(
-            "legacy relations require their integration adapter",
+            "workspace relations require their integration adapter",
         ));
     }
     let body = json!({"operation":kind,"object_id":object,"payload":payload});

@@ -1,6 +1,6 @@
 //! Canonical Flow ownership and authorization namespaces. A scope is never a navigator root.
 //!
-//! Legacy authority delegates to the original workspace fence; personal authority uses its own
+//! Workspace authority delegates to the original workspace fence; personal authority uses its own
 //! row. No code in this module manufactures a workspace or a workspace membership.
 #[derive(FromQueryResult)]
 struct ActiveScopeUser {
@@ -54,7 +54,7 @@ pub struct Capabilities {
     pub block_transfers_enabled: bool,
     pub portable_page_packages_enabled: bool,
     pub portable_graph_packages_enabled: bool,
-    pub scope_native_legacy: bool,
+    pub workspace_editor_initialization: bool,
     pub personal_provisioning: bool,
     pub personal_writes: bool,
     pub external_mounts: bool,
@@ -66,7 +66,7 @@ pub struct Capabilities {
 pub async fn capabilities<C: ConnectionTrait>(db: &C) -> Result<Capabilities, ApiError> {
     Capabilities::find_by_statement(Statement::from_string(
         DbBackend::Postgres,
-        "SELECT block_transfers_enabled,portable_page_packages_enabled,portable_graph_packages_enabled,scope_native_legacy,personal_provisioning,personal_writes,external_mounts,personal_package_imports,personal_scope_package_exports,personal_forms_conversion,cross_workspace_forms_conversion FROM flow_runtime_capabilities WHERE singleton".to_string(),
+        "SELECT block_transfers_enabled,portable_page_packages_enabled,portable_graph_packages_enabled,workspace_editor_initialization,personal_provisioning,personal_writes,external_mounts,personal_package_imports,personal_scope_package_exports,personal_forms_conversion,cross_workspace_forms_conversion FROM flow_runtime_capabilities WHERE singleton".to_string(),
     ))
     .one(db)
     .await?
@@ -82,7 +82,7 @@ pub async fn get<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<FlowScope, ApiE
     .await?
     .ok_or_else(not_found)
 }
-pub async fn legacy_workspace<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<Option<Uuid>, ApiError> {
+pub async fn bound_workspace<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<Option<Uuid>, ApiError> {
     #[derive(FromQueryResult)]
     struct Row {
         workspace_id: Uuid,
@@ -96,7 +96,7 @@ pub async fn legacy_workspace<C: ConnectionTrait>(db: &C, id: Uuid) -> Result<Op
     .await?
     .map(|r| r.workspace_id))
 }
-pub async fn legacy_scope<C: ConnectionTrait>(db: &C, workspace_id: Uuid) -> Result<FlowScope, ApiError> {
+pub async fn workspace_scope<C: ConnectionTrait>(db: &C, workspace_id: Uuid) -> Result<FlowScope, ApiError> {
     #[derive(FromQueryResult)]
     struct Row {
         scope_id: Uuid,
@@ -208,7 +208,7 @@ struct Revision {
     authz_revision: i64,
 }
 pub async fn revision<C: ConnectionTrait>(db: &C, scope_id: Uuid) -> Result<i64, ApiError> {
-    if let Some(workspace) = legacy_workspace(db, scope_id).await? {
+    if let Some(workspace) = bound_workspace(db, scope_id).await? {
         return authz::read_epoch(db, workspace).await;
     }
     Revision::find_by_statement(Statement::from_sql_and_values(
@@ -221,7 +221,7 @@ pub async fn revision<C: ConnectionTrait>(db: &C, scope_id: Uuid) -> Result<i64,
     .map(|r| r.authz_revision)
     .ok_or_else(not_found)
 }
-/// A personal mounted audience is never a legacy rescue authority. Resolve only grants on the
+/// A personal mounted audience is never a workspace rescue authority. Resolve only grants on the
 /// requested object's in-scope ACL chain; never expose ancestors or siblings as navigation data.
 pub async fn authorize<C: ConnectionTrait>(
     db: &C,
@@ -328,9 +328,9 @@ pub async fn authorize<C: ConnectionTrait>(
 /// Stable lock order: audience workspace fences sorted by UUID, then personal scope fence,
 /// then object rows/document heads.
 ///
-/// Legacy writes still lock their original workspace row. Membership writers synchronously advance those audience rows in their existing transaction.
+/// Workspace writes still lock their original workspace row. Membership writers synchronously advance those audience rows in their existing transaction.
 pub async fn fence(tx: &DatabaseTransaction, proof: &AuthorizationProof) -> Result<(), ApiError> {
-    if let Some(workspace) = legacy_workspace(tx, proof.scope_id).await? {
+    if let Some(workspace) = bound_workspace(tx, proof.scope_id).await? {
         return authz::fence_epoch_for_share(tx, workspace, proof.revision).await;
     }
     for (workspace, epoch) in &proof.audience_revisions {
@@ -358,7 +358,7 @@ pub async fn lock_change(tx: &DatabaseTransaction, proof: &AuthorizationProof) -
     for (workspace, epoch) in &proof.audience_revisions {
         authz::fence_epoch_for_share(tx, *workspace, *epoch).await?;
     }
-    if let Some(workspace) = legacy_workspace(tx, proof.scope_id).await? {
+    if let Some(workspace) = bound_workspace(tx, proof.scope_id).await? {
         let current = authz::lock_epoch_for_update(tx, workspace).await?;
         if current != proof.revision {
             return Err(ApiError::policy_rejected("authorization changed"));
@@ -390,7 +390,7 @@ pub async fn proof_current<C: ConnectionTrait>(db: &C, proof: &AuthorizationProo
     Ok(true)
 }
 pub async fn advance_revision<C: ConnectionTrait>(tx: &C, scope_id: Uuid) -> Result<i64, ApiError> {
-    if let Some(workspace) = legacy_workspace(tx, scope_id).await? {
+    if let Some(workspace) = bound_workspace(tx, scope_id).await? {
         return authz::advance_epoch(tx, workspace).await;
     }
     Revision::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,r"
@@ -653,7 +653,7 @@ pub async fn create_personal(db: &DatabaseConnection, user: Uuid, input: CreateI
     }
     if !matches!(input.object_type.as_str(), "page" | "navigator" | "collection") || input.project_id.is_some() {
         return Err(ApiError::invalid_update(
-            "personal creation requires page/navigator/collection with no legacy project",
+            "personal creation requires page/navigator/collection with no workspace project",
         ));
     }
     if input.idempotency_key.trim().is_empty() || input.idempotency_key.len() > 128 || input.title.chars().count() > 500
@@ -670,7 +670,7 @@ pub async fn create_personal(db: &DatabaseConnection, user: Uuid, input: CreateI
             .ok_or_else(not_found)?
     };
     let proof = authorize(db, parent, user, PermissionLevel::Edit).await?;
-    if proof.scope_id != input.scope_id || legacy_workspace(db, proof.scope_id).await?.is_some() {
+    if proof.scope_id != input.scope_id || bound_workspace(db, proof.scope_id).await?.is_some() {
         return Err(not_found());
     }
     let mut body = json!({"operation":"create","object_type":input.object_type,"parent_object_id":parent,"title":input.title.trim(),"message":input.message,"initial_fields":input.initial_fields,"initial_view":input.initial_view,"editor_model":input.editor_model});
@@ -796,14 +796,16 @@ pub async fn fence_many_with_workspaces(
             }
         }
     }
-    let mut legacy_scopes = std::collections::BTreeSet::new();
+    let mut workspace_scopes = std::collections::BTreeSet::new();
     for (scope, revision) in &scopes {
-        if let Some(workspace) = legacy_workspace(tx, *scope).await? {
-            legacy_scopes.insert(*scope);
+        if let Some(workspace) = bound_workspace(tx, *scope).await? {
+            workspace_scopes.insert(*scope);
             if let Some(previous) = audiences.insert(workspace, *revision)
                 && previous != *revision
             {
-                return Err(ApiError::policy_rejected("legacy authority changed during preparation"));
+                return Err(ApiError::policy_rejected(
+                    "workspace authority changed during preparation",
+                ));
             }
         }
     }
@@ -811,7 +813,7 @@ pub async fn fence_many_with_workspaces(
         authz::fence_epoch_for_share(tx, audience, revision).await?;
     }
     for (scope, revision) in scopes {
-        if legacy_scopes.contains(&scope) {
+        if workspace_scopes.contains(&scope) {
             continue;
         }
         let current = Revision::find_by_statement(Statement::from_sql_and_values(

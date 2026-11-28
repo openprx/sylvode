@@ -1486,7 +1486,7 @@ mod flow_database_tests {
         Path(workspace): Path<Uuid>,
         Json(request): Json<CreateFlowObjectRequest>,
     ) -> Result<Response, ApiError> {
-        let scope = crate::flow::scope::legacy_scope(&state.0.db, workspace).await?;
+        let scope = crate::flow::scope::workspace_scope(&state.0.db, workspace).await?;
         post_flow_v2_object(
             state,
             claims,
@@ -1513,7 +1513,7 @@ mod flow_database_tests {
         Path(workspace): Path<Uuid>,
         super::FlowQuery(query): super::FlowQuery<ListFlowObjectsQuery>,
     ) -> Result<Response, ApiError> {
-        let scope = crate::flow::scope::legacy_scope(&state.0.db, workspace).await?;
+        let scope = crate::flow::scope::workspace_scope(&state.0.db, workspace).await?;
         Ok(get_flow_v2_objects(
             state,
             claims,

@@ -28,7 +28,7 @@ export function conversionAvailability(
 			return { mode: 'same_workspace', workspaceId: object.workspace_id };
 		return { mode: 'unavailable' };
 	}
-	// Older genuine legacy DTOs retain their existing workflow. Missing personal metadata fails closed.
+	// Older workspace DTOs retain their existing workflow. Missing personal metadata fails closed.
 	if (
 		object.supported_forms_conversion === undefined &&
 		object.forms_conversion_destination_mode === undefined &&

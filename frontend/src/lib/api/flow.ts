@@ -493,7 +493,7 @@ export interface FlowPackageImportReport {
 	package_sha256: string;
 	source_scope_id?: string | null;
 	target_scope_id: string;
-	/** Historical provenance and legacy integration only; never fabricated for personal jobs. */
+	/** Historical provenance and workspace integration only; never fabricated for personal jobs. */
 	source_workspace_id?: string | null;
 	target_workspace_id?: string | null;
 	status: string;
@@ -1289,7 +1289,7 @@ export interface FlowCapabilities {
 	block_transfers_enabled: boolean;
 	portable_page_packages_enabled: boolean;
 	portable_graph_packages_enabled: boolean;
-	scope_native_legacy: boolean;
+	workspace_editor_initialization: boolean;
 	personal_provisioning: boolean;
 	personal_writes: boolean;
 	external_mounts: boolean;
@@ -1301,7 +1301,7 @@ export interface FlowCapabilities {
 export interface FlowScopeHome {
 	scope: {
 		id: string;
-		kind: 'personal' | 'legacy_managed';
+		kind: 'personal' | 'workspace';
 		owner_user_id?: string;
 		lifecycle_status: string;
 	};
