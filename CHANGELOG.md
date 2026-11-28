@@ -18,6 +18,11 @@ name.
   fresh lock. `trust-client.sh` passes only the re-encoded first certificate to `security` and
   `certutil`. A non-private `config-hint --name` warns again after names were validated. The
   residual for URI and e-mail names is documented in docs/install.md.
+- **`trust-client.sh` reads the CA file once.** The file is snapshotted once, re-encoded, and every
+  check, fingerprint and trust-store call uses the re-encoded copy. A file with more than one PEM
+  object of any label is refused. The printed `NODE_EXTRA_CA_CERTS` and `SSL_CERT_FILE` hints now
+  name a placeholder path and show how to make a verified copy. `sylvode-tls.sh` exits 6 when it
+  cannot write its pid into the lock.
 
 ### Removed
 

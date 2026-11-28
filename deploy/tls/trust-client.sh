@@ -207,39 +207,52 @@ case $OPENSSL in
 esac
 
 [ -f "$CA_FILE" ] || die 2 "not a file: $(safe_str "$CA_FILE")"
-# A CA certificate from sylvode-tls.sh is under 1 KiB: cap the input before anything parses it.
-_size=$(wc -c <"$CA_FILE")
-[ "$((_size + 0))" -le 65536 ] || die 3 "$(safe_str "$CA_FILE") is larger than 64 KiB; refusing it"
-if grep -q 'PRIVATE KEY' "$CA_FILE"; then
-  die 3 "refusing $(safe_str "$CA_FILE"): it contains a private key; pass the CA certificate only"
-fi
-_certs=$(grep -c -e '-----BEGIN CERTIFICATE-----' "$CA_FILE")
-[ "$_certs" = 1 ] || die 3 "$(safe_str "$CA_FILE") must hold exactly one PEM certificate (found $_certs)"
-"$OPENSSL" x509 -in "$CA_FILE" -noout >/dev/null 2>&1 || die 3 "$(safe_str "$CA_FILE") is not a valid PEM certificate"
-_der=$("$OPENSSL" x509 -in "$CA_FILE" -outform DER | wc -c)
-[ "$((_der + 0))" -le 16384 ] || die 3 "the certificate in $(safe_str "$CA_FILE") is larger than 16 KiB (DER); refusing it"
-
-# Every checked property above belongs to the first PEM object. Re-encode that one certificate into
-# a private directory and hand only the re-encoded file to the system tools, so nothing else in
-# CA_FILE (a second object, text around the certificate) can reach a trust store.
+# CA_FILE is read exactly once, into a snapshot in a private directory. Every later check, the
+# fingerprints, the structure parse, the display and the trust tools use the re-encoded copy of that
+# snapshot only, so swapping CA_FILE while this runs changes nothing. The read is capped at 64 KiB + 1.
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/sylvode-trust.XXXXXX") || die 1 "cannot create a temporary directory"
 trap 'rm -rf "$WORK_DIR"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
 chmod 0700 "$WORK_DIR" || die 1 "cannot set the mode of the temporary directory"
+RAW_FILE=$WORK_DIR/raw.in
+head -c 65537 "$CA_FILE" >"$RAW_FILE" || die 2 "cannot read $(safe_str "$CA_FILE")"
+_size=$(wc -c <"$RAW_FILE")
+# A CA certificate from sylvode-tls.sh is under 1 KiB: cap the input before anything parses it.
+[ "$((_size + 0))" -le 65536 ] || die 3 "$(safe_str "$CA_FILE") is larger than 64 KiB; refusing it"
+if grep -q 'PRIVATE KEY' "$RAW_FILE"; then
+  die 3 "refusing $(safe_str "$CA_FILE"): it contains a private key; pass the CA certificate only"
+fi
+# One PEM object of any label: a second object (CERTIFICATE, X509 CERTIFICATE, TRUSTED CERTIFICATE, ...)
+# would be read by OpenSSL-based programs that the printed hints point at.
+_objs=$(grep -c -e '-----BEGIN' "$RAW_FILE")
+[ "$_objs" = 1 ] || die 3 "$(safe_str "$CA_FILE") must hold exactly one PEM object (found $_objs)"
+"$OPENSSL" x509 -in "$RAW_FILE" -noout >/dev/null 2>&1 || die 3 "$(safe_str "$CA_FILE") is not a valid PEM certificate"
 PEM_FILE=$WORK_DIR/ca.pem
-"$OPENSSL" x509 -in "$CA_FILE" -out "$PEM_FILE" || die 1 "cannot re-encode the certificate"
+"$OPENSSL" x509 -in "$RAW_FILE" -out "$PEM_FILE" || die 1 "cannot re-encode the certificate"
+rm -f "$RAW_FILE"
 [ "$(grep -c -e '-----BEGIN' "$PEM_FILE")" = 1 ] || die 1 "the re-encoded certificate is not a single PEM object"
+_der=$("$OPENSSL" x509 -in "$PEM_FILE" -outform DER | wc -c)
+[ "$((_der + 0))" -le 16384 ] || die 3 "the certificate in $(safe_str "$CA_FILE") is larger than 16 KiB (DER); refusing it"
 
-FP=$("$OPENSSL" x509 -in "$CA_FILE" -noout -fingerprint -sha256 | sed -n 's/^.*Fingerprint=//p' | head -n 1 | tr 'a-f' 'A-F')
+FP=$("$OPENSSL" x509 -in "$PEM_FILE" -noout -fingerprint -sha256 | sed -n 's/^.*Fingerprint=//p' | head -n 1 | tr 'a-f' 'A-F')
 [ -n "$FP" ] || die 1 "cannot compute the SHA-256 fingerprint"
 FP16=$(printf '%s' "$FP" | tr -d ':' | tr 'A-F' 'a-f' | cut -c1-16)
 LABEL=sylvode-ca-$FP16
 # SHA-1 is only a lookup key for the macOS keychain, never a trust decision.
-SHA1=$("$OPENSSL" x509 -in "$CA_FILE" -noout -fingerprint -sha1 | sed -n 's/^.*Fingerprint=//p' | head -n 1 | tr -d ':' | tr 'a-f' 'A-F')
+SHA1=$("$OPENSSL" x509 -in "$PEM_FILE" -noout -fingerprint -sha1 | sed -n 's/^.*Fingerprint=//p' | head -n 1 | tr -d ':' | tr 'a-f' 'A-F')
 
 # ---------------------------------------------------------------------------------------------
+# Hints never point at CA_FILE (it may hold anything). HINT_COPY is a placeholder for a copy that the
+# operator keeps; the re-encoded file in the temporary directory is removed on exit.
+HINT_COPY=/path/to/sylvode-ca.pem
+
+print_copy_hint() {
+  printf '  %s stands for a copy you keep of the verified certificate; create it with: %s x509 -in %s -out %s, then compare its SHA-256 fingerprint with %s.\n' \
+    "$HINT_COPY" "$OPENSSL" "$(safe_str "$CA_FILE")" "$HINT_COPY" "$FP"
+}
+
 # Structural certificate parse (SD-17). The extensions are read from the DER encoding, never
 # from free text, because the subject and the names can hold any characters.
 # ---------------------------------------------------------------------------------------------
@@ -438,7 +451,7 @@ parse_nc() {
 }
 
 parse_ca_der() {
-  DER_HEX=$("$OPENSSL" x509 -in "$CA_FILE" -outform DER | od -An -v -tx1 | tr -d ' \n')
+  DER_HEX=$("$OPENSSL" x509 -in "$PEM_FILE" -outform DER | od -An -v -tx1 | tr -d ' \n')
   [ -n "$DER_HEX" ] || bad_der
   REST=$DER_HEX
   der_get 30
@@ -498,9 +511,9 @@ parse_ca_der() {
 
 show_certificate() {
   printf 'Certificate: %s\n' "$(safe_str "$CA_FILE")"
-  printf 'Subject:     %s\n' "$("$OPENSSL" x509 -in "$CA_FILE" -noout -subject -nameopt RFC2253 | sed -n 's/^subject= *//p' | sed 's/,/, /g' | tr -c 'A-Za-z0-9._:/@=,+ -' '?')"
-  printf 'Valid from:  %s\n' "$("$OPENSSL" x509 -in "$CA_FILE" -noout -startdate | sed -n 's/^notBefore=//p')"
-  printf 'Valid until: %s\n' "$("$OPENSSL" x509 -in "$CA_FILE" -noout -enddate | sed -n 's/^notAfter=//p')"
+  printf 'Subject:     %s\n' "$("$OPENSSL" x509 -in "$PEM_FILE" -noout -subject -nameopt RFC2253 | sed -n 's/^subject= *//p' | sed 's/,/, /g' | tr -c 'A-Za-z0-9._:/@=,+ -' '?')"
+  printf 'Valid from:  %s\n' "$("$OPENSSL" x509 -in "$PEM_FILE" -noout -startdate | sed -n 's/^notBefore=//p')"
+  printf 'Valid until: %s\n' "$("$OPENSSL" x509 -in "$PEM_FILE" -noout -enddate | sed -n 's/^notAfter=//p')"
   printf 'SHA-256:     %s\n' "$FP"
   printf 'This CA may vouch for these names only:\n'
   printf '  Permitted:\n%s' "$PERM_LINES"
@@ -575,8 +588,9 @@ mac_install() {
   say_done install installed "$LABEL in $_kc"
   printf 'Hints:\n'
   printf '  Firefox: set security.enterprise_roots.enabled to true in about:config if it is not already (the default in current releases).\n'
-  printf '  Node.js: NODE_EXTRA_CA_CERTS=%s (read at start-up), or NODE_USE_SYSTEM_CA=1 on recent releases.\n' "$CA_FILE"
-  printf '  Python requests/httpx: REQUESTS_CA_BUNDLE or SSL_CERT_FILE pointing at %s.\n' "$CA_FILE"
+  printf '  Node.js: NODE_EXTRA_CA_CERTS=%s (read at start-up), or NODE_USE_SYSTEM_CA=1 on recent releases.\n' "$HINT_COPY"
+  printf '  Python requests/httpx: REQUESTS_CA_BUNDLE or SSL_CERT_FILE pointing at %s.\n' "$HINT_COPY"
+  print_copy_hint
 }
 
 mac_remove() {
@@ -674,7 +688,6 @@ linux_install() {
       run_or_die certutil -A -d "sql:$_d" -n "$LABEL" -t "C,," -i "$PEM_FILE"
       say_done install installed "$LABEL in $_d"
     done
-    HINT_CA=$CA_FILE
   fi
   printf 'Hints:\n'
   if [ "$TARGET" = system ]; then
@@ -683,6 +696,7 @@ linux_install() {
   printf '  Firefox: if it does not use the NSS database, set security.enterprise_roots.enabled to true in about:config.\n'
   printf '  Node.js: NODE_EXTRA_CA_CERTS=%s (read at start-up), or NODE_USE_SYSTEM_CA=1 on recent releases.\n' "$HINT_CA"
   printf '  Python requests/httpx: REQUESTS_CA_BUNDLE or SSL_CERT_FILE pointing at the system bundle or %s.\n' "$HINT_CA"
+  [ "$HINT_CA" = "$DEST" ] || print_copy_hint
 }
 
 linux_remove() {
@@ -744,7 +758,7 @@ EOF2
 # Main
 # ---------------------------------------------------------------------------------------------
 
-HINT_CA=$CA_FILE
+HINT_CA=$HINT_COPY
 
 case $ACTION in
   install)
