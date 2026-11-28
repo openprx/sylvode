@@ -200,19 +200,3 @@ pub async fn require_layout_viewable(
         .await
         .map_err(|_| denied())
 }
-
-/// The draft-path form of [`require_layout_viewable`]: judges the layout a draft names by id; an
-/// id that does not resolve is left to the draft's own review report.
-pub async fn require_layout_id_viewable(
-    state: &AppState,
-    who: &Who,
-    site: &SiteRow,
-    layout_id: Uuid,
-) -> Result<(), ApiError> {
-    match store::load_layout(&state.db, layout_id).await? {
-        Some(layout) if layout.workspace_id == site.workspace_id => {
-            require_layout_viewable(state, who, site, &layout).await
-        }
-        _ => Ok(()),
-    }
-}

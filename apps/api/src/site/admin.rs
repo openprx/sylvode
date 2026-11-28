@@ -17,8 +17,8 @@ use sv_layout::Validated;
 use uuid::Uuid;
 
 use super::access::{
-    Who, admin_site, page_writable_site, readable_site, require_layout_id_viewable, require_layout_viewable,
-    require_project_read, require_project_write,
+    Who, admin_site, page_writable_site, readable_site, require_layout_viewable, require_project_read,
+    require_project_write,
 };
 use super::drafts::{PageTarget, submit};
 use super::layouts::{binding_keys, validate_site_layout};
@@ -422,6 +422,14 @@ async fn check_page_layout_as(
     Ok(layout)
 }
 
+/// The submit-time check of a layout a draft names: missing, out of the site's reach, or a form
+/// layout the caller may not view all answer the same `not_found`, before any draft exists. The
+/// spec is left to the draft review, which also reports a layout deleted after submit.
+async fn require_draft_layout(state: &AppState, who: &Who, site: &SiteRow, layout_id: Uuid) -> Result<(), ApiError> {
+    let layout = load_page_layout(&state.db, site, layout_id).await?;
+    require_layout_viewable(state, who, site, &layout).await
+}
+
 /// Stores a layout spec at the site's scope (a new layout, or the page's own site layout).
 pub(super) async fn save_site_layout(
     tx: &sea_orm::DatabaseTransaction,
@@ -467,7 +475,7 @@ pub async fn create_page(
     if drafted(&tx, &who, &site).await? {
         drop(tx);
         if let Some(layout_id) = req.layout_id {
-            require_layout_id_viewable(&state, &who, &site, layout_id).await?;
+            require_draft_layout(&state, &who, &site, layout_id).await?;
         }
         let target = PageTarget::create(site.id);
         let spec = page_spec(
@@ -579,7 +587,7 @@ pub async fn update_page(
             ));
         }
         if let Some(layout_id) = req.layout_id {
-            require_layout_id_viewable(&state, &who, &site, layout_id).await?;
+            require_draft_layout(&state, &who, &site, layout_id).await?;
         }
         // Without a layout change the draft names the page's current layout, so the reviewer sees it.
         let layout_id = req
