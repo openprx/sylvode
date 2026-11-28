@@ -286,25 +286,34 @@ pub async fn get_flow_v2_objects(
         .map(Uuid::parse_str)
         .transpose()
         .map_err(|_| ApiError::invalid_update("invalid object cursor"))?;
-    let rows=ObjectId::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT o.id FROM flow_objects o JOIN flow_object_projections p ON p.object_id=o.id WHERE o.scope_id=$1 AND NOT flow_is_system_navigator_root(o.object_type,o.parent_id,o.governance_metadata) AND ($2::uuid IS NULL OR o.parent_id=$2) AND ($3::uuid IS NULL OR o.id>$3) AND ($4 OR o.lifecycle_status='active') AND ($5::text IS NULL OR o.object_type=$5) AND ($6::uuid IS NULL OR o.project_id=$6) AND ($7::text IS NULL OR p.title ILIKE '%'||$7||'%') AND (NOT $9::boolean OR o.project_id IS NULL) ORDER BY o.id LIMIT $8",vec![scope_id.into(),params.parent_id.into(),cursor.into(),params.include_archived.into(),params.object_type.into(),params.project_id.into(),params.q.into(),10001_i64.into(),params.unprojected.into()])).all(&state.db).await?;
+    let rows=ObjectId::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT o.id FROM flow_objects o JOIN flow_object_projections p ON p.object_id=o.id WHERE o.scope_id=$1 AND NOT flow_is_system_navigator_root(o.object_type,o.parent_id,o.governance_metadata) AND ($2::uuid IS NULL OR o.parent_id=$2) AND ($3::uuid IS NULL OR o.id>$3) AND ($4 OR o.lifecycle_status='active') AND ($5::text IS NULL OR o.object_type=$5) AND ($6::uuid IS NULL OR o.project_id=$6) AND ($7::text IS NULL OR p.title ILIKE '%'||$7||'%') AND (NOT $9::boolean OR o.project_id IS NULL) ORDER BY o.id LIMIT $8",vec![scope_id.into(),params.parent_id.into(),cursor.into(),params.include_archived.into(),params.object_type.into(),params.project_id.into(),params.q.into(),1001_i64.into(),params.unprojected.into()])).all(&state.db).await?;
     let mut items = Vec::new();
     let mut next = None;
-    let scanned = rows.len();
     let mut last_scanned = None;
+    let mut examined = 0_u64;
     for row in rows {
         if items.len() >= usize::try_from(limit).unwrap_or(100) {
             next = last_scanned.map(|id: Uuid| id.to_string());
             break;
         }
         last_scanned = Some(row.id);
+        // `limits-v1.md`: candidates are counted before policy filtering, and a page that is still
+        // short after `authorized_scan_rows_max` candidates is `limit_exceeded`/`scan_budget`.
+        examined += 1;
+        if examined > crate::flow::collab::limits::AUTHORIZED_SCAN_ROWS_MAX {
+            return Err(ApiError::limit_exceeded(
+                "authorized scan budget exceeded before enough policy-visible rows were found",
+                "scan_budget",
+                Some(json!(crate::flow::collab::limits::AUTHORIZED_SCAN_ROWS_MAX)),
+                Some(json!(crate::flow::collab::limits::AUTHORIZED_SCAN_ROWS_MAX)),
+                None,
+            ));
+        }
         match scope::object_view(&state.db, row.id, actor).await {
             Ok(view) => items.push(view),
             Err(err) if err.kind() == crate::error::ApiErrorKind::NotFound => {}
             Err(err) => return Err(err),
         }
-    }
-    if next.is_none() && scanned >= 10001 {
-        next = last_scanned.map(|id| id.to_string());
     }
     Ok(ApiResponse::success(json!({"items":items,"next_cursor":next})))
 }

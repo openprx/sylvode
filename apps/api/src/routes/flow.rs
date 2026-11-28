@@ -2601,6 +2601,9 @@ mod flow_database_tests {
     const DEPTH_32_WARMUP_ROUNDS: usize = 5;
     const DEPTH_32_MEASURED_ROUNDS: usize = 30;
     const DEPTH_32_MIN_SAMPLES: usize = 30;
+    /// One content command evaluates the depth-32 chain twice: the permission check inside the
+    /// command, and the `permitted_actions` proof of the object view returned in the v2 response.
+    const DEPTH_32_EVALUATIONS_PER_COMMAND: usize = 2;
     const FROZEN_LOCK_HOLD_P95_MS_MAX: f64 = 25.0;
     const FROZEN_LOCK_HOLD_SINGLE_MS_MAX: f64 = 100.0;
 
@@ -2754,7 +2757,10 @@ mod flow_database_tests {
                 }
                 let warmup_evaluation_samples = evaluation_probe.take_samples();
                 let warmup_lock_hold_samples = locked_phase_probe.take_samples();
-                assert_eq!(warmup_evaluation_samples.len(), DEPTH_32_WARMUP_ROUNDS);
+                assert_eq!(
+                    warmup_evaluation_samples.len(),
+                    DEPTH_32_WARMUP_ROUNDS * DEPTH_32_EVALUATIONS_PER_COMMAND
+                );
                 assert_eq!(warmup_lock_hold_samples.len(), DEPTH_32_WARMUP_ROUNDS);
 
                 let mut end_to_end_samples_ms = Vec::with_capacity(DEPTH_32_MEASURED_ROUNDS);
@@ -2822,7 +2828,10 @@ mod flow_database_tests {
             "depth-32 lock hold produced only {} samples; at least {DEPTH_32_MIN_SAMPLES} are required",
             lock_hold_samples_ms.len()
         );
-        assert_eq!(evaluation_samples_ms.len(), DEPTH_32_MEASURED_ROUNDS);
+        assert_eq!(
+            evaluation_samples_ms.len(),
+            DEPTH_32_MEASURED_ROUNDS * DEPTH_32_EVALUATIONS_PER_COMMAND
+        );
         // One sample per measured command is required. A lock timeout that the write path
         // resubmits records an additional sample on this same task; an exact count fails the
         // parallel suite whenever the shared CI database stalls once (observed 31 against 30).
@@ -4014,7 +4023,9 @@ mod flow_database_tests {
                     (c.relname IN ('flow_conversion_previews','flow_conversion_jobs','flow_object_lineage') \
                        AND p.proname='flow_conversion_bind_source_scope') OR \
                     (c.relname IN ('flow_conversion_previews','flow_conversion_jobs') \
-                       AND p.proname='flow_conversion_bind_request_key')))",
+                       AND p.proname='flow_conversion_bind_request_key') OR \
+                    (c.relname='form_records' AND t.tgname='trg_sv_site_record_guard' \
+                       AND p.proname='sv_site_record_guard')))",
             ))
             .await
             .expect("pg_trigger probe")

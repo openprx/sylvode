@@ -1223,12 +1223,14 @@ mod collab_database_tests {
 
         // Tab A and tab B: two independent WebSocket connections open on the exact same document,
         // exactly like two browser tabs.
-        let client_a = "two-tabs-client-a";
+        let client_a_owned = wire_client("two-tabs-client-a");
+        let client_a = client_a_owned.as_str();
         let ticket_a = issue_ticket(addr, &token, object_id, document_id, client_a).await;
         let mut ws_a = connect(addr, &ticket_a, client_a).await;
         let snapshot_a_b64 = hello_open_snapshot(&mut ws_a, client_a, document_id).await;
 
-        let client_b = "two-tabs-client-b";
+        let client_b_owned = wire_client("two-tabs-client-b");
+        let client_b = client_b_owned.as_str();
         let ticket_b = issue_ticket(addr, &token, object_id, document_id, client_b).await;
         let mut ws_b = connect(addr, &ticket_b, client_b).await;
         let snapshot_b_b64 = hello_open_snapshot(&mut ws_b, client_b, document_id).await;

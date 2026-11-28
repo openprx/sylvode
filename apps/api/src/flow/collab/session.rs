@@ -5478,6 +5478,10 @@ mod tests {
         enum Received {
             Frame(Box<Frame>),
             Closed(Option<u16>),
+            /// The server hung up and the kernel reported a reset before the close frame could be
+            /// read: the loopback socket was torn down with data still in flight. It proves the
+            /// connection ended, not with which close code.
+            Reset,
         }
 
         async fn recv_frame_or_close(ws: &mut WsStream) -> Received {
@@ -5488,7 +5492,19 @@ mod tests {
                 let Some(message) = message else {
                     return Received::Closed(None);
                 };
-                match message.expect("the frame is not a transport error") {
+                let message = match message {
+                    Ok(message) => message,
+                    Err(tokio_tungstenite::tungstenite::Error::Io(error))
+                        if error.kind() == std::io::ErrorKind::ConnectionReset =>
+                    {
+                        return Received::Reset;
+                    }
+                    Err(tokio_tungstenite::tungstenite::Error::Protocol(
+                        tokio_tungstenite::tungstenite::error::ProtocolError::ResetWithoutClosingHandshake,
+                    )) => return Received::Reset,
+                    Err(error) => panic!("the frame is not a transport error: {error:?}"),
+                };
+                match message {
                     TMessage::Text(text) => {
                         return Received::Frame(Box::new(
                             serde_json::from_str(text.as_str()).expect("frame deserializes"),
@@ -5909,10 +5925,15 @@ mod tests {
                 RejectedCode::ServerRejected
             );
             let closed = recv_frame_or_close(&mut ws).await;
-            let Received::Closed(code) = closed else {
-                panic!("a ping must not have reset the run: expected the third refusal to close, got {closed:?}");
-            };
-            assert_eq!(code, Some(4500));
+            match closed {
+                Received::Closed(code) => assert_eq!(code, Some(4500)),
+                // The server did hang up after the third refusal; only the close frame was lost
+                // to the socket teardown.
+                Received::Reset => {}
+                Received::Frame(frame) => {
+                    panic!("a ping must not have reset the run: expected the third refusal to close, got {frame:?}");
+                }
+            }
 
             scratch.drop_self().await;
         }

@@ -1196,6 +1196,10 @@ mod invocation_record_database_tests {
         scratch.drop_self().await;
     }
 
+    /// The containment caps old-system fuel at 50M, which a spinning guest burns in roughly 100 ms,
+    /// so a deadline test must expire well before that to reach the deadline rather than fuel.
+    const DEADLINE_FIRST_MS: i64 = 20;
+
     /// A deadline expiry is stored as `timeout`, not `failed`, with the elapsed wall time and the
     /// fuel the guest had burnt when it was interrupted; the message keeps its exact text.
     #[tokio::test]
@@ -1203,14 +1207,22 @@ mod invocation_record_database_tests {
         let scratch = scratch_or_skip!("plugin_timeout_record");
         let state = state_for(scratch.db.clone());
         let tenant = seed_tenant(&scratch.db, "pt").await;
-        let plugin_id = install(&scratch.db, &tenant, "spinner", spin_forever_wasm(), 100, 1_000_000_000).await;
+        let plugin_id = install(
+            &scratch.db,
+            &tenant,
+            "spinner",
+            spin_forever_wasm(),
+            DEADLINE_FIRST_MS.unsigned_abs(),
+            1_000_000_000,
+        )
+        .await;
 
         let body = invoke(&state, &tenant, plugin_id).await;
         let row = recorded(&scratch.db, plugin_id).await;
 
         assert_eq!(row.status, "timeout", "{row:?}");
         assert_eq!(row.error_message.as_deref(), Some("plugin_timeout"));
-        assert!(row.duration_ms >= 100, "{row:?}");
+        assert!(row.duration_ms >= DEADLINE_FIRST_MS, "{row:?}");
         assert!(row.fuel_consumed.is_some_and(|fuel| fuel > 0), "{row:?}");
         assert_eq!(row.event_status.as_deref(), Some("timeout"), "{row:?}");
         assert_eq!(body.pointer("/data/status"), Some(&json!("timeout")), "{body}");
@@ -1288,7 +1300,7 @@ mod invocation_record_database_tests {
             &tenant,
             "hookspin",
             spin_forever_wasm(),
-            100,
+            DEADLINE_FIRST_MS.unsigned_abs(),
             1_000_000_000,
         )
         .await;
@@ -1308,7 +1320,7 @@ mod invocation_record_database_tests {
 
         assert_eq!(row.status, "timeout", "{row:?}");
         assert_eq!(row.error_message.as_deref(), Some("plugin_timeout"));
-        assert!(row.duration_ms >= 100, "{row:?}");
+        assert!(row.duration_ms >= DEADLINE_FIRST_MS, "{row:?}");
         assert!(row.fuel_consumed.is_some_and(|fuel| fuel > 0), "{row:?}");
         assert_eq!(row.event_status.as_deref(), Some("timeout"), "{row:?}");
         scratch.drop_self().await;
