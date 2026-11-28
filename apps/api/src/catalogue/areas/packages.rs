@@ -7,7 +7,7 @@
 //! submission route (`package-uploads`) is for bots only and stores nothing as a package: it keeps
 //! a verified upload as a `package_upload` draft that a person approves (contract C3 section 4.4,
 //! LEAD-DECISIONS M11-UPLOAD); the handler also demands `write` and a bot of the whole workspace.
-//! The index read routes (`market/index`, contract M15) follow the same rule as the package reads; their
+//! The search route (`market/search`) follows the same rule as the package list. The index read routes (`market/index`, contract M15) follow the same rule as the package reads; their
 //! image route is for a console session. Upload, delete and the publisher-key routes are behind the JWT middleware, which no bot token
 //! passes.
 
@@ -19,6 +19,7 @@ use crate::catalogue::types::dsl::{
 pub static ENTRIES: &[Entry] = &[
     bot("packages.packages.read", Get, "/api/v1/workspaces/{workspace_id}/packages/{digest}", Workspace, Read),
     bot("packages.packages.read/list", Get, "/api/v1/workspaces/{workspace_id}/packages", Workspace, Read),
+    bot("market.packages.read/search", Get, "/api/v1/workspaces/{workspace_id}/market/search", Workspace, Read),
     bot("packages.package_uploads.create", Post, "/api/v1/workspaces/{workspace_id}/package-uploads", Workspace, Write),
     console("packages.packages.create", Post, "/api/v1/workspaces/{workspace_id}/packages", WorkspaceAdmin, Write),
     console("packages.packages.delete", Delete, "/api/v1/workspaces/{workspace_id}/packages/{digest}", WorkspaceAdmin, Destructive),
@@ -42,7 +43,7 @@ mod tests {
     fn the_classes_of_the_area() {
         assert_eq!(
             bot_class_counts(ENTRIES),
-            BTreeMap::from([("refused", 6)]),
+            BTreeMap::from([("refused", 7)]),
             "the classes of the packages routes changed"
         );
     }

@@ -21,6 +21,7 @@ use super::{
 };
 use crate::{
     error::ApiError,
+    extensions::install::validate::capability_info,
     middleware::bot_auth::{BotAuthContext, BotPermission, ensure_bot_permission},
     response::{ApiResponse, PageQuery, PaginatedData},
 };
@@ -371,6 +372,26 @@ pub struct ListQuery {
     per_page: Option<i64>,
 }
 
+/// Validates the `kind` and `q` filters of a package list or search and returns the trimmed text.
+pub(super) fn checked_filters<'a>(kind: Option<&str>, q: Option<&'a str>) -> Result<Option<&'a str>, ApiError> {
+    if let Some(kind) = kind
+        && !KINDS.contains(&kind)
+    {
+        return Err(ApiError::bad_request_coded(
+            "kind_invalid",
+            "kind must be one of: form-template, page-template, app, plugin",
+        ));
+    }
+    let q = q.map(str::trim).filter(|q| !q.is_empty());
+    if q.is_some_and(|q| q.chars().count() > 100) {
+        return Err(ApiError::bad_request_coded(
+            "q_invalid",
+            "q is limited to 100 characters",
+        ));
+    }
+    Ok(q)
+}
+
 /// `GET /api/v1/workspaces/{w}/packages?kind=&q=&page=`: built-in packages and the workspace's own.
 pub async fn list_packages(
     State(state): State<AppState>,
@@ -380,21 +401,7 @@ pub async fn list_packages(
     Query(query): Query<ListQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     Caller::resolve(&state, &claims, bot, workspace_id).await?;
-    if let Some(kind) = query.kind.as_deref()
-        && !KINDS.contains(&kind)
-    {
-        return Err(ApiError::bad_request_coded(
-            "kind_invalid",
-            "kind must be one of: form-template, page-template, app, plugin",
-        ));
-    }
-    let q = query.q.as_deref().map(str::trim).filter(|q| !q.is_empty());
-    if q.is_some_and(|q| q.chars().count() > 100) {
-        return Err(ApiError::bad_request_coded(
-            "q_invalid",
-            "q is limited to 100 characters",
-        ));
-    }
+    let q = checked_filters(query.kind.as_deref(), query.q.as_deref())?;
     let paging = PageQuery {
         page: query.page,
         per_page: query.per_page,
@@ -405,6 +412,7 @@ pub async fn list_packages(
         workspace_id,
         query.kind.as_deref(),
         q,
+        None,
         paging.per_page,
         paging.offset(),
     )
@@ -423,13 +431,18 @@ pub struct PackageDetail {
 }
 
 /// What the review needs from the manifest: requests with their bind hints, actions, rules,
-/// layouts, pages and the forms the package binds or creates. `risk` is filled from the
-/// capability catalogue once it exists.
+/// layouts, pages and the forms the package binds or creates. A request's `risk` is the catalogue
+/// risk of its capability id, `unknown` for an id the catalogue does not have (as the install
+/// review reports it).
 fn analysis(manifest: &Manifest) -> Value {
     let form_hint = |f: &Option<String>| f.as_deref().and_then(|f| f.strip_prefix("$bind.")).map(str::to_owned);
     json!({
         "requests": manifest.requests.iter()
-            .map(|r| json!({"id": r.id, "risk": null, "form_hint": form_hint(&r.form)}))
+            .map(|r| json!({
+                "id": r.id,
+                "risk": capability_info(&r.id).map_or("unknown", |info| info.risk),
+                "form_hint": form_hint(&r.form),
+            }))
             .collect::<Vec<_>>(),
         "actions": manifest.actions.iter().map(|a| json!({"name": a.name, "label": a.label})).collect::<Vec<_>>(),
         "rules": manifest.rules.iter()

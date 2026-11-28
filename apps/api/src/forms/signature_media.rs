@@ -194,6 +194,29 @@ fn decode_signature_data_url(value: &str) -> Result<Option<Vec<u8>>, ApiError> {
     Ok(Some(bytes))
 }
 
+/// `source` without `signature_media`: that key is server-owned (the audit trail of materialized
+/// signatures, which the retention cleanup acts on), so whatever a client sent under it is dropped.
+#[must_use]
+pub fn without_client_signature_media(mut source: Value) -> Value {
+    if let Some(object) = source.as_object_mut() {
+        object.remove("signature_media");
+    }
+    source
+}
+
+/// `source` with the stored record's `signature_media` carried over.
+///
+/// A record write replaces `source` but never the server-owned audit trail. `stored` is the `signature_media` value of the
+/// stored `source` (`None` when it has none); the client's copy is dropped first.
+#[must_use]
+pub fn with_stored_signature_media(source: Value, stored: Option<Value>) -> Value {
+    let mut source = without_client_signature_media(source);
+    if let (Some(object), Some(stored)) = (source.as_object_mut(), stored) {
+        object.insert("signature_media".to_string(), stored);
+    }
+    source
+}
+
 pub fn append_signature_audit_source(source: Value, audit_entries: Vec<Value>) -> Result<Value, ApiError> {
     if audit_entries.is_empty() {
         return Ok(source);

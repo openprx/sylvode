@@ -40,6 +40,54 @@ struct ScopeId {
     scope_id: Uuid,
 }
 
+/// The scope ids layouts of a project can sit in: the project itself and its forms. Read before
+/// the project is deleted (the forms go with it).
+///
+/// # Errors
+/// A database failure.
+pub async fn project_layout_scopes(tx: &DatabaseTransaction, project_id: Uuid) -> Result<Vec<Uuid>, ApiError> {
+    #[derive(FromQueryResult)]
+    struct FormId {
+        id: Uuid,
+    }
+    let mut ids: Vec<Uuid> = FormId::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT id FROM project_forms WHERE project_id = $1",
+        vec![project_id.into()],
+    ))
+    .all(tx)
+    .await?
+    .into_iter()
+    .map(|row| row.id)
+    .collect();
+    ids.push(project_id);
+    Ok(ids)
+}
+
+/// Deletes the layouts and placements of deleted project and form scopes.
+///
+/// Their scope ids have no foreign key. Runs after the project row is gone, so the pages of its sites no longer hold a
+/// layout; a layout some page still uses is left alone.
+///
+/// # Errors
+/// A database failure.
+pub async fn delete_layouts_of_scopes(tx: &DatabaseTransaction, scopes: &[Uuid]) -> Result<(), ApiError> {
+    run(
+        tx,
+        "DELETE FROM layout_placements WHERE scope_kind IN ('project','form') AND scope_id = ANY($1)",
+        vec![scopes.to_vec().into()],
+    )
+    .await?;
+    run(
+        tx,
+        "DELETE FROM layouts l WHERE l.scope_kind IN ('project','form') AND l.scope_id = ANY($1) \
+         AND NOT EXISTS (SELECT 1 FROM site_pages sp WHERE sp.layout_id = l.id)",
+        vec![scopes.to_vec().into()],
+    )
+    .await?;
+    Ok(())
+}
+
 /// Deletes everything that blocks the removal of `workspace_id`, then the workspace, then its
 /// legacy Flow scope. The caller owns the transaction and commits it.
 pub async fn delete_workspace_content(tx: &DatabaseTransaction, workspace_id: Uuid) -> Result<(), ApiError> {

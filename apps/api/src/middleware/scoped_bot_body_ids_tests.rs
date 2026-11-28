@@ -47,7 +47,7 @@ const CHECK_CALLS: &[&str] = &[
 const RECORD_VALUES: &str = "field values of the route's own form, normalized by forms/values.rs and stored: a relation value is an opaque snapshot (forms/types/reference.rs keeps it as sent; child rows are links, not values), attachment and image upload keys owned by another workspace are refused (routes/form.rs ensure_record_objects_claimable), a signature URL is reduced to a signatures/<safe name> key by signature_object_key_from_url, and forms/rules, forms/calculation.rs and forms/types run no SQL";
 
 /// Record `source` (create, update, child create and update).
-const RECORD_SOURCE: &str = "the record's provenance object: ensure_json_object plus ensure_no_site_origin (routes/form.rs) and stored; the only code that acts on it is the signature retention cleanup, which deletes only signatures/<safe name> keys (forms/signature_media.rs is_signature_object_key), whatever the entry says";
+const RECORD_SOURCE: &str = "the record's provenance object: ensure_json_object plus ensure_no_site_origin (routes/form.rs) and stored; `signature_media` is server-owned (a client's copy is dropped on create and update), and the signature retention cleanup deletes only signatures/<safe name> keys (forms/signature_media.rs is_signature_object_key)";
 
 /// Free JSON stored with a row and read back as data.
 const STORED_METADATA: &str = "stored in the row (form_record_links.metadata, record_comments.metadata) and read back as data; the only readers are the SELECTs in forms/relations.rs and forms/record_comments.rs, which resolve nothing";
@@ -462,7 +462,7 @@ const ACCOUNTED: &[(&str, &str, Account)] = &[
         "mentions",
         Exempt("user ids, not project objects (audit F5)"),
     ),
-    // Values the scan cannot see into (re-audit item 2); not yet read for embedded ids.
+    // Values the scan cannot see into (re-audit item 2); each reason names the code that reads the value.
     ("UpdateChildRecordRequest", "source", Exempt(RECORD_SOURCE)),
     ("UpdateChildRecordRequest", "values", Exempt(RECORD_VALUES)),
     ("UpdateRecordRequest", "source", Exempt(RECORD_SOURCE)),
@@ -499,14 +499,14 @@ const ACCOUNTED: &[(&str, &str, Account)] = &[
         "UpdateProjectResourceRequest",
         "locator",
         Exempt(
-            "stored in project_resources and echoed; nothing outside routes/project_type.rs reads the column, so no server fetch or lookup follows the value",
+            "stored in project_resources and echoed; only routes/project_type.rs and routes/context.rs (the project's own context, returned unchanged) read the column, so no server fetch or lookup follows the value",
         ),
     ),
     (
         "UpdateProjectResourceRequest",
         "permission_policy",
         Exempt(
-            "stored in project_resources and echoed; nothing outside routes/project_type.rs reads the column, so no server fetch or lookup follows the value",
+            "stored in project_resources and echoed; only routes/project_type.rs and routes/context.rs (the project's own context, returned unchanged) read the column, so no server fetch or lookup follows the value",
         ),
     ),
     (
@@ -660,14 +660,14 @@ const ACCOUNTED: &[(&str, &str, Account)] = &[
         "CreateProjectResourceRequest",
         "locator",
         Exempt(
-            "stored in project_resources and echoed; nothing outside routes/project_type.rs reads the column, so no server fetch or lookup follows the value",
+            "stored in project_resources and echoed; only routes/project_type.rs and routes/context.rs (the project's own context, returned unchanged) read the column, so no server fetch or lookup follows the value",
         ),
     ),
     (
         "CreateProjectResourceRequest",
         "permission_policy",
         Exempt(
-            "stored in project_resources and echoed; nothing outside routes/project_type.rs reads the column, so no server fetch or lookup follows the value",
+            "stored in project_resources and echoed; only routes/project_type.rs and routes/context.rs (the project's own context, returned unchanged) read the column, so no server fetch or lookup follows the value",
         ),
     ),
     (

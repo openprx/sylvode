@@ -1004,7 +1004,6 @@ impl Cx {
     }
 }
 
-/// `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){0,4}$`
 /// Columns of a grid as the renderers lay it out: `columns` 1..=4, 2 when absent.
 fn grid_columns_of(props: Option<&Value>) -> u64 {
     props
@@ -1014,6 +1013,7 @@ fn grid_columns_of(props: Option<&Value>) -> u64 {
         .unwrap_or(2)
 }
 
+/// `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){0,4}$`
 fn key_ok(k: &str) -> bool {
     let segs: Vec<&str> = k.split('.').collect();
     segs.len() <= 5

@@ -75,6 +75,14 @@ pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
                 middleware::auth::jwt_auth_middleware,
             )),
         )
+        // The search of the package store (contract C3 4.4), for members and bots of the whole workspace.
+        .route(
+            "/api/v1/workspaces/{workspace_id}/market/search",
+            get(packages::search::search_packages).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
         // The public plugin index (contract M15): reads from the cache, for members and bots of the
         // whole workspace; the image route is for a console session only.
         .route(

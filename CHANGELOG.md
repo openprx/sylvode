@@ -21,9 +21,26 @@ name.
   stopped for a version get the new disabled reason `index_revoked`. New read routes under
   `/api/v1/workspaces/{id}/market/index`: `sources`, `plugins` (search and filters), plugin detail,
   and an image route that serves cached icons and screenshots.
+- **Package store search.** `GET /api/v1/workspaces/{id}/market/search` searches the built-in
+  packages and the workspace's own by text, kind and layout slot, with paging, and marks each one
+  `installed` for the workspace or for a given `project_id` (the installation id only for owners and
+  admins). The console market uses it. The package detail now reports the catalogue risk of every
+  requested capability (`unknown` for an id the catalogue lacks), as the install review does.
+
+### Changed
+
+- A project delete now also removes the layouts and placements saved in the project and in its
+  forms (their scope ids have no foreign key); a layout a site page still uses is kept.
+- A record write keeps the stored signature audit trail of the record when it replaces `source`
+  (an update used to drop it, which left replaced signature files out of the retention cleanup).
 
 ### Security
 
+- **`source.signature_media` of a record is server-owned.** A client's copy is dropped on record
+  create and update, so a forged entry can no longer make the retention cleanup delete another
+  record's signature file.
+- A check-result approved effect that sets a work item's `assignee_id` now requires the assignee
+  to be a member of the project's workspace, as the issue routes do.
 - **MCP request bodies and requests have time limits.** A request body must arrive within 30 seconds
   (120 seconds for a body above 2 MiB, which holds one of two process-wide large-body permits); a
   request that runs out of time is answered `408` and frees its permit, so a client that trickles

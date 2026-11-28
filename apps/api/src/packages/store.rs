@@ -397,6 +397,7 @@ pub(super) async fn list_visible(
     workspace_id: Uuid,
     kind: Option<&str>,
     q: Option<&str>,
+    slot: Option<&str>,
     limit: i64,
     offset: i64,
 ) -> Result<(Vec<PackageRow>, i64), ApiError> {
@@ -405,13 +406,15 @@ pub(super) async fn list_visible(
         n: i64,
     }
     let filter = "(tier = 'builtin' OR workspace_id = $1) AND ($2::text IS NULL OR kind = $2) \
-                  AND ($3::text IS NULL OR package_key ILIKE $3 ESCAPE '\\' OR (manifest->'summary'->>'en') ILIKE $3 ESCAPE '\\')";
+                  AND ($3::text IS NULL OR package_key ILIKE $3 ESCAPE '\\' OR (manifest->'summary'->>'en') ILIKE $3 ESCAPE '\\') \
+                  AND ($4::text IS NULL OR manifest->'layouts' @> jsonb_build_array(jsonb_build_object('slots', jsonb_build_array($4::text))))";
     let pattern = q.map(like_pattern);
     let args = || -> Vec<SqlValue> {
         vec![
             workspace_id.into(),
             kind.map(str::to_owned).into(),
             pattern.clone().into(),
+            slot.map(str::to_owned).into(),
         ]
     };
     let total = Count::find_by_statement(stmt(
@@ -426,13 +429,55 @@ pub(super) async fn list_visible(
     values.push(offset.into());
     let rows = PackageRow::find_by_statement(stmt(
         &format!(
-            "SELECT {PACKAGE_COLUMNS} FROM packages WHERE {filter} ORDER BY created_at DESC, id LIMIT $4 OFFSET $5"
+            "SELECT {PACKAGE_COLUMNS} FROM packages WHERE {filter} ORDER BY created_at DESC, id LIMIT $5 OFFSET $6"
         ),
         values,
     ))
     .all(db)
     .await?;
     Ok((rows, total))
+}
+
+/// The live (not revoked) installations of `package_keys` at one scope, as `(package_key, id)`.
+/// `project_id` is the project of a project-scoped installation, `None` for the workspace scope.
+pub(super) async fn live_installations(
+    db: &impl ConnectionTrait,
+    workspace_id: Uuid,
+    project_id: Option<Uuid>,
+    package_keys: &[String],
+) -> Result<Vec<(String, Uuid)>, ApiError> {
+    #[derive(FromQueryResult)]
+    struct Live {
+        package_key: String,
+        id: Uuid,
+    }
+    let rows = Live::find_by_statement(stmt(
+        "SELECT package_key, id FROM installations WHERE workspace_id = $1 \
+         AND project_id IS NOT DISTINCT FROM $2 AND status <> 'revoked' AND package_key = ANY($3)",
+        vec![workspace_id.into(), project_id.into(), package_keys.to_vec().into()],
+    ))
+    .all(db)
+    .await?;
+    Ok(rows.into_iter().map(|row| (row.package_key, row.id)).collect())
+}
+
+/// Whether a project belongs to the workspace.
+pub(super) async fn project_in_workspace(
+    db: &impl ConnectionTrait,
+    workspace_id: Uuid,
+    project_id: Uuid,
+) -> Result<bool, ApiError> {
+    #[derive(FromQueryResult)]
+    struct Count {
+        n: i64,
+    }
+    Ok(Count::find_by_statement(stmt(
+        "SELECT count(*) AS n FROM projects WHERE id = $1 AND workspace_id = $2",
+        vec![project_id.into(), workspace_id.into()],
+    ))
+    .one(db)
+    .await?
+    .is_some_and(|c| c.n > 0))
 }
 
 #[cfg(test)]

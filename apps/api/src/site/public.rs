@@ -400,7 +400,6 @@ pub async fn submit_record(
             &binding.form,
             actor,
             NativeRecordCreateRequest {
-                record_id: None,
                 values: Value::Object(body.values),
                 title: None,
                 source,
