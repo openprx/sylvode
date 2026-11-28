@@ -19,8 +19,8 @@ use uuid::Uuid;
 use super::{
     apply,
     prepare::{
-        self, FormTarget, KIND_FORM_SCHEMA, KIND_LAYOUT, KIND_SITE_PAGE, LayoutTarget, MAX_SPEC_BYTES, Prepared,
-        public_exposure, review_digest,
+        self, FormTarget, KIND_FORM_SCHEMA, KIND_LAYOUT, KIND_PACKAGE_UPLOAD, KIND_SITE_PAGE, LayoutTarget,
+        MAX_SPEC_BYTES, PackageUploadTarget, Prepared, public_exposure, review_digest,
     },
     store::{self, DraftRow, ListFilter, NewDraft},
 };
@@ -32,6 +32,7 @@ use crate::{
         apply::draft_slot,
     },
     middleware::{bot_auth::BotAuthContext, scoped_bot::readable_projects},
+    packages::handlers::PreparedUpload,
     response::{ApiResponse, PageQuery, PaginatedData},
     routes::form::{find_form, require_form_action},
     site::drafts::PageTarget,
@@ -41,6 +42,8 @@ use crate::{
 const CREATIONS_PER_MINUTE: i64 = 30;
 /// Pending drafts of one author in one project.
 const PENDING_PER_AUTHOR: i64 = 50;
+/// Pending package upload drafts of one workspace, all bots together: each keeps up to 32 MiB.
+const PENDING_UPLOADS_PER_WORKSPACE: i64 = 10;
 const MAX_COMMENT_CHARS: usize = 2000;
 
 fn rate_limited(message: &'static str) -> ApiError {
@@ -96,7 +99,8 @@ pub struct Author {
 pub struct DraftSummary {
     id: Uuid,
     kind: String,
-    project_id: Uuid,
+    /// Empty for a `package_upload` draft, which belongs to the workspace.
+    project_id: Option<Uuid>,
     target: Value,
     author: Author,
     status: String,
@@ -328,6 +332,12 @@ pub async fn create_draft(
                 "site_page drafts are created by the site page and title routes",
             ));
         }
+        KIND_PACKAGE_UPLOAD => {
+            return Err(ApiError::bad_request_coded(
+                "draft_kind_unsupported",
+                "package_upload drafts are created by the package upload submission route",
+            ));
+        }
         "package_install" => {
             return Err(ApiError::bad_request_coded(
                 "draft_kind_unsupported",
@@ -367,7 +377,7 @@ async fn store_draft(
     candidate.prepared.public = public_exposure(
         &state.db,
         project.workspace_id,
-        project.id,
+        Some(project.id),
         kind,
         &candidate.target,
         &candidate.prepared.spec,
@@ -377,7 +387,7 @@ async fn store_draft(
 
     let tx = state.db.begin().await?;
     store::lock_author(&tx, author_id).await?;
-    store::supersede(&tx, project.id, kind, author_kind, author_id, &candidate.identity).await?;
+    store::supersede(&tx, Some(project.id), kind, author_kind, author_id, &candidate.identity).await?;
     if store::count_last_minute(&tx, author_kind, author_id).await? >= CREATIONS_PER_MINUTE {
         return Err(rate_limited("too many drafts in the last minute"));
     }
@@ -388,7 +398,7 @@ async fn store_draft(
         &tx,
         &NewDraft {
             workspace_id: project.workspace_id,
-            project_id: project.id,
+            project_id: Some(project.id),
             kind,
             target: &candidate.target,
             spec: &candidate.prepared.spec,
@@ -483,6 +493,61 @@ pub(crate) async fn create_site_page_draft(
     Ok(row.id)
 }
 
+/// Keeps a verified package upload of a bot as a `package_upload` draft (LEAD-DECISIONS
+/// M11-UPLOAD): the bytes are stored with the draft, never as a package. A newer upload of the
+/// same bot for the same package version replaces its older pending one; the workspace holds a
+/// small number of pending uploads in all, so bots cannot fill the package quota or the database.
+pub(crate) async fn create_package_upload_draft(
+    state: &AppState,
+    workspace_id: Uuid,
+    bot_id: Uuid,
+    upload: PreparedUpload,
+) -> Result<Draft, ApiError> {
+    if store::count_last_minute(&state.db, "bot", bot_id).await? >= CREATIONS_PER_MINUTE {
+        return Err(rate_limited("too many drafts in the last minute"));
+    }
+    let info = upload.info();
+    let prepared = prepare::package_upload(&info);
+    let digest = prepared.digest()?;
+    let target = PackageUploadTarget::from_info(&info);
+    let target_json = serde_json::to_value(&target).map_err(|_| ApiError::internal())?;
+
+    let tx = state.db.begin().await?;
+    store::lock_author(&tx, bot_id).await?;
+    store::lock_author(&tx, workspace_id).await?;
+    store::supersede(&tx, None, KIND_PACKAGE_UPLOAD, "bot", bot_id, &target.identity()).await?;
+    if store::count_last_minute(&tx, "bot", bot_id).await? >= CREATIONS_PER_MINUTE {
+        return Err(rate_limited("too many drafts in the last minute"));
+    }
+    if store::count_pending_uploads(&tx, workspace_id).await? >= PENDING_UPLOADS_PER_WORKSPACE {
+        return Err(ApiError::conflict_coded(
+            "package_upload_quota_exceeded",
+            "this workspace has the most pending package uploads it may; a person must approve or reject some first",
+            Some(json!({ "limit": PENDING_UPLOADS_PER_WORKSPACE })),
+        ));
+    }
+    let row = store::insert(
+        &tx,
+        &NewDraft {
+            workspace_id,
+            project_id: None,
+            kind: KIND_PACKAGE_UPLOAD,
+            target: &target_json,
+            spec: &prepared.spec,
+            author_kind: "bot",
+            author_id: bot_id,
+            note: None,
+            validation: &prepared.validation,
+            capability_diff: &prepared.capability_diff,
+            review_digest: &digest,
+        },
+    )
+    .await?;
+    store::put_upload_blob(&tx, row.id, workspace_id, &info.blob_digest, upload.bytes()).await?;
+    tx.commit().await?;
+    body(&state.db, &row).await
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ListDraftsQuery {
     project_id: Option<Uuid>,
@@ -536,6 +601,7 @@ pub async fn list_drafts(
             kind: query.kind.as_deref(),
             can_bypass_form_view: role_is_form_admin(&role),
             role_subject: normalize_permission_subject_id(&role)?,
+            viewer_bot: who.bot_id(),
         },
         paging.per_page,
         paging.offset(),
@@ -555,11 +621,26 @@ pub async fn get_draft(
     let bot_context = bot.as_ref().map(|Extension(context)| context.clone());
     let who = Principal::new(claims.clone(), bot);
     let row = store::load(&state.db, id, false).await?.ok_or_else(draft_not_found)?;
+    // A package upload belongs to the workspace: the people who review it and the bot that
+    // submitted it read it, nobody else (a project-scoped bot never does).
+    if row.kind == KIND_PACKAGE_UPLOAD {
+        let role = member(&state, &who, row.workspace_id)
+            .await
+            .map_err(reads_as_not_found)?;
+        let own = who
+            .bot_id()
+            .is_some_and(|bot_id| row.author_kind == "bot" && row.author_id == bot_id);
+        if !(own || role_is_form_admin(&role)) {
+            return Err(draft_not_found());
+        }
+        return Ok(ApiResponse::success(body(&state.db, &row).await?));
+    }
+    let project_id = row.project()?;
     let project = Scope {
         kind: ScopeKind::Project,
-        id: row.project_id,
+        id: project_id,
         workspace_id: row.workspace_id,
-        project_id: Some(row.project_id),
+        project_id: Some(project_id),
     };
     require_read(&state, &who, &project).await.map_err(reads_as_not_found)?;
     // The proposed schema of a form, and a layout placed on a form, are as private as the form:

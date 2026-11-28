@@ -225,6 +225,11 @@
     "name": "layouts.create_draft"
   },
   {
+    "access": "write",
+    "category": "plugins",
+    "name": "packages.upload"
+  },
+  {
     "access": "read",
     "category": "plugins",
     "name": "plugins.list"

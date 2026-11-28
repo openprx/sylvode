@@ -17,6 +17,7 @@ pub mod members;
 pub mod milestones;
 pub mod objects;
 pub mod operation_logs;
+pub mod packages;
 pub mod page_links;
 pub mod plugins;
 pub mod project_types;
@@ -86,6 +87,7 @@ pub fn get_all_tool_definitions() -> Vec<ToolDefinition> {
         forms::create_schema_draft_tool(),
         layouts::validate_layout_tool(),
         layouts::create_layout_draft_tool(),
+        packages::upload_package_tool(),
         plugins::list_plugins_tool(),
         plugins::get_plugin_tool(),
         plugins::install_plugin_tool(),

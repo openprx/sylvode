@@ -1,7 +1,7 @@
 {
   "schema_version": "sylvode.mcp-tool-registry-baseline.v1",
   "source": "mcp_server::get_all_tool_definitions",
-  "count": 159,
-  "names_sha256": "fd28c845e41817f482ef62f2f10bf493cd6482c8d9f4396dcf5524f9979fff36",
-  "catalog_sha256": "57f1b6d05c1dfe0b13ed7224b4d9d80863ca8637627a20d1581e405912aa3c4f"
+  "count": 160,
+  "names_sha256": "0a9b591294c0605dae00c8bd07bbb6a55b1549d7d6b9b2c7632266e51d9fdaff",
+  "catalog_sha256": "e899f9411cf229dcc309bade0bc27984c82691b54b9576e3f2a148e05e57333e"
 }

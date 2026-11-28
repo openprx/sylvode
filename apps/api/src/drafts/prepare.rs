@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 use sv_layout::{Analysis, CAP_ACTION_INVOKE, SlotDescriptor};
 use uuid::Uuid;
 
-use super::store::DraftRow;
+use super::store::{self, DraftRow};
 use crate::{
     catalogue::{self, Risk},
     error::{ApiError, ApiErrorKind},
@@ -24,12 +24,14 @@ use crate::{
         access::{Scope, ScopeKind, resolve_scope},
         apply::{draft_slot, validate_for_slot},
     },
+    packages::handlers::{PreparedUpload, UploadInfo},
     site::drafts::{self as site_drafts, Base, PageTarget},
 };
 
 pub(super) const KIND_FORM_SCHEMA: &str = "form_schema";
 pub(super) const KIND_LAYOUT: &str = "layout";
 pub(super) const KIND_SITE_PAGE: &str = "site_page";
+pub(super) const KIND_PACKAGE_UPLOAD: &str = "package_upload";
 
 /// The largest serialised spec a draft accepts. The column check counts the text form of the
 /// stored `jsonb`, which is a little longer than the compact form, so this leaves room under the
@@ -58,6 +60,33 @@ pub(super) struct LayoutTarget {
     pub(super) slot_id: String,
     pub(super) scope_kind: String,
     pub(super) scope_id: Uuid,
+}
+
+/// `target` of a `package_upload` draft: the package and the digests of the bytes kept with the
+/// draft. It is derived from the verified package, never taken from the caller.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PackageUploadTarget {
+    pub(super) package_key: String,
+    pub(super) version: String,
+    pub(super) digest: String,
+    pub(super) blob_digest: String,
+}
+
+impl PackageUploadTarget {
+    pub(super) fn from_info(info: &UploadInfo) -> Self {
+        Self {
+            package_key: info.package_key.clone(),
+            version: info.version.clone(),
+            digest: info.digest.clone(),
+            blob_digest: info.blob_digest.clone(),
+        }
+    }
+
+    /// What a later upload of the same author for the same package version replaces.
+    pub(super) fn identity(&self) -> String {
+        format!("{}@{}", self.package_key, self.version)
+    }
 }
 
 impl FormTarget {
@@ -121,11 +150,15 @@ pub(super) fn review_digest(
 pub(super) async fn public_exposure(
     db: &impl ConnectionTrait,
     workspace_id: Uuid,
-    project_id: Uuid,
+    project_id: Option<Uuid>,
     kind: &str,
     target: &Value,
     spec: &Value,
 ) -> Result<Vec<Value>, ApiError> {
+    // Only a `package_upload` draft has no project, and it shows no page to visitors.
+    let Some(project_id) = project_id else {
+        return Ok(Vec::new());
+    };
     match kind {
         KIND_FORM_SCHEMA => {
             let form_id = target
@@ -142,6 +175,29 @@ pub(super) async fn public_exposure(
             Err(_) => Ok(Vec::new()),
         },
         _ => Ok(Vec::new()),
+    }
+}
+
+/// What the reviewer of a package upload sees: the verified package as the upload shows it. The
+/// bytes themselves are checked again at approval, so the report is always valid here; a package
+/// that no longer verifies refuses the review instead.
+pub(super) fn package_upload(info: &UploadInfo) -> Prepared {
+    Prepared {
+        spec: json!({
+            "digest": info.digest,
+            "blob_digest": info.blob_digest,
+            "package_key": info.package_key,
+            "version": info.version,
+            "kind": info.kind,
+            "publisher": info.publisher,
+            "custom_code": info.custom_code,
+            "size_bytes": info.size_bytes,
+            "file_count": info.file_count,
+            "summary": info.summary,
+        }),
+        validation: json!({ "valid": true, "errors": [], "warnings": [] }),
+        capability_diff: json!([]),
+        public: Vec::new(),
     }
 }
 
@@ -252,10 +308,24 @@ pub(super) fn layout(slot: &SlotDescriptor, spec: Value) -> Prepared {
 
 /// How an approved draft is saved, resolved against the state at approval.
 pub(super) enum Plan {
-    UpdateForm { form_id: Uuid },
-    CreateForm { key: String, name: String },
-    PlaceLayout { scope: Scope, slot: SlotDescriptor },
-    SitePage { target: PageTarget },
+    UpdateForm {
+        form_id: Uuid,
+    },
+    CreateForm {
+        key: String,
+        name: String,
+    },
+    PlaceLayout {
+        scope: Scope,
+        slot: SlotDescriptor,
+    },
+    SitePage {
+        target: PageTarget,
+    },
+    /// The package, verified again from the kept bytes, ready to be stored.
+    PackageUpload {
+        upload: Box<PreparedUpload>,
+    },
 }
 
 fn stale(reason: &'static str, details: Value) -> ApiError {
@@ -265,6 +335,7 @@ fn stale(reason: &'static str, details: Value) -> ApiError {
             "form_missing" => "the form of this draft no longer exists",
             "scope_missing" => "the scope of this draft no longer exists",
             "page_missing" => "the site or page of this draft no longer exists",
+            "blob_missing" => "the uploaded package of this draft is no longer kept",
             _ => "the target changed since the draft was written",
         },
         Some(details),
@@ -303,10 +374,10 @@ async fn judge_stored(tx: &DatabaseTransaction, row: &DraftRow) -> Result<(Prepa
             } else {
                 let key = target.key.ok_or_else(ApiError::internal)?;
                 let name = target.name.ok_or_else(ApiError::internal)?;
-                ensure_key_free(tx, row.project_id, &key).await?;
+                ensure_key_free(tx, row.project()?, &key).await?;
                 Plan::CreateForm { key, name }
             };
-            Ok((form_schema(row.workspace_id, row.project_id, row.spec.clone()), plan))
+            Ok((form_schema(row.workspace_id, row.project()?, row.spec.clone()), plan))
         }
         KIND_LAYOUT => {
             let target: LayoutTarget = stored(&row.target)?;
@@ -314,7 +385,7 @@ async fn judge_stored(tx: &DatabaseTransaction, row: &DraftRow) -> Result<(Prepa
             let scope = resolve_scope(tx, kind, target.scope_id)
                 .await
                 .map_err(|_| stale("scope_missing", json!({})))?;
-            if scope.workspace_id != row.workspace_id || scope.project_id.is_some_and(|id| id != row.project_id) {
+            if scope.workspace_id != row.workspace_id || scope.project_id.is_some_and(|id| Some(id) != row.project_id) {
                 return Err(stale("scope_moved", json!({})));
             }
             let slot = draft_slot(&target.slot_id, kind)?;
@@ -328,7 +399,7 @@ async fn judge_stored(tx: &DatabaseTransaction, row: &DraftRow) -> Result<(Prepa
                 Base::Missing => return Err(stale("page_missing", json!({}))),
                 Base::Changed => return Err(stale("target_changed", json!({}))),
             }
-            let prepared = site_page(tx, row.workspace_id, row.project_id, &target, &row.spec)
+            let prepared = site_page(tx, row.workspace_id, row.project()?, &target, &row.spec)
                 .await
                 .map_err(|error| {
                     if error.kind() == ApiErrorKind::NotFound {
@@ -338,6 +409,25 @@ async fn judge_stored(tx: &DatabaseTransaction, row: &DraftRow) -> Result<(Prepa
                     }
                 })?;
             Ok((prepared, Plan::SitePage { target }))
+        }
+        KIND_PACKAGE_UPLOAD => {
+            let target: PackageUploadTarget = stored(&row.target)?;
+            // The kept bytes are verified again with the workspace's keys as they are now: a key
+            // revoked since the submission refuses the package here.
+            let bytes = store::upload_blob(tx, row.id)
+                .await?
+                .ok_or_else(|| stale("blob_missing", json!({})))?;
+            let upload = PreparedUpload::verify(tx, row.workspace_id, bytes).await?;
+            let info = upload.info();
+            if info.digest != target.digest || info.blob_digest != target.blob_digest {
+                return Err(stale("target_changed", json!({})));
+            }
+            Ok((
+                package_upload(&info),
+                Plan::PackageUpload {
+                    upload: Box::new(upload),
+                },
+            ))
         }
         _ => Err(ApiError::bad_request_coded(
             "draft_kind_unsupported",
@@ -366,7 +456,7 @@ async fn check_form_unchanged(
     ))
     .one(tx)
     .await?
-    .filter(|form| form.project_id == row.project_id)
+    .filter(|form| Some(form.project_id) == row.project_id)
     .ok_or_else(|| stale("form_missing", json!({})))?;
     if current.archived {
         return Err(ApiError::conflict_coded(

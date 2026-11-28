@@ -537,6 +537,7 @@ fn build_mcp_tool_registry(capabilities: &Value) -> Value {
                 "plugins.install",
                 "plugins.invoke",
                 "plugin_invocations.list",
+                "packages.upload",
             ]),
         );
     }

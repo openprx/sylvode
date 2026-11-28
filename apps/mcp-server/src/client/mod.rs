@@ -1549,6 +1549,42 @@ impl OpenPrClient {
         .await
     }
 
+    // ---- Packages ----
+
+    /// `POST /api/v1/workspaces/{workspace_id}/package-uploads`: a signed package as a multipart
+    /// `file`; answers the `package_upload` draft a person approves.
+    pub async fn submit_package_upload(&self, content: Vec<u8>) -> Result<Value, String> {
+        let path = format!(
+            "/api/v1/workspaces/{}/package-uploads",
+            urlencoding::encode(&self.workspace().await?)
+        );
+        let part = multipart::Part::bytes(content)
+            .file_name("package.svpkg".to_string())
+            .mime_str("application/zip")
+            .map_err(|e| format!("Failed to build multipart part: {e}"))?;
+        let resp = self
+            .operation_headers(self.client.post(format!("{}{path}", self.base_url)))
+            .header("Authorization", self.authorization()?)
+            .multipart(multipart::Form::new().part("file", part))
+            .send()
+            .await
+            .map_err(|e| format!("Request failed: {e}"))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(rejected_request_error(status, &path, &body));
+        }
+        let payload: Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("Failed to deserialize response: {e}"))?;
+        check_response_envelope(&payload, &path)?;
+        payload
+            .get("data")
+            .cloned()
+            .ok_or_else(|| format!("Missing data in {path} response"))
+    }
+
     // ---- Members ----
 
     pub async fn list_members(&self) -> Result<Value, String> {

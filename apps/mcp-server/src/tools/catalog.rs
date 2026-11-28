@@ -81,7 +81,7 @@ pub static CATEGORIES: &[Category] = &[
     Category {
         name: "plugins",
         title: "Plugins",
-        summary: "Install, inspect and invoke WASM plugins",
+        summary: "Install, inspect and invoke WASM plugins; submit signed packages",
     },
     Category {
         name: "work_items",
@@ -540,6 +540,19 @@ pub static CATALOG: &[ToolMeta] = &[
         access: Access::Write,
         summary: "Propose a layout for a slot as a draft for a person to approve",
         keywords: &["draft layout", "propose layout", "place layout", "ui for review"],
+    },
+    ToolMeta {
+        name: "packages.upload",
+        category: "plugins",
+        access: Access::Write,
+        summary: "Submit a signed .svpkg plugin package as an upload draft for a person to approve",
+        keywords: &[
+            "upload package",
+            "svpkg",
+            "plugin package",
+            "build plugin",
+            "component template",
+        ],
     },
     ToolMeta {
         name: "plugins.list",

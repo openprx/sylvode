@@ -367,6 +367,7 @@ POST /api/v1/workspaces/{workspace_id}/installations/preview Admin - false
 POST /api/v1/workspaces/{workspace_id}/labels Admin - false
 POST /api/v1/workspaces/{workspace_id}/members Admin - false
 POST /api/v1/workspaces/{workspace_id}/milestones Refused - false
+POST /api/v1/workspaces/{workspace_id}/package-uploads Refused - false
 POST /api/v1/workspaces/{workspace_id}/project-types Admin - false
 POST /api/v1/workspaces/{workspace_id}/projects Admin - false
 POST /api/v1/workspaces/{workspace_id}/webhooks Admin - false

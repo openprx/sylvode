@@ -17,6 +17,20 @@ export const draftsApi = {
 		if (filter.page) query.set('page', String(filter.page));
 		return apiClient.get<PaginatedData<DraftSummary>>(`/api/v1/drafts?${query.toString()}`);
 	},
+	/** The workspace's drafts of one kind (package uploads belong to no project). */
+	listWorkspace(
+		workspaceId: string,
+		filter: { status?: DraftStatus; kind?: DraftKind; page?: number; perPage?: number } = {}
+	): Promise<ApiResult<PaginatedData<DraftSummary>>> {
+		const query = new URLSearchParams({
+			workspace_id: workspaceId,
+			per_page: String(filter.perPage ?? 50)
+		});
+		if (filter.status) query.set('status', filter.status);
+		if (filter.kind) query.set('kind', filter.kind);
+		if (filter.page) query.set('page', String(filter.page));
+		return apiClient.get<PaginatedData<DraftSummary>>(`/api/v1/drafts?${query.toString()}`);
+	},
 	get(id: string): Promise<ApiResult<Draft>> {
 		return apiClient.get<Draft>(`/api/v1/drafts/${enc(id)}`);
 	},
