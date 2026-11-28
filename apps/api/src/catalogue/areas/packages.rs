@@ -3,16 +3,19 @@
 //! Only the two read routes are behind the bot authentication. The class `Refused` still admits a
 //! project-scoped bot with a default level of `read` or more, so the handlers refuse every bot that
 //! is not a bot of the whole workspace (`packages::access`, packages are workspace-level); a bot of
-//! the whole workspace passes and the handler checks its workspace and `read` permission. Upload and
-//! the publisher-key routes are behind the JWT middleware, which no bot token passes.
+//! the whole workspace passes and the handler checks its workspace and `read` permission. Upload,
+//! delete and the publisher-key routes are behind the JWT middleware, which no bot token passes.
 
-use crate::catalogue::types::dsl::{Entry, Get, Post, Read, Workspace, WorkspaceAdmin, Write, bot, console};
+use crate::catalogue::types::dsl::{
+    Delete, Destructive, Entry, Get, Post, Read, Workspace, WorkspaceAdmin, Write, bot, console,
+};
 
 #[rustfmt::skip]
 pub static ENTRIES: &[Entry] = &[
     bot("packages.packages.read", Get, "/api/v1/workspaces/{workspace_id}/packages/{digest}", Workspace, Read),
     bot("packages.packages.read/list", Get, "/api/v1/workspaces/{workspace_id}/packages", Workspace, Read),
     console("packages.packages.create", Post, "/api/v1/workspaces/{workspace_id}/packages", WorkspaceAdmin, Write),
+    console("packages.packages.delete", Delete, "/api/v1/workspaces/{workspace_id}/packages/{digest}", WorkspaceAdmin, Destructive),
     console("packages.publisher_keys.create", Post, "/api/v1/workspaces/{workspace_id}/publisher-keys", WorkspaceAdmin, Write),
     console("packages.publisher_keys.read", Get, "/api/v1/workspaces/{workspace_id}/publisher-keys", WorkspaceAdmin, Read),
     console("packages.publisher_keys.revoke", Post, "/api/v1/workspaces/{workspace_id}/publisher-keys/{key_id}/revoke", WorkspaceAdmin, Write),

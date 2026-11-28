@@ -97,7 +97,7 @@ async fn enforce_quota(
     if usage.packages >= MAX_PACKAGES_PER_WORKSPACE {
         return Err(ApiError::conflict_coded(
             "package_quota_exceeded",
-            "this workspace stores the most packages it may; delete one first",
+            "this workspace stores the most packages it may; delete an unused package with DELETE /api/v1/workspaces/{workspace_id}/packages/{digest}",
             Some(json!({ "limit": MAX_PACKAGES_PER_WORKSPACE })),
         ));
     }
@@ -184,6 +184,52 @@ pub async fn upload_package(
     tx.commit().await?;
     tracing::info!(%workspace_id, package_id = %row.id, "package stored");
     Ok(ApiResponse::success(PackageSummary::from(&row)))
+}
+
+fn package_in_use() -> ApiError {
+    ApiError::conflict_coded(
+        "package_in_use",
+        "an installation still references this package; remove the installation first",
+        None,
+    )
+}
+
+/// `DELETE /api/v1/workspaces/{w}/packages/{digest}`: removes a stored private package of the
+/// workspace and the blob nothing else uses. Refused while any installation generation references
+/// it, and for a built-in package. Serialised with uploads by the workspace's upload lock.
+pub async fn delete_package(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    Path((workspace_id, digest)): Path<(Uuid, String)>,
+) -> Result<impl IntoResponse, ApiError> {
+    let caller = Caller::resolve(&state, &claims, None, workspace_id).await?;
+    caller.require_admin()?;
+    if !is_digest(&digest) {
+        return Err(package_not_found());
+    }
+    let tx = state.db.begin().await?;
+    store::lock_workspace_uploads(&tx, workspace_id).await?;
+    let Some(row) = store::find_owned(&tx, Some(workspace_id), &digest).await? else {
+        return Err(if store::find_owned(&tx, None, &digest).await?.is_some() {
+            ApiError::conflict_coded("package_builtin", "a built-in package cannot be deleted", None)
+        } else {
+            package_not_found()
+        });
+    };
+    if store::is_installed(&tx, row.id).await? {
+        return Err(package_in_use());
+    }
+    store::delete_package(&tx, row.id).await.map_err(|e| {
+        if e.database_sqlstate().as_deref() == Some("23503") {
+            package_in_use()
+        } else {
+            e
+        }
+    })?;
+    store::delete_unreferenced_blobs(&tx, std::slice::from_ref(&row.blob_digest)).await?;
+    tx.commit().await?;
+    tracing::info!(%workspace_id, package_id = %row.id, "package deleted");
+    Ok(ApiResponse::ok())
 }
 
 #[derive(Debug, Deserialize)]

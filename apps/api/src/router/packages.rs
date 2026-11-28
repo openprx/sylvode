@@ -1,6 +1,6 @@
 //! Routes of the `packages` area: the package store and the workspace's publisher keys.
 //!
-//! Upload and the publisher-key routes sit behind the JWT middleware only: a bot token or a
+//! Upload, delete and the publisher-key routes sit behind the JWT middleware only: a bot token or a
 //! delegated token never reaches them. Listing and reading also admit a bot of the whole
 //! workspace (a project-scoped bot is refused by its class in `bot_routes/packages.rs`).
 
@@ -9,7 +9,7 @@ use axum::{
     Router,
     extract::DefaultBodyLimit,
     middleware as axum_middleware,
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use platform::app::AppState;
 
@@ -39,6 +39,13 @@ pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
             get(packages::handlers::get_package).route_layer(axum_middleware::from_fn_with_state(
                 auth_state.clone(),
                 middleware::bot_auth::bot_or_user_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/packages/{digest}",
+            delete(packages::handlers::delete_package).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::auth::jwt_auth_middleware,
             )),
         )
         .route(

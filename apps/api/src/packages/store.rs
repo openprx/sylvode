@@ -246,6 +246,25 @@ pub async fn delete_unreferenced_blobs(db: &impl ConnectionTrait, digests: &[Str
     Ok(())
 }
 
+/// Whether any installation generation (of any status) references the package row.
+pub(super) async fn is_installed(db: &impl ConnectionTrait, package_row_id: Uuid) -> Result<bool, ApiError> {
+    Ok(db
+        .query_one(stmt(
+            "SELECT 1 FROM installation_generations WHERE package_row_id = $1 LIMIT 1",
+            vec![package_row_id.into()],
+        ))
+        .await?
+        .is_some())
+}
+
+/// Deletes one package row. The foreign key from the installation generations is `RESTRICT`, so a
+/// generation created after the caller's check still refuses the delete (SQLSTATE `23503`).
+pub(super) async fn delete_package(db: &impl ConnectionTrait, package_row_id: Uuid) -> Result<(), ApiError> {
+    db.execute(stmt("DELETE FROM packages WHERE id = $1", vec![package_row_id.into()]))
+        .await?;
+    Ok(())
+}
+
 /// Inserts a package row; `None` when the owner already has this digest.
 pub(super) async fn insert_package(
     db: &impl ConnectionTrait,

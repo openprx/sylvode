@@ -368,12 +368,34 @@ pub async fn delete_workspace(
     if current.is_none_or(|row| row.try_get::<String>("", "role").ok().as_deref() != Some("owner")) {
         return Err(ApiError::Forbidden("only owners can delete workspaces".to_string()));
     }
+    // The package rows cascade with the workspace; the blobs they used are read first.
+    let blob_digests = crate::packages::store::workspace_blob_digests(&tx, workspace_id).await?;
     crate::services::teardown::delete_workspace_content(&tx, workspace_id)
         .await
         .map_err(|err| crate::services::teardown::refuse_blocked(err, "workspace"))?;
     tx.commit().await?;
+    remove_orphan_package_blobs(&state, workspace_id, &blob_digests).await;
 
     Ok(ApiResponse::ok())
+}
+
+/// Drops the package blobs the deleted workspace used and nothing else references, in a
+/// transaction of their own after the teardown committed. A failure (a foreign-key violation means
+/// the blob is still in use) is logged and never fails the workspace deletion.
+async fn remove_orphan_package_blobs(state: &AppState, workspace_id: Uuid, digests: &[String]) {
+    if digests.is_empty() {
+        return;
+    }
+    let result = async {
+        let tx = state.db.begin().await?;
+        crate::packages::store::delete_unreferenced_blobs(&tx, digests).await?;
+        tx.commit().await?;
+        Ok::<(), ApiError>(())
+    }
+    .await;
+    if let Err(err) = result {
+        tracing::warn!(%workspace_id, error = %err, "package blobs of a deleted workspace were kept");
+    }
 }
 
 /// Helper: Get user's role in workspace
