@@ -1,0 +1,20 @@
+[package]
+name = "sv-index"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Sylvode public plugin index: schemas, strict and lenient validation, limits, image header checks"
+
+[dependencies]
+base64.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_path_to_error = "0.1"
+sv-package = { path = "../sv-package" }
+unicode-normalization.workspace = true
+url = "2.5"
+
+[lints]
+workspace = true
