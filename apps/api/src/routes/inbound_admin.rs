@@ -716,8 +716,7 @@ async fn check_rule_references<C: ConnectionTrait>(
             // Not refused: the bot may be connected later, but a task for a bot that is not
             // connected to this project cannot reach a runner that will run it.
             warnings.push("bot_not_connected_to_project");
-        }
-        if bot_cannot_read_project(db, project_id, bot).await? {
+        } else if bot_cannot_read_project(db, project_id, bot).await? {
             // Not refused: the bot's access may be widened later, but until then it gets no task.
             warnings.push("bot_cannot_read_project");
         }
