@@ -8,6 +8,8 @@ pub mod admin;
 pub(crate) mod drafts;
 pub mod http;
 pub mod layouts;
+#[cfg(test)]
+mod package_pages_tests;
 mod projection;
 pub mod public;
 mod records;
