@@ -399,7 +399,48 @@ struct PoolCounters {
     requests: AtomicU64,
     resolver_lookups: AtomicU64,
     resolver_refusals: AtomicU64,
+    connections_opened: AtomicU64,
     permits_waiting: AtomicUsize,
+}
+
+/// Counts every connection either pool client sets out to open, before the address is known to be
+/// reachable: the connector is asked once per new connection, never for a reused one.
+#[derive(Clone)]
+struct CountConnections(Arc<PoolCounters>);
+
+impl<S> tower::Layer<S> for CountConnections {
+    type Service = CountedConnector<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        CountedConnector {
+            inner,
+            counters: Arc::clone(&self.0),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct CountedConnector<S> {
+    inner: S,
+    counters: Arc<PoolCounters>,
+}
+
+impl<S, R> tower::Service<R> for CountedConnector<S>
+where
+    S: tower::Service<R>,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = S::Future;
+
+    fn poll_ready(&mut self, cx: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, request: R) -> Self::Future {
+        self.counters.connections_opened.fetch_add(1, Ordering::Relaxed);
+        self.inner.call(request)
+    }
 }
 
 /// A point-in-time copy of a pool's counters.
@@ -411,6 +452,8 @@ pub struct PoolStats {
     pub resolver_lookups: u64,
     /// Lookups the policy refused (a blocked address, an empty or a failed answer).
     pub resolver_refusals: u64,
+    /// Connections either client set out to open, to a host name or a literal address.
+    pub connections_opened: u64,
     /// Targets with a concurrency limit entry.
     pub targets: usize,
     /// Requests waiting for a permit of their target.
@@ -539,14 +582,30 @@ struct TargetEntry {
 pub enum PoolError {
     /// The URL failed the scheme, credential or literal-address checks.
     Rejected(String),
+    /// The address policy refused the target while a connection was being opened: the name
+    /// resolved to a blocked address, to none, or did not resolve. The text carries no address.
+    Refused(ResolveRefusal),
     /// The request failed; the error has its URL removed.
     Transport(reqwest::Error),
+}
+
+/// The [`ResolveRefusal`] in an error's source chain, if the address policy caused the error.
+fn refusal_in(error: &(dyn std::error::Error + 'static)) -> Option<ResolveRefusal> {
+    let mut current = Some(error);
+    while let Some(error) = current {
+        if let Some(refusal) = error.downcast_ref::<ResolveRefusal>() {
+            return Some(refusal.clone());
+        }
+        current = error.source();
+    }
+    None
 }
 
 impl std::fmt::Display for PoolError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Rejected(reason) => f.write_str(reason),
+            Self::Refused(refusal) => write!(f, "the outbound address policy refused the target: {refusal}"),
             Self::Transport(error) => write!(f, "{error}"),
         }
     }
@@ -570,9 +629,9 @@ pub struct PooledResponse {
 /// address passed the rule when that connection opened. A per-target semaphore limits requests in
 /// flight to one `(scheme, host, port)`.
 ///
-/// Neither client sets `no_proxy()`, as today's per-delivery client does not: with `HTTP_PROXY`,
-/// `HTTPS_PROXY` or `ALL_PROXY` set in the environment the proxy resolves the target and the
-/// address rule does not apply (see `proxy_environment_variables_are_honoured_as_before`).
+/// `checked` ignores the proxy environment variables (`no_proxy()`): a proxy would resolve the
+/// target itself and the address rule would never see the name. `exempt` serves only targets the
+/// policy lists, and keeps honouring them (see `the_checked_client_ignores_the_proxy_environment`).
 pub struct DeliveryPool {
     settings: PoolSettings,
     lookup: Arc<dyn Lookup>,
@@ -612,6 +671,7 @@ impl DeliveryPool {
     ) -> Result<Active, reqwest::Error> {
         let base = || {
             reqwest::Client::builder()
+                .connector_layer(CountConnections(Arc::clone(counters)))
                 .timeout(settings.timeout)
                 .connect_timeout(settings.connect_timeout)
                 .redirect(reqwest::redirect::Policy::none())
@@ -621,7 +681,7 @@ impl DeliveryPool {
                 .http1_only()
         };
         let resolver = PolicyResolver::new(Arc::clone(lookup), policy.blocked, Arc::clone(counters));
-        let checked = base().dns_resolver(Arc::new(resolver)).build()?;
+        let checked = base().dns_resolver(Arc::new(resolver)).no_proxy().build()?;
         let exempt = base().build()?;
         Ok(Active {
             fingerprint: policy.fingerprint(),
@@ -696,7 +756,10 @@ impl DeliveryPool {
         let response = build(client, url)
             .send()
             .await
-            .map_err(|error| PoolError::Transport(error.without_url()))?;
+            .map_err(|error| match refusal_in(&error) {
+                Some(refusal) => PoolError::Refused(refusal),
+                None => PoolError::Transport(error.without_url()),
+            })?;
         Ok(PooledResponse { response, permit })
     }
 
@@ -736,6 +799,7 @@ impl DeliveryPool {
             requests: self.counters.requests.load(Ordering::Relaxed),
             resolver_lookups: self.counters.resolver_lookups.load(Ordering::Relaxed),
             resolver_refusals: self.counters.resolver_refusals.load(Ordering::Relaxed),
+            connections_opened: self.counters.connections_opened.load(Ordering::Relaxed),
             targets: self.targets.lock().len(),
             permits_waiting: self.counters.permits_waiting.load(Ordering::Relaxed),
         }
@@ -1097,7 +1161,12 @@ mod pool_tests {
         assert_eq!(server.accepted.load(Ordering::SeqCst), 1);
         // The idle connection expires, so the next request must connect, and resolve, again.
         tokio::time::sleep(Duration::from_millis(400)).await;
-        assert!(matches!(get(&pool, &url).await, Err(PoolError::Transport(_))));
+        let refused = get(&pool, &url).await.expect_err("the rebound name is refused");
+        assert!(
+            matches!(refused, PoolError::Refused(ResolveRefusal::Blocked)),
+            "the reason survives the transport error: {refused}"
+        );
+        assert!(refused.to_string().contains("blocked address"), "{refused}");
         assert_eq!(
             server.accepted.load(Ordering::SeqCst),
             1,
@@ -1162,8 +1231,13 @@ mod pool_tests {
         assert_eq!(server.accepted.load(Ordering::SeqCst), 1);
         let stats = pool.stats();
         assert_eq!(
-            (stats.requests, stats.resolver_lookups, stats.resolver_refusals),
-            (10, 1, 0)
+            (
+                stats.requests,
+                stats.resolver_lookups,
+                stats.resolver_refusals,
+                stats.connections_opened
+            ),
+            (10, 1, 0, 1)
         );
     }
 
@@ -1243,31 +1317,36 @@ mod pool_tests {
 
     const PROXY_CHILD_ENV: &str = "SYLVODE_OUTBOUND_PROXY_TEST_CHILD";
 
-    /// Runs only inside the child process of `proxy_environment_variables_are_honoured_as_before`.
-    /// The lookup would refuse the name, so any connection is one the resolver never saw.
+    /// Runs only inside the child process of `the_checked_client_ignores_the_proxy_environment`,
+    /// whose environment names a proxy. The scripted lookup answers with the test server's
+    /// loopback address, so a delivery that is answered went through the resolver.
     #[tokio::test]
     async fn proxy_environment_child() {
-        if std::env::var_os(PROXY_CHILD_ENV).is_none() {
+        let Some(port) = std::env::var(PROXY_CHILD_ENV)
+            .ok()
+            .and_then(|port| port.parse::<u16>().ok())
+        else {
             return;
-        }
-        let lookup = Scripted::always(&["10.0.0.1"]);
-        let pool = DeliveryPool::with_lookup(
-            AddressPolicy::new("", false),
-            settings(1, Duration::from_secs(5)),
-            lookup,
-        )
-        .expect("pool");
-        let _ = get(&pool, "http://runner.test:9/hook").await;
+        };
+        let lookup = Scripted::always(&["127.0.0.1"]);
+        let pool =
+            DeliveryPool::with_lookup(test_policy(""), settings(1, Duration::from_secs(5)), lookup).expect("pool");
+        let url = format!("http://runner.test:{port}/hook");
+        assert_eq!(get(&pool, &url).await.expect("delivered directly"), 200);
+        let stats = pool.stats();
+        assert_eq!((stats.resolver_lookups, stats.connections_opened), (1, 1));
     }
 
-    /// Documents today's behaviour (design O5): the clients do not ignore the proxy environment
-    /// variables, so with `HTTP_PROXY` set the request goes to the proxy and the address rule
-    /// never sees the name. The environment is set on a child process, not on this one.
+    /// Design O5: with `HTTP_PROXY` set the checked client still resolves and checks the name
+    /// itself and connects to the target; the proxy is never contacted. The environment is set on
+    /// a child process, not on this one.
     #[tokio::test]
-    async fn proxy_environment_variables_are_honoured_as_before() {
+    async fn the_checked_client_ignores_the_proxy_environment() {
+        let server = serve(Mode::Ok).await;
         let proxy = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let proxy_port = proxy.local_addr().expect("addr").port();
         let exe = std::env::current_exe().expect("test binary");
+        let target_port = server.port;
         let child = tokio::task::spawn_blocking(move || {
             std::process::Command::new(exe)
                 .args([
@@ -1275,28 +1354,26 @@ mod pool_tests {
                     "outbound::pool_tests::proxy_environment_child",
                     "--test-threads=1",
                 ])
-                .env(PROXY_CHILD_ENV, "1")
+                .env(PROXY_CHILD_ENV, target_port.to_string())
                 .env("HTTP_PROXY", format!("http://127.0.0.1:{proxy_port}"))
                 .env("http_proxy", format!("http://127.0.0.1:{proxy_port}"))
+                .env("ALL_PROXY", format!("http://127.0.0.1:{proxy_port}"))
                 .env_remove("NO_PROXY")
                 .env_remove("no_proxy")
-                .env_remove("ALL_PROXY")
-                .env_remove("all_proxy")
                 .output()
         });
-        let (mut socket, _) = tokio::time::timeout(Duration::from_secs(20), proxy.accept())
-            .await
-            .expect("the proxy was contacted")
-            .expect("accept");
-        let mut buffer = [0_u8; 1024];
-        let read = socket.read(&mut buffer).await.expect("read");
-        let head = String::from_utf8_lossy(buffer.get(..read).unwrap_or_default()).into_owned();
-        assert!(
-            head.starts_with("GET http://runner.test:9/hook HTTP/1.1"),
-            "the request reached the proxy in absolute form: {head:?}"
-        );
-        drop(socket);
         let output = child.await.expect("join").expect("child ran");
-        assert!(output.status.success(), "the child test passed");
+        assert!(
+            output.status.success(),
+            "the child test passed: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert_eq!(
+            server.accepted.load(Ordering::SeqCst),
+            1,
+            "the target was reached directly"
+        );
+        let contacted = tokio::time::timeout(Duration::from_millis(200), proxy.accept()).await;
+        assert!(contacted.is_err(), "the proxy was never contacted");
     }
 }
