@@ -208,6 +208,9 @@ pub struct Machine<T> {
     next_push_at: Instant,
     /// Since when pushes have been held back by the screen (see [`PushOutcome::Held`]).
     held_since: Option<Instant>,
+    /// When the session was last declined (see [`EnsureOutcome::Declined`]); cleared by a session
+    /// that is used or created.
+    declined_at: Option<Instant>,
     next_ensure_at: Instant,
     consecutive_push_failures: u32,
     last_queue_beat: Instant,
@@ -234,6 +237,7 @@ impl<T: Task> Machine<T> {
             push_in_flight: false,
             next_push_at: now,
             held_since: None,
+            declined_at: None,
             next_ensure_at: now,
             consecutive_push_failures: 0,
             last_queue_beat: now,
@@ -372,14 +376,17 @@ impl<T: Task> Machine<T> {
         let mut actions = Vec::new();
         match outcome {
             EnsureOutcome::Started => {
+                self.declined_at = None;
                 self.state = State::Starting { since: now };
                 self.starting_dialog = None;
             }
             EnsureOutcome::Running => {
+                self.declined_at = None;
                 self.state = State::Idle;
                 self.last_liveness = now;
             }
             EnsureOutcome::Declined { reason, retryable } => {
+                self.declined_at = Some(now);
                 // The head task fails; the next one is tried a moment later.
                 if let Some(head) = self.queue.pop_front() {
                     actions.push(Action::Fail {
@@ -881,6 +888,38 @@ impl<T: Task> Machine<T> {
         }
         actions.extend(self.drive(now));
         actions
+    }
+
+    /// When the session was last declined, if it has not been used since.
+    pub const fn declined_at(&self) -> Option<Instant> {
+        self.declined_at
+    }
+
+    /// Since when pushes have been held back by the screen.
+    pub const fn held_since(&self) -> Option<Instant> {
+        self.held_since
+    }
+
+    /// A dead session was seen to exist again: it waits for its next task like a new one.
+    pub const fn on_probe_alive(&mut self) {
+        if matches!(self.state, State::Dead) {
+            self.state = State::NoSession;
+        }
+    }
+
+    /// Removes and returns the queued tasks that can move to another session, in order: those
+    /// never typed in. The head is left when its push is under way (it may be typed any moment).
+    pub fn take_movable(&mut self) -> Vec<Entry<T>> {
+        let head = if self.push_in_flight {
+            self.queue.pop_front()
+        } else {
+            None
+        };
+        let rest = self.queue.drain_all();
+        if let Some(head) = head {
+            self.queue.push_front(head);
+        }
+        rest
     }
 
     /// Everything still queued or current, for shutdown.

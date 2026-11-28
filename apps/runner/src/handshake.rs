@@ -244,14 +244,13 @@ fn session_row(session: &crate::runner::session_report::Assessment) -> Value {
     };
     let mut row = serde_json::Map::new();
     row.insert("component".to_string(), json!("tmux_session"));
-    match session.name.key() {
-        Some(key) => {
-            row.insert("scope".to_string(), json!("project"));
-            row.insert("project_key".to_string(), json!(key));
-        }
-        None => {
-            row.insert("scope".to_string(), json!("bot"));
-        }
+    if let Some(key) = session.name.key() {
+        row.insert("scope".to_string(), json!("project"));
+        row.insert("project_key".to_string(), json!(key));
+    } else {
+        row.insert("scope".to_string(), json!("bot"));
+        // Which member of the bot's pool the row is (0 for the primary).
+        row.insert("member".to_string(), json!(session.name.member()));
     }
     row.insert("cli".to_string(), json!(session.name.cli()));
     row.insert("status".to_string(), json!(status));
@@ -592,7 +591,7 @@ mod tests {
                  "hooks": "seen", "permissions": "bypass", "mcp": "stale"},
                 {"component": "tmux_session", "scope": "project", "project_key": "QLA", "cli": "claude",
                  "status": "ok", "state": "absent", "session_source": "derived"},
-                {"component": "tmux_session", "scope": "bot", "cli": "claude", "status": "ok",
+                {"component": "tmux_session", "scope": "bot", "member": 0, "cli": "claude", "status": "ok",
                  "state": "absent", "session_source": "local"},
             ])
         );

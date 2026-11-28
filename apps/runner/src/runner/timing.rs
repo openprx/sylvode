@@ -98,6 +98,16 @@ pub fn member_selected(task_id: &str, bot: &str, member: u8, reason: &str) {
     );
 }
 
+/// `member health`: a pool member turned healthy or unhealthy, and why (a fixed word).
+pub fn member_health(bot: &str, member: u8, healthy: bool, cause: &str) {
+    tracing::info!(bot = %id_word(bot), member, healthy, cause = %cause, "member health");
+}
+
+/// `rebalance`: a queued task that was never typed in moved from an unhealthy member to another.
+pub fn rebalance(bot: &str, from: u8, to: u8, task_id: &str) {
+    tracing::info!(bot = %id_word(bot), from, to, task_id = %id_word(task_id), "rebalance");
+}
+
 /// `task left session`: the current task cleared; `end` is `terminal`, `superseded` or `gone`.
 pub fn task_left_session(task_id: &str, attempt: i64, slot: &str, member: u8, busy: Duration, end: &str) {
     tracing::info!(

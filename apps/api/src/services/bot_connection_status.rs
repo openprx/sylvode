@@ -8,7 +8,7 @@
 //!    issued (`bot_runners.credentials_issued_at`);
 //! 3. the runner's own report (`PUT /api/v1/ai/runner/report`), sanitised before it is stored: the
 //!    API keeps component names, states and versions, never a path, a hint or a detail. A tmux
-//!    session row (`tmux_session`) keeps its project key, CLI type and five fixed-vocabulary fields:
+//!    session row (`tmux_session`) keeps its project key, CLI type, pool member (0 to 7) and five fixed-vocabulary fields:
 //!    no session name, path or pane id.
 
 use platform::timestamp::Timestamp;
@@ -35,6 +35,8 @@ const MAX_VERSION_CHARS: usize = 64;
 const MAX_SESSION_ROWS: usize = 64;
 /// A project key is `^[A-Z0-9]{1,32}$`.
 const MAX_PROJECT_KEY_CHARS: usize = 32;
+/// A bot's session pool has at most this many members, numbered from 0.
+const MAX_POOL_MEMBERS: u64 = 8;
 
 /// The values a `tmux_session` field may carry, by field. Anything else drops the field.
 const SESSION_FIELDS: [(&str, &[&str]); 5] = [
@@ -93,6 +95,15 @@ fn sanitize_session_row(row: &Value) -> Option<Value> {
     kept.insert("scope".to_string(), json!(if bot_scope { "bot" } else { "project" }));
     if let Some(key) = key {
         kept.insert("project_key".to_string(), json!(key));
+    }
+    // Which member of the bot's session pool the row is: an integer from 0 to 7, bot rows only.
+    if bot_scope
+        && let Some(member) = row
+            .get("member")
+            .and_then(Value::as_u64)
+            .filter(|member| *member < MAX_POOL_MEMBERS)
+    {
+        kept.insert("member".to_string(), json!(member));
     }
     kept.insert("cli".to_string(), json!(cli));
     kept.insert("status".to_string(), json!(status));
@@ -265,6 +276,10 @@ pub struct DeliveryStatus {
 pub struct SessionStatus {
     /// `bot` (the bot's own session, one for all its projects) or `project` (`<KEY>-<cli>`).
     pub scope: &'static str,
+    /// The member of the bot's session pool, 0 for the primary; absent for a project row and for a
+    /// runner that does not report members.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub member: Option<u8>,
     /// The derived `<KEY>-<cli>`; absent for a bot session, whose name only the operator knows.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_name: Option<String>,
@@ -296,6 +311,10 @@ pub struct ConnectionStatus {
     /// The session of a tmux connection; `None` for headless, without a fresh report, or when the
     /// report has no row for the session.
     pub tmux_session: Option<SessionStatus>,
+    /// One row per member of the bot's session pool, in member order, when the runner reports more
+    /// than one; empty otherwise (the one row is `tmux_session`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tmux_members: Vec<SessionStatus>,
     /// Whether tasks of this connection run with permission checks off on its channel: `true` or
     /// `false` from a fresh report, `None` when the report says nothing.
     pub bypass: Option<bool>,
@@ -417,31 +436,69 @@ fn component_status(
     }
 }
 
-/// The report's `tmux_session` row for this connection: the bot's own session row for its CLI first,
-/// else the row of the project key and CLI.
+/// The report's `tmux_session` row for this connection: the bot's own session row for its CLI first
+/// (the primary member of its pool), else the row of the project key and CLI.
 fn session_row(inputs: &StatusInputs) -> Option<SessionStatus> {
     let rows = inputs.report.as_ref()?.get("components")?.as_array()?;
     let of_cli = |row: &&Value| {
         row.get("component").and_then(Value::as_str) == Some("tmux_session")
             && row.get("cli").and_then(Value::as_str) == Some(inputs.cli.as_str())
     };
+    let is_bot = |row: &&Value| row.get("scope").and_then(Value::as_str) == Some("bot");
     let bot_row = rows
         .iter()
         .filter(of_cli)
-        .find(|row| row.get("scope").and_then(Value::as_str) == Some("bot"));
-    let (row, scope) = match bot_row {
-        Some(row) => (row, "bot"),
-        None => (
+        .filter(is_bot)
+        .min_by_key(|row| row.get("member").and_then(Value::as_u64).unwrap_or(0));
+    match bot_row {
+        Some(row) => session_status(row, "bot", inputs),
+        None => session_status(
             rows.iter().filter(of_cli).find(|row| {
-                row.get("scope").and_then(Value::as_str) != Some("bot")
-                    && row.get("project_key").and_then(Value::as_str) == Some(inputs.project_key.as_str())
+                !is_bot(row) && row.get("project_key").and_then(Value::as_str) == Some(inputs.project_key.as_str())
             })?,
             "project",
+            inputs,
         ),
+    }
+}
+
+/// The rows of every member of the bot's session pool for the connection's CLI, in member order,
+/// when the report holds more than one; empty otherwise.
+fn member_rows(inputs: &StatusInputs) -> Vec<SessionStatus> {
+    let Some(rows) = inputs
+        .report
+        .as_ref()
+        .and_then(|report| report.get("components"))
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
     };
+    let mut members: Vec<&Value> = rows
+        .iter()
+        .filter(|row| {
+            row.get("component").and_then(Value::as_str) == Some("tmux_session")
+                && row.get("cli").and_then(Value::as_str) == Some(inputs.cli.as_str())
+                && row.get("scope").and_then(Value::as_str) == Some("bot")
+        })
+        .collect();
+    if members.len() < 2 {
+        return Vec::new();
+    }
+    members.sort_by_key(|row| row.get("member").and_then(Value::as_u64).unwrap_or(0));
+    members
+        .into_iter()
+        .filter_map(|row| session_status(row, "bot", inputs))
+        .collect()
+}
+
+fn session_status(row: &Value, scope: &'static str, inputs: &StatusInputs) -> Option<SessionStatus> {
     let text = |field: &str| row.get(field).and_then(Value::as_str).map(str::to_string);
     Some(SessionStatus {
         scope,
+        member: row
+            .get("member")
+            .and_then(Value::as_u64)
+            .and_then(|member| u8::try_from(member).ok()),
         session_name: (scope == "project")
             .then(|| crate::services::execution_settings::session_name(&inputs.project_key, &inputs.cli)),
         status: text("status")?,
@@ -535,6 +592,11 @@ pub fn derive(inputs: &StatusInputs) -> ConnectionStatus {
     let tmux_session = (inputs.channel == "tmux" && report_is_fresh)
         .then(|| session_row(inputs))
         .flatten();
+    let tmux_members = if inputs.channel == "tmux" && report_is_fresh {
+        member_rows(inputs)
+    } else {
+        Vec::new()
+    };
     let bypass = report_is_fresh
         .then(|| bypass_flag(inputs, tmux_session.as_ref()))
         .flatten();
@@ -567,6 +629,7 @@ pub fn derive(inputs: &StatusInputs) -> ConnectionStatus {
         cli,
         tmux,
         tmux_session,
+        tmux_members,
         bypass,
         last_delivery,
         computed_at: inputs.now,

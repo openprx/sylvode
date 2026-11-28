@@ -129,21 +129,27 @@ pub const DEFAULT_AI_TASK_MAX_CHAIN_DEPTH: u32 = 3;
 /// Accepted range of `ai_tasks.max_chain_depth`.
 pub const AI_TASK_MAX_CHAIN_DEPTH_RANGE: std::ops::RangeInclusive<u32> = 1..=10;
 
-/// AI task deliveries the worker runs at once. 1 is the serial delivery of a batch.
-pub const DEFAULT_AI_TASK_DELIVERY_CONCURRENCY: u32 = 1;
+/// Bots whose deliveries the worker runs at once (each bot's own tasks go one at a time).
+pub const DEFAULT_AI_TASK_DELIVERY_CONCURRENCY: u32 = 8;
 
 /// Accepted range of `ai_tasks.delivery_concurrency`.
 pub const AI_TASK_DELIVERY_CONCURRENCY_RANGE: std::ops::RangeInclusive<u32> = 1..=64;
 
 /// Requests in flight to one runner address at once. Only the delivery pool applies it.
-pub const DEFAULT_AI_TASK_PER_RUNNER_CONCURRENCY: u32 = 1;
+pub const DEFAULT_AI_TASK_PER_RUNNER_CONCURRENCY: u32 = 4;
 
 /// Accepted range of `ai_tasks.per_runner_concurrency`.
 pub const AI_TASK_PER_RUNNER_CONCURRENCY_RANGE: std::ops::RangeInclusive<u32> = 1..=64;
 
-/// Tasks picked up per delivery slot in one worker tick (the pick-up limit is the worker's
-/// `--concurrency` times this).
+/// The most tasks one bot's lane picks up in one tick, so the lease clock of a task waiting in a
+/// lane stays short.
 pub const DEFAULT_AI_TASK_LANE_BATCH: u32 = 10;
+
+/// Milliseconds between the polls of the worker's delivery loop.
+pub const DEFAULT_AI_TASK_POLL_INTERVAL_MS: u64 = 1_000;
+
+/// Accepted range of `ai_tasks.poll_interval_ms`.
+pub const AI_TASK_POLL_INTERVAL_RANGE_MS: std::ops::RangeInclusive<u64> = 100..=60_000;
 
 /// Accepted range of `ai_tasks.lane_batch`.
 pub const AI_TASK_LANE_BATCH_RANGE: std::ops::RangeInclusive<u32> = 1..=1_000;
@@ -581,8 +587,10 @@ impl Default for ApiConfig {
 ///
 /// - `pool_idle_timeout_secs`, `pool_max_idle_per_host` and `tcp_keepalive_secs` shape its
 ///   connections, and `per_runner_concurrency` caps the requests in flight to one runner address.
-/// - `delivery_concurrency` is how many bots' deliveries run at once (1 is serial) and
-///   `lane_batch` multiplies the worker's `--concurrency` into the pick-up limit of one tick.
+/// - The worker delivers on a loop of its own that polls every `poll_interval_ms`. Each bot has at
+///   most one lane in flight, which delivers that bot's tasks one at a time in pick-up order, and
+///   `delivery_concurrency` is how many bots' lanes run at once. A poll picks up at most
+///   `lane_batch` tasks per bot and skips the bots that have a lane in flight.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AiTasksConfig {
     pub processing_timeout_secs: u64,
@@ -592,6 +600,7 @@ pub struct AiTasksConfig {
     pub delivery_concurrency: u32,
     pub per_runner_concurrency: u32,
     pub lane_batch: u32,
+    pub poll_interval_ms: u64,
     pub pool_idle_timeout_secs: u64,
     pub pool_max_idle_per_host: u32,
     pub tcp_keepalive_secs: u64,
@@ -607,6 +616,7 @@ impl Default for AiTasksConfig {
             delivery_concurrency: DEFAULT_AI_TASK_DELIVERY_CONCURRENCY,
             per_runner_concurrency: DEFAULT_AI_TASK_PER_RUNNER_CONCURRENCY,
             lane_batch: DEFAULT_AI_TASK_LANE_BATCH,
+            poll_interval_ms: DEFAULT_AI_TASK_POLL_INTERVAL_MS,
             pool_idle_timeout_secs: DEFAULT_AI_TASK_POOL_IDLE_TIMEOUT_SECS,
             pool_max_idle_per_host: DEFAULT_AI_TASK_POOL_MAX_IDLE_PER_HOST,
             tcp_keepalive_secs: DEFAULT_AI_TASK_TCP_KEEPALIVE_SECS,

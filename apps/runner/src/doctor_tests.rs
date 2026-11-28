@@ -178,8 +178,8 @@ fn an_acknowledged_plain_http_server_address_is_a_warning() {
 fn every_session_entry_gets_a_bot_row_beside_the_project_row() {
     let bot = "00000000-0000-0000-0000-000000000000";
     let cfg = crate::config::Config::from_toml(&format!(
-        "{}\n[[runner.tmux.sessions]]\nbot = \"{bot}\"\ncli = \"claude\"\nname = \"sv\"\n\
-         [[runner.tmux.sessions]]\nbot = \"{bot}\"\ncli = \"codex\"\nname = \"lead-two\"\n",
+        "{}\n[[runner.tmux.sessions]]\nbot = \"{bot}\"\ncli = \"claude\"\nnames = [\"sv\"]\n\
+         [[runner.tmux.sessions]]\nbot = \"{bot}\"\ncli = \"codex\"\nnames = [\"lead-two\"]\n",
         include_str!("../../api/tests/fixtures/runner-config-block.toml")
     ))
     .expect("block with entries");

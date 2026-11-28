@@ -567,7 +567,7 @@ fn named_config(cli: &str) -> Config {
     let block = include_str!("../../../api/tests/fixtures/runner-config-block.toml")
         .replace("00000000-0000-0000-0000-000000000000", BOT);
     Config::from_toml(&format!(
-        "{block}\n[[runner.tmux.sessions]]\nbot = \"{BOT}\"\ncli = \"{cli}\"\nname = \"lead\"\n"
+        "{block}\n[[runner.tmux.sessions]]\nbot = \"{BOT}\"\ncli = \"{cli}\"\nnames = [\"lead\"]\n"
     ))
     .expect("block with a session entry")
 }

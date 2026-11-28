@@ -1,24 +1,29 @@
-//! Delivery lanes: the tasks of one tick, grouped by bot.
+//! Delivery lanes: the tasks of one bot, delivered one at a time in pick-up order.
 //!
-//! A lane delivers its tasks one at a time in pick-up order, so a bot's tasks reach its runner in
-//! the order they were picked up. Lanes run concurrently up to a cap. With a cap of 1 there is no
-//! lane machinery: the tasks are delivered one after the other in pick-up order and the first
-//! error ends the batch. The worker's own `deliver` settles every task on its own and never
-//! returns an error (see `ai_tasks::settle_task`), so one failing task does not end a batch there.
+//! Each poll of the delivery loop groups the tasks it picked up by bot and starts one lane per
+//! bot. A bot has at most one lane in flight: the loop asks [`Lanes::busy`] which bots to leave
+//! out of its next pick-up, so a bot's tasks reach its runner in the order they were picked up and
+//! never overlap. Lanes run concurrently up to a cap; a lane beyond the cap waits for a permit
+//! while it still counts as in flight.
 //!
-//! With a cap above 1 a failed delivery ends only its own lane (its remaining tasks keep their
-//! lease and are swept as before); other lanes finish, and the first error is returned after all
-//! lanes have ended. A lane that panics is logged and does not end the others.
+//! The worker's own `deliver` settles every task on its own and never fails the lane: a task that
+//! cannot be settled is logged and keeps its lease (see `ai_tasks::settle_task`), and the lane goes
+//! on. A lane that panics is logged when it is reaped; its key is freed on unwind, and its tasks
+//! keep their lease and are swept as before.
+//!
+//! On shutdown a lane delivers no further task. The one it is delivering finishes within the
+//! delivery timeout, and the rest keep their lease.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::hash::Hash;
 use std::sync::Arc;
 
-use tokio::sync::Semaphore;
+use parking_lot::Mutex;
+use tokio::sync::{Semaphore, watch};
 use tokio::task::JoinSet;
 
-/// Shape of a tick's lanes, for the `delivery tick` log line.
+/// Shape of a poll's lanes, for the `delivery tick` log line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LaneStats {
     pub lanes: usize,
@@ -55,59 +60,118 @@ pub fn lane_stats<T, K: Eq + Hash>(tasks: &[T], key_of: impl Fn(&T) -> K) -> Lan
     }
 }
 
-/// Delivers `tasks` with `deliver`, at most `concurrency` lanes at a time (see the module text).
-pub async fn run_lanes<T, K, F, Fut>(
-    tasks: Vec<T>,
-    key_of: impl Fn(&T) -> K,
+/// Frees a lane's key when the lane ends, whether it ran to the end, was dropped or panicked.
+struct LaneKey<K: Eq + Hash> {
+    in_flight: Arc<Mutex<HashSet<K>>>,
+    key: K,
+}
+
+impl<K: Eq + Hash> Drop for LaneKey<K> {
+    fn drop(&mut self) {
+        self.in_flight.lock().remove(&self.key);
+    }
+}
+
+/// The lanes in flight, and the cap on how many deliver at once.
+pub struct Lanes<K: Eq + Hash> {
+    in_flight: Arc<Mutex<HashSet<K>>>,
+    permits: Arc<Semaphore>,
     concurrency: usize,
-    deliver: F,
-) -> anyhow::Result<()>
-where
-    T: Send + 'static,
-    K: Eq + Hash + Clone,
-    F: Fn(T) -> Fut + Clone + Send + 'static,
-    Fut: Future<Output = anyhow::Result<()>> + Send + 'static,
-{
-    if concurrency <= 1 {
-        for task in tasks {
-            deliver(task).await?;
-        }
-        return Ok(());
-    }
-    let permits = Arc::new(Semaphore::new(concurrency));
-    let mut set = JoinSet::new();
-    for lane in group(tasks, key_of) {
-        let (permits, deliver) = (Arc::clone(&permits), deliver.clone());
-        set.spawn(async move {
-            let _permit = permits
-                .acquire_owned()
-                .await
-                .map_err(|_| anyhow::anyhow!("the delivery lane limit is closed"))?;
-            for task in lane {
-                deliver(task).await?;
-            }
-            Ok::<(), anyhow::Error>(())
-        });
-    }
-    let mut first_error = None;
-    while let Some(joined) = set.join_next().await {
-        match joined {
-            Ok(Ok(())) => {}
-            Ok(Err(err)) => {
-                first_error.get_or_insert(err);
-            }
-            Err(join) => tracing::error!(error = %join, "a delivery lane ended abnormally"),
+    stop: watch::Receiver<bool>,
+    set: JoinSet<()>,
+}
+
+impl<K: Eq + Hash + Clone + Send + 'static> Lanes<K> {
+    /// At most `concurrency` lanes deliver at once; `stop` set to `true` ends every lane after the
+    /// delivery it is making.
+    pub fn new(concurrency: usize, stop: watch::Receiver<bool>) -> Self {
+        let concurrency = concurrency.max(1);
+        Self {
+            in_flight: Arc::new(Mutex::new(HashSet::new())),
+            permits: Arc::new(Semaphore::new(concurrency)),
+            concurrency,
+            stop,
+            set: JoinSet::new(),
         }
     }
-    first_error.map_or(Ok(()), Err)
+
+    /// The keys that have a lane in flight: the bots the next pick-up leaves out.
+    pub fn busy(&self) -> Vec<K> {
+        self.in_flight.lock().iter().cloned().collect()
+    }
+
+    /// How many lanes are in flight (delivering or waiting for a permit).
+    pub fn in_flight(&self) -> usize {
+        self.in_flight.lock().len()
+    }
+
+    /// How many more lanes the cap allows.
+    pub fn free(&self) -> usize {
+        self.concurrency.saturating_sub(self.in_flight())
+    }
+
+    /// Starts one lane per key of `tasks`, each delivering its tasks in the order given. A key that
+    /// already has a lane in flight is never given a second one: its tasks are handed back.
+    pub fn start<T, F, Fut>(&mut self, tasks: Vec<T>, key_of: impl Fn(&T) -> K, deliver: F) -> Vec<T>
+    where
+        T: Send + 'static,
+        F: Fn(T) -> Fut + Clone + Send + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        let mut refused = Vec::new();
+        for lane in group(tasks, &key_of) {
+            let Some(key) = lane.first().map(&key_of) else { continue };
+            if !self.in_flight.lock().insert(key.clone()) {
+                refused.extend(lane);
+                continue;
+            }
+            let guard = LaneKey {
+                in_flight: Arc::clone(&self.in_flight),
+                key,
+            };
+            let (permits, deliver, stop) = (Arc::clone(&self.permits), deliver.clone(), self.stop.clone());
+            self.set.spawn(async move {
+                let _guard = guard;
+                let Ok(_permit) = permits.acquire_owned().await else {
+                    return;
+                };
+                for task in lane {
+                    if *stop.borrow() {
+                        break;
+                    }
+                    deliver(task).await;
+                }
+            });
+        }
+        refused
+    }
+
+    /// Collects the lanes that have ended, without waiting; a lane that panicked is logged.
+    pub fn reap(&mut self) {
+        while let Some(joined) = self.set.try_join_next() {
+            if let Err(join) = joined {
+                tracing::error!(error = %join, "a delivery lane ended abnormally");
+            }
+        }
+    }
+
+    /// Waits for every lane to end (after `stop` is set they end after their current delivery).
+    pub async fn drain(&mut self) {
+        while let Some(joined) = self.set.join_next().await {
+            if let Err(join) = joined {
+                tracing::error!(error = %join, "a delivery lane ended abnormally");
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{LaneStats, lane_stats, run_lanes};
+    use super::{LaneStats, Lanes, lane_stats};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
+    use tokio::sync::watch;
 
     /// `(bot, sequence)`
     type Task = (u8, u32);
@@ -120,10 +184,11 @@ mod tests {
         let done = Arc::new(tokio::sync::Mutex::new(Vec::new()));
         let (active, peak) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
         let (done_in, active_in, peak_in) = (done.clone(), active.clone(), peak.clone());
-        run_lanes(
+        let (_stop_tx, stop_rx) = watch::channel(false);
+        let mut lanes = Lanes::new(concurrency, stop_rx);
+        let refused = lanes.start(
             tasks(),
             |task: &Task| task.0,
-            concurrency,
             move |task: Task| {
                 let (done, active, peak) = (done_in.clone(), active_in.clone(), peak_in.clone());
                 async move {
@@ -132,12 +197,11 @@ mod tests {
                     tokio::time::sleep(Duration::from_millis(20)).await;
                     done.lock().await.push(task);
                     active.fetch_sub(1, Ordering::SeqCst);
-                    Ok(())
                 }
             },
-        )
-        .await
-        .expect("all delivered");
+        );
+        assert!(refused.is_empty());
+        lanes.drain().await;
         let finished = done.lock().await.clone();
         (finished, peak.load(Ordering::SeqCst))
     }
@@ -150,13 +214,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn concurrency_one_is_the_serial_pick_up_order() {
-        let (done, peak) = run(1).await;
-        assert_eq!(done, tasks());
-        assert_eq!(peak, 1);
-    }
-
-    #[tokio::test]
     async fn lanes_keep_each_bots_order_and_run_bots_concurrently() {
         let (done, peak) = run(3).await;
         assert_eq!(done.len(), 6);
@@ -165,60 +222,9 @@ mod tests {
         let (done, peak) = run(2).await;
         assert!(per_bot_order_holds(&done), "{done:?}");
         assert_eq!(peak, 2, "the cap holds with three lanes");
-    }
-
-    #[tokio::test]
-    async fn the_serial_path_stops_the_batch_at_the_first_error() {
-        let delivered = Arc::new(AtomicUsize::new(0));
-        let delivered_in = delivered.clone();
-        let outcome = run_lanes(
-            tasks(),
-            |task: &Task| task.0,
-            1,
-            move |task: Task| {
-                let delivered = delivered_in.clone();
-                async move {
-                    delivered.fetch_add(1, Ordering::SeqCst);
-                    if task == (2, 1) {
-                        anyhow::bail!("down");
-                    }
-                    Ok(())
-                }
-            },
-        )
-        .await;
-        assert!(outcome.is_err());
-        assert_eq!(delivered.load(Ordering::SeqCst), 2, "the rest of the batch is dropped");
-    }
-
-    #[tokio::test]
-    async fn a_failure_ends_only_its_own_lane_when_lanes_run() {
-        let done = Arc::new(tokio::sync::Mutex::new(Vec::new()));
-        let done_in = done.clone();
-        let outcome = run_lanes(
-            tasks(),
-            |task: &Task| task.0,
-            3,
-            move |task: Task| {
-                let done = done_in.clone();
-                async move {
-                    if task == (1, 2) {
-                        anyhow::bail!("down");
-                    }
-                    done.lock().await.push(task);
-                    Ok(())
-                }
-            },
-        )
-        .await;
-        assert!(outcome.is_err());
-        let mut finished = done.lock().await.clone();
-        finished.sort_unstable();
-        assert_eq!(
-            finished,
-            vec![(1, 1), (2, 1), (2, 2), (3, 1)],
-            "bot 1 stopped, the others finished"
-        );
+        let (done, peak) = run(1).await;
+        assert!(per_bot_order_holds(&done), "{done:?}");
+        assert_eq!(peak, 1);
     }
 
     #[test]

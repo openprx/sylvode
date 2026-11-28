@@ -101,6 +101,7 @@
 				"refresh": "Refresh status",
 				"session": {
 					"label": "Session",
+					"member": "Session {number}",
 					"running": "Running",
 					"runningBot": "Running (this bot's own session)",
 					"runningRunner": "Running (started by runner)",

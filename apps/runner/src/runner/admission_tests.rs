@@ -46,6 +46,7 @@ fn task(id: &str, slot: &Slot) -> TmuxTask {
         cli: "claude".to_string(),
         program: PathBuf::from("/nonexistent/claude"),
         mcp_server: PathBuf::from("/nonexistent/mcp"),
+        item: None,
     }
 }
 
@@ -251,27 +252,24 @@ fn member(n: u8) -> Slot {
 }
 
 #[tokio::test]
-async fn a_refused_enqueue_leaves_no_affinity_and_the_retry_goes_to_another_member() {
+async fn an_enqueue_in_flight_counts_against_its_member_and_a_refusal_leaves_no_affinity() {
     let (manager, _dir) = manager(1);
     let (m0, m1) = (member(0), member(1));
-    let (handle0, mut rx0, status0) = stalled(8);
+    let (handle0, mut rx0, _status0) = stalled(8);
     let (handle1, mut rx1, _status1) = stalled(8);
     manager.install(&m0, handle0);
     manager.install(&m1, handle1);
-    // The first task fills member 0 up to the cap of 1 (its status still reads idle).
+    // The first task goes to member 0 and is held in its channel: it counts towards the cap of 1.
     assert_eq!(manager.enqueue(task("t1", &m0)).await, Ok(None));
-    // Held, not dropped: a command in flight counts towards the cap.
     let first = rx0.try_recv().expect("t1");
-    // t2 is chosen for member 0 (idle by its status) and refused: nothing is remembered.
-    assert_eq!(manager.enqueue(task("t2", &m0)).await, Err(EnqueueRefusal::Capped));
-    assert!(rx0.try_recv().is_err());
-    assert_eq!(queued_id(first), "t1");
-    // Member 0 is busy now and member 1 idle: the retry would return to member 0 had the refusal
-    // recorded affinity.
-    status0.send_replace(MemberStatus::fresh().next(State::Busy, 0, Instant::now()));
+    // Member 0 reads idle, but its held enqueue counts: t2 is chosen for member 1.
     assert_eq!(manager.enqueue(task("t2", &m0)).await, Ok(None));
     assert_eq!(queued_id(rx1.try_recv().expect("t2 on member 1")), "t2");
-    assert!(rx0.try_recv().is_err());
+    assert_eq!(queued_id(first), "t1");
+    // Both members are at the cap now: the pool falls back to the unmasked choice, the member
+    // refuses, and the refusal remembers nothing.
+    assert_eq!(manager.enqueue(task("t3", &m0)).await, Err(EnqueueRefusal::Capped));
+    assert!(rx0.try_recv().is_err() && rx1.try_recv().is_err());
 }
 
 #[tokio::test]

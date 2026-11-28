@@ -11,7 +11,7 @@ fn config(sessions: &str) -> RunnerConfig {
 }
 
 fn entry(bot: &str, cli: &str, name: &str) -> String {
-    format!("[[tmux.sessions]]\nbot = \"{bot}\"\ncli = \"{cli}\"\nname = \"{name}\"\n")
+    format!("[[tmux.sessions]]\nbot = \"{bot}\"\ncli = \"{cli}\"\nnames = [\"{name}\"]\n")
 }
 
 #[test]

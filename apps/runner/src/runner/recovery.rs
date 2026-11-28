@@ -134,8 +134,12 @@ async fn recover_bot(
         let Ok(found) = super::naming::resolve(&state.config.runner, &bot.bot_id, key_text, cli, Channel::Tmux) else {
             continue;
         };
-        let name = found.slot;
         let attempt = view.get("attempt").and_then(Value::as_i64).unwrap_or(0);
+        // A bot with several sessions: the member that holds the task, or would take it.
+        let item = str_at(&view, &["project", "id"]).and_then(|project_id| checks::item_key(&view, project_id));
+        let name = sessions
+            .locate_member(&found.slot, task_id, attempt, item.as_deref())
+            .await;
         let probe: Probe = sessions.probe(&name, task_id, attempt).await;
         let step = plan_task(&Facts {
             phase: view.get("runner_phase").and_then(Value::as_str),
@@ -158,9 +162,10 @@ async fn recover_bot(
         if step == Step::Skip {
             continue;
         }
-        let Some(task) = rebuild_task(state, client, bot, &view).await else {
+        let Some(mut task) = rebuild_task(state, client, bot, &view).await else {
             continue;
         };
+        sessions.retarget(&mut task, &name);
         let at = slots.iter().position(|(slot, _)| *slot == name).unwrap_or_else(|| {
             slots.push((name.clone(), PerKey::default()));
             slots.len() - 1

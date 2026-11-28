@@ -10,6 +10,7 @@ api = { path = "../api" }
 time.workspace = true
 clap.workspace = true
 lettre = { workspace = true, features = ["builder", "smtp-transport", "tokio1", "tokio1-rustls-tls"] }
+parking_lot.workspace = true
 platform = { path = "../../crates/platform" }
 reqwest.workspace = true
 sea-orm.workspace = true
@@ -20,7 +21,6 @@ uuid.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
-parking_lot.workspace = true
 
 [lints]
 workspace = true

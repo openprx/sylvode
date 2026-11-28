@@ -171,7 +171,7 @@ impl Fixture {
 
     /// The bot's claude tasks, from every project, go to the existing tmux session `name`.
     fn named(mut self, name: &str) -> Self {
-        self.sessions = format!("[[runner.tmux.sessions]]\nbot = \"{BOT}\"\ncli = \"claude\"\nname = \"{name}\"\n");
+        self.sessions = format!("[[runner.tmux.sessions]]\nbot = \"{BOT}\"\ncli = \"claude\"\nnames = [\"{name}\"]\n");
         self
     }
 

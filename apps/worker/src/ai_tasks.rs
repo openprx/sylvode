@@ -35,9 +35,10 @@ use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::watch;
 use uuid::Uuid;
 
-use crate::lanes::{lane_stats, run_lanes};
+use crate::lanes::{Lanes, lane_stats};
 
 /// At most this many bytes of a runner's answer are read; the rest is dropped unread.
 const MAX_ANSWER_BYTES: usize = 16 * 1024;
@@ -71,6 +72,7 @@ struct AiTaskDispatchRow {
     attempts: i32,
     max_attempts: i32,
     priority: i32,
+    created_at: Timestamp,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -235,56 +237,53 @@ impl Deliverer {
     }
 }
 
-/// Picks up due tasks and delivers each to its bot's webhook.
+/// The delivery loop: polls for due tasks every `poll_interval_ms` and delivers them on per-bot
+/// lanes, on a loop of its own that no other job of the worker slows down.
 ///
-/// Each picked-up task gets a lease of `processing_timeout_secs` from the pick-up. With the
-/// default configuration the tasks are delivered one after the other; see [`crate::lanes`] for
-/// `delivery_concurrency` above 1. Every task is settled on its own: a delivery or settlement that
-/// fails is logged and leaves that task to its lease, and the rest of the batch goes on.
-pub async fn process_pending_tasks(
-    state: &AppState,
+/// A poll leaves out the bots that have a lane in flight and picks up at most `lane_batch` tasks
+/// of each other bot, so one bot never has two lanes at once and its tasks reach the runner in
+/// pick-up order. Each picked-up task gets a lease of `processing_timeout_secs` from the pick-up.
+/// Every task is settled on its own: a delivery or settlement that fails is logged and leaves that
+/// task to its lease, and its lane goes on.
+///
+/// When `stop` is set the loop picks up nothing more, each lane ends after the delivery it is
+/// making (bounded by the delivery timeout) and the tasks it did not reach keep their lease.
+pub async fn run_delivery_loop(
+    state: AppState,
     concurrency: usize,
-    config: &AiTasksConfig,
-    deliverer: &Arc<Deliverer>,
-) -> anyhow::Result<()> {
-    let db = &state.db;
-    let limit = i64::try_from(concurrency.max(1)).unwrap_or(i64::MAX) * deliverer.lane_batch;
-    fail_unconnected_tasks(state, limit).await?;
-    let tasks = pickup_pending_tasks(db, limit, config.processing_timeout_secs).await?;
-    if tasks.is_empty() {
-        return Ok(());
+    config: AiTasksConfig,
+    deliverer: Arc<Deliverer>,
+    mut stop: watch::Receiver<bool>,
+) {
+    let mut lanes: Lanes<Uuid> = Lanes::new(deliverer.concurrency, stop.clone());
+    let poll = Duration::from_millis(config.poll_interval_ms);
+    let mut pool_logged = Instant::now();
+    loop {
+        lanes.reap();
+        if let Err(err) = poll_once(&state, concurrency, &config, &deliverer, &mut lanes).await {
+            tracing::warn!(error = %err, "task polling failed");
+        }
+        if pool_logged.elapsed() >= POOL_LOG_EVERY {
+            pool_logged = Instant::now();
+            log_pool(&deliverer);
+        }
+        tokio::select! {
+            _ = stop.wait_for(|stopped| *stopped) => break,
+            () = tokio::time::sleep(poll) => {}
+        }
     }
-
-    let picked_at = Instant::now();
-    let picked = tasks.len();
-    let shape = lane_stats(&tasks, |task| task.ai_participant_id);
-    let outcome = {
-        let state = state.clone();
-        let deliverer = Arc::clone(deliverer);
-        run_lanes(
-            tasks,
-            |task| task.ai_participant_id,
-            deliverer.concurrency,
-            move |task| {
-                let state = state.clone();
-                let deliverer = Arc::clone(&deliverer);
-                async move {
-                    settle_task(&state, &task, &deliverer, picked_at).await;
-                    Ok(())
-                }
-            },
-        )
-        .await
-    };
     tracing::info!(
-        picked,
-        lanes = shape.lanes,
-        max_lane_len = shape.max_lane_len,
-        in_flight_lanes = 0,
-        elapsed_ms = elapsed_ms(picked_at),
-        "delivery tick"
+        in_flight_lanes = lanes.in_flight(),
+        "delivery loop stopping; waiting for deliveries in flight"
     );
-    // Counters only: no host, address, URL, token or body.
+    lanes.drain().await;
+}
+
+/// How often the delivery pool's counters are logged.
+const POOL_LOG_EVERY: Duration = Duration::from_mins(1);
+
+/// Counters only: no host, address, URL, token or body.
+fn log_pool(deliverer: &Deliverer) {
     let pool = deliverer.pool.stats();
     tracing::info!(
         requests = pool.requests,
@@ -295,7 +294,70 @@ pub async fn process_pending_tasks(
         permits_waiting = pool.permits_waiting,
         "delivery pool"
     );
-    outcome
+}
+
+/// One poll: fails the tasks of unconnected projects, picks up the due tasks of the bots that have
+/// no lane in flight, and starts a lane for each bot picked up.
+async fn poll_once(
+    state: &AppState,
+    concurrency: usize,
+    config: &AiTasksConfig,
+    deliverer: &Arc<Deliverer>,
+    lanes: &mut Lanes<Uuid>,
+) -> anyhow::Result<()> {
+    let db = &state.db;
+    let sweep = i64::try_from(concurrency.max(1)).unwrap_or(i64::MAX) * deliverer.lane_batch;
+    fail_unconnected_tasks(state, sweep).await?;
+    let free = i64::try_from(lanes.free()).unwrap_or(i64::MAX);
+    if free == 0 {
+        return Ok(());
+    }
+    let busy = lanes.busy();
+    let tasks = pickup_pending_tasks(
+        db,
+        &Pickup {
+            limit: free.saturating_mul(deliverer.lane_batch),
+            per_bot: deliverer.lane_batch,
+            exclude: &busy,
+        },
+        config.processing_timeout_secs,
+    )
+    .await?;
+    if tasks.is_empty() {
+        return Ok(());
+    }
+    let picked_at = Instant::now();
+    let picked = tasks.len();
+    let shape = lane_stats(&tasks, |task| task.ai_participant_id);
+    let in_flight_lanes = lanes.in_flight();
+    let refused = {
+        let (state, deliverer) = (state.clone(), Arc::clone(deliverer));
+        lanes.start(
+            tasks,
+            |task| task.ai_participant_id,
+            move |task| {
+                let (state, deliverer) = (state.clone(), Arc::clone(&deliverer));
+                async move { settle_task(&state, &task, &deliverer, picked_at).await }
+            },
+        )
+    };
+    // A bot is picked up only when it has no lane, so nothing is refused; were one, it keeps its
+    // lease and the sweep takes it back.
+    if !refused.is_empty() {
+        tracing::warn!(
+            refused = refused.len(),
+            "tasks of a bot with a lane in flight were picked up"
+        );
+    }
+    tracing::info!(
+        picked,
+        lanes = shape.lanes,
+        max_lane_len = shape.max_lane_len,
+        in_flight_lanes,
+        elapsed_ms = elapsed_ms(picked_at),
+        "delivery tick"
+    );
+    Ok(())
 }
 
 /// Delivers and settles one task; an error ends only this task's attempt handling. The task keeps
@@ -505,17 +567,48 @@ async fn notify_failed(state: &AppState, task: &api::services::ai_task_service::
     }
 }
 
+/// What one pick-up may take.
+#[derive(Debug)]
+struct Pickup<'a> {
+    /// The most tasks in all.
+    limit: i64,
+    /// The most tasks of one bot.
+    per_bot: i64,
+    /// The bots to leave out: those with a lane in flight.
+    exclude: &'a [Uuid],
+}
+
+#[cfg(test)]
+impl Pickup<'_> {
+    /// Up to `limit` tasks of any bots.
+    const fn any(limit: i64) -> Pickup<'static> {
+        Pickup {
+            limit,
+            per_bot: limit,
+            exclude: &[],
+        }
+    }
+}
+
+/// Picks up due tasks, `ORDER BY priority DESC, created_at`: at most `pickup.per_bot` of each bot
+/// and `pickup.limit` in all, none of a bot in `pickup.exclude`. The tasks come back in pick-up
+/// order. The status test is repeated on the locked row because the window that ranks a bot's tasks
+/// cannot be taken under `FOR UPDATE`: a task another worker took meanwhile is skipped.
 async fn pickup_pending_tasks(
     db: &sea_orm::DatabaseConnection,
-    limit: i64,
+    pickup: &Pickup<'_>,
     processing_timeout_secs: u64,
 ) -> anyhow::Result<Vec<AiTaskDispatchRow>> {
     let processing_timeout_secs = i64::try_from(processing_timeout_secs).unwrap_or(i64::MAX);
-    let tasks = AiTaskDispatchRow::find_by_statement(Statement::from_sql_and_values(
+    let mut tasks = AiTaskDispatchRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         r"
-            WITH picked AS (
-                SELECT id
+            WITH due AS (
+                SELECT id,
+                       row_number() OVER (
+                           PARTITION BY ai_participant_id
+                           ORDER BY priority DESC, created_at, id
+                       ) AS lane_pos
                 FROM ai_tasks
                 WHERE status = 'pending'
                   AND (next_retry_at IS NULL OR next_retry_at <= now())
@@ -544,9 +637,18 @@ async fn pickup_pending_tasks(
                             AND c.enabled
                       )
                   )
-                ORDER BY priority DESC, created_at
+                  AND NOT (ai_participant_id = ANY($3))
+            ),
+            picked AS (
+                SELECT t.id
+                FROM ai_tasks t
+                INNER JOIN due ON due.id = t.id
+                WHERE due.lane_pos <= $4
+                  AND t.status = 'pending'
+                  AND (t.next_retry_at IS NULL OR t.next_retry_at <= now())
+                ORDER BY t.priority DESC, t.created_at, t.id
                 LIMIT $1
-                FOR UPDATE SKIP LOCKED
+                FOR UPDATE OF t SKIP LOCKED
             )
             UPDATE ai_tasks t
             SET status = 'processing',
@@ -591,12 +693,25 @@ async fn pickup_pending_tasks(
                 t.payload,
                 t.attempts,
                 t.max_attempts,
-                t.priority
+                t.priority,
+                t.created_at
         ",
-        vec![limit.into(), processing_timeout_secs.into()],
+        vec![
+            pickup.limit.into(),
+            processing_timeout_secs.into(),
+            pickup.exclude.to_vec().into(),
+            pickup.per_bot.into(),
+        ],
     ))
     .all(db)
     .await?;
+    // UPDATE ... RETURNING answers in no particular order: restore the pick-up order.
+    tasks.sort_by(|a, b| {
+        b.priority
+            .cmp(&a.priority)
+            .then(a.created_at.cmp(&b.created_at))
+            .then(a.id.cmp(&b.id))
+    });
 
     for task in &tasks {
         insert_task_event(
@@ -852,6 +967,7 @@ mod tests {
             attempts: 1,
             max_attempts: 3,
             priority: 5,
+            created_at: platform::timestamp::Timestamp::now(),
         };
         assert_eq!(
             delivery_body(&task),
@@ -1055,6 +1171,7 @@ mod tests {
             attempts: 1,
             max_attempts: 3,
             priority: 0,
+            created_at: platform::timestamp::Timestamp::now(),
         }
     }
 
@@ -1076,15 +1193,17 @@ mod tests {
         for concurrency in [1_usize, 4] {
             let done = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
             let tasks: Vec<AiTaskDispatchRow> = (1..=6).map(dispatch_row).collect();
-            let outcome = crate::lanes::run_lanes(tasks, |task| task.ai_participant_id, concurrency, {
+            let (_stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+            let mut lanes = crate::lanes::Lanes::new(concurrency, stop_rx);
+            let refused = lanes.start(tasks, |task| task.ai_participant_id, {
                 let done = done.clone();
                 move |task| {
                     settle_all_but_the_second(&done, &task);
-                    std::future::ready(Ok(()))
+                    std::future::ready(())
                 }
-            })
-            .await;
-            assert!(outcome.is_ok(), "concurrency {concurrency}");
+            });
+            assert!(refused.is_empty(), "concurrency {concurrency}");
+            lanes.drain().await;
             let mut done = done.lock().clone();
             done.sort_unstable();
             assert_eq!(
@@ -1129,7 +1248,7 @@ mod tests {
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::panic, clippy::print_stderr)]
 mod database_tests {
-    use super::{DeliveryVerdict, fail_tasks_without_connection, pickup_pending_tasks, settle_delivery};
+    use super::{DeliveryVerdict, Pickup, fail_tasks_without_connection, pickup_pending_tasks, settle_delivery};
     use platform::app::{AppState, FlowPermissionCacheSlot};
     use platform::config::{AppConfig, Secret};
     use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbBackend, FromQueryResult, Statement};
@@ -1327,7 +1446,9 @@ mod database_tests {
         )
         .await;
 
-        let picked = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+        let picked = pickup_pending_tasks(db, &Pickup::any(10), 3_600)
+            .await
+            .expect("pick-up runs");
         let [first] = picked.as_slice() else {
             panic!("exactly one task is picked up, got {}", picked.len());
         };
@@ -1364,7 +1485,9 @@ mod database_tests {
         let accepted = seed_pending_task(db).await;
         let declined = seed_pending_task(db).await;
         let transient = seed_pending_task(db).await;
-        let picked = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+        let picked = pickup_pending_tasks(db, &Pickup::any(10), 3_600)
+            .await
+            .expect("pick-up runs");
         assert_eq!(picked.len(), 3);
         let row = |id: Uuid| picked.iter().find(|task| task.id == id).expect("picked");
 
@@ -1423,7 +1546,9 @@ mod database_tests {
                 connect_the_bot_of(db, task, 3.0, Some(2.0)).await;
             }
         }
-        let picked = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+        let picked = pickup_pending_tasks(db, &Pickup::any(10), 3_600)
+            .await
+            .expect("pick-up runs");
         // The connection of one task is disabled after pick-up: still a configured project.
         exec(
             db,
@@ -1560,7 +1685,9 @@ mod database_tests {
         connect_the_bot_of(db, used, 1.0 / 60.0, Some(1.0 / 120.0)).await;
         connect_the_bot_of(db, old, 2.0, None).await;
 
-        let picked = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+        let picked = pickup_pending_tasks(db, &Pickup::any(10), 3_600)
+            .await
+            .expect("pick-up runs");
         let ids: Vec<Uuid> = picked.iter().map(|task| task.id).collect();
         assert!(
             !ids.contains(&fresh),
@@ -1585,7 +1712,9 @@ mod database_tests {
             vec![fresh.into()],
         )
         .await;
-        let later = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+        let later = pickup_pending_tasks(db, &Pickup::any(10), 3_600)
+            .await
+            .expect("pick-up runs");
         assert_eq!(later.iter().map(|task| task.id).collect::<Vec<_>>(), vec![fresh]);
         let lease = Count::find_by_statement(Statement::from_sql_and_values(
             DbBackend::Postgres,
@@ -1730,7 +1859,9 @@ mod database_tests {
         let scratch = scratch_or_skip!("gate_pickup");
         let db = &scratch.db;
         let w = gate_world(db).await;
-        let picked = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+        let picked = pickup_pending_tasks(db, &Pickup::any(10), 3_600)
+            .await
+            .expect("pick-up runs");
         assert_eq!(
             picked.iter().map(|task| task.id).collect::<Vec<_>>(),
             vec![w.enabled.1],
@@ -1814,7 +1945,9 @@ mod database_tests {
         let db = &scratch.db;
         let state = state_for(db.clone());
         let w = gate_world(db).await;
-        let picked = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+        let picked = pickup_pending_tasks(db, &Pickup::any(10), 3_600)
+            .await
+            .expect("pick-up runs");
         let task = picked
             .iter()
             .find(|task| task.id == w.enabled.1)
@@ -1878,11 +2011,15 @@ mod database_tests {
             .await;
         };
         set(second, false).await;
-        let picked = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+        let picked = pickup_pending_tasks(db, &Pickup::any(10), 3_600)
+            .await
+            .expect("pick-up runs");
         assert_eq!(picked.iter().map(|task| task.id).collect::<Vec<_>>(), vec![first]);
         assert_eq!(status_of(db, second).await, "pending");
         set(second, true).await;
-        let picked = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+        let picked = pickup_pending_tasks(db, &Pickup::any(10), 3_600)
+            .await
+            .expect("pick-up runs");
         assert_eq!(picked.iter().map(|task| task.id).collect::<Vec<_>>(), vec![second]);
         scratch.drop_self().await;
     }
@@ -1906,7 +2043,9 @@ mod database_tests {
         // minute ago restarts the hold from that moment.
         exec(db, &rotate(50).await, vec![task.into()]).await;
         exec(db, &rotate(1).await, vec![task.into()]).await;
-        let held = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+        let held = pickup_pending_tasks(db, &Pickup::any(10), 3_600)
+            .await
+            .expect("pick-up runs");
         assert!(
             held.is_empty(),
             "held after the second rotation, though the first is 50 minutes old"
@@ -1920,7 +2059,9 @@ mod database_tests {
             vec![task.into()],
         )
         .await;
-        let released = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+        let released = pickup_pending_tasks(db, &Pickup::any(10), 3_600)
+            .await
+            .expect("pick-up runs");
         assert_eq!(released.len(), 1);
 
         // Never used: the hold still ends one hour after the last rotation.
@@ -1938,14 +2079,17 @@ mod database_tests {
         .await;
         exec(db, &rotate(59).await, vec![task.into()]).await;
         assert!(
-            pickup_pending_tasks(db, 10, 3_600)
+            pickup_pending_tasks(db, &Pickup::any(10), 3_600)
                 .await
                 .expect("pick-up runs")
                 .is_empty()
         );
         exec(db, &rotate(61).await, vec![task.into()]).await;
         assert_eq!(
-            pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs").len(),
+            pickup_pending_tasks(db, &Pickup::any(10), 3_600)
+                .await
+                .expect("pick-up runs")
+                .len(),
             1
         );
         scratch.drop_self().await;
@@ -1961,7 +2105,9 @@ mod database_tests {
         let state = state_for(db.clone());
         let task = seed_pending_task(db).await;
         connect_the_bot_of(db, task, 3.0, Some(2.0)).await;
-        let picked = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+        let picked = pickup_pending_tasks(db, &Pickup::any(10), 3_600)
+            .await
+            .expect("pick-up runs");
         assert_eq!(picked.len(), 1);
         // The removal of the last connection, as `bot_connections::remove` leaves it.
         for sql in [
@@ -1998,7 +2144,9 @@ mod database_tests {
             )
             .await;
             // Delivery: no webhook is left, so it is not delivered; it burns an attempt.
-            let picked = pickup_pending_tasks(db, 10, 3_600).await.expect("pick-up runs");
+            let picked = pickup_pending_tasks(db, &Pickup::any(10), 3_600)
+                .await
+                .expect("pick-up runs");
             for picked in picked {
                 super::deliver_task(&state, &picked, &test_deliverer(), std::time::Instant::now())
                     .await

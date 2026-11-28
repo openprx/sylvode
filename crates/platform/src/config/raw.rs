@@ -27,18 +27,19 @@ use super::site::RawSite;
 use super::{
     AI_TASK_DELIVERY_CONCURRENCY_RANGE, AI_TASK_LANE_BATCH_RANGE, AI_TASK_LEASE_EXTENSION_RANGE_SECS,
     AI_TASK_MAX_CHAIN_DEPTH_RANGE, AI_TASK_MAX_PROCESSING_CEILING_SECS, AI_TASK_PER_RUNNER_CONCURRENCY_RANGE,
-    AI_TASK_POOL_IDLE_TIMEOUT_RANGE_SECS, AI_TASK_POOL_MAX_IDLE_PER_HOST_RANGE, AI_TASK_PROCESSING_TIMEOUT_RANGE_SECS,
-    AI_TASK_TCP_KEEPALIVE_CEILING_SECS, AiTasksConfig, ApiConfig, AuditConfig, AuthConfig, ConfigError,
-    DEFAULT_AI_TASK_DELIVERY_CONCURRENCY, DEFAULT_AI_TASK_LANE_BATCH, DEFAULT_AI_TASK_LEASE_EXTENSION_SECS,
-    DEFAULT_AI_TASK_MAX_CHAIN_DEPTH, DEFAULT_AI_TASK_MAX_PROCESSING_SECS, DEFAULT_AI_TASK_PER_RUNNER_CONCURRENCY,
-    DEFAULT_AI_TASK_POOL_IDLE_TIMEOUT_SECS, DEFAULT_AI_TASK_POOL_MAX_IDLE_PER_HOST,
-    DEFAULT_AI_TASK_PROCESSING_TIMEOUT_SECS, DEFAULT_AI_TASK_TCP_KEEPALIVE_SECS, DEFAULT_FLOW_BODY_ASSET_MAX_BYTES,
-    DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS, DEFAULT_FLOW_DISPATCH_MAX_ATTEMPTS, DEFAULT_FLOW_SETUP_CPU_BUDGET_MS,
-    DEFAULT_MAX_CHANGE_HINT_STREAMS, DEFAULT_OPERATION_LOG_RETENTION_DAYS, DEFAULT_S3_REGION, DEFAULT_STORAGE_DIR,
-    DatabaseConfig, FlowConfig, IpCidr, LogFormat, LogOutput, LoggingConfig, MAX_CHANGE_HINT_STREAMS_CEILING,
-    MAX_FLOW_BODY_ASSET_BYTES, MAX_FLOW_CONVERSION_REAP_INTERVAL_SECS, MAX_FLOW_SETUP_CPU_BUDGET_MS,
-    MIN_FLOW_SETUP_CPU_BUDGET_MS, MIN_JWT_SECRET_LEN, McpConfig, McpToolMode, McpTransport, OAuthConfig, OpenPrConfig,
-    OutboundConfig, S3Config, ServerConfig, StorageBackend, StorageConfig,
+    AI_TASK_POLL_INTERVAL_RANGE_MS, AI_TASK_POOL_IDLE_TIMEOUT_RANGE_SECS, AI_TASK_POOL_MAX_IDLE_PER_HOST_RANGE,
+    AI_TASK_PROCESSING_TIMEOUT_RANGE_SECS, AI_TASK_TCP_KEEPALIVE_CEILING_SECS, AiTasksConfig, ApiConfig, AuditConfig,
+    AuthConfig, ConfigError, DEFAULT_AI_TASK_DELIVERY_CONCURRENCY, DEFAULT_AI_TASK_LANE_BATCH,
+    DEFAULT_AI_TASK_LEASE_EXTENSION_SECS, DEFAULT_AI_TASK_MAX_CHAIN_DEPTH, DEFAULT_AI_TASK_MAX_PROCESSING_SECS,
+    DEFAULT_AI_TASK_PER_RUNNER_CONCURRENCY, DEFAULT_AI_TASK_POLL_INTERVAL_MS, DEFAULT_AI_TASK_POOL_IDLE_TIMEOUT_SECS,
+    DEFAULT_AI_TASK_POOL_MAX_IDLE_PER_HOST, DEFAULT_AI_TASK_PROCESSING_TIMEOUT_SECS,
+    DEFAULT_AI_TASK_TCP_KEEPALIVE_SECS, DEFAULT_FLOW_BODY_ASSET_MAX_BYTES, DEFAULT_FLOW_CONVERSION_REAP_INTERVAL_SECS,
+    DEFAULT_FLOW_DISPATCH_MAX_ATTEMPTS, DEFAULT_FLOW_SETUP_CPU_BUDGET_MS, DEFAULT_MAX_CHANGE_HINT_STREAMS,
+    DEFAULT_OPERATION_LOG_RETENTION_DAYS, DEFAULT_S3_REGION, DEFAULT_STORAGE_DIR, DatabaseConfig, FlowConfig, IpCidr,
+    LogFormat, LogOutput, LoggingConfig, MAX_CHANGE_HINT_STREAMS_CEILING, MAX_FLOW_BODY_ASSET_BYTES,
+    MAX_FLOW_CONVERSION_REAP_INTERVAL_SECS, MAX_FLOW_SETUP_CPU_BUDGET_MS, MIN_FLOW_SETUP_CPU_BUDGET_MS,
+    MIN_JWT_SECRET_LEN, McpConfig, McpToolMode, McpTransport, OAuthConfig, OpenPrConfig, OutboundConfig, S3Config,
+    ServerConfig, StorageBackend, StorageConfig,
 };
 
 const DEFAULT_MAX_CONNECTIONS: u32 = 20;
@@ -179,6 +180,7 @@ struct RawAiTasks {
     delivery_concurrency: Option<u32>,
     per_runner_concurrency: Option<u32>,
     lane_batch: Option<u32>,
+    poll_interval_ms: Option<u64>,
     pool_idle_timeout_secs: Option<u64>,
     pool_max_idle_per_host: Option<u32>,
     tcp_keepalive_secs: Option<u64>,
@@ -676,6 +678,14 @@ impl RawAiTasks {
                 DEFAULT_AI_TASK_LANE_BATCH
             }
         });
+        let poll_interval_ms = self.poll_interval_ms.map_or(DEFAULT_AI_TASK_POLL_INTERVAL_MS, |value| {
+            if AI_TASK_POLL_INTERVAL_RANGE_MS.contains(&value) {
+                value
+            } else {
+                issues.push("ai_tasks.poll_interval_ms must be between 100 and 60000");
+                DEFAULT_AI_TASK_POLL_INTERVAL_MS
+            }
+        });
         let pool_idle_timeout_secs =
             self.pool_idle_timeout_secs
                 .map_or(DEFAULT_AI_TASK_POOL_IDLE_TIMEOUT_SECS, |value| {
@@ -714,6 +724,7 @@ impl RawAiTasks {
             delivery_concurrency,
             per_runner_concurrency,
             lane_batch,
+            poll_interval_ms,
             pool_idle_timeout_secs,
             pool_max_idle_per_host,
             tcp_keepalive_secs,

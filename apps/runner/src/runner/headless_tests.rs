@@ -64,6 +64,7 @@ fn accepted(cli: &str, dir: &Path, key: &str, program: &Path) -> Accepted {
         cli: cli.to_string(),
         program: program.to_path_buf(),
         mcp_server: PathBuf::from("/opt/mcp-server"),
+        item: None,
     }
 }
 

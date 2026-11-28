@@ -189,18 +189,20 @@ max_processing_secs = 86400
 # depth, or one that brings the same bot into a chain twice for the same work item, creates no
 # task and is recorded as an `ai_task.chain_refused` event. Default: 3. Accepted range: 1..=10.
 max_chain_depth = 3
-# Delivery of tasks to runners. The worker always delivers through one long-lived client pair that
-# reuses connections and checks the address of every new connection against the [outbound] rules;
-# the defaults deliver one task at a time.
-# Deliveries that run at once; each bot's tasks are still delivered in order, one at a time.
-# 1 delivers a batch serially. Default: 1. Accepted range: 1..=64.
-delivery_concurrency = 1
-# Requests in flight to one runner address at once. Default: 1.
+# Delivery of tasks to runners. The worker delivers on a loop of its own, through one long-lived
+# client pair that reuses connections and checks the address of every new connection against the
+# [outbound] rules. Each bot has at most one lane in flight; the lane delivers that bot's tasks one
+# at a time in pick-up order, and a poll skips the bots that have a lane in flight.
+# Bots whose lanes run at once. 1 delivers one bot after the other. Default: 8.
 # Accepted range: 1..=64.
-per_runner_concurrency = 1
-# The worker picks up at most its --concurrency times this many tasks per tick. Default: 10.
-# Accepted range: 1..=1000.
+delivery_concurrency = 8
+# Requests in flight to one runner address at once. Default: 4. Accepted range: 1..=64.
+per_runner_concurrency = 4
+# The most tasks one bot's lane picks up in one poll, so a task waiting in a lane does not wait
+# long on its lease. Default: 10. Accepted range: 1..=1000.
 lane_batch = 10
+# Milliseconds between the polls of the delivery loop. Default: 1000. Accepted range: 100..=60000.
+poll_interval_ms = 1000
 # An idle pooled connection is closed after this many seconds. Default: 30.
 # Accepted range: 1..=3600.
 pool_idle_timeout_secs = 30

@@ -2037,7 +2037,7 @@ url = "http://127.0.0.1:9000/hook"
     #[test]
     fn a_bad_session_entry_is_refused_naming_its_index() {
         let entry = |bot: &str, cli: &str, name: &str| {
-            format!("[[runner.tmux.sessions]]\nbot = \"{bot}\"\ncli = \"{cli}\"\nname = \"{name}\"\n")
+            format!("[[runner.tmux.sessions]]\nbot = \"{bot}\"\ncli = \"{cli}\"\nnames = [\"{name}\"]\n")
         };
         let good = entry(SESSION_BOT, "claude", "sv");
         for (extra, want) in [
@@ -2073,7 +2073,7 @@ url = "http://127.0.0.1:9000/hook"
             ),
             (
                 format!("{good}{}", entry(SESSION_OTHER_BOT, "codex", "SV")),
-                "runner.tmux.sessions[1].name repeats",
+                "runner.tmux.sessions[1].names repeats",
             ),
             (
                 format!(
@@ -2081,11 +2081,11 @@ url = "http://127.0.0.1:9000/hook"
                     entry(SESSION_OTHER_BOT, "claude", "rf"),
                     entry(SESSION_BOT, "codex", "Rf")
                 ),
-                "runner.tmux.sessions[2].name repeats",
+                "runner.tmux.sessions[2].names repeats",
             ),
             // The `project` key is gone, not renamed: it is refused naming the key.
             (
-                "[[runner.tmux.sessions]]\nproject = \"SV\"\ncli = \"claude\"\nname = \"sv\"\n".to_string(),
+                "[[runner.tmux.sessions]]\nproject = \"SV\"\ncli = \"claude\"\nnames = [\"sv\"]\n".to_string(),
                 "project",
             ),
         ] {
@@ -2100,7 +2100,8 @@ url = "http://127.0.0.1:9000/hook"
     /// An entry names a bot a runner agent serves and that has a token.
     #[test]
     fn a_session_entry_needs_a_served_bot_with_a_token() {
-        let entry = |bot: &str| format!("[[runner.tmux.sessions]]\nbot = \"{bot}\"\ncli = \"claude\"\nname = \"sv\"\n");
+        let entry =
+            |bot: &str| format!("[[runner.tmux.sessions]]\nbot = \"{bot}\"\ncli = \"claude\"\nnames = [\"sv\"]\n");
         // A bot no runner agent serves, though it holds a token of its own.
         let unserved = format!(
             "{GOLDEN_BLOCK}\n{}[[ai_task_callback.bots]]\nbot_id = \"{SESSION_OTHER_BOT}\"\n\
@@ -2137,7 +2138,7 @@ url = "http://127.0.0.1:9000/hook"
         assert_eq!(
             cfg.runner
                 .bot_session(&bot.to_uppercase(), "codex")
-                .map(|e| e.name.as_str()),
+                .and_then(|e| e.primary()),
             Some("sv-codex-lead")
         );
         assert!(cfg.runner.bot_session(SESSION_OTHER_BOT, "claude").is_none());

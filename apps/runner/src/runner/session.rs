@@ -75,6 +75,8 @@ pub struct TmuxTask {
     pub cli: String,
     pub program: PathBuf,
     pub mcp_server: PathBuf,
+    /// The work item the task belongs to (see `checks::item_key`), for the pool's item affinity.
+    pub item: Option<String>,
 }
 
 impl Task for TmuxTask {
@@ -107,6 +109,7 @@ impl TmuxTask {
             cli: accepted.cli.clone(),
             program: accepted.program.clone(),
             mcp_server: accepted.mcp_server.clone(),
+            item: accepted.item.clone(),
         }
     }
 }
@@ -275,7 +278,15 @@ impl MemberStatus {
     /// The status after a state change: the unhealthy time is kept while the member stays unhealthy.
     #[must_use]
     pub fn next(&self, state: State, queue_len: usize, now: Instant) -> Self {
-        let healthy = !matches!(state, State::Dead);
+        self.next_checked(state, queue_len, now, false)
+    }
+
+    /// Like [`Self::next`], with `unhealthy` set when the worker found another reason to distrust
+    /// the member (absent session, declined session, blocked or held too long). A dead session is
+    /// always unhealthy.
+    #[must_use]
+    pub fn next_checked(&self, state: State, queue_len: usize, now: Instant, unhealthy: bool) -> Self {
+        let healthy = !unhealthy && !matches!(state, State::Dead);
         let unhealthy_since = if healthy {
             None
         } else {
@@ -287,6 +298,15 @@ impl MemberStatus {
             healthy,
             unhealthy_since,
         }
+    }
+
+    /// Whether the member has been unhealthy for at least `after` at `now`.
+    #[must_use]
+    pub fn unhealthy_for(&self, now: Instant, after: Duration) -> bool {
+        !self.healthy
+            && self
+                .unhealthy_since
+                .is_some_and(|since| now.saturating_duration_since(since) >= after)
     }
 
     const fn is_idle(&self) -> bool {
@@ -377,7 +397,7 @@ impl AffinityStore {
     }
 
     /// Keeps at most [`AFFINITY_CAP`] entries of each kind, dropping the least recently touched.
-    fn prune(&mut self) {
+    pub fn prune(&mut self) {
         while self.tasks.len() > AFFINITY_CAP {
             let Some(oldest) = self
                 .tasks
@@ -482,6 +502,41 @@ pub fn select_member(
 struct PoolMember {
     slot: Slot,
     status: watch::Receiver<MemberStatus>,
+    /// The member's count of enqueues that are chosen or in its channel and not yet in its queue.
+    pending: Arc<AtomicUsize>,
+}
+
+/// The tasks whose enqueue is under way, by task id: the member chosen for each and how many
+/// enqueues of the task hold the mark. A second enqueue of the same task (a new attempt arriving
+/// within the answer window) goes to the same member, so one task is never queued on two members.
+type InFlight = Arc<Mutex<HashMap<String, (u8, usize)>>>;
+
+/// Holds the in-flight mark of a task until the enqueue is over (or its future is dropped).
+pub(super) struct InFlightMark {
+    marks: InFlight,
+    task_id: Option<String>,
+}
+
+impl Drop for InFlightMark {
+    fn drop(&mut self) {
+        let Some(id) = self.task_id.take() else { return };
+        let mut marks = self.marks.lock();
+        if let Some(entry) = marks.get_mut(&id) {
+            entry.1 = entry.1.saturating_sub(1);
+            if entry.1 == 0 {
+                marks.remove(&id);
+            }
+        }
+    }
+}
+
+/// The member chosen for a task, with what keeps the choice true until the member has the task.
+pub(super) struct Chosen {
+    slot: Slot,
+    reason: SelectReason,
+    /// Counted against the member from the moment of the choice.
+    pending: Pending,
+    mark: InFlightMark,
 }
 
 /// The sessions of one bot and CLI, ordered by member number, and what they served. The pool of a
@@ -490,32 +545,91 @@ struct PoolMember {
 pub struct BotPool {
     members: Vec<PoolMember>,
     affinity: AffinityStore,
+    inflight: InFlight,
+    /// Bumped on every change worth writing to disk.
+    version: u64,
+    /// The newest version written, so an older snapshot finishing late never overwrites a newer one.
+    persisted: Arc<Mutex<u64>>,
 }
 
 impl BotPool {
-    /// Adds the member `slot` (a bot slot) with its status channel; a member already there is kept.
-    fn attach(&mut self, slot: &Slot, status: watch::Receiver<MemberStatus>) {
+    /// A pool with the affinity the runner persisted for `primary`, if any.
+    fn load(state: &StateDir, primary: &Slot) -> Self {
+        let mut pool = Self::default();
+        if let Some(mut affinity) = state
+            .read_pool_affinity(primary)
+            .and_then(|text| serde_json::from_str::<AffinityStore>(&text).ok())
+        {
+            affinity.prune();
+            pool.affinity = affinity;
+        }
+        pool
+    }
+
+    /// Adds the member `slot` (a bot slot) with its status channel and pending count; a member
+    /// already there is kept.
+    fn attach(&mut self, slot: &Slot, status: watch::Receiver<MemberStatus>, pending: Arc<AtomicUsize>) {
         if self.members.iter().any(|member| member.slot == *slot) {
             return;
         }
         self.members.push(PoolMember {
             slot: slot.clone(),
             status,
+            pending,
         });
         self.members.sort_by_key(|member| member.slot.member());
     }
 
-    /// The slot that takes the task, and the reason. Records nothing: affinity is recorded by
-    /// [`Self::record`] once the member has accepted the task. A member at its queue cap
-    /// (`max_queued` of 0 means no cap) is passed over while another member has room.
-    fn select(
-        &self,
-        input: &SelectInput<'_>,
-        now: u64,
-        item_ttl_secs: u64,
-        max_queued: usize,
-    ) -> Option<(Slot, SelectReason)> {
-        let mut statuses: Vec<MemberStatus> = self.members.iter().map(|member| *member.status.borrow()).collect();
+    /// Chooses the member that takes the task, counts the task against it and marks it in flight,
+    /// all under one hold of the marks, so concurrent choices see each other. Records no affinity:
+    /// that is [`Self::record`], once the member has accepted the task. A member at its queue cap
+    /// (`max_queued` of 0 means no cap), counting the enqueues on their way to it, is passed over
+    /// while another member has room. A task already in flight keeps its member.
+    fn choose(&self, input: &SelectInput<'_>, now: u64, item_ttl_secs: u64, max_queued: usize) -> Option<Chosen> {
+        let mut marks = self.inflight.lock();
+        let marked = input
+            .task_id
+            .and_then(|id| marks.get(id))
+            .and_then(|(member, _)| self.members.iter().position(|m| m.slot.member() == *member));
+        let (index, reason) = marked.map_or_else(
+            || self.pick(input, now, item_ttl_secs, max_queued),
+            |index| (index, SelectReason::AffinityTask),
+        );
+        let member = self.members.get(index)?;
+        let pending = Pending::acquire(&member.pending);
+        let task_id = input.task_id.map(str::to_string);
+        if let Some(id) = &task_id {
+            marks
+                .entry(id.clone())
+                .and_modify(|entry| entry.1 = entry.1.saturating_add(1))
+                .or_insert_with(|| (member.slot.member(), 1));
+        }
+        drop(marks);
+        Some(Chosen {
+            slot: member.slot.clone(),
+            reason,
+            pending,
+            mark: InFlightMark {
+                marks: Arc::clone(&self.inflight),
+                task_id,
+            },
+        })
+    }
+
+    /// The member [`select_member`] picks, counting the enqueues on their way to each member and
+    /// passing over the members at the queue cap while another has room.
+    fn pick(&self, input: &SelectInput<'_>, now: u64, item_ttl_secs: u64, max_queued: usize) -> (usize, SelectReason) {
+        let mut statuses: Vec<MemberStatus> = self
+            .members
+            .iter()
+            .map(|member| {
+                let status = *member.status.borrow();
+                MemberStatus {
+                    queue_len: status.queue_len.saturating_add(member.pending.load(Ordering::Acquire)),
+                    ..status
+                }
+            })
+            .collect();
         if max_queued > 0 {
             let open: Vec<MemberStatus> = statuses
                 .iter()
@@ -528,9 +642,7 @@ impl BotPool {
                 statuses = open;
             }
         }
-        let (index, reason) = select_member(input, &self.affinity, &statuses, now, item_ttl_secs);
-        let slot = self.members.get(index)?.slot.clone();
-        Some((slot, reason))
+        select_member(input, &self.affinity, &statuses, now, item_ttl_secs)
     }
 
     /// Remembers that `slot` took the task (and the work item) of `input`.
@@ -541,12 +653,57 @@ impl BotPool {
         if let Some(item) = input.item {
             self.affinity.record_item(item, slot.member(), now);
         }
+        self.version = self.version.saturating_add(1);
+    }
+
+    /// `task_id` left its member.
+    fn task_left(&mut self, task_id: &str, now: u64) {
+        self.affinity.task_left(task_id, now);
+        self.version = self.version.saturating_add(1);
+    }
+
+    /// Whether a member other than `member` is healthy.
+    fn has_healthy_other(&self, member: u8) -> bool {
+        self.members
+            .iter()
+            .any(|other| other.slot.member() != member && other.status.borrow().healthy)
+    }
+
+    /// What to write to disk: the version, the text and the version gate. `None` for a pool of one
+    /// member, which keeps no file.
+    fn snapshot(&self) -> Option<Snapshot> {
+        if self.members.len() < 2 {
+            return None;
+        }
+        let text = serde_json::to_string(&self.affinity).ok()?;
+        Some(Snapshot {
+            version: self.version,
+            text,
+            gate: Arc::clone(&self.persisted),
+        })
     }
 }
 
-/// How long a work item sticks to the member that served it (`[runner.tmux.pool]` later; the
-/// design's default).
-const ITEM_AFFINITY_TTL_SECS: u64 = 3600;
+/// The affinity of a pool, serialised, with the gate that keeps writes in order.
+struct Snapshot {
+    version: u64,
+    text: String,
+    gate: Arc<Mutex<u64>>,
+}
+
+impl Snapshot {
+    /// Writes the snapshot unless a newer one was written already.
+    fn write(self, state: &StateDir, primary: &Slot) {
+        let mut done = self.gate.lock();
+        if self.version <= *done {
+            return;
+        }
+        match state.write_pool_affinity(primary, &self.text) {
+            Ok(()) => *done = self.version,
+            Err(e) => tracing::warn!(pool = primary.as_str(), "the pool's affinity could not be saved: {e}"),
+        }
+    }
+}
 
 /// How many commands a session's channel holds.
 const WORKER_CHANNEL: usize = 256;
@@ -587,6 +744,58 @@ struct Shared {
     /// Asked for a report when a session appears or changes, so Sylvode does not show the old
     /// state until the next periodic one.
     report_trigger: crate::handshake::ReportTrigger,
+    /// The command channel of each session worker, by slot.
+    workers: Mutex<HashMap<String, WorkerHandle>>,
+    /// The pool of each bot and CLI, by the text of its member 0 slot.
+    pools: Mutex<HashMap<String, BotPool>>,
+}
+
+impl Shared {
+    /// Points `task` at the pool member `slot`: its slot, and the tmux session of that member.
+    /// A member the configuration does not name keeps the task's tmux session.
+    fn retarget(&self, task: &mut TmuxTask, slot: &Slot) {
+        if let Some((tmux, _)) = super::naming::tmux_of_slot(&self.config.runner, slot) {
+            task.tmux = tmux;
+        }
+        task.slot = slot.clone();
+    }
+
+    /// Writes the affinity snapshot of the pool of `primary` in the background.
+    fn persist(self: &Arc<Self>, primary: &Slot, snapshot: Option<Snapshot>) {
+        let Some(snapshot) = snapshot else { return };
+        let (shared, primary) = (Arc::clone(self), primary.clone());
+        // A runtime that is shutting down drops the write; the file is only a hint.
+        drop(tokio::task::spawn_blocking(move || {
+            snapshot.write(&shared.state, &primary);
+        }));
+    }
+
+    /// Remembers that the member `slot` of a bot's pool took task `task_id` of work item `item`.
+    fn record_affinity(self: &Arc<Self>, slot: &Slot, task_id: &str, item: Option<&str>) {
+        if !slot.is_bot() {
+            return;
+        }
+        let Ok(primary) = bot_primary(slot) else { return };
+        let input = SelectInput {
+            task_id: Some(task_id),
+            item,
+        };
+        let snapshot = {
+            let mut pools = self.pools.lock();
+            pools.get_mut(primary.as_str()).and_then(|pool| {
+                pool.record(&input, slot, unix_now());
+                pool.snapshot()
+            })
+        };
+        self.persist(&primary, snapshot);
+    }
+
+    /// The members the configuration names for the bot of `slot` and its CLI (1 when it names none).
+    fn member_count(&self, slot: &Slot) -> usize {
+        slot.bot_id()
+            .and_then(|bot| self.config.runner.bot_session(bot, slot.cli()))
+            .map_or(1, |entry| entry.names.len().max(1))
+    }
 }
 
 /// `(tmux socket path, pane id)` to the name of the session that uses the pane.
@@ -669,6 +878,17 @@ impl WorkerHandle {
     /// queued all the same, in the order it arrived.
     pub(super) async fn enqueue(&self, task: TmuxTask, limits: EnqueueLimits) -> Result<Option<usize>, EnqueueRefusal> {
         let pending = Pending::acquire(&self.pending);
+        self.enqueue_reserved(task, limits, pending).await
+    }
+
+    /// [`Self::enqueue`] for a task already counted against this session as `pending` (the pool
+    /// counts a task when it chooses the member).
+    async fn enqueue_reserved(
+        &self,
+        task: TmuxTask,
+        limits: EnqueueLimits,
+        pending: Pending,
+    ) -> Result<Option<usize>, EnqueueRefusal> {
         if limits.max_queued > 0 {
             let queued = self.status.borrow().queue_len;
             if queued.saturating_add(pending.count) > limits.max_queued {
@@ -695,6 +915,22 @@ impl WorkerHandle {
         }
     }
 
+    /// Hands `task` to the worker without waiting for room or for an answer (a task moved from
+    /// another member). A refusal gives the task back.
+    fn enqueue_nowait(&self, task: TmuxTask, pending: Pending) -> Result<(), (EnqueueRefusal, Box<TmuxTask>)> {
+        let backup = task.clone();
+        let (reply, _answer) = oneshot::channel();
+        match self.tx.try_send(Cmd::Enqueue {
+            task: Box::new(task),
+            reply,
+            pending,
+        }) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => Err((EnqueueRefusal::Full, Box::new(backup))),
+            Err(TrySendError::Closed(_)) => Err((EnqueueRefusal::Closed, Box::new(backup))),
+        }
+    }
+
     /// Hands a hook event to the worker without waiting: a full channel drops the event (the
     /// screen read covers a missed turn event) so one stalled session never holds up the others.
     pub(super) fn hook(&self, event: HookEvent, seq: u64, peer_chain: Option<Vec<u32>>) -> Result<(), EnqueueRefusal> {
@@ -706,14 +942,19 @@ impl WorkerHandle {
     }
 }
 
+/// Where a task goes: the slot, and for a pool member what keeps the choice true until the enqueue
+/// is over.
+struct Routed {
+    slot: Slot,
+    pending: Option<Pending>,
+    mark: Option<InFlightMark>,
+}
+
 /// The sessions of this runner.
 pub struct SessionManager {
     shared: Arc<Shared>,
-    workers: Mutex<HashMap<String, WorkerHandle>>,
     /// Hook events dropped because a session's channel was full, since the runner started.
     hooks_dropped: AtomicU64,
-    /// The pool of each bot and CLI, by the text of its member 0 slot.
-    pools: Mutex<HashMap<String, BotPool>>,
 }
 
 impl SessionManager {
@@ -741,10 +982,10 @@ impl SessionManager {
                 background,
                 panes: Arc::new(Mutex::new(HashMap::new())),
                 report_trigger,
+                workers: Mutex::new(HashMap::new()),
+                pools: Mutex::new(HashMap::new()),
             }),
-            workers: Mutex::new(HashMap::new()),
             hooks_dropped: AtomicU64::new(0),
-            pools: Mutex::new(HashMap::new()),
         })
     }
 
@@ -759,7 +1000,7 @@ impl SessionManager {
         let (tx, rx) = mpsc::channel(WORKER_CHANNEL);
         let (status_tx, status_rx) = watch::channel(MemberStatus::fresh());
         let handle = {
-            let mut workers = self.workers.lock();
+            let mut workers = self.shared.workers.lock();
             if let Some(existing) = workers.get(name.as_str()) {
                 return existing.clone();
             }
@@ -767,15 +1008,7 @@ impl SessionManager {
             workers.insert(name.as_str().to_string(), handle.clone());
             handle
         };
-        if name.is_bot()
-            && let Ok(primary) = bot_primary(name)
-        {
-            self.pools
-                .lock()
-                .entry(primary.as_str().to_string())
-                .or_default()
-                .attach(name, status_rx);
-        }
+        self.attach_to_pool(name, status_rx, Arc::clone(&handle.pending));
         let worker = Worker::new(Arc::clone(&self.shared), name.clone(), rx, tx, status_tx);
         tokio::spawn(worker.run());
         handle
@@ -785,16 +1018,37 @@ impl SessionManager {
     /// by this manager).
     #[cfg(test)]
     pub(super) fn install(&self, name: &Slot, handle: WorkerHandle) {
-        if name.is_bot()
-            && let Ok(primary) = bot_primary(name)
-        {
-            self.pools
-                .lock()
-                .entry(primary.as_str().to_string())
-                .or_default()
-                .attach(name, handle.status.clone());
+        self.attach_to_pool(name, handle.status.clone(), Arc::clone(&handle.pending));
+        self.shared.workers.lock().insert(name.as_str().to_string(), handle);
+    }
+
+    /// Adds a bot slot to its pool (created, with the persisted affinity, on first use).
+    fn attach_to_pool(&self, name: &Slot, status: watch::Receiver<MemberStatus>, pending: Arc<AtomicUsize>) {
+        if !name.is_bot() {
+            return;
         }
-        self.workers.lock().insert(name.as_str().to_string(), handle);
+        let Ok(primary) = bot_primary(name) else { return };
+        self.shared
+            .pools
+            .lock()
+            .entry(primary.as_str().to_string())
+            .or_insert_with(|| BotPool::load(&self.shared.state, &primary))
+            .attach(name, status, pending);
+    }
+
+    /// Starts the workers of every member the configuration names for the bot of `slot`, so the
+    /// pool knows them all before it chooses.
+    fn ensure_members(&self, slot: &Slot) {
+        let (Some(bot), count) = (slot.bot_id(), self.shared.member_count(slot)) else {
+            return;
+        };
+        for member in 0..count {
+            if let Ok(member) = u8::try_from(member)
+                && let Ok(slot) = Slot::bot_member(bot, slot.cli(), member)
+            {
+                drop(self.handle(&slot));
+            }
+        }
     }
 
     /// Queues a task on its slot (the project's session, or the bot's one session shared by every
@@ -805,59 +1059,69 @@ impl SessionManager {
     ///
     /// [`EnqueueRefusal`]: the channel is full, the session holds `max_queued_per_session` tasks,
     /// or the worker has ended. The first two are back-pressure (HTTP 503).
-    pub async fn enqueue(&self, task: TmuxTask) -> Result<Option<usize>, EnqueueRefusal> {
+    pub async fn enqueue(&self, mut task: TmuxTask) -> Result<Option<usize>, EnqueueRefusal> {
         let runner = &self.shared.config.runner;
         let limits = EnqueueLimits {
             answer: Duration::from_millis(runner.enqueue_answer_ms),
             max_queued: usize::try_from(runner.max_queued_per_session).unwrap_or(usize::MAX),
         };
-        let slot = self.choose_slot(&task, limits.max_queued);
-        let task_id = task.task_id.clone();
-        let result = self.handle(&slot).enqueue(task, limits).await;
-        // Affinity follows only a task the member took (a late answer still queued it).
+        let input_task = task.task_id.clone();
+        let input_item = task.item.clone();
+        let routed = self.route(&mut task, limits.max_queued);
+        let handle = self.handle(&routed.slot);
+        let result = match routed.pending {
+            Some(pending) => handle.enqueue_reserved(task, limits, pending).await,
+            None => handle.enqueue(task, limits).await,
+        };
+        // Affinity follows only a task the member took (a late answer still queued it). It is
+        // recorded before the in-flight mark is released, so a concurrent enqueue of the same task
+        // finds the mark or the record.
         if result.is_ok() {
-            self.record_affinity(&slot, &task_id);
+            self.shared
+                .record_affinity(&routed.slot, &input_task, input_item.as_deref());
         }
+        drop(routed.mark);
         result
     }
 
-    /// Remembers that the member `slot` of a bot's pool took task `task_id`.
-    fn record_affinity(&self, slot: &Slot, task_id: &str) {
-        if !slot.is_bot() {
-            return;
-        }
-        let Ok(primary) = bot_primary(slot) else { return };
-        let input = SelectInput {
-            task_id: Some(task_id),
-            item: None,
-        };
-        if let Some(pool) = self.pools.lock().get_mut(primary.as_str()) {
-            pool.record(&input, slot, unix_now());
-        }
-    }
-
     /// The slot that takes `task`: the project's own, or the member of the bot's pool chosen by
-    /// [`select_member`] (the bot's only session while the pool has one member).
-    fn choose_slot(&self, task: &TmuxTask, max_queued: usize) -> Slot {
+    /// [`select_member`] (the bot's only session while the pool has one member). The task is
+    /// pointed at the member. For a pool member the choice also counts the task against the member
+    /// and marks it in flight until the enqueue is over.
+    fn route(&self, task: &mut TmuxTask, max_queued: usize) -> Routed {
+        let unrouted = |slot: Slot| Routed {
+            slot,
+            pending: None,
+            mark: None,
+        };
         if !task.slot.is_bot() {
-            return task.slot.clone();
+            return unrouted(task.slot.clone());
         }
         let Ok(primary) = bot_primary(&task.slot) else {
-            return task.slot.clone();
+            return unrouted(task.slot.clone());
         };
-        // The worker of the slot attaches to the pool when it is created.
+        // The workers of the members attach to the pool when they are created.
+        self.ensure_members(&task.slot);
         drop(self.handle(&task.slot));
         let input = SelectInput {
             task_id: Some(&task.task_id),
-            item: None,
+            item: task.item.as_deref(),
         };
+        let ttl = self.shared.config.runner.tmux.pool.affinity_ttl_secs;
         let chosen = self
+            .shared
             .pools
             .lock()
             .get(primary.as_str())
-            .and_then(|pool| pool.select(&input, unix_now(), ITEM_AFFINITY_TTL_SECS, max_queued));
-        let Some((slot, reason)) = chosen else {
-            return task.slot.clone();
+            .and_then(|pool| pool.choose(&input, unix_now(), ttl, max_queued));
+        let Some(Chosen {
+            slot,
+            reason,
+            pending,
+            mark,
+        }) = chosen
+        else {
+            return unrouted(task.slot.clone());
         };
         timing::member_selected(
             &task.task_id,
@@ -865,7 +1129,53 @@ impl SessionManager {
             slot.member(),
             reason.as_str(),
         );
-        slot
+        self.shared.retarget(task, &slot);
+        Routed {
+            slot,
+            pending: Some(pending),
+            mark: Some(mark),
+        }
+    }
+
+    /// Points a task rebuilt by restart recovery at the pool member `slot`.
+    pub fn retarget(&self, task: &mut TmuxTask, slot: &Slot) {
+        self.shared.retarget(task, slot);
+    }
+
+    /// The member of a bot's pool that holds the task `task_id` of `attempt` after a restart: the
+    /// one whose record or scrollback shows it was typed in, else the one the persisted affinity
+    /// names, else the one [`select_member`] picks now. `primary` itself for a pool of one member.
+    pub async fn locate_member(&self, primary: &Slot, task_id: &str, attempt: i64, item: Option<&str>) -> Slot {
+        if !primary.is_bot() || self.shared.member_count(primary) < 2 {
+            return primary.clone();
+        }
+        self.ensure_members(primary);
+        for member in 0..self.shared.member_count(primary) {
+            let Ok(member) = u8::try_from(member) else { continue };
+            let Some(slot) = primary
+                .bot_id()
+                .and_then(|bot| Slot::bot_member(bot, primary.cli(), member).ok())
+            else {
+                continue;
+            };
+            let probe = self.probe(&slot, task_id, attempt).await;
+            if probe.recorded_pushed || (probe.alive && probe.scrollback_hit) {
+                return slot;
+            }
+        }
+        let input = SelectInput {
+            task_id: Some(task_id),
+            item,
+        };
+        let ttl = self.shared.config.runner.tmux.pool.affinity_ttl_secs;
+        // No cap: a recovered task is queued whatever the member holds.
+        let chosen = self
+            .shared
+            .pools
+            .lock()
+            .get(primary.as_str())
+            .and_then(|pool| pool.choose(&input, unix_now(), ttl, 0));
+        chosen.map_or_else(|| primary.clone(), |chosen| chosen.slot)
     }
 
     /// A hook event from a CLI. Never waits: see [`Self::deliver_hook`].
@@ -894,7 +1204,7 @@ impl SessionManager {
     /// Hands a hook event to the worker of session `name`. A full channel drops the event with a
     /// warning and a running count; the other sessions are not affected.
     pub(super) fn deliver_hook(&self, name: &str, event: HookEvent, seq: u64, peer_chain: Option<Vec<u32>>) {
-        let handle = self.workers.lock().get(name).cloned();
+        let handle = self.shared.workers.lock().get(name).cloned();
         let Some(handle) = handle else { return };
         match handle.hook(event, seq, peer_chain) {
             Ok(()) => {}
@@ -986,6 +1296,7 @@ fn pane_alive(tmux: &Tmux, pane: &Pane) -> bool {
 
 // ----- the worker -----------------------------------------------------------------------------
 
+#[allow(clippy::struct_excessive_bools, reason = "independent flags of one session worker")]
 struct Worker {
     shared: Arc<Shared>,
     name: Slot,
@@ -1017,6 +1328,18 @@ struct Worker {
     depth_beat: timing::DepthBeat,
     /// Publishes this member's status for the pool.
     status_tx: watch::Sender<MemberStatus>,
+    /// This session is a member of a pool of two or more: it is watched for health and its queued
+    /// tasks may move.
+    pooled: bool,
+    /// The member's tmux session was not there at the last look (a pooled member with nothing to
+    /// do is looked at every 10 s).
+    absent: bool,
+    /// Why the member is unhealthy now, as last logged.
+    health_cause: Option<&'static str>,
+    /// The tasks this member held (queued or current) at the last look, to see which left it.
+    held_ids: std::collections::HashSet<String>,
+    /// When queued tasks last moved off this member.
+    last_rebalance: Instant,
 }
 
 /// Whether a session's record is worth an out-of-cycle report: there was no record before, its pane
@@ -1096,6 +1419,7 @@ impl Worker {
         tx: mpsc::Sender<Cmd>,
         status_tx: watch::Sender<MemberStatus>,
     ) -> Self {
+        let pooled = shared.member_count(&name) > 1;
         let socket = shared.socket.as_str();
         let attach = if socket.is_empty() {
             format!("tmux attach -t {}", name.as_str())
@@ -1131,6 +1455,11 @@ impl Worker {
             enqueued_at: HashMap::new(),
             watch: timing::CurrentWatch::default(),
             depth_beat: timing::DepthBeat::new(Instant::now()),
+            pooled,
+            absent: false,
+            health_cause: None,
+            held_ids: std::collections::HashSet::new(),
+            last_rebalance: Instant::now(),
             status_tx,
         }
     }
@@ -1145,13 +1474,8 @@ impl Worker {
             .as_ref()
             .map(|c| (c.task.task_id.clone(), c.task.attempt, c.pushed_at));
         self.watch.observe(current, now, self.name.as_str(), self.name.member());
-        let (state, queue_len) = (self.machine.state, self.machine.queue.len());
-        self.status_tx.send_if_modified(|status| {
-            let next = status.next(state, queue_len, now);
-            let changed = next != *status;
-            *status = next;
-            changed
-        });
+        self.publish_status(now);
+        self.note_departures();
         let machine = &self.machine;
         self.enqueued_at
             .retain(|(id, attempt), _| machine.queue.iter().any(|e| &e.task_id == id && e.attempt == *attempt));
@@ -1164,6 +1488,183 @@ impl Worker {
             self.machine.queue.len(),
             state_word(&self.machine.state),
         );
+    }
+
+    /// Why a pooled member is not to be trusted now: its session is absent, was declined at the last
+    /// delivery, has been blocked on a dialog, or has held pushes back because of its screen for
+    /// `stuck_after_secs`. A session that ended is [`State::Dead`], which the status shows on its own.
+    fn unhealthy_cause(&self, now: Instant) -> Option<&'static str> {
+        if !self.pooled {
+            return None;
+        }
+        if matches!(self.machine.state, State::Dead) {
+            return Some("dead");
+        }
+        let stuck = Duration::from_secs(self.shared.config.runner.tmux.pool.stuck_after_secs);
+        let past = |since: Instant| now.saturating_duration_since(since) >= stuck;
+        if self.absent && matches!(self.machine.state, State::NoSession) {
+            return Some("absent");
+        }
+        if self.machine.declined_at().is_some_and(|at| !past(at)) {
+            return Some("declined");
+        }
+        if let State::Blocked { since } = self.machine.state
+            && past(since)
+        {
+            return Some("blocked");
+        }
+        if self.machine.held_since().is_some_and(past) {
+            return Some("held");
+        }
+        None
+    }
+
+    /// Publishes the member's state, queue length and health for the pool, and logs a change of
+    /// health.
+    fn publish_status(&mut self, now: Instant) {
+        let (state, queue_len) = (self.machine.state, self.machine.queue.len());
+        let cause = self.unhealthy_cause(now);
+        self.status_tx.send_if_modified(|status| {
+            let next = status.next_checked(state, queue_len, now, cause.is_some());
+            let changed = next != *status;
+            *status = next;
+            changed
+        });
+        if self.pooled && cause != self.health_cause {
+            self.health_cause = cause;
+            timing::member_health(
+                self.name.bot_id().unwrap_or_default(),
+                self.name.member(),
+                cause.is_none(),
+                cause.unwrap_or("recovered"),
+            );
+        }
+    }
+
+    /// Tells the pool which tasks have left this member, so their affinity starts to expire.
+    fn note_departures(&mut self) {
+        if !self.pooled {
+            return;
+        }
+        let mut ids: std::collections::HashSet<String> = self.machine.queue.iter().map(|e| e.task_id.clone()).collect();
+        if let Some(current) = self.machine.current_task() {
+            ids.insert(current.task_id.clone());
+        }
+        let left: Vec<String> = self.held_ids.difference(&ids).cloned().collect();
+        self.held_ids = ids;
+        if left.is_empty() {
+            return;
+        }
+        let Ok(primary) = bot_primary(&self.name) else { return };
+        let snapshot = {
+            let mut pools = self.shared.pools.lock();
+            pools.get_mut(primary.as_str()).and_then(|pool| {
+                let now = unix_now();
+                for id in &left {
+                    pool.task_left(id, now);
+                }
+                pool.snapshot()
+            })
+        };
+        self.shared.persist(&primary, snapshot);
+    }
+
+    /// Looks, every 10 s, for the tmux session of a pooled member that has nothing to do: a member
+    /// whose session is not there is unhealthy, and one that is back is used again. Reads tmux only.
+    async fn probe_presence(&mut self) {
+        let idle = matches!(self.machine.state, State::NoSession | State::Dead);
+        if !self.pooled || !idle || !self.machine.queue.is_empty() {
+            self.absent = false;
+            return;
+        }
+        if !self.ticks.is_multiple_of(10) {
+            return;
+        }
+        let alive = self.alive().await;
+        self.absent = !alive;
+        if alive {
+            self.machine.on_probe_alive();
+        }
+    }
+
+    /// Moves the queued tasks that were never typed in to other members once this member has been
+    /// unhealthy for `rebalance_after_secs` and another member is healthy. The task at the head
+    /// of a push under way, and the task being worked on, never move.
+    async fn rebalance(&mut self) {
+        let now = Instant::now();
+        let config = &self.shared.config.runner;
+        let after = Duration::from_secs(config.tmux.pool.rebalance_after_secs);
+        let status = *self.status_tx.borrow();
+        if !self.pooled
+            || self.machine.queue.is_empty()
+            || !status.unhealthy_for(now, after)
+            || now.saturating_duration_since(self.last_rebalance) < Duration::from_secs(5)
+        {
+            return;
+        }
+        self.last_rebalance = now;
+        let Ok(primary) = bot_primary(&self.name) else { return };
+        let ttl = config.tmux.pool.affinity_ttl_secs;
+        let max_queued = usize::try_from(config.max_queued_per_session).unwrap_or(usize::MAX);
+        let others = self
+            .shared
+            .pools
+            .lock()
+            .get(primary.as_str())
+            .is_some_and(|pool| pool.has_healthy_other(self.name.member()));
+        if !others {
+            return;
+        }
+        let mut kept: Vec<TmuxTask> = Vec::new();
+        for entry in self.machine.take_movable() {
+            let mut task = entry.item;
+            let input = SelectInput {
+                task_id: None,
+                item: task.item.as_deref(),
+            };
+            let chosen = self
+                .shared
+                .pools
+                .lock()
+                .get(primary.as_str())
+                .and_then(|pool| pool.choose(&input, unix_now(), ttl, max_queued))
+                .filter(|chosen| chosen.slot != self.name);
+            let target = chosen.as_ref().and_then(|chosen| {
+                self.shared
+                    .workers
+                    .lock()
+                    .get(chosen.slot.as_str())
+                    .cloned()
+                    .map(|handle| (handle, chosen.slot.clone()))
+            });
+            let (Some(chosen), Some((handle, to))) = (chosen, target) else {
+                kept.push(task);
+                continue;
+            };
+            let task_id = task.task_id.clone();
+            let item = task.item.clone();
+            self.shared.retarget(&mut task, &to);
+            match handle.enqueue_nowait(task, chosen.pending) {
+                Ok(()) => {
+                    self.shared.record_affinity(&to, &task_id, item.as_deref());
+                    timing::rebalance(
+                        self.name.bot_id().unwrap_or_default(),
+                        self.name.member(),
+                        to.member(),
+                        &task_id,
+                    );
+                }
+                Err((_, mut back)) => {
+                    self.shared.retarget(&mut back, &self.name);
+                    kept.push(*back);
+                }
+            }
+        }
+        let mut actions = Vec::new();
+        for task in kept {
+            actions.extend(self.machine.enqueue(task, now));
+        }
+        self.carry_out(actions).await;
     }
 
     /// Asks for an out-of-cycle report when [`report_needed`] says so.
@@ -1194,6 +1695,7 @@ impl Worker {
                     actions.extend(self.confirm_turn_by_screen().await);
                     actions.extend(self.confirm_turn_end_by_screen().await);
                     actions.extend(self.close_stale_turn().await);
+                    self.probe_presence().await;
                     actions.extend(self.machine.on_tick(Instant::now()));
                     actions
                 }
@@ -1204,6 +1706,7 @@ impl Worker {
             };
             self.carry_out(actions).await;
             self.observe();
+            self.rebalance().await;
         }
     }
 
@@ -1291,6 +1794,9 @@ impl Worker {
                 }
                 self.enqueued_at.entry((id.clone(), task.attempt)).or_insert(now);
                 let actions = self.machine.enqueue(*task, now);
+                // The queue length is published before the answer and before the pending count is
+                // released, so the pool never sees the task in neither.
+                self.publish_status(now);
                 let _ = reply.send(self.machine.queue.position(&id).unwrap_or(0));
                 actions
             }
