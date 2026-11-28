@@ -2603,6 +2603,7 @@ dependencies = [
  "hyper-util",
  "parking_lot",
  "platform",
+ "rand 0.8.6",
  "reqwest",
  "sea-orm",
  "serde",

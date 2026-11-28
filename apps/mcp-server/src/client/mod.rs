@@ -6,7 +6,9 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 
 mod hints;
-pub use hints::{HINTS_PATH, HintEvent, HintOpenError, HintReadError, HintStream};
+pub use hints::{
+    FIRST_OPEN_TIMEOUT, HINTS_PATH, HintEvent, HintOpenError, HintReadError, HintStream, RECONNECT_OPEN_TIMEOUT,
+};
 mod error_class;
 pub use error_class::{ApiErrorClass, classify_api_error, is_backend_failure};
 mod workspace;

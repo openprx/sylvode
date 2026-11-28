@@ -9,7 +9,7 @@
 //! it; a stream that does not read costs one boolean, and the upstream read goes on.
 
 use super::CallerKey;
-use crate::client::{HintEvent, HintOpenError, HintStream, OpenPrClient};
+use crate::client::{FIRST_OPEN_TIMEOUT, HintEvent, HintOpenError, HintStream, OpenPrClient, RECONNECT_OPEN_TIMEOUT};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -132,14 +132,17 @@ impl Hub {
 
     /// Adds a stream; `None` when the hub has ended in the meantime.
     fn register(self: &Arc<Self>, hubs: &Arc<Hubs>) -> Option<Registration> {
-        let mut inner = self.inner.lock();
-        if inner.ended {
-            return None;
-        }
-        let id = inner.next_id;
-        inner.next_id += 1;
         let shared = Arc::new(StreamShared::default());
-        inner.streams.insert(id, Arc::clone(&shared));
+        let id = {
+            let mut inner = self.inner.lock();
+            if inner.ended {
+                return None;
+            }
+            let id = inner.next_id;
+            inner.next_id += 1;
+            inner.streams.insert(id, Arc::clone(&shared));
+            id
+        };
         Some(Registration {
             hub: Arc::clone(self),
             hubs: Arc::clone(hubs),
@@ -245,6 +248,9 @@ impl Hubs {
     }
 
     /// What is already known about `key`: its refusal, or a registration on its live hub.
+    // The refusal check, the hub lookup, the registration and the removal of an ended hub must stay
+    // under one guard; dropping it earlier would split the check-then-mutate.
+    #[allow(clippy::significant_drop_tightening)]
     fn known(self: &Arc<Self>, key: &CallerKey) -> Result<Option<Access>, AcquireError> {
         let mut state = self.state.lock();
         if let Some((until, refusal)) = state.refused.get(key).copied() {
@@ -301,7 +307,7 @@ impl Hubs {
         if let Some(access) = self.known(&key)? {
             return Ok(access);
         }
-        match client.open_change_hints().await {
+        match client.open_change_hints(FIRST_OPEN_TIMEOUT).await {
             Ok(stream) => {
                 let hub = Hub::new(key);
                 let Some(registration) = hub.register(self) else {
@@ -407,9 +413,9 @@ async fn run_hub(
                 biased;
                 () = hub.stop.cancelled() => return,
                 () = shutdown.cancelled() => return,
-                () = tokio::time::sleep(backoff(failures)) => {}
+                () = tokio::time::sleep(jittered(backoff(failures), rand::random::<f64>())) => {}
             }
-            match client.open_change_hints().await {
+            match client.open_change_hints(RECONNECT_OPEN_TIMEOUT).await {
                 Ok(next) => {
                     stream = next;
                     opened = Instant::now();
@@ -441,9 +447,31 @@ fn backoff(failures: u32) -> Duration {
     (BACKOFF_START * 2_u32.pow(doublings)).min(BACKOFF_MAX)
 }
 
+/// Equal jitter: `base` scaled into `[base / 2, base]` by `fraction` in `[0, 1]`, so hubs dropped
+/// together do not reconnect in lockstep.
+fn jittered(base: Duration, fraction: f64) -> Duration {
+    let fraction = if fraction.is_finite() {
+        fraction.clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    base.mul_f64(0.5 + fraction / 2.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_jitter_stays_between_half_and_all_of_the_backoff() {
+        let base = Duration::from_secs(8);
+        assert_eq!(jittered(base, 0.0), Duration::from_secs(4));
+        assert_eq!(jittered(base, 0.5), Duration::from_secs(6));
+        assert_eq!(jittered(base, 1.0), base);
+        assert_eq!(jittered(base, 7.0), base);
+        assert_eq!(jittered(base, -1.0), Duration::from_secs(4));
+        assert_eq!(jittered(base, f64::NAN), base);
+    }
 
     #[test]
     fn the_backoff_starts_at_one_second_doubles_and_stops_at_thirty() {

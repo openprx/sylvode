@@ -148,8 +148,9 @@ async fn open(
     id: i64,
 ) -> Result<ListenHandle, Box<dyn std::error::Error>> {
     let params = tools_params();
+    let auth = auth(base, token)?;
     registry
-        .open(auth(base, token)?, &json!(id), Some(&params))
+        .open(auth, &json!(id), Some(&params))
         .await
         .map_err(|error| format!("open failed: {error:?}").into())
 }
@@ -546,6 +547,7 @@ async fn the_per_credential_cap_counts_held_streams_and_the_slot_returns_on_drop
     for id in 0..3 {
         held.push(open(&registry, &base, "opr_a", id).await?);
     }
+    assert_eq!(held.len(), 3);
     let params = tools_params();
     let refused = registry.open(auth(&base, "opr_a")?, &json!(9), Some(&params)).await;
     assert!(matches!(refused, Err(OpenError::TooMany(3))));

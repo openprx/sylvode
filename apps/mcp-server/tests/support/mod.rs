@@ -130,7 +130,8 @@ pub fn write_config_with_extra_mcp_keys(
 /// Stand-in for `GET /api/v1/bot/change-hints`: a bot token (`opr_`) gets `hello` and a stream
 /// that stays open and silent; any other credential is refused the way the API does (`200` with a
 /// `401` envelope).
-#[allow(dead_code)]
+// Axum handlers must be async fns even when nothing awaits.
+#[allow(dead_code, clippy::unused_async)]
 pub async fn held_change_hints(headers: HeaderMap) -> Response {
     let bot = headers
         .get(header::AUTHORIZATION)

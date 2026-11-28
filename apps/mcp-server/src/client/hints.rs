@@ -14,8 +14,11 @@ use std::time::Duration;
 /// Path of the stream on the API.
 pub const HINTS_PATH: &str = "/api/v1/bot/change-hints";
 
-/// How long opening the stream (request, status, `hello`) may take.
-const OPEN_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long the first open of a hub (request, status, `hello`) may take: it sits on the path of
+/// the listen acknowledgment, which the spec wants within 5 s.
+pub const FIRST_OPEN_TIMEOUT: Duration = Duration::from_secs(4);
+/// How long a reconnect inside a running hub may take; no client waits on it.
+pub const RECONNECT_OPEN_TIMEOUT: Duration = Duration::from_secs(10);
 /// Longest SSE line or event payload accepted; a longer one ends the stream.
 const MAX_EVENT_BYTES: usize = 16 * 1024;
 
@@ -106,7 +109,7 @@ fn stream_client() -> Option<&'static Client> {
         .as_ref()
 }
 
-fn classify_code(code: i64) -> HintOpenError {
+const fn classify_code(code: i64) -> HintOpenError {
     match code {
         401 => HintOpenError::Unauthorized,
         403 => HintOpenError::NotABot,
@@ -120,7 +123,7 @@ impl OpenPrClient {
     ///
     /// The API answers `200` with the usual envelope for errors that occur before the stream
     /// starts, and a real status for limits and shutdown; both are mapped the same way.
-    pub async fn open_change_hints(&self) -> Result<HintStream, HintOpenError> {
+    pub async fn open_change_hints(&self, open_timeout: Duration) -> Result<HintStream, HintOpenError> {
         let authorization = self.authorization().map_err(|_| HintOpenError::Unauthorized)?;
         let client = stream_client().ok_or(HintOpenError::Unavailable)?;
         let url = format!("{}{HINTS_PATH}", self.base_url);
@@ -128,7 +131,7 @@ impl OpenPrClient {
             .operation_headers(client.get(url))
             .header(header::AUTHORIZATION, authorization)
             .header(header::ACCEPT, "text/event-stream");
-        tokio::time::timeout(OPEN_TIMEOUT, async {
+        tokio::time::timeout(open_timeout, async {
             let response = request.send().await.map_err(|_| HintOpenError::Unavailable)?;
             Self::await_hello(response).await
         })

@@ -189,16 +189,18 @@ impl ListenRegistry {
 
     /// Takes a place under both caps.
     fn reserve(&self, key: CallerKey) -> Result<StreamGuard, OpenError> {
-        let mut counts = self.inner.counts.lock();
-        if counts.total >= self.inner.config.max_streams {
-            return Err(OpenError::TooMany(self.inner.config.max_streams));
+        {
+            let mut counts = self.inner.counts.lock();
+            if counts.total >= self.inner.config.max_streams {
+                return Err(OpenError::TooMany(self.inner.config.max_streams));
+            }
+            let held = counts.per_key.entry(key).or_insert(0);
+            if *held >= self.inner.config.per_key_limit {
+                return Err(OpenError::TooMany(self.inner.config.per_key_limit));
+            }
+            *held += 1;
+            counts.total += 1;
         }
-        let held = counts.per_key.entry(key).or_insert(0);
-        if *held >= self.inner.config.per_key_limit {
-            return Err(OpenError::TooMany(self.inner.config.per_key_limit));
-        }
-        *held += 1;
-        counts.total += 1;
         Ok(StreamGuard {
             inner: Arc::clone(&self.inner),
             key,
