@@ -10,6 +10,7 @@
 	import Textarea from '#lib/ui/textarea/Textarea.svelte';
 	import { layoutApi } from '../api';
 	import LayoutView from '../LayoutView.svelte';
+	import StructureEditor from './StructureEditor.svelte';
 	import type {
 		LayoutSpec,
 		LayoutSummary,
@@ -24,6 +25,7 @@
 		offeredScopes,
 		parseSpec,
 		placeable,
+		refusalErrors,
 		refusalLines,
 		starterSpec,
 		type OfferedScope
@@ -51,7 +53,7 @@
 		onclose: () => void;
 	} = $props();
 
-	type Mode = 'existing' | 'json' | 'market';
+	type Mode = 'existing' | 'json' | 'structure' | 'market';
 
 	const scopes = $derived(offeredScopes(descriptor, context, workspaceId, $authStore.user?.role));
 	let scopeKey = $state<string | null>(null);
@@ -63,6 +65,8 @@
 	let condition = $state('');
 	let busy = $state(false);
 	let failure = $state.raw<string[]>([]);
+	// Errors of the last refused save, shown on the nodes of the structural mode.
+	let refused = $state.raw<LayoutValidationError[]>([]);
 
 	// Existing layouts: the chosen scope and the workspace above it (a workspace layout can be
 	// placed at a project).
@@ -84,12 +88,21 @@
 	let syntaxError = $state(false);
 	let validating = $state(false);
 
+	// JSON text and structural mode edit the same draft.
+	const drafting = $derived(mode === 'json' || mode === 'structure');
 	const parsed = $derived(parseSpec(jsonText));
+	const structural = $derived(
+		parsed.ok && parsed.spec.root && typeof parsed.spec.root === 'object'
+			? (parsed.spec as unknown as LayoutSpec)
+			: null
+	);
+	const nodeErrors = $derived([...(verdict?.errors ?? []), ...refused]);
+	const loose = $derived(nodeErrors.filter((error) => !error.path.startsWith('/root')));
 	const jsonSpec = $derived(
 		parsed.ok && verdict?.valid ? (parsed.spec as unknown as LayoutSpec) : null
 	);
-	const previewSpec = $derived(mode === 'json' ? jsonSpec : pickedSpec);
-	const previewKey = $derived(mode === 'json' ? jsonText : (pickedId ?? ''));
+	const previewSpec = $derived(drafting ? jsonSpec : pickedSpec);
+	const previewKey = $derived(drafting ? jsonText : (pickedId ?? ''));
 
 	$effect(() => {
 		const current = scope;
@@ -183,7 +196,7 @@
 
 	let validateToken = 0;
 	$effect(() => {
-		if (mode !== 'json') return;
+		if (!drafting) return;
 		const text = jsonText;
 		const current = scope;
 		const attempt = parseSpec(text);
@@ -235,9 +248,10 @@
 		if (!scope || busy) return;
 		busy = true;
 		failure = [];
+		refused = [];
 		try {
 			let layoutId = pickedId;
-			if (mode === 'json') {
+			if (drafting) {
 				if (!parsed.ok) return;
 				const saved = await layoutApi.createLayout({
 					scope_kind: scope.kind,
@@ -246,6 +260,7 @@
 				});
 				if (saved.code !== 0 || !saved.data) {
 					failure = refusalLines(saved);
+					refused = refusalErrors(saved);
 					return;
 				}
 				layoutId = saved.data.id;
@@ -261,7 +276,7 @@
 			});
 			if (placed.code !== 0) {
 				failure = refusalLines(placed);
-				if (mode === 'json') {
+				if (drafting) {
 					// The layout is saved; from here on it is listed under "Use a layout".
 					mode = 'existing';
 					await pick(layoutId);
@@ -337,6 +352,17 @@
 					{$t('layout.editor.modeJson')}
 				</Button>
 				<Button
+					variant={mode === 'structure' ? 'primary' : 'secondary'}
+					aria-pressed={mode === 'structure'}
+					data-layout-mode-structure
+					onclick={() => {
+						mode = 'structure';
+						void pick(null);
+					}}
+				>
+					{$t('layout.editor.modeStructure')}
+				</Button>
+				<Button
 					variant={mode === 'market' ? 'primary' : 'secondary'}
 					aria-pressed={mode === 'market'}
 					onclick={() => {
@@ -383,6 +409,33 @@
 							options={layoutOptions}
 							onchange={(value) => void pick(value)}
 						/>
+					{/if}
+				{:else if mode === 'structure'}
+					{#if structural}
+						<StructureEditor
+							spec={structural}
+							errors={nodeErrors}
+							slot={descriptor}
+							onchange={(next) => {
+								refused = [];
+								jsonText = JSON.stringify(next, null, 2);
+							}}
+						/>
+						<div class="mt-2 text-xs" aria-live="polite" data-layout-editor-verdict>
+							{#if validating}
+								<p class="text-fg-muted">{$t('layout.editor.validating')}</p>
+							{:else if verdict?.valid}
+								<p class="text-success">{$t('layout.editor.valid')}</p>
+							{:else if loose.length > 0}
+								<ul class="text-danger">
+									{#each errorLines(loose) as line, index (index)}
+										<li class="break-all font-mono">{line}</li>
+									{/each}
+								</ul>
+							{/if}
+						</div>
+					{:else}
+						<p class="text-sm text-danger">{$t('layout.editor.syntax')}</p>
 					{/if}
 				{:else}
 					<Textarea
@@ -435,7 +488,7 @@
 				/>
 			</div>
 			<Button variant="primary" loading={busy} disabled={!canPlace} onclick={() => void place()}>
-				{mode === 'json' ? $t('layout.editor.saveAndPlace') : $t('layout.editor.place')}
+				{drafting ? $t('layout.editor.saveAndPlace') : $t('layout.editor.place')}
 			</Button>
 		</div>
 
