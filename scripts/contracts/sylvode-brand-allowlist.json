@@ -169,16 +169,6 @@
       "explanation": "The browser localStorage key under which users' saved import column mappings live; renaming it silently discards every saved mapping."
     },
     {
-      "id": "sylvode-template-integration-provider",
-      "reason": "stable_identifier",
-      "repo": "sylvode",
-      "paths": [
-        "frontend/scripts/smoke-project-template-wizard.mjs"
-      ],
-      "pattern": "provider: 'openpr-webhook'",
-      "explanation": "The integration provider value the built-in scenario templates store (migration 0029); the smoke asserts what the API returns."
-    },
-    {
       "id": "sylvode-migration-history",
       "reason": "stable_identifier",
       "repo": "sylvode",
