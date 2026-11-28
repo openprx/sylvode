@@ -94,6 +94,16 @@ pub async fn delete_workspace_content(tx: &DatabaseTransaction, workspace_id: Uu
     run(tx, "DELETE FROM notifications WHERE workspace_id = $1", ws()).await?;
     // Installations and their generations go explicitly: a generation holds a RESTRICT reference to
     // the workspace's package rows, which the workspace cascade deletes in the same statement.
+    // Package site pages reference layouts without ON DELETE; they go before the generation delete
+    // cascades the layouts (a page of a person cannot show a package layout).
+    run(
+        tx,
+        "DELETE FROM site_pages WHERE installation_id IN (SELECT id FROM installations WHERE workspace_id = $1) \
+         OR layout_id IN (SELECT id FROM layouts WHERE installation_id IN \
+         (SELECT id FROM installations WHERE workspace_id = $1))",
+        ws(),
+    )
+    .await?;
     run(
         tx,
         "DELETE FROM installation_generations WHERE installation_id IN \

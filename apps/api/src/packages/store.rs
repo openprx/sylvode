@@ -246,14 +246,26 @@ pub async fn delete_unreferenced_blobs(db: &impl ConnectionTrait, digests: &[Str
     Ok(())
 }
 
+/// Condition on `installation_generations g` for a live generation: `pending` or `approved` of an
+/// installation that is not revoked.
+const LIVE_GENERATION: &str = "g.status IN ('pending','approved') \
+     AND NOT EXISTS (SELECT 1 FROM installations i WHERE i.id = g.installation_id AND i.status = 'revoked')";
+
+/// Condition on `installation_generations g` for history: `rejected` or `superseded`, or any
+/// generation of a revoked installation. The delete statements carry exactly this condition, so a
+/// live generation committed after the check is never removed.
+const HISTORY_GENERATION: &str = "(g.status IN ('rejected','superseded') \
+     OR EXISTS (SELECT 1 FROM installations i WHERE i.id = g.installation_id AND i.status = 'revoked'))";
+
 /// Whether a live generation references the package row. Live means the generation is `pending`
 /// or `approved` (the active one) and its installation is not `revoked`; `rejected` and
 /// `superseded` generations, and every generation of a revoked installation, are history.
 pub(super) async fn has_live_generation(db: &impl ConnectionTrait, package_row_id: Uuid) -> Result<bool, ApiError> {
     Ok(db
         .query_one(stmt(
-            "SELECT 1 FROM installation_generations g JOIN installations i ON i.id = g.installation_id \
-             WHERE g.package_row_id = $1 AND g.status IN ('pending','approved') AND i.status <> 'revoked' LIMIT 1",
+            &format!(
+                "SELECT 1 FROM installation_generations g WHERE g.package_row_id = $1 AND {LIVE_GENERATION} LIMIT 1"
+            ),
             vec![package_row_id.into()],
         ))
         .await?
@@ -261,9 +273,12 @@ pub(super) async fn has_live_generation(db: &impl ConnectionTrait, package_row_i
 }
 
 /// Deletes the non-live generations that reference the package row, with the grants and layouts
-/// that hang on them (their foreign keys cascade). A revoked installation may still name such a
-/// generation as its last active one; that pointer is cleared first so the deferred foreign key
-/// holds. Call it only after [`has_live_generation`] returned false, in the delete transaction.
+/// that hang on them (their foreign keys cascade) and the site pages those layouts serve. A
+/// revoked installation may still name such a generation as its last active one; that pointer is
+/// cleared first so the deferred foreign key holds. Every statement carries the history condition,
+/// so a live generation that appeared after [`has_live_generation`] survives and the package delete
+/// that follows fails on the `RESTRICT` key (`23503`, mapped to `package_in_use`). Call it in the
+/// delete transaction.
 pub(super) async fn delete_history_generations(
     db: &impl ConnectionTrait,
     package_row_id: Uuid,
@@ -275,8 +290,23 @@ pub(super) async fn delete_history_generations(
         vec![package_row_id.into()],
     ))
     .await?;
+    // `site_pages.layout_id` has no ON DELETE: the pages go before the layouts cascade. Pages of
+    // people (`installation_id IS NULL`) cannot show a package layout (`load_page_layout` refuses
+    // layouts with an installation), so only package pages are removed.
     db.execute(stmt(
-        "DELETE FROM installation_generations WHERE package_row_id = $1",
+        &format!(
+            "DELETE FROM site_pages p WHERE p.installation_id IS NOT NULL AND EXISTS (\
+             SELECT 1 FROM installation_generations g WHERE g.package_row_id = $1 AND {HISTORY_GENERATION} \
+             AND g.installation_id = p.installation_id AND g.generation = p.generation \
+             UNION ALL SELECT 1 FROM layouts l JOIN installation_generations g \
+             ON g.installation_id = l.installation_id AND g.generation = l.generation \
+             WHERE l.id = p.layout_id AND g.package_row_id = $1 AND {HISTORY_GENERATION})"
+        ),
+        vec![package_row_id.into()],
+    ))
+    .await?;
+    db.execute(stmt(
+        &format!("DELETE FROM installation_generations g WHERE g.package_row_id = $1 AND {HISTORY_GENERATION}"),
         vec![package_row_id.into()],
     ))
     .await?;
@@ -387,5 +417,24 @@ mod tests {
     #[test]
     fn like_wildcards_in_the_query_are_escaped() {
         assert_eq!(like_pattern("a%b_c\\"), "%a\\%b\\_c\\\\%");
+    }
+}
+
+#[cfg(test)]
+mod delete_condition_tests {
+    use super::{HISTORY_GENERATION, LIVE_GENERATION};
+
+    #[test]
+    fn live_and_history_conditions_are_complementary() {
+        for status in ["pending", "approved"] {
+            assert!(LIVE_GENERATION.contains(status));
+            assert!(!HISTORY_GENERATION.contains(status));
+        }
+        for status in ["rejected", "superseded"] {
+            assert!(HISTORY_GENERATION.contains(status));
+            assert!(!LIVE_GENERATION.contains(status));
+        }
+        assert!(LIVE_GENERATION.contains("NOT EXISTS") && LIVE_GENERATION.contains("'revoked'"));
+        assert!(HISTORY_GENERATION.contains("EXISTS") && HISTORY_GENERATION.contains("'revoked'"));
     }
 }

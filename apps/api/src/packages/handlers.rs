@@ -194,10 +194,21 @@ fn package_in_use() -> ApiError {
     )
 }
 
-/// `DELETE /api/v1/workspaces/{w}/packages/{digest}`: removes a stored private package of the
-/// workspace and the blob nothing else uses. Refused while a live installation generation (pending or
-/// approved, of an installation that is not revoked) references it, and for a built-in package.
-/// The package's non-live generations go with it; the blob is cleaned after the commit. Serialised with uploads by the workspace's upload lock.
+/// A foreign key violation (`23503`) during the delete means a live generation appeared after the check.
+fn map_in_use(error: ApiError) -> ApiError {
+    if error.database_sqlstate().as_deref() == Some("23503") {
+        package_in_use()
+    } else {
+        error
+    }
+}
+
+/// `DELETE /api/v1/workspaces/{w}/packages/{digest}`: removes a stored private package.
+///
+/// Refused while a live installation generation (pending or approved, of an installation that is
+/// not revoked) references the package, and for a built-in package. The package's non-live
+/// generations go with it; the blob nothing else uses is cleaned after the commit. Serialised with
+/// uploads by the workspace's upload lock.
 pub async fn delete_package(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
@@ -220,14 +231,10 @@ pub async fn delete_package(
     if store::has_live_generation(&tx, row.id).await? {
         return Err(package_in_use());
     }
-    store::delete_history_generations(&tx, row.id).await?;
-    store::delete_package(&tx, row.id).await.map_err(|e| {
-        if e.database_sqlstate().as_deref() == Some("23503") {
-            package_in_use()
-        } else {
-            e
-        }
-    })?;
+    store::delete_history_generations(&tx, row.id)
+        .await
+        .map_err(map_in_use)?;
+    store::delete_package(&tx, row.id).await.map_err(map_in_use)?;
     tx.commit().await?;
     tracing::info!(%workspace_id, package_id = %row.id, "package deleted");
     remove_orphan_blob(&state, workspace_id, &row.blob_digest).await;
