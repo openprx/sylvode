@@ -1,4 +1,4 @@
-import type { PackageDetail, PreviewRequest, Risk } from './api';
+import type { CatalogueCapability, PackageDetail, PreviewRequest, Risk } from './api';
 
 export const KINDS = ['form-template', 'page-template', 'app', 'plugin'] as const;
 export type Kind = (typeof KINDS)[number];
@@ -58,4 +58,85 @@ export function publicPages(detail: Pick<PackageDetail, 'analysis'>): string[] {
 	return detail.analysis.pages
 		.filter((page) => page.audience === 'visitor')
 		.map((page) => page.route);
+}
+
+/** The three tiers a review groups requests into; admin, secret and unknown ids count as destructive. */
+export type RiskTier = 'read' | 'write' | 'destructive';
+export const RISK_TIERS: readonly RiskTier[] = ['read', 'write', 'destructive'];
+
+export function riskTier(risk: Risk): RiskTier {
+	if (risk === 'read') return 'read';
+	if (risk === 'write') return 'write';
+	return 'destructive';
+}
+
+/** The area of a capability id: its first segment. */
+export function areaOf(capability: string): string {
+	return capability.split('.')[0] ?? capability;
+}
+
+export interface AreaGroup {
+	area: string;
+	/** Operations the requested ids open in this area; `null` when the catalogue is not loaded. */
+	ops: number | null;
+	tiers: { tier: RiskTier; items: { index: number; request: PreviewRequest }[] }[];
+}
+
+/** The number of operations behind each capability id, from the plugin catalogue. */
+export function opCounts(capabilities: readonly CatalogueCapability[]): Map<string, number> {
+	return new Map(capabilities.map((capability) => [capability.id, capability.operations.length]));
+}
+
+/**
+ * Requests grouped by area (alphabetical), then by risk tier (read, write, destructive), each item
+ * keeping its index in the request list so a tick stays attached to it.
+ */
+export function groupRequests(
+	requests: readonly PreviewRequest[],
+	counts: ReadonlyMap<string, number> | null
+): AreaGroup[] {
+	const byArea = new Map<string, AreaGroup>();
+	requests.forEach((request, index) => {
+		const area = areaOf(request.capability);
+		let group = byArea.get(area);
+		if (!group) {
+			group = { area, ops: counts ? 0 : null, tiers: [] };
+			byArea.set(area, group);
+		}
+		if (group.ops !== null) group.ops += counts?.get(request.capability) ?? 0;
+		const tier = riskTier(request.risk);
+		let entry = group.tiers.find((candidate) => candidate.tier === tier);
+		if (!entry) {
+			entry = { tier, items: [] };
+			group.tiers.push(entry);
+		}
+		entry.items.push({ index, request });
+	});
+	for (const group of byArea.values()) {
+		group.tiers.sort((a, b) => RISK_TIERS.indexOf(a.tier) - RISK_TIERS.indexOf(b.tier));
+	}
+	return [...byArea.values()].sort((a, b) => a.area.localeCompare(b.area));
+}
+
+/** Catalogue capabilities that match a search text on id, operation key, path or comment. */
+export function searchCatalogue(
+	capabilities: readonly CatalogueCapability[],
+	text: string
+): CatalogueCapability[] {
+	const needle = text.trim().toLowerCase();
+	if (needle === '') return [...capabilities];
+	const out: CatalogueCapability[] = [];
+	for (const capability of capabilities) {
+		if (capability.id.toLowerCase().includes(needle)) {
+			out.push(capability);
+			continue;
+		}
+		const operations = capability.operations.filter((operation) =>
+			`${operation.op} ${operation.method} ${operation.path} ${operation.comment ?? ''}`
+				.toLowerCase()
+				.includes(needle)
+		);
+		if (operations.length > 0) out.push({ ...capability, operations });
+	}
+	return out;
 }

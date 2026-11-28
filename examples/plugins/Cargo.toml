@@ -5,6 +5,7 @@ resolver = "2"
 members = [
   "service-desk/action",
   "service-desk/rule",
+  "api-probe/action",
   "bad-fixtures/endless-loop",
   "bad-fixtures/memory-growth",
   "bad-fixtures/host-calls",

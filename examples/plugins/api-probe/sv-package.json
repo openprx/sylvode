@@ -1,0 +1,25 @@
+{
+  "schema": "sv.package.v1",
+  "kind": "plugin",
+  "id": "qa/api-probe",
+  "version": "1.0.0",
+  "publisher": {"id": "qa", "key_id": "ed25519:00000000000000000000000000000000"},
+  "sv": {"min": "0.6.0", "layout": "sv.layout.v1", "form_schema": "sv.form.schema.v2"},
+  "wit": "sv:plugin@4.0.0",
+  "summary": {"en": "API probe: calls catalogue operations through the host and reports each outcome", "zh": "接口探针：通过宿主调用目录操作并报告每个结果"},
+  "license": "Apache-2.0",
+  "binds": {},
+  "requests": [
+__REQUESTS__
+  ],
+  "actions": [
+    {"name": "call", "world": "action", "component": "contents/components/api-probe-action.wasm", "label": {"en": "Call one operation", "zh": "调用单个操作"}},
+    {"name": "probe", "world": "action", "component": "contents/components/api-probe-action.wasm", "label": {"en": "Call a list of operations", "zh": "调用操作列表"}}
+  ],
+  "rules": [],
+  "messages": {},
+  "layouts": [],
+  "pages": [],
+  "depends": [],
+  "files": {}
+}

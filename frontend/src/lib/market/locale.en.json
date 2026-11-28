@@ -183,6 +183,121 @@
 		},
 		"pageNoMenu": "not in the menu",
 		"sitePagesNote": "Installing into a project creates a draft site. Nothing is public until someone publishes it. Later upgrades update that site directly, including when it is published.",
-		"openSite": "Open site"
+		"openSite": "Open site",
+		"areaOps": "{count, plural, one {# operation} other {# operations}}",
+		"riskTier": {
+			"read": "Read only",
+			"write": "Changes data",
+			"destructive": "Deletes data or administers"
+		},
+		"destructiveTitle": "Allow deleting data?",
+		"destructiveBody": "\"{name}\" lets this plugin delete or purge data. Grant it only if you trust the plugin to do so. Every such call is written to the call log.",
+		"destructiveGrant": "Grant",
+		"logInvocations": "Invocations",
+		"callsTitle": "Recent calls that change data",
+		"callsEmpty": "No calls that change data yet.",
+		"callsColOp": "Operation",
+		"callsNote": "Only calls that change or delete data are listed, with the outcome code and no data.",
+		"tabDevelopers": "Developers",
+		"catTitle": "Plugin API catalogue",
+		"catLead": "The operations a plugin can call through the host, grouped by area. A plugin asks for a capability id; each id opens the operations listed under it.",
+		"catSearch": "Search ids, operations and paths",
+		"catArea": "Area",
+		"catAreaAll": "All areas",
+		"catLoading": "Loading the catalogue.",
+		"catFailed": "The catalogue could not be loaded.",
+		"catEmpty": "Nothing matches.",
+		"catCounts": "{ops} operations in {ids} capability ids",
+		"catScope": "Scope: {scope}",
+		"areas": {
+			"account": {
+				"name": "Account",
+				"desc": "Your own profile and preferences."
+			},
+			"alerts": {
+				"name": "Alerts",
+				"desc": "Alert rules, incoming alerts and their routing."
+			},
+			"catalogue": {
+				"name": "API catalogue",
+				"desc": "The list of operations a plugin can call."
+			},
+			"drafts": {
+				"name": "Drafts",
+				"desc": "Drafts waiting for a person to review and accept them."
+			},
+			"extensions": {
+				"name": "Extensions",
+				"desc": "Installed packages, their grants and their call history."
+			},
+			"flow": {
+				"name": "Flow",
+				"desc": "Flow pages, objects, links and sharing."
+			},
+			"forms": {
+				"name": "Forms",
+				"desc": "Forms, their fields, views and records."
+			},
+			"governance": {
+				"name": "Governance",
+				"desc": "Proposals, votes, policies and approvals."
+			},
+			"integrations": {
+				"name": "Integrations",
+				"desc": "Webhooks, connections and outside services."
+			},
+			"layouts": {
+				"name": "Layouts",
+				"desc": "Page layouts, components and where they are placed."
+			},
+			"legacy_plugins": {
+				"name": "Legacy plugins",
+				"desc": "Older plugin records kept for compatibility."
+			},
+			"nav": {
+				"name": "Navigation",
+				"desc": "Menus and navigation entries."
+			},
+			"packages": {
+				"name": "Packages",
+				"desc": "The package catalogue and uploaded packages."
+			},
+			"planning": {
+				"name": "Planning",
+				"desc": "Sprints, milestones and schedules."
+			},
+			"projects": {
+				"name": "Projects",
+				"desc": "Projects, their settings, members and bot connections."
+			},
+			"site": {
+				"name": "Site pages",
+				"desc": "Pages of a published site as visitors see them."
+			},
+			"sites": {
+				"name": "Sites",
+				"desc": "Sites, their pages and publishing."
+			},
+			"system": {
+				"name": "System",
+				"desc": "Instance status and settings."
+			},
+			"tasks": {
+				"name": "Tasks",
+				"desc": "Tasks delivered to bots and runners."
+			},
+			"uploads": {
+				"name": "Uploads",
+				"desc": "Files uploaded to the workspace."
+			},
+			"work_items": {
+				"name": "Work items",
+				"desc": "Issues and tasks of a project, with their comments."
+			},
+			"workspace": {
+				"name": "Workspace",
+				"desc": "The workspace itself, its members and settings."
+			}
+		}
 	}
 }
