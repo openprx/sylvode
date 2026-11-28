@@ -228,6 +228,9 @@ mod admin_setup_api_tests;
 mod plugin_template_api_tests;
 
 #[cfg(test)]
+mod site_admin_api_tests;
+
+#[cfg(test)]
 mod legacy_auth_characterization_tests;
 
 #[cfg(test)]

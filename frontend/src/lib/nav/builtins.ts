@@ -26,6 +26,7 @@ export const PROJECT_BUILTINS: Record<string, BuiltinInfo> = {
 	'project.cycles': { labelKey: 'shell.projectNav.cycles', glyph: 'repeat' },
 	'project.forms': { labelKey: 'shell.projectNav.forms', glyph: 'table-2' },
 	'project.apps': { labelKey: 'shell.projectNav.apps', glyph: 'app-window' },
+	'project.sites': { labelKey: 'shell.projectNav.sites', glyph: 'globe' },
 	'project.settings': { labelKey: 'shell.projectNav.settings', glyph: 'settings' }
 };
 
@@ -67,6 +68,8 @@ export function projectBuiltinHref(page: string, workspaceId: string, projectId:
 			return `${base}/forms`;
 		case 'project.apps':
 			return `${base}/apps`;
+		case 'project.sites':
+			return `${base}/sites`;
 		case 'project.settings':
 			return `${base}/settings`;
 		default:

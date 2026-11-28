@@ -173,8 +173,11 @@ async fn installation_json(db: &impl ConnectionTrait, row: &InstallationRow) -> 
         ),
         None => active.map(|_| false),
     };
+    // The site that holds the pages of the newest generation, if the package brought any.
+    let site_id = crate::site::store::site_of_installation(db, row.id).await?;
     Ok(json!({
         "id": row.id,
+        "site_id": site_id,
         "approver_active": approver_active,
         "workspace_id": row.workspace_id,
         "scope": {"kind": row.scope_kind, "project_id": row.project_id},

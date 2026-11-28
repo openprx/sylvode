@@ -249,7 +249,7 @@ test('without a menu the project tree is the built-in one', () => {
 	});
 	nodeAssert.deepEqual(
 		(tree.children ?? []).map((c) => c.kind),
-		['forms', 'apps']
+		['forms', 'apps', 'sites']
 	);
 	nodeAssert.equal(tree.children?.[1].children?.[0].kind, 'app');
 });

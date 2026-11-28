@@ -94,8 +94,30 @@ fn is_route(route: &str) -> bool {
     })
 }
 
-fn site_body(row: &SiteRow) -> SiteBody {
-    SiteBody::from(row)
+/// The console shape of sites: each row with its link and the installation behind it.
+async fn site_bodies(state: &AppState, rows: &[SiteRow]) -> Result<Vec<SiteBody>, ApiError> {
+    let ids: Vec<Uuid> = rows.iter().map(|row| row.id).collect();
+    let mut installations = store::installations_of_sites(&state.db, &ids).await?;
+    let config = crate::config::runtime();
+    Ok(rows
+        .iter()
+        .map(|row| {
+            let link = super::link::site_link(
+                row.allowed_origin(),
+                &row.slug,
+                &config.site,
+                config.public_url.as_deref(),
+            );
+            SiteBody::new(row, link, installations.remove(&row.id))
+        })
+        .collect())
+}
+
+async fn site_body(state: &AppState, row: &SiteRow) -> Result<SiteBody, ApiError> {
+    site_bodies(state, std::slice::from_ref(row))
+        .await?
+        .pop()
+        .ok_or_else(ApiError::internal)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -119,7 +141,7 @@ pub async fn list_sites(
     require_project_read(&state, &who, project_id).await?;
     let paging = query.page.resolve(50, 200);
     let (rows, total) = store::list_sites(&state.db, project_id, paging.per_page, paging.offset()).await?;
-    let items = rows.iter().map(site_body).collect();
+    let items = site_bodies(&state, &rows).await?;
     Ok(ApiResponse::success(PaginatedData::page(items, total, paging)))
 }
 
@@ -159,7 +181,7 @@ pub async fn create_site(
     )
     .await?
     .ok_or_else(|| ApiError::conflict_coded("slug_taken", "this slug is taken", None))?;
-    Ok(ApiResponse::success(site_body(&row)))
+    Ok(ApiResponse::success(site_body(&state, &row).await?))
 }
 
 /// `GET /api/v1/sites/{id}`
@@ -171,16 +193,22 @@ pub async fn get_site(
 ) -> Result<impl IntoResponse, ApiError> {
     let who = Who::new(claims, bot);
     let site = readable_site(&state, &who, id).await?;
-    Ok(ApiResponse::success(site_body(&site)))
+    Ok(ApiResponse::success(site_body(&state, &site).await?))
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateSiteRequest {
-    title: Value,
+    #[serde(default)]
+    title: Option<Value>,
+    #[serde(default)]
+    slug: Option<String>,
 }
 
-/// `PATCH /api/v1/sites/{id}`: the title only.
+/// `PATCH /api/v1/sites/{id}`: the title, and the slug while the site is a draft.
+///
+/// The slug is for owners and admins who are people (it is the site's address); the title keeps the
+/// rule of the pages. A published or disabled site refuses a new slug with `site_not_draft`.
 pub async fn update_site(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
@@ -189,19 +217,55 @@ pub async fn update_site(
     Json(req): Json<UpdateSiteRequest>,
 ) -> Result<Response, ApiError> {
     let who = Who::new(claims, bot);
-    let site = page_writable_site(&state, &who, id).await?;
-    check_text(&req.title, "title_invalid")?;
-    let tx = state.db.begin().await?;
-    if drafted(&tx, &who, &site).await? {
-        drop(tx);
-        let target = PageTarget::title(site.id);
-        return submit(&state, &who, &site, &target, json!({ "title": req.title })).await;
+    if req.title.is_none() && req.slug.is_none() {
+        return Err(invalid("update_empty", "send a title, a slug or both"));
     }
-    let row = store::update_title(&tx, site.id, &req.title)
-        .await?
-        .ok_or_else(|| ApiError::not_found("site not found"))?;
+    if let Some(title) = &req.title {
+        check_text(title, "title_invalid")?;
+    }
+    if let Some(slug) = &req.slug {
+        if !is_slug(slug) {
+            return Err(invalid(
+                "slug_invalid",
+                "a slug is 2-40 lowercase letters, digits or hyphens",
+            ));
+        }
+        admin_site(&state, &who, id).await?;
+    }
+    let site = page_writable_site(&state, &who, id).await?;
+    if req.slug.is_some() && site.status != "draft" {
+        return Err(ApiError::conflict_coded(
+            "site_not_draft",
+            "the slug of a site changes only while it is a draft",
+            None,
+        ));
+    }
+    let tx = state.db.begin().await?;
+    let titled = if let Some(title) = &req.title {
+        if drafted(&tx, &who, &site).await? {
+            drop(tx);
+            let target = PageTarget::title(site.id);
+            return submit(&state, &who, &site, &target, json!({ "title": title })).await;
+        }
+        store::update_title(&tx, site.id, title)
+            .await?
+            .ok_or_else(|| ApiError::not_found("site not found"))?
+    } else {
+        site.clone()
+    };
+    let row = if let Some(slug) = &req.slug {
+        store::update_slug(&tx, site.id, slug).await?.ok_or_else(|| {
+            ApiError::conflict_coded(
+                "site_not_draft",
+                "the slug of a site changes only while it is a draft",
+                None,
+            )
+        })?
+    } else {
+        titled
+    };
     tx.commit().await?;
-    Ok(ApiResponse::success(site_body(&row)).into_response())
+    Ok(ApiResponse::success(site_body(&state, &row).await?).into_response())
 }
 
 async fn set_status(state: &AppState, who: &Who, id: Uuid, status: &str) -> Result<SiteBody, ApiError> {
@@ -209,7 +273,7 @@ async fn set_status(state: &AppState, who: &Who, id: Uuid, status: &str) -> Resu
     let row = store::set_status(&state.db, site.id, status)
         .await?
         .ok_or_else(|| ApiError::not_found("site not found"))?;
-    Ok(site_body(&row))
+    site_body(state, &row).await
 }
 
 /// `POST /api/v1/sites/{id}/publish`
@@ -306,7 +370,7 @@ pub async fn put_settings(
     let row = store::update_settings(&state.db, site.id, &Value::Object(settings))
         .await?
         .ok_or_else(|| ApiError::not_found("site not found"))?;
-    Ok(ApiResponse::success(site_body(&row)))
+    Ok(ApiResponse::success(site_body(&state, &row).await?))
 }
 
 /// `DELETE /api/v1/sites/{id}`
@@ -317,6 +381,13 @@ pub async fn delete_site(
 ) -> Result<impl IntoResponse, ApiError> {
     let who = Who::new(claims, None);
     let site = admin_site(&state, &who, id).await?;
+    if site.is_published() {
+        return Err(ApiError::conflict_coded(
+            "site_published",
+            "unpublish the site before deleting it",
+            None,
+        ));
+    }
     let tx = state.db.begin().await?;
     store::delete_site(&tx, site.id).await?;
     tx.commit().await?;
