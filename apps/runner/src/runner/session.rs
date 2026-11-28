@@ -505,18 +505,42 @@ impl BotPool {
         self.members.sort_by_key(|member| member.slot.member());
     }
 
-    /// The slot that takes the task, and the member number and reason, recording the choice.
-    fn select(&mut self, input: &SelectInput<'_>, now: u64, item_ttl_secs: u64) -> Option<(Slot, SelectReason)> {
-        let statuses: Vec<MemberStatus> = self.members.iter().map(|member| *member.status.borrow()).collect();
+    /// The slot that takes the task, and the reason. Records nothing: affinity is recorded by
+    /// [`Self::record`] once the member has accepted the task. A member at its queue cap
+    /// (`max_queued` of 0 means no cap) is passed over while another member has room.
+    fn select(
+        &self,
+        input: &SelectInput<'_>,
+        now: u64,
+        item_ttl_secs: u64,
+        max_queued: usize,
+    ) -> Option<(Slot, SelectReason)> {
+        let mut statuses: Vec<MemberStatus> = self.members.iter().map(|member| *member.status.borrow()).collect();
+        if max_queued > 0 {
+            let open: Vec<MemberStatus> = statuses
+                .iter()
+                .map(|status| MemberStatus {
+                    healthy: status.healthy && status.queue_len < max_queued,
+                    ..*status
+                })
+                .collect();
+            if open.iter().any(|status| status.healthy) {
+                statuses = open;
+            }
+        }
         let (index, reason) = select_member(input, &self.affinity, &statuses, now, item_ttl_secs);
         let slot = self.members.get(index)?.slot.clone();
+        Some((slot, reason))
+    }
+
+    /// Remembers that `slot` took the task (and the work item) of `input`.
+    fn record(&mut self, input: &SelectInput<'_>, slot: &Slot, now: u64) {
         if let Some(id) = input.task_id {
             self.affinity.record_task(id, slot.member(), now);
         }
         if let Some(item) = input.item {
             self.affinity.record_item(item, slot.member(), now);
         }
-        Some((slot, reason))
     }
 }
 
@@ -759,7 +783,17 @@ impl SessionManager {
 
     /// Puts a ready-made handle in place of a worker (the channel of a session that is not run
     /// by this manager).
+    #[cfg(test)]
     pub(super) fn install(&self, name: &Slot, handle: WorkerHandle) {
+        if name.is_bot()
+            && let Ok(primary) = bot_primary(name)
+        {
+            self.pools
+                .lock()
+                .entry(primary.as_str().to_string())
+                .or_default()
+                .attach(name, handle.status.clone());
+        }
         self.workers.lock().insert(name.as_str().to_string(), handle);
     }
 
@@ -772,18 +806,39 @@ impl SessionManager {
     /// [`EnqueueRefusal`]: the channel is full, the session holds `max_queued_per_session` tasks,
     /// or the worker has ended. The first two are back-pressure (HTTP 503).
     pub async fn enqueue(&self, task: TmuxTask) -> Result<Option<usize>, EnqueueRefusal> {
-        let slot = self.choose_slot(&task);
         let runner = &self.shared.config.runner;
         let limits = EnqueueLimits {
             answer: Duration::from_millis(runner.enqueue_answer_ms),
             max_queued: usize::try_from(runner.max_queued_per_session).unwrap_or(usize::MAX),
         };
-        self.handle(&slot).enqueue(task, limits).await
+        let slot = self.choose_slot(&task, limits.max_queued);
+        let task_id = task.task_id.clone();
+        let result = self.handle(&slot).enqueue(task, limits).await;
+        // Affinity follows only a task the member took (a late answer still queued it).
+        if result.is_ok() {
+            self.record_affinity(&slot, &task_id);
+        }
+        result
+    }
+
+    /// Remembers that the member `slot` of a bot's pool took task `task_id`.
+    fn record_affinity(&self, slot: &Slot, task_id: &str) {
+        if !slot.is_bot() {
+            return;
+        }
+        let Ok(primary) = bot_primary(slot) else { return };
+        let input = SelectInput {
+            task_id: Some(task_id),
+            item: None,
+        };
+        if let Some(pool) = self.pools.lock().get_mut(primary.as_str()) {
+            pool.record(&input, slot, unix_now());
+        }
     }
 
     /// The slot that takes `task`: the project's own, or the member of the bot's pool chosen by
     /// [`select_member`] (the bot's only session while the pool has one member).
-    fn choose_slot(&self, task: &TmuxTask) -> Slot {
+    fn choose_slot(&self, task: &TmuxTask, max_queued: usize) -> Slot {
         if !task.slot.is_bot() {
             return task.slot.clone();
         }
@@ -799,8 +854,8 @@ impl SessionManager {
         let chosen = self
             .pools
             .lock()
-            .get_mut(primary.as_str())
-            .and_then(|pool| pool.select(&input, unix_now(), ITEM_AFFINITY_TTL_SECS));
+            .get(primary.as_str())
+            .and_then(|pool| pool.select(&input, unix_now(), ITEM_AFFINITY_TTL_SECS, max_queued));
         let Some((slot, reason)) = chosen else {
             return task.slot.clone();
         };
@@ -831,6 +886,7 @@ impl SessionManager {
     }
 
     /// The hook events dropped so far because a session's channel was full.
+    #[cfg(test)]
     pub(super) fn hooks_dropped(&self) -> u64 {
         self.hooks_dropped.load(Ordering::Relaxed)
     }
