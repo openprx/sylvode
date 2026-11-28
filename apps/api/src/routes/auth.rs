@@ -57,7 +57,7 @@ fn account_key(email: &str) -> RateKey {
 /// The key of one account tried from one address.
 fn account_address_key(email: &str, headers: &HeaderMap, peer: &Peer) -> RateKey {
     let ip = rate::client_address(headers, peer.as_ref().map(|Extension(info)| info.0));
-    RateKey::from_text(&format!("{}\n{}", email.trim().to_lowercase(), ip.to_canonical()))
+    RateKey::from_text_at(&email.trim().to_lowercase(), ip)
 }
 
 #[derive(Debug, Serialize)]
@@ -331,13 +331,31 @@ pub async fn login(
     // A pair that has signed in before is known. The account's failure cap does not stop a known
     // pair, or one attacker address keeping the cap used up would lock the owner out.
     let pair = account_address_key(&req.email, &headers, &peer);
-    let known = match rate::is_over_limit(&state.db, RateBucket::AuthLoginKnown, &pair, 1).await {
+    let mut known = match rate::is_over_limit(&state.db, RateBucket::AuthLoginKnown, &pair, 1).await {
         Ok(known) => known.is_some(),
         Err(error) => {
             tracing::warn!(error = %error, "auth known-pair lookup unavailable");
             return Err(ApiError::Internal);
         }
     };
+    // The exemption has a daily ceiling of failures per account: over it, known pairs are held to
+    // the account cap like unknown ones.
+    if known {
+        match rate::is_over_limit(
+            &state.db,
+            RateBucket::AuthLoginKnownFail,
+            &account,
+            RateBucket::AuthLoginKnownFail.limit(),
+        )
+        .await
+        {
+            Ok(over) => known = over.is_none(),
+            Err(error) => {
+                tracing::warn!(error = %error, "auth known-pair failure counter unavailable");
+                return Err(ApiError::Internal);
+            }
+        }
+    }
     match rate::is_over_limit(
         &state.db,
         RateBucket::AuthLoginAccountFail,
@@ -356,17 +374,22 @@ pub async fn login(
     let row = match check_login_credentials(&state, &req.email, req.password).await {
         Ok(row) => row,
         Err(error) => {
-            // A known pair is never refused by the account's cap, even while its failures count.
-            if matches!(error, ApiError::Unauthorized(_))
-                && let Some(refused) = limit(&state, RateBucket::AuthLoginAccountFail, &account).await?
-                && !known
-            {
-                return Ok(refused);
+            // A known pair is never refused by the account's cap, even while its failures count;
+            // they count against the daily ceiling of known pairs instead.
+            if matches!(error, ApiError::Unauthorized(_)) {
+                if let Some(refused) = limit(&state, RateBucket::AuthLoginAccountFail, &account).await?
+                    && !known
+                {
+                    return Ok(refused);
+                }
+                if known && let Some(refused) = limit(&state, RateBucket::AuthLoginKnownFail, &account).await? {
+                    return Ok(refused);
+                }
             }
             return Err(error);
         }
     };
-    if let Err(error) = rate::enforce_with_limit(&state.db, RateBucket::AuthLoginKnown, &pair, u32::MAX).await {
+    if let Err(error) = rate::touch_window(&state.db, RateBucket::AuthLoginKnown, &pair).await {
         // Signing in does not depend on remembering the pair.
         tracing::warn!(error = %error, "auth known-pair record failed");
     }

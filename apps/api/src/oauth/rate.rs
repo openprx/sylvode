@@ -35,7 +35,8 @@ pub const DAY_WINDOW_SECS: u32 = 86_400;
 /// Length of the failed-login window per account, in seconds (15 minutes).
 pub const ACCOUNT_FAIL_WINDOW_SECS: u32 = 900;
 
-/// How long a signed-in (account, address) pair stays known, in seconds (30 days).
+/// How long a signed-in (account, address) pair stays known after its last sign-in, in seconds
+/// (30 days).
 pub const KNOWN_PAIR_WINDOW_SECS: u32 = 2_592_000;
 
 /// The database-backed buckets and their limits per window.
@@ -68,9 +69,13 @@ pub enum RateBucket {
     /// Failed console logins, per account. Successful logins are not counted.
     AuthLoginAccountFail,
     /// An (account, address) pair that has signed in: one row per pair, kept for 30 days from its
-    /// first hit in a window and renewed by the next sign-in after that. Not a limit: a row means
-    /// "known", and the account's failure cap does not apply to a known pair.
+    /// last sign-in (each sign-in restarts the window, see [`touch_window`]). Not a limit: a row
+    /// means "known", and the account's failure cap does not apply to a known pair.
     AuthLoginKnown,
+    /// Failed console logins of known pairs, per account per day. A known pair is exempt from
+    /// the account's failure cap, so this is the ceiling of that exemption: over it, known pairs
+    /// are limited like unknown ones.
+    AuthLoginKnownFail,
     /// Registration requests, per client address.
     AuthRegisterIp,
     /// Session refreshes, per client address.
@@ -80,7 +85,7 @@ pub enum RateBucket {
 }
 
 impl RateBucket {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::Authorize,
         Self::Decision,
         Self::TokenIp,
@@ -95,6 +100,7 @@ impl RateBucket {
         Self::AuthLoginPair,
         Self::AuthLoginAccountFail,
         Self::AuthLoginKnown,
+        Self::AuthLoginKnownFail,
         Self::AuthRegisterIp,
         Self::AuthRefreshIp,
         Self::AuthSetupStatusIp,
@@ -116,6 +122,7 @@ impl RateBucket {
             Self::AuthLoginPair => "auth_login_pair",
             Self::AuthLoginAccountFail => "auth_login_account_fail",
             Self::AuthLoginKnown => "auth_login_known",
+            Self::AuthLoginKnownFail => "auth_login_known_fail",
             Self::AuthRegisterIp => "auth_register_ip",
             Self::AuthRefreshIp => "auth_refresh_ip",
             Self::AuthSetupStatusIp => "auth_setup_status_ip",
@@ -125,7 +132,7 @@ impl RateBucket {
     /// Length of this bucket's window, in seconds.
     pub const fn window_secs(self) -> u32 {
         match self {
-            Self::InboundSourceDay => DAY_WINDOW_SECS,
+            Self::InboundSourceDay | Self::AuthLoginKnownFail => DAY_WINDOW_SECS,
             Self::AuthLoginAccountFail => ACCOUNT_FAIL_WINDOW_SECS,
             Self::AuthLoginKnown => KNOWN_PAIR_WINDOW_SECS,
             _ => WINDOW_SECS,
@@ -144,6 +151,7 @@ impl RateBucket {
             Self::AuthLoginAccountFail => 50,
             // One hit makes a pair known.
             Self::AuthLoginKnown => 1,
+            Self::AuthLoginKnownFail => 200,
             Self::TokenIp | Self::AuthRefreshIp => 60,
             Self::TokenGrant => 20,
             Self::InboundSourceMinute => 120,
@@ -162,6 +170,12 @@ impl RateKey {
         Self(hash_secret(&ip.to_canonical().to_string()).as_hex().to_owned())
     }
 
+    /// A key for an identity tried from an address: IPv4 by the address, IPv6 by its /64 prefix
+    /// (privacy addresses rotate inside one), an IPv4-mapped IPv6 address as the IPv4 one.
+    pub fn from_text_at(text: &str, ip: IpAddr) -> Self {
+        Self::from_text(&format!("{text}\n{}", address_prefix(ip)))
+    }
+
     pub fn from_id(id: Uuid) -> Self {
         Self(hash_secret(&id.to_string()).as_hex().to_owned())
     }
@@ -174,6 +188,32 @@ impl RateKey {
     pub fn as_hex(&self) -> &str {
         &self.0
     }
+}
+
+/// The address a pair is keyed by: the IPv4 address, or the /64 prefix of an IPv6 address.
+fn address_prefix(ip: IpAddr) -> String {
+    match ip.to_canonical() {
+        IpAddr::V4(v4) => v4.to_string(),
+        IpAddr::V6(v6) => {
+            let mut octets = v6.octets();
+            octets[8..].fill(0);
+            format!("{}/64", std::net::Ipv6Addr::from(octets))
+        }
+    }
+}
+
+/// Counts a hit for `key` in `bucket` and restarts the bucket's window at now, so the row stays
+/// for a full window after the last hit. The count is set to 1.
+pub(crate) async fn touch_window<C: ConnectionTrait>(conn: &C, bucket: RateBucket, key: &RateKey) -> Result<(), DbErr> {
+    conn.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO oauth_rate_hits AS hit (bucket, key_hash, window_started, hit_count) \
+         VALUES ($1, $2, now(), 1) \
+         ON CONFLICT (bucket, key_hash) DO UPDATE SET window_started = now(), hit_count = 1",
+        vec![bucket.as_str().into(), key.as_hex().into()],
+    ))
+    .await?;
+    Ok(())
 }
 
 /// The client address a request is limited under: the right-most untrusted forwarding entry when
@@ -439,6 +479,7 @@ mod tests {
             (RateBucket::AuthLoginPair, "auth_login_pair", 10),
             (RateBucket::AuthLoginAccountFail, "auth_login_account_fail", 50),
             (RateBucket::AuthLoginKnown, "auth_login_known", 1),
+            (RateBucket::AuthLoginKnownFail, "auth_login_known_fail", 200),
             (RateBucket::AuthRegisterIp, "auth_register_ip", 10),
             (RateBucket::AuthRefreshIp, "auth_refresh_ip", 60),
             (RateBucket::AuthSetupStatusIp, "auth_setup_status_ip", 30),
@@ -475,6 +516,20 @@ mod tests {
         let id = Uuid::new_v4();
         assert_eq!(RateKey::from_id(id).as_hex().len(), 64);
         assert_ne!(RateKey::from_id(id), RateKey::from_id(Uuid::new_v4()));
+    }
+
+    #[test]
+    fn pair_keys_use_ipv4_whole_and_ipv6_by_the_64_prefix() {
+        let at = |ip: &str| RateKey::from_text_at("a@example.com", ip.parse().unwrap());
+        assert_eq!(at("192.0.2.10"), at("192.0.2.10"));
+        assert_ne!(at("192.0.2.10"), at("192.0.2.11"));
+        assert_eq!(at("2001:db8:1:2::1"), at("2001:db8:1:2:aaaa:bbbb:cccc:dddd"));
+        assert_ne!(at("2001:db8:1:2::1"), at("2001:db8:1:3::1"));
+        assert_eq!(at("192.0.2.10"), at("::ffff:192.0.2.10"));
+        assert_ne!(
+            at("2001:db8:1:2::1"),
+            RateKey::from_text_at("b@example.com", "2001:db8:1:2::1".parse().unwrap())
+        );
     }
 
     #[test]

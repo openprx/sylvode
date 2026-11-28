@@ -21,7 +21,7 @@ use super::grants::{
     Actor, RevokeReason, revoke_all_user_grants, revoke_client_grants, revoke_grant, revoke_user_workspace_grants,
     revoke_workspace_grants,
 };
-use super::rate::{RateBucket, RateError, RateKey, enforce, enforce_with_limit};
+use super::rate::{RateBucket, RateError, RateKey, enforce, enforce_with_limit, is_over_limit, touch_window};
 use super::scopes::{ProjectScope, Scope, TokenResource};
 use super::test_support::{Start, count, oauth_scratch_or_skip, seed_access_token, seed_grant};
 use super::tokens::{TokenKind, mint};
@@ -780,5 +780,99 @@ async fn the_database_rate_window_admits_the_limit_then_refuses_then_resets() {
     let results =
         futures_util::future::join_all((0..20).map(|_| enforce_with_limit(db, RateBucket::Revoke, &racing, 5))).await;
     assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 5);
+    scratch.drop_self().await;
+}
+
+#[tokio::test]
+async fn a_sign_in_slides_the_known_pair_window() {
+    let scratch = oauth_scratch_or_skip!("known_slide", Start::Complete);
+    let db = &scratch.db;
+    let bucket = RateBucket::AuthLoginKnown;
+    let slid = RateKey::from_text_at("a@example.com", "192.0.2.50".parse().unwrap());
+    let lapsed = RateKey::from_text_at("b@example.com", "192.0.2.50".parse().unwrap());
+    for key in [&slid, &lapsed] {
+        touch_window(db, bucket, key).await.expect("first sign-in");
+        assert!(is_over_limit(db, bucket, key, 1).await.unwrap().is_some(), "known");
+    }
+    // Day 29: one pair signs in again, the other does not.
+    for key in [&slid, &lapsed] {
+        exec(
+            db,
+            "UPDATE oauth_rate_hits SET window_started = now() - interval '29 days' WHERE bucket = $1 AND key_hash = $2",
+            vec![bucket.as_str().into(), key.as_hex().into()],
+        )
+        .await;
+    }
+    touch_window(db, bucket, &slid).await.expect("sign-in on day 29");
+    // Day 50: 21 days after the last sign-in for the first pair, 50 for the second.
+    exec(
+        db,
+        "UPDATE oauth_rate_hits SET window_started = window_started - interval '21 days' WHERE bucket = $1 AND key_hash = $2",
+        vec![bucket.as_str().into(), slid.as_hex().into()],
+    )
+    .await;
+    exec(
+        db,
+        "UPDATE oauth_rate_hits SET window_started = now() - interval '50 days' WHERE bucket = $1 AND key_hash = $2",
+        vec![bucket.as_str().into(), lapsed.as_hex().into()],
+    )
+    .await;
+    assert!(
+        is_over_limit(db, bucket, &slid, 1).await.unwrap().is_some(),
+        "still known on day 50"
+    );
+    assert!(
+        is_over_limit(db, bucket, &lapsed, 1).await.unwrap().is_none(),
+        "lapsed after 30 days"
+    );
+    // A sign-in after the lapse makes the pair known again.
+    touch_window(db, bucket, &lapsed)
+        .await
+        .expect("sign-in after the lapse");
+    assert!(is_over_limit(db, bucket, &lapsed, 1).await.unwrap().is_some());
+    scratch.drop_self().await;
+}
+
+#[tokio::test]
+async fn known_pair_failures_have_a_daily_ceiling_per_account() {
+    let scratch = oauth_scratch_or_skip!("known_fail", Start::Complete);
+    let db = &scratch.db;
+    let bucket = RateBucket::AuthLoginKnownFail;
+    let account = RateKey::from_text("a@example.com");
+    let other = RateKey::from_text("b@example.com");
+    for hit in 1..=bucket.limit() {
+        enforce(db, bucket, &account)
+            .await
+            .unwrap_or_else(|err| panic!("failure {hit} is within the ceiling: {err}"));
+    }
+    assert!(
+        is_over_limit(db, bucket, &account, bucket.limit())
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(matches!(
+        enforce(db, bucket, &account).await,
+        Err(RateError::Limited(_))
+    ));
+    assert!(
+        is_over_limit(db, bucket, &other, bucket.limit())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    // The window is a day.
+    exec(
+        db,
+        "UPDATE oauth_rate_hits SET window_started = now() - interval '25 hours' WHERE bucket = $1 AND key_hash = $2",
+        vec![bucket.as_str().into(), account.as_hex().into()],
+    )
+    .await;
+    assert!(
+        is_over_limit(db, bucket, &account, bucket.limit())
+            .await
+            .unwrap()
+            .is_none()
+    );
     scratch.drop_self().await;
 }
