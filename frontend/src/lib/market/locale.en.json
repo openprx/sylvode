@@ -182,7 +182,7 @@
 			"operator": "Operators"
 		},
 		"pageNoMenu": "not in the menu",
-		"sitePagesNote": "Installing into a project creates a draft site. Nothing is public until someone publishes it.",
+		"sitePagesNote": "Installing into a project creates a draft site. Nothing is public until someone publishes it. Later upgrades update that site directly, including when it is published.",
 		"openSite": "Open site"
 	}
 }
