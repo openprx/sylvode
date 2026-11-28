@@ -993,6 +993,21 @@ async fn apply_work_item_update_effect<C: ConnectionTrait>(
     }
     if args.get("assignee_id").is_some() {
         let assignee_id = optional_uuid_arg(args, "assignee_id")?;
+        // As the issue routes do: an assignee is a member of the project's workspace.
+        if let Some(assignee_id) = assignee_id {
+            crate::oauth::delegated::refuse_agent_dispatch(db, &[assignee_id]).await?;
+            let member = db
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "SELECT 1 FROM workspace_members wm JOIN projects p ON p.workspace_id = wm.workspace_id \
+                     WHERE p.id = $1 AND wm.user_id = $2",
+                    vec![row.project_id.into(), assignee_id.into()],
+                ))
+                .await?;
+            if member.is_none() {
+                return Err(ApiError::BadRequest("assignee must be a workspace member".to_string()));
+            }
+        }
         sets.push(format!("assignee_id = ${idx}"));
         values.push(assignee_id.into());
         changed_fields.push("assignee_id");

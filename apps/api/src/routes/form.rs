@@ -88,7 +88,7 @@ use crate::{
             cleanup_expired_replaced_signature_audit_entries, cleanup_expired_signature_values,
             materialize_signature_values_with_existing_audit, record_source_for_reader,
             signature_audit_source_for_reader, signature_lifecycle_summary, signature_workflow_verification_summary,
-            verify_signature_audit_source,
+            verify_signature_audit_source, with_stored_signature_media,
         },
         validation::{caller, validate_create_report, validate_recalculated, validate_update, write_context},
     },
@@ -3448,7 +3448,6 @@ async fn create_record_for_form_in_slots(
         role,
         is_bot,
         crate::forms::native_create::NativeRecordCreateRequest {
-            record_id: None,
             values: req.values,
             title: req.title,
             source,
@@ -3609,7 +3608,10 @@ pub async fn recalculate_form_record(
         DbBackend::Postgres,
         r"
             UPDATE form_records
-            SET title = $1, values = $2, source = $3, schema_version = $4, updated_by = $5, updated_at = now()
+            SET title = $1, values = $2, schema_version = $4, updated_by = $5, updated_at = now(),
+                source = CASE WHEN source ? 'signature_media'
+                    THEN $3::jsonb || jsonb_build_object('signature_media', source->'signature_media')
+                    ELSE $3::jsonb END
             WHERE id = $6
         ",
         vec![
@@ -4014,6 +4016,18 @@ async fn update_record_for_form_internal(
         None => record.values,
     };
     ensure_record_objects_claimable(state, form.workspace_id, &values, Some(&previous_values)).await?;
+    // `signature_media` is server-owned: the client's copy is dropped and the stored trail kept.
+    let stored_media = tx
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT source->'signature_media' AS media FROM form_records WHERE id = $1 FOR UPDATE",
+            vec![record_id.into()],
+        ))
+        .await?
+        .map(|row| row.try_get::<Option<Value>>("", "media"))
+        .transpose()?
+        .flatten();
+    let source = with_stored_signature_media(source, stored_media);
     let source = append_signature_audit_source(source, signature_audit_entries)?;
     run_field_validator_hooks(
         state,
@@ -5430,7 +5444,10 @@ async fn recalculate_record_values(
         DbBackend::Postgres,
         r"
             UPDATE form_records
-            SET title = $1, values = $2, source = $3, schema_version = $4, updated_by = $5, updated_at = now()
+            SET title = $1, values = $2, schema_version = $4, updated_by = $5, updated_at = now(),
+                source = CASE WHEN source ? 'signature_media'
+                    THEN $3::jsonb || jsonb_build_object('signature_media', source->'signature_media')
+                    ELSE $3::jsonb END
             WHERE id = $6
         ",
         vec![

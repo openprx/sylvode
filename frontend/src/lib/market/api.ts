@@ -111,6 +111,10 @@ export interface PackageSummary {
 		url?: string;
 		imported_at?: string;
 	} | null;
+	/** Only in a market search: a live installation exists at the asked scope. */
+	installed?: boolean;
+	/** Only in a market search, and only for a workspace owner or admin. */
+	installation_id?: string;
 }
 
 export interface ApproveGrant {
@@ -173,7 +177,9 @@ export const marketApi = {
 		const query = new URLSearchParams({ per_page: '200' });
 		if (filter.kind) query.set('kind', filter.kind);
 		if (filter.q) query.set('q', filter.q);
-		return apiClient.get(`/api/v1/workspaces/${enc(workspaceId)}/packages?${query.toString()}`);
+		return apiClient.get(
+			`/api/v1/workspaces/${enc(workspaceId)}/market/search?${query.toString()}`
+		);
 	},
 	list(workspaceId: string): Promise<ApiResult<{ items: Installation[] }>> {
 		return apiClient.get(`/api/v1/workspaces/${enc(workspaceId)}/installations`);

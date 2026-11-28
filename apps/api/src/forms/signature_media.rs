@@ -102,6 +102,7 @@ async fn materialize_signature_values_with_existing_storage(
             continue;
         };
         let Some(bytes) = decode_signature_data_url(value)? else {
+            ensure_stored_signature_url(value, existing_values.and_then(|values| values.get(&field.key)))?;
             continue;
         };
         let object_storage = match &storage {
@@ -164,6 +165,24 @@ async fn materialize_signature_values_with_existing_storage(
     })
 }
 
+/// A signature value that names a stored signature file must be the file the field already holds.
+///
+/// Only the server mints those names, when it materializes a drawn signature. A client that
+/// could write another record's file name into a signature field would make the retention cleanup
+/// of its own record delete that file.
+fn ensure_stored_signature_url(value: &str, stored: Option<&Value>) -> Result<(), ApiError> {
+    let trimmed = value.trim();
+    let names_stored_file =
+        trimmed.starts_with("/api/v1/uploads/signatures/") || trimmed.starts_with("/uploads/signatures/");
+    if names_stored_file && stored.and_then(Value::as_str) != Some(value) {
+        return Err(ApiError::bad_request_coded(
+            "signature_value_invalid",
+            "a signature is drawn; it cannot name a stored signature file",
+        ));
+    }
+    Ok(())
+}
+
 fn decode_signature_data_url(value: &str) -> Result<Option<Vec<u8>>, ApiError> {
     let trimmed = value.trim();
     if trimmed.is_empty()
@@ -192,6 +211,29 @@ fn decode_signature_data_url(value: &str) -> Result<Option<Vec<u8>>, ApiError> {
         ));
     }
     Ok(Some(bytes))
+}
+
+/// `source` without `signature_media`: that key is server-owned (the audit trail of materialized
+/// signatures, which the retention cleanup acts on), so whatever a client sent under it is dropped.
+#[must_use]
+pub fn without_client_signature_media(mut source: Value) -> Value {
+    if let Some(object) = source.as_object_mut() {
+        object.remove("signature_media");
+    }
+    source
+}
+
+/// `source` with the stored record's `signature_media` carried over.
+///
+/// A record write replaces `source` but never the server-owned audit trail. `stored` is the `signature_media` value of the
+/// stored `source` (`None` when it has none); the client's copy is dropped first.
+#[must_use]
+pub fn with_stored_signature_media(source: Value, stored: Option<Value>) -> Value {
+    let mut source = without_client_signature_media(source);
+    if let (Some(object), Some(stored)) = (source.as_object_mut(), stored) {
+        object.insert("signature_media".to_string(), stored);
+    }
+    source
 }
 
 pub fn append_signature_audit_source(source: Value, audit_entries: Vec<Value>) -> Result<Value, ApiError> {
@@ -776,7 +818,8 @@ pub async fn cleanup_expired_signature_values_with_storage(
         let Some(value) = object.get(&field.key).and_then(Value::as_str) else {
             continue;
         };
-        let Some(object_key) = signature_object_key_from_url(value) else {
+        let Some(object_key) = signature_object_key_from_url(value).filter(|key| key_is_of_field(key, &field.key))
+        else {
             continue;
         };
         if now < retained_since + Duration::days(retention_days) {
@@ -861,12 +904,12 @@ pub async fn cleanup_expired_replaced_signature_audit_entries_with_storage(
         else {
             continue;
         };
-        // The record's `source` is client-writable, so an entry here may not be one the server
-        // wrote: only a key of the shape the server itself stores is ever deleted.
+        // The trail is server-owned, but a key is still only deleted when it has the shape the
+        // server stores for this field (`signatures/signature-<field_key>-<uuid>.png`).
         let Some(previous_object_key) = entry_object
             .get("previous_object_key")
             .and_then(Value::as_str)
-            .filter(|key| is_signature_object_key(key))
+            .filter(|key| is_signature_object_key(key) && key_is_of_field(key, &field_key))
             .map(str::to_string)
         else {
             continue;
@@ -936,6 +979,13 @@ fn parse_signature_audit_timestamp(value: &str) -> Option<Timestamp> {
 /// Whether `key` has the shape of a stored signature object: `signatures/<safe file name>`.
 fn is_signature_object_key(key: &str) -> bool {
     key.strip_prefix("signatures/").is_some_and(is_safe_signature_file_name)
+}
+
+/// Whether a stored signature object key was minted for the field `field_key`.
+fn key_is_of_field(key: &str, field_key: &str) -> bool {
+    key.strip_prefix("signatures/signature-")
+        .and_then(|rest| rest.strip_prefix(field_key))
+        .is_some_and(|rest| rest.starts_with('-'))
 }
 
 fn is_safe_signature_file_name(file_name: &str) -> bool {
@@ -1087,11 +1137,11 @@ mod tests {
         let root = test_upload_root();
         let storage = ObjectStorage::local(&root);
         storage
-            .put("signatures/signature-guest-expired.png", b"expired")
+            .put("signatures/signature-guest_signature-expired.png", b"expired")
             .await
             .expect("expired signature should be stored");
         storage
-            .put("signatures/signature-guest-fresh.png", b"fresh")
+            .put("signatures/signature-fresh_signature-fresh.png", b"fresh")
             .await
             .expect("fresh signature should be stored");
         let schema = json!({
@@ -1107,8 +1157,8 @@ mod tests {
         let cleanup = cleanup_expired_signature_values_with_storage(
             &schema,
             json!({
-                "guest_signature": "/api/v1/uploads/signatures/signature-guest-expired.png",
-                "fresh_signature": "/api/v1/uploads/signatures/signature-guest-fresh.png",
+                "guest_signature": "/api/v1/uploads/signatures/signature-guest_signature-expired.png",
+                "fresh_signature": "/api/v1/uploads/signatures/signature-fresh_signature-fresh.png",
                 "note": "keep me"
             }),
             retained_since,
@@ -1122,13 +1172,18 @@ mod tests {
         assert!(cleanup.values["guest_signature"].is_null());
         assert_eq!(
             cleanup.values["fresh_signature"],
-            "/api/v1/uploads/signatures/signature-guest-fresh.png"
+            "/api/v1/uploads/signatures/signature-fresh_signature-fresh.png"
         );
         assert_eq!(cleanup.values["note"], "keep me");
-        assert!(storage.get("signatures/signature-guest-expired.png").await.is_err());
+        assert!(
+            storage
+                .get("signatures/signature-guest_signature-expired.png")
+                .await
+                .is_err()
+        );
         assert_eq!(
             storage
-                .get("signatures/signature-guest-fresh.png")
+                .get("signatures/signature-fresh_signature-fresh.png")
                 .await
                 .expect("fresh signature should remain"),
             b"fresh"
@@ -1137,7 +1192,7 @@ mod tests {
         let entry = &cleanup.audit_entries[0];
         assert_eq!(entry["action"], "retention_delete");
         assert_eq!(entry["field_key"], "guest_signature");
-        assert_eq!(entry["object_key"], "signatures/signature-guest-expired.png");
+        assert_eq!(entry["object_key"], "signatures/signature-guest_signature-expired.png");
         assert_eq!(entry["storage_backend"], "local");
         assert_eq!(entry["retention_days"], 7);
         assert_eq!(entry["retained_since"].as_str(), Some("2026-06-01T00:00:00Z"));
@@ -1150,11 +1205,11 @@ mod tests {
         let root = test_upload_root();
         let storage = ObjectStorage::local(&root);
         storage
-            .put("signatures/signature-guest-old.png", b"old-signature")
+            .put("signatures/signature-guest_signature-old.png", b"old-signature")
             .await
             .expect("old signature should be stored");
         storage
-            .put("signatures/signature-guest-current.png", b"current-signature")
+            .put("signatures/signature-guest_signature-current.png", b"current-signature")
             .await
             .expect("current signature should be stored");
         let schema = json!({
@@ -1172,9 +1227,9 @@ mod tests {
                     {
                         "action": "materialize",
                         "field_key": "guest_signature",
-                        "object_key": "signatures/signature-guest-current.png",
-                        "previous_url": "/api/v1/uploads/signatures/signature-guest-old.png",
-                        "previous_object_key": "signatures/signature-guest-old.png",
+                        "object_key": "signatures/signature-guest_signature-current.png",
+                        "previous_url": "/api/v1/uploads/signatures/signature-guest_signature-old.png",
+                        "previous_object_key": "signatures/signature-guest_signature-old.png",
                         "materialized_at": retained_since
                     }
                 ]
@@ -1184,7 +1239,7 @@ mod tests {
         let cleanup = cleanup_expired_replaced_signature_audit_entries_with_storage(
             &schema,
             &json!({
-                "guest_signature": "/api/v1/uploads/signatures/signature-guest-current.png"
+                "guest_signature": "/api/v1/uploads/signatures/signature-guest_signature-current.png"
             }),
             source,
             now,
@@ -1194,10 +1249,15 @@ mod tests {
         .expect("replaced signature should clean up");
 
         assert_eq!(cleanup.deleted_count, 1);
-        assert!(storage.get("signatures/signature-guest-old.png").await.is_err());
+        assert!(
+            storage
+                .get("signatures/signature-guest_signature-old.png")
+                .await
+                .is_err()
+        );
         assert_eq!(
             storage
-                .get("signatures/signature-guest-current.png")
+                .get("signatures/signature-guest_signature-current.png")
                 .await
                 .expect("current signature should remain"),
             b"current-signature"
@@ -1206,7 +1266,7 @@ mod tests {
         assert_eq!(cleanup.audit_entries[0]["action"], "replacement_retention_delete");
         assert_eq!(
             cleanup.audit_entries[0]["object_key"],
-            "signatures/signature-guest-old.png"
+            "signatures/signature-guest_signature-old.png"
         );
         assert_eq!(
             cleanup.source["signature_media"]["entries"][0]["previous_deleted_at"].as_str(),

@@ -64,6 +64,12 @@ at `/api/site/v1`. With `VITE_SV_SITE_ROUTING=hash` the router base is empty (ro
   `location`, `scan` are blocked (nothing is shown or editable). Client validation is a hint (required and the
   built-in rules of `rules_client`); the server C2 report is the verdict and is shown per field.
 
+## Records a visitor sees
+
+A visitor sees the records they submitted (their own rows of the binding). A change a staff member makes to
+such a record in the console is stored on that same record, so it appears in the visitor's view the next time
+the page is read; there is no separate visitor copy.
+
 ## Mock mode
 
 `VITE_SV_SITE_MOCK=1` installs a fixture-backed `fetch` (`src/lib/site/mock/`, shapes of contract section 6.6,

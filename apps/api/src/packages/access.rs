@@ -46,6 +46,16 @@ impl Caller {
         Ok(Self { user_id, role, is_bot })
     }
 
+    /// Whether the caller is a bot (of the whole workspace: the others are refused in `resolve`).
+    pub(super) const fn is_bot(&self) -> bool {
+        self.is_bot
+    }
+
+    /// Whether the caller is a workspace owner or admin who is a person.
+    pub(super) fn is_admin(&self) -> bool {
+        !self.is_bot && matches!(self.role.as_str(), "owner" | "admin")
+    }
+
     /// A workspace owner or admin who is a person.
     pub(super) fn require_admin(&self) -> Result<(), ApiError> {
         if !self.is_bot && matches!(self.role.as_str(), "owner" | "admin") {

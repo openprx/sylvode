@@ -195,6 +195,7 @@ GET /api/v1/workspaces/{workspace_id}/labels Refused - false
 GET /api/v1/workspaces/{workspace_id}/market/index/plugins Refused - false
 GET /api/v1/workspaces/{workspace_id}/market/index/plugins/{source}/{publisher}/{name} Refused - false
 GET /api/v1/workspaces/{workspace_id}/market/index/sources Refused - false
+GET /api/v1/workspaces/{workspace_id}/market/search Refused - false
 GET /api/v1/workspaces/{workspace_id}/members Admin - false
 GET /api/v1/workspaces/{workspace_id}/milestones Refused - false
 GET /api/v1/workspaces/{workspace_id}/nav NoProject - false

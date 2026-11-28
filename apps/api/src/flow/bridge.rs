@@ -1811,7 +1811,6 @@ async fn finish_conversion(
             &actor.role,
             actor.is_bot,
             crate::forms::native_create::NativeRecordCreateRequest {
-                record_id: Some(Uuid::new_v4()),
                 values,
                 title,
                 source: json!({

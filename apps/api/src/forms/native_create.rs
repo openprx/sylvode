@@ -23,6 +23,7 @@ use crate::{
         schema::{ensure_schema_field_ids, ensure_valid_schema, normalize_key},
         signature_media::{
             annotate_signature_audit_entries, append_signature_audit_source, materialize_signature_values_with_audit,
+            without_client_signature_media,
         },
         validation::{caller, validate_create, write_context, writer_for_source},
     },
@@ -140,8 +141,8 @@ pub async fn create_form_in_transaction(
     Ok(form)
 }
 
+/// The id of the new record is always generated here: no caller supplies one, so a create can't collide with an existing record.
 pub struct NativeRecordCreateRequest {
-    pub record_id: Option<Uuid>,
     pub values: Value,
     pub title: Option<String>,
     pub source: Value,
@@ -231,9 +232,10 @@ pub async fn create_record_as(
         with_defaults,
     )
     .await?;
-    let record_id = req.record_id.unwrap_or_else(Uuid::new_v4);
+    let record_id = Uuid::new_v4();
     let created_by = actor.created_by;
-    let source = ensure_json_object(req.source, "source")?;
+    // `signature_media` is server-owned: a client's copy is dropped, the server adds its own below.
+    let source = without_client_signature_media(ensure_json_object(req.source, "source")?);
     let calculated = calculate_values(state, form, None, values_with_formula).await?;
     let with_autonumber = apply_autonumber_values(tx, form, None, calculated).await?;
     let denied_read_fields = match actor.policy_role {

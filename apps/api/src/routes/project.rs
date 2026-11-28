@@ -858,6 +858,7 @@ async fn delete_project_row(
     tx: &sea_orm::DatabaseTransaction,
     project_id: Uuid,
 ) -> Result<Option<(Uuid, i64)>, ApiError> {
+    let layout_scopes = crate::services::teardown::project_layout_scopes(tx, project_id).await?;
     let released = crate::services::teardown::delete_project_content(tx, project_id).await?;
     tx.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
@@ -865,6 +866,9 @@ async fn delete_project_row(
         vec![project_id.into()],
     ))
     .await?;
+    if let Some(scopes) = &layout_scopes {
+        crate::services::teardown::delete_layouts_of_scopes(tx, scopes).await?;
+    }
     Ok(released)
 }
 

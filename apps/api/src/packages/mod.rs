@@ -10,6 +10,7 @@ pub mod handlers;
 pub mod index;
 mod keys;
 pub mod open;
+pub mod search;
 pub mod store;
 mod submit_gate;
 pub(crate) mod verify;
