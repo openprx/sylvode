@@ -2679,6 +2679,7 @@
 			}
 		},
 		"canvas": {
+			"restoringEdits": "Restoring your unsaved edits…",
 			"emptyTitle": "Untitled page",
 			"placeholder": "Type \"/\" to insert a block, or just start typing",
 			"slashMenu": {

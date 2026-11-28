@@ -79,7 +79,8 @@
 		void load();
 	});
 
-	const nameOf = (userId: string): string => byId.get(userId)?.name || userId.slice(0, 8);
+	const nameOf = (userId: string): string =>
+		byId.get(userId)?.name || $t('forms.fieldValue.unknownMember');
 
 	async function add(): Promise<void> {
 		if (!newUser) return;

@@ -16,7 +16,7 @@ function value(dictionary: unknown, key: string): unknown {
 			dictionary
 		);
 }
-test.skip('SKIPPED, product bug: flow.canvas.restoringEdits is missing from the en dictionary (found when the suite joined CI); the current Phase2 source set and every dynamic label family resolve in both shipped locales, including common keys', async () => {
+test('the current Phase2 source set and every dynamic label family resolve in both shipped locales, including common keys', async () => {
 	const dictionaries = await Promise.all(
 		['en', 'zh'].map(
 			async (lang) =>
