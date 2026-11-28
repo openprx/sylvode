@@ -7,7 +7,7 @@
 use super::item_api_tests::{Answer, Api};
 use api::services::bots::{self, NewBot};
 use axum::body::Body;
-use axum::http::{Method, Request, StatusCode, header};
+use axum::http::{Method, Request, header};
 use sea_orm::TransactionTrait as _;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -51,27 +51,27 @@ async fn a_draft_site_is_renamed_and_a_published_one_is_not() {
 
     // Same checks as creation: bad shape is 400, a taken slug is 409.
     let bad = api.patch_site(id, api.alice, json!({"slug": "Bad Slug"})).await;
-    assert_eq!(bad.status, StatusCode::BAD_REQUEST, "{}", bad.body);
+    assert_eq!(bad.code(), Some(400), "{}", bad.body);
     let taken = api.patch_site(id, api.alice, json!({"slug": "help-two"})).await;
-    assert_eq!(taken.status, StatusCode::CONFLICT, "{}", taken.body);
+    assert_eq!(taken.code(), Some(409), "{}", taken.body);
     assert!(taken.body.to_string().contains("slug_taken"), "{}", taken.body);
 
     // A member may not rename; the title still follows the old rule.
     let member = api.patch_site(id, api.bob, json!({"slug": "member-name"})).await;
-    assert_eq!(member.status, StatusCode::FORBIDDEN, "{}", member.body);
+    assert_eq!(member.code(), Some(403), "{}", member.body);
 
     assert_eq!(api.site_action(id, "publish").await.code(), Some(0));
     let refused = api.patch_site(id, api.alice, json!({"slug": "help-late"})).await;
-    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.body);
+    assert_eq!(refused.code(), Some(409), "{}", refused.body);
     assert!(refused.body.to_string().contains("site_not_draft"), "{}", refused.body);
 
     // Disabled is not a draft either.
     assert_eq!(api.site_action(other, "disable").await.code(), Some(0));
     let disabled = api.patch_site(other, api.alice, json!({"slug": "help-off"})).await;
-    assert_eq!(disabled.status, StatusCode::CONFLICT, "{}", disabled.body);
+    assert_eq!(disabled.code(), Some(409), "{}", disabled.body);
 
     let empty = api.patch_site(id, api.alice, json!({})).await;
-    assert_eq!(empty.status, StatusCode::BAD_REQUEST, "{}", empty.body);
+    assert_eq!(empty.code(), Some(400), "{}", empty.body);
     api.finish().await;
 }
 
@@ -94,7 +94,7 @@ async fn a_site_editor_and_a_bot_cannot_change_the_slug_and_rights_come_before_s
     let titled = api.patch_site(id, api.bob, json!({"title": "Editor title"})).await;
     assert_eq!(titled.code(), Some(0), "{}", titled.body);
     let editor = api.patch_site(id, api.bob, json!({"slug": "editor-name"})).await;
-    assert_eq!(editor.status, StatusCode::FORBIDDEN, "{}", editor.body);
+    assert_eq!(editor.code(), Some(403), "{}", editor.body);
 
     // A bot with write access is refused the slug as well.
     let tx = api.db.begin().await.expect("begin");
@@ -120,16 +120,20 @@ async fn a_site_editor_and_a_bot_cannot_change_the_slug_and_rights_come_before_s
         .body(Body::from(json!({"slug": "bot-name"}).to_string()))
         .expect("request");
     let response = api.router.clone().oneshot(request).await.expect("answer");
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("the body is readable");
+    let refused: Value = serde_json::from_slice(&bytes).expect("a JSON body");
+    assert_eq!(refused["code"], json!(403), "{refused}");
 
     // Rights before shapes: a caller who may not rename gets 403 even for a malformed slug or title.
     let outsider = api.patch_site(id, api.carol, json!({"slug": "Bad Slug"})).await;
-    assert_ne!(outsider.status, StatusCode::BAD_REQUEST, "{}", outsider.body);
+    assert_ne!(outsider.code(), Some(400), "{}", outsider.body);
     let plain = api.new_site("help-plain").await;
     let member = api.patch_site(plain, api.bob, json!({"slug": "Bad Slug"})).await;
-    assert_eq!(member.status, StatusCode::FORBIDDEN, "{}", member.body);
+    assert_eq!(member.code(), Some(403), "{}", member.body);
     let member_title = api.patch_site(plain, api.bob, json!({"title": ""})).await;
-    assert_eq!(member_title.status, StatusCode::FORBIDDEN, "{}", member_title.body);
+    assert_eq!(member_title.code(), Some(403), "{}", member_title.body);
 
     let after = api.get(&format!("/api/v1/sites/{id}"), api.alice).await;
     assert_eq!(after.data()["slug"], json!("help-rights"));
@@ -173,7 +177,7 @@ async fn a_site_is_deleted_only_when_not_published() {
     assert_eq!(api.site_action(id, "publish").await.code(), Some(0));
     let uri = format!("/api/v1/sites/{id}");
     let refused = api.call(Method::DELETE, &uri, api.alice, None).await;
-    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.body);
+    assert_eq!(refused.code(), Some(409), "{}", refused.body);
     assert!(refused.body.to_string().contains("site_published"), "{}", refused.body);
 
     assert_eq!(api.site_action(id, "disable").await.code(), Some(0));
