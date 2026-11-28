@@ -10,21 +10,26 @@
 	import Button from '#lib/ui/button/Button.svelte';
 	import Segmented from '#lib/ui/segmented/Segmented.svelte';
 	import StatusChip from '#lib/ui/status-chip/StatusChip.svelte';
+	import { authStore } from '#lib/stores/auth.js';
+	import { workspacesApi } from '#lib/api/workspaces.js';
 	import TextField from '#lib/ui/text-field/TextField.svelte';
 	import { marketApi, marketDetailApi, type PackageDetail, type PackageSummary } from './api';
 	import CatalogueBrowser from './CatalogueBrowser.svelte';
 	import InstallationsPage from './InstallationsPage.svelte';
+	import type { Role } from './index-logic';
 	import { KINDS, pickText, type Kind } from './logic';
 	import PackageDetailView from './PackageDetail.svelte';
+	import PublicTab from './PublicTab.svelte';
 
 	/**
 	 * The workspace Market: Discover (built-in and this workspace's private packages, filtered by
-	 * kind and searched on the server) and Installed (the installations of the workspace). Nothing
+	 * kind and searched on the server), Public (plugins of the public index sources) and Installed
+	 * (the installations of the workspace). Nothing
 	 * here decides who may install; the server does, and the buttons only follow its answer.
 	 */
 	let { workspaceId }: { workspaceId: string } = $props();
 
-	type Tab = 'discover' | 'installed' | 'developers';
+	type Tab = 'discover' | 'public' | 'installed' | 'developers';
 	let tab = $state<Tab>('discover');
 	let kind = $state<Kind | 'all'>('all');
 	let query = $state('');
@@ -34,6 +39,7 @@
 
 	/** Installed package keys; the installations list is answered to administrators only. */
 	let admin = $state(false);
+	let role = $state<Role>('member');
 	let installedKeys = $state.raw<Set<string>>(new Set());
 
 	let detail = $state.raw<PackageDetail | null>(null);
@@ -63,8 +69,15 @@
 		);
 	}
 
+	async function probeRole() {
+		const userId = get(authStore).user?.id;
+		const members = await workspacesApi.getMembers(workspaceId);
+		role = members.data?.items.find((member) => member.user_id === userId)?.role ?? 'member';
+	}
+
 	onMount(() => {
 		void probeInstalled();
+		void probeRole();
 	});
 
 	// Search runs on kind change at once and on typing after a pause.
@@ -92,6 +105,12 @@
 		tab = 'installed';
 	}
 
+	/** A package imported from the public index: its install flow opens on the Installed tab. */
+	function imported(digest: string) {
+		installDigest = digest;
+		tab = 'installed';
+	}
+
 	function kindName(value: string): string {
 		const key = `market.kindOne.${value}`;
 		const text = get(t)(key);
@@ -104,6 +123,7 @@
 	]);
 	const tabOptions = $derived([
 		{ value: 'discover' as const, label: $t('market.tabDiscover') },
+		{ value: 'public' as const, label: $t('market.tabPublic') },
 		{ value: 'installed' as const, label: $t('market.tabInstalled') },
 		{ value: 'developers' as const, label: $t('market.tabDevelopers') }
 	]);
@@ -124,7 +144,7 @@
 			tab = value;
 			if (value === 'discover') installDigest = null;
 		}}
-		width={420}
+		width={520}
 	/>
 
 	{#if tab === 'discover'}
@@ -186,6 +206,8 @@
 				{/each}
 			</ul>
 		{/if}
+	{:else if tab === 'public'}
+		<PublicTab {workspaceId} {role} onimported={imported} />
 	{:else if tab === 'developers'}
 		<CatalogueBrowser />
 	{:else}

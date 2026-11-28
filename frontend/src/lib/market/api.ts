@@ -31,7 +31,7 @@ export interface Installation {
 	/** The site that holds the pages of the newest generation; `null` when the package has none. */
 	site_id: string | null;
 	status: InstallationStatus;
-	disabled_reason: 'admin' | 'approver_lost' | 'key_revoked' | null;
+	disabled_reason: 'admin' | 'approver_lost' | 'key_revoked' | 'index_revoked' | null;
 	active_generation: number | null;
 	/** False when the administrator who approved the active generation no longer is one. */
 	approver_active: boolean | null;
@@ -103,6 +103,14 @@ export interface PackageSummary {
 	publisher: { id: string; key_id: string } | null;
 	custom_code: boolean;
 	summary: Record<string, string> | null;
+	/** Set when the package was imported from a public plugin index. */
+	origin: {
+		source: string;
+		plugin_id: string;
+		version: string;
+		url?: string;
+		imported_at?: string;
+	} | null;
 }
 
 export interface ApproveGrant {

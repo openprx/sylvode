@@ -79,7 +79,8 @@
 		"disabledReason": {
 			"admin": "已被管理员停用",
 			"approver_lost": "批准它的管理员已不再是管理员",
-			"key_revoked": "发布者的签名密钥已被撤销"
+			"key_revoked": "发布者的签名密钥已被撤销",
+			"index_revoked": "此版本已在公共索引中被撤销"
 		},
 		"risk": {
 			"read": "读取",
@@ -297,6 +298,180 @@
 			"workspace": {
 				"name": "工作区",
 				"desc": "工作区本身、成员和设置。"
+			}
+		},
+		"tabPublic": "公共",
+		"index": {
+			"imageFailed": "图片无法显示",
+			"loadFailed": "无法加载公共插件。",
+			"thing": "公共插件",
+			"sourceLabel": "来源",
+			"allSources": "全部来源",
+			"categoryLabel": "分类",
+			"anyCategory": "任意分类",
+			"labelLabel": "标签",
+			"anyLabel": "任意标签",
+			"compatibleOnly": "只看能在当前 Sylvode 上运行的版本",
+			"someStale": "{count} 个来源已过期",
+			"sources": "来源",
+			"events": "活动",
+			"noneTitle": "尚未配置公共插件来源",
+			"noneBody": "运维人员还没有为此服务器设置公共插件索引。你上传的包仍显示在“发现”中。",
+			"allHiddenTitle": "所有公共来源均已隐藏",
+			"allHiddenOwner": "你已为此工作区隐藏所有来源。可在“来源”中重新显示。",
+			"allHiddenMember": "工作区所有者已为此工作区隐藏所有公共来源。",
+			"clearFilters": "清除筛选",
+			"emptyTitle": "此来源暂无插件",
+			"emptyBody": "该索引尚未发布任何内容,或还没有获取过。打开“来源”查看上次获取时间。",
+			"paging": "公共插件分页",
+			"trustedPublisher": "发布者已在此工作区受信任",
+			"noCompatible": "没有适用于当前 Sylvode 的版本",
+			"imported": "已导入",
+			"refreshWait": "来源每分钟只能刷新一次。请 {seconds} 秒后再试。",
+			"refreshFailed": "无法获取该来源,仍显示上一份可用副本。",
+			"refreshSkipped": "另一台服务器正在刷新此来源。",
+			"refreshed": "来源已刷新。",
+			"hideFailed": "无法修改该来源。",
+			"fetchedAt": "获取于 {when}",
+			"neverFetched": "尚未获取",
+			"hidden": "已隐藏",
+			"statusError": "获取失败",
+			"statusStale": "已过期",
+			"statusFresh": "最新",
+			"pluginCount": "{count} 个插件",
+			"errorLine": "上次获取失败:{error}。",
+			"keepingCopy": "显示的是 {when} 的副本。",
+			"staleLine": "服务器已有一段时间无法检查此来源,所显示的副本可能已过时。",
+			"warnings": "上次获取有 {count} 条警告",
+			"hiddenNote": "已对此工作区隐藏:不列出,也不能从中导入。",
+			"refreshIn": "{seconds} 秒后可再次刷新",
+			"refreshNow": "立即刷新",
+			"show": "显示",
+			"hide": "隐藏",
+			"hideRevocations": "隐藏的来源仍会被检查:它撤销的密钥和版本仍会在此工作区被停用。",
+			"eventsFailed": "无法加载活动记录。",
+			"eventsEmpty": "此工作区还没有与公共索引有关的活动。",
+			"colWhen": "时间",
+			"colAction": "操作",
+			"colSource": "来源",
+			"colDetails": "详情",
+			"action": {
+				"import": "已导入",
+				"import_refused": "导入被拒绝",
+				"trust_key": "已信任密钥",
+				"key_revoked_sync": "索引撤销了密钥",
+				"version_revoked_sync": "索引撤销了版本",
+				"refresh_failed": "刷新失败"
+			},
+			"detailFailed": "无法加载该插件。",
+			"back": "公共插件",
+			"openImported": "打开已导入的包",
+			"importVersion": "导入 {version}",
+			"import": "导入",
+			"memberNote": "导入插件由所有者和管理员操作。",
+			"noCompatibleNote": "没有已上架的版本能在当前 Sylvode 上运行。",
+			"source": "来源",
+			"license": "许可证",
+			"homepage": "主页",
+			"repository": "代码仓库",
+			"screenshots": "截图",
+			"description": "简介",
+			"versions": "版本",
+			"published": "发布时间",
+			"size": "大小",
+			"compatible": "适用于当前 Sylvode",
+			"incompatible": "不适用于当前 Sylvode",
+			"needsSylvode": "需要 Sylvode {range}",
+			"versionStatus": {
+				"listed": "已上架",
+				"yanked": "已下架:不能再导入,已导入的副本继续可用",
+				"revoked": "因安全原因撤销:已导入的副本会被停用"
+			},
+			"showContents": "内容",
+			"contentsOf": "{version} 包含的内容",
+			"projectBlock": "一个项目区块",
+			"contentsNote": "内容取自索引,仅供初步了解。导入后的正式审查会读取包本身。",
+			"publisherKeys": "发布者密钥",
+			"keyRevoked": "已撤销",
+			"keyPinned": "在此已受信任",
+			"keyNotPinned": "在此未受信任",
+			"keysNote": "只有工作区所有者在首次导入时确认后,密钥才会成为受信任密钥。",
+			"originLine": "导入自 {source} 索引:{plugin} {version}。",
+			"originBadge": "来自 {source}",
+			"updateAvailable": "可更新到 {version}",
+			"importTitle": "导入 {name} {version}",
+			"downloadFrom": "下载自",
+			"sha256": "SHA-256",
+			"publisher": "发布者",
+			"signingKey": "签名密钥",
+			"keyChangeTitle": "密钥变更",
+			"keyChangeBody": "此工作区已信任 {publisher} 的另一把密钥,而此版本用不同的密钥签名。请先确认发布者已公布此变更,再选择信任。",
+			"keyOld": "当前信任:",
+			"keyNew": "新密钥:",
+			"untrustedTitle": "此发布者的第一个包",
+			"untrustedBody": "此工作区尚未信任 {publisher} 的任何密钥。所有者需要先确认下方的指纹(仅一次),才能导入用它签名的包。",
+			"trustTick": "我在此工作区信任 {publisher} 的这把密钥",
+			"ownerOnlyNote": "请让工作区所有者导入此版本。只有所有者可以信任新的发布者密钥。",
+			"afterImport": "导入只会下载并检查包。在你审查并批准之前,不会安装或运行任何内容。",
+			"cancel": "取消",
+			"importing": "正在导入...",
+			"importConfirm": "导入",
+			"reasonMember": "只有所有者和管理员可以导入。",
+			"reasonKeyRevoked": "此版本的签名密钥已被撤销。",
+			"reasonUnknownKey": "索引中没有此版本的签名密钥。",
+			"reasonOwnerOnly": "只有工作区所有者可以信任新密钥。",
+			"reasonTick": "请先确认你信任该密钥。",
+			"importFailed": "无法导入该包。",
+			"importedToast": "已导入 {name}。审查后即可安装。",
+			"error": {
+				"publisher_untrusted": {
+					"default": "此发布者的密钥在此工作区尚未受信任。请勾选确认框。"
+				},
+				"publisher_trust_owner_only": {
+					"default": "只有工作区所有者可以信任新的发布者密钥。"
+				},
+				"index_version_not_importable": {
+					"default": "此版本不能导入。",
+					"yanked": "此版本已被发布者下架。",
+					"revoked": "此版本因安全原因被撤销。",
+					"incompatible": "此版本不适用于当前 Sylvode。",
+					"sv_min": "该包需要比当前更新的 Sylvode。"
+				},
+				"index_download_failed": {
+					"default": "无法下载该包。",
+					"timeout": "下载耗时过长,已中止。",
+					"too_large": "文件大于索引中声明的大小,已中止。",
+					"http_status": "下载主机返回了错误。",
+					"redirect_limit": "下载被重定向的次数过多。",
+					"url_refused": "下载地址不被允许(不是公网 https 地址)。"
+				},
+				"index_size_mismatch": {
+					"default": "下载的文件大小与索引声明的不一致,未保存任何内容。"
+				},
+				"index_sha256_mismatch": {
+					"default": "下载的文件与索引中的校验值不符,未保存任何内容。"
+				},
+				"index_mismatch": {
+					"default": "包与其索引条目不一致,未保存任何内容。"
+				},
+				"index_key_conflict": {
+					"default": "此工作区已把这把密钥登记给了另一位发布者。"
+				},
+				"index_key_revoked": {
+					"default": "此版本的签名密钥已被撤销。"
+				},
+				"index_import_in_progress": {
+					"default": "此工作区的另一个导入仍在进行,请稍后再试。"
+				},
+				"index_source_not_found": {
+					"default": "该来源不存在或已被隐藏。"
+				},
+				"index_plugin_not_found": {
+					"default": "缓存的索引中没有该插件。请刷新来源后重试。"
+				},
+				"import_request_invalid": {
+					"default": "导入请求无效。"
+				}
 			}
 		}
 	}

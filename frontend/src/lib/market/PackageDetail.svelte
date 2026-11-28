@@ -73,6 +73,18 @@
 		</span>
 	</div>
 
+	{#if detail.origin}
+		<p class="text-sm text-fg-muted" data-market-origin>
+			{$t('market.index.originLine', {
+				values: {
+					source: detail.origin.source,
+					plugin: detail.origin.plugin_id,
+					version: detail.origin.version
+				}
+			})}
+		</p>
+	{/if}
+
 	<div class="text-sm text-fg">
 		<div class="font-medium">{$t('market.contents')}</div>
 		<ul class="mt-1 space-y-1 text-fg-muted">
