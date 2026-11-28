@@ -21,6 +21,33 @@ name.
   stopped for a version get the new disabled reason `index_revoked`. New read routes under
   `/api/v1/workspaces/{id}/market/index`: `sources`, `plugins` (search and filters), plugin detail,
   and an image route that serves cached icons and screenshots.
+- **Public plugin index, import (M15-4).** `POST /api/v1/workspaces/{id}/market/index/import`
+  (workspace owner or admin, console session only; bots and OAuth are refused) downloads one `listed`,
+  compatible version of an indexed plugin and stores it as a private package with an `origin`
+  (`{source, plugin_id, publisher, name, version, digest, url, sha256, imported_by, imported_at}`,
+  also shown on package reads). The download uses `https` only, follows at most 3 redirects with the
+  host list (`index_download_hosts`) and the outbound address policy applied to every hop, stops at
+  the declared `size` and takes at most 60 s; the file must match the index's `size` and `sha256`,
+  verify against the workspace's pinned key, agree with the index entry (id, version, kind,
+  publisher, key, package digest) and its own `sv.min` must admit the running version. A key the
+  workspace has not pinned is pinned only by a workspace owner who names it in `trust_key_id`, inside
+  the transaction that stores a verified package (`publisher_untrusted` otherwise,
+  `publisher_trust_owner_only` for an admin); a key registered by hand is reused and never changes
+  its origin. Other refusals: `index_version_not_importable`, `index_download_failed`,
+  `index_size_mismatch`, `index_sha256_mismatch`, `index_mismatch`, `index_key_conflict`,
+  `index_key_revoked`, `index_import_in_progress`. Every step writes a `package_index_events` row;
+  the owner or an admin reads them at `GET .../market/index/events`. The owner can refresh a source
+  now (`POST .../sources/{source}/refresh`, once a minute per source) and hide or show it
+  (`PUT .../sources/{source}/hidden`). An installation stopped by the index shows `disabled_reason`
+  `index_revoked` in every installation answer.
+
+### Changed
+
+- **Index revocation sync closes its race with approve and enable.** The sync runs on the cached
+  document after every successful check, including `304`, and locks publisher keys, installations
+  (in id order) and package rows in the same order as the package delete; approve and enable read
+  `installable` under a share lock on the package row. Source URLs in member and bot answers no
+  longer carry a query string or fragment.
 
 ### Security
 

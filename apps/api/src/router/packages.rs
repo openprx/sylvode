@@ -10,7 +10,7 @@ use axum::{
     Router,
     extract::DefaultBodyLimit,
     middleware as axum_middleware,
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
 };
 use platform::app::AppState;
 
@@ -101,6 +101,35 @@ pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
         .route(
             "/api/v1/workspaces/{workspace_id}/market/index/assets/{source}/{publisher}/{name}/{*asset_path}",
             get(index::handlers::get_asset).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::auth::jwt_auth_middleware,
+            )),
+        )
+        // Import, trust, refresh, hide and the audit log: people with a console session only.
+        .route(
+            "/api/v1/workspaces/{workspace_id}/market/index/import",
+            post(index::import::import_package).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::auth::jwt_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/market/index/sources/{source}/refresh",
+            post(index::admin::refresh_now).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::auth::jwt_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/market/index/sources/{source}/hidden",
+            put(index::admin::set_hidden).route_layer(axum_middleware::from_fn_with_state(
+                auth_state.clone(),
+                middleware::auth::jwt_auth_middleware,
+            )),
+        )
+        .route(
+            "/api/v1/workspaces/{workspace_id}/market/index/events",
+            get(index::admin::list_events).route_layer(axum_middleware::from_fn_with_state(
                 auth_state.clone(),
                 middleware::auth::jwt_auth_middleware,
             )),

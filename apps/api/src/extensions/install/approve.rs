@@ -315,9 +315,11 @@ pub async fn ensure_key_active(
     stored: &open::StoredPackage,
 ) -> Result<(), ApiError> {
     let locked = crate::packages::keys_lock_active(tx, stored.publisher_key_id).await?;
-    let installable = open::find_by_row(tx, workspace_id, stored.id)
-        .await?
-        .is_some_and(|row| row.installable);
+    // The package row is read under a share lock: the index revocation sync updates `installable`
+    // under the row lock, after it locked the installations, so an approve or enable that holds the
+    // installation lock either sees the flag already cleared or finishes before the sync starts.
+    // Lock order stays: publisher key, installation, package row.
+    let installable = open::installable_locked(tx, workspace_id, stored.id).await?;
     if locked && installable {
         Ok(())
     } else {

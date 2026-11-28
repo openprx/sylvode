@@ -9,9 +9,12 @@
 //! or version it marks `revoked` stops the matching workspace keys, packages and installations
 //! (`sync`). Every request goes through the outbound address policy (`fetch`).
 
+pub mod admin;
 mod cache;
+mod download;
 mod fetch;
 pub mod handlers;
+pub mod import;
 mod refresh;
 mod store;
 mod sync;

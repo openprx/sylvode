@@ -118,7 +118,14 @@ pub async fn refresh_source(state: &AppState, source: &IndexSource, force: bool)
     let (outcome, disabled) = match answer {
         Ok(Answer::NotModified) => {
             store::save_unchanged(&tx, &source.id).await?;
-            (RefreshOutcome::Unchanged, 0)
+            // The copy is current, but the sync runs again on it: a revocation that raced an approve
+            // or enable when the document first arrived is closed here, without waiting for the
+            // index to change. The sync is idempotent.
+            let disabled = match cache::load(&tx, source).await? {
+                Some(doc) => apply_sync(&tx, source, &doc).await?,
+                None => 0,
+            };
+            (RefreshOutcome::Unchanged, disabled)
         }
         Ok(Answer::Body { bytes, etag }) => match cache::parse_body(bytes.clone()).await {
             Ok(doc) => {
@@ -136,17 +143,7 @@ pub async fn refresh_source(state: &AppState, source: &IndexSource, force: bool)
                     },
                 )
                 .await?;
-                let report = sync::apply(&tx, &source.id, &doc).await?;
-                store::save_warnings(&tx, &source.id, &report.warnings).await?;
-                if report.keys_revoked > 0 || report.installations_disabled > 0 {
-                    tracing::warn!(
-                        source = %source.id,
-                        keys = report.keys_revoked,
-                        installations = report.installations_disabled,
-                        "the plugin index revoked keys or versions"
-                    );
-                }
-                (RefreshOutcome::Updated, report.installations_disabled)
+                (RefreshOutcome::Updated, apply_sync(&tx, source, &doc).await?)
             }
             Err(issues) => {
                 record_failure(&tx, source, prior.as_ref(), &format!("invalid_document: {issues}")).await?;
@@ -165,6 +162,26 @@ pub async fn refresh_source(state: &AppState, source: &IndexSource, force: bool)
         tracing::warn!(%error, "the plugin rule registry was not refreshed");
     }
     Ok(outcome)
+}
+
+/// Applies what `doc` revokes and records the sync's warnings; returns how many installations it
+/// disabled.
+async fn apply_sync(
+    tx: &impl ConnectionTrait,
+    source: &IndexSource,
+    doc: &sv_index::IndexDoc,
+) -> Result<usize, ApiError> {
+    let report = sync::apply(tx, &source.id, doc).await?;
+    store::save_warnings(tx, &source.id, &report.warnings).await?;
+    if report.keys_revoked > 0 || report.installations_disabled > 0 {
+        tracing::warn!(
+            source = %source.id,
+            keys = report.keys_revoked,
+            installations = report.installations_disabled,
+            "the plugin index revoked keys or versions"
+        );
+    }
+    Ok(report.installations_disabled)
 }
 
 /// Whether a source is due: its interval has passed since the last check, or, after a failure, the

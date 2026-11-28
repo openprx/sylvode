@@ -88,6 +88,26 @@ pub async fn find_by_row(
     .await?)
 }
 
+/// Whether the package is still installable, read under a share lock on its row.
+///
+/// The lock is held until the transaction ends (see `extensions::install::approve::ensure_key_active`).
+/// `false` for a package that is not visible to the workspace.
+///
+/// # Errors
+/// A database failure.
+pub async fn installable_locked(db: &impl ConnectionTrait, workspace_id: Uuid, row_id: Uuid) -> Result<bool, ApiError> {
+    Ok(db
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT installable FROM packages WHERE id = $1 AND (tier = 'builtin' OR workspace_id = $2) FOR SHARE",
+            vec![row_id.into(), workspace_id.into()],
+        ))
+        .await?
+        .map(|row| row.try_get::<bool>("", "installable"))
+        .transpose()?
+        .unwrap_or(false))
+}
+
 /// Reads the blob and verifies it again.
 ///
 /// # Errors

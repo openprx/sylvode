@@ -138,7 +138,7 @@ pub(super) async fn save_warnings(
     Ok(())
 }
 
-/// Appends a row to the audit log of the index.
+/// Appends a row to the audit log of the index (no actor: the refresher and the sync).
 pub(super) async fn insert_event(
     db: &impl ConnectionTrait,
     workspace_id: Option<Uuid>,
@@ -146,12 +146,188 @@ pub(super) async fn insert_event(
     action: &str,
     details: Value,
 ) -> Result<(), ApiError> {
+    insert_event_by(db, workspace_id, source_id, action, None, details).await
+}
+
+/// Appends a row to the audit log of the index, naming the person who caused it.
+pub(super) async fn insert_event_by(
+    db: &impl ConnectionTrait,
+    workspace_id: Option<Uuid>,
+    source_id: &str,
+    action: &str,
+    actor_id: Option<Uuid>,
+    details: Value,
+) -> Result<(), ApiError> {
     db.execute(stmt(
-        "INSERT INTO package_index_events (workspace_id, source_id, action, details) VALUES ($1, $2, $3, $4)",
-        vec![workspace_id.into(), source_id.into(), action.into(), details.into()],
+        "INSERT INTO package_index_events (workspace_id, source_id, action, actor_id, details) \
+         VALUES ($1, $2, $3, $4, $5)",
+        vec![
+            workspace_id.into(),
+            source_id.into(),
+            action.into(),
+            actor_id.into(),
+            details.into(),
+        ],
     ))
     .await?;
     Ok(())
+}
+
+/// One row of the audit log as the events route shows it.
+#[derive(Debug, FromQueryResult)]
+pub(super) struct EventRow {
+    pub(super) id: Uuid,
+    pub(super) source_id: String,
+    pub(super) action: String,
+    pub(super) actor_id: Option<Uuid>,
+    pub(super) details: Value,
+    pub(super) created_at: Timestamp,
+}
+
+/// The events of a workspace and the source-wide events (refresh failures) of the configured
+/// sources, newest first, and the total.
+pub(super) async fn list_events(
+    db: &impl ConnectionTrait,
+    workspace_id: Uuid,
+    configured: &[String],
+    limit: i64,
+    offset: i64,
+) -> Result<(Vec<EventRow>, i64), ApiError> {
+    #[derive(FromQueryResult)]
+    struct Total {
+        count: i64,
+    }
+    let filter = "(workspace_id = $1 OR (workspace_id IS NULL AND source_id = ANY($2)))";
+    let total = Total::find_by_statement(stmt(
+        &format!("SELECT count(*) AS count FROM package_index_events WHERE {filter}"),
+        vec![workspace_id.into(), configured.to_vec().into()],
+    ))
+    .one(db)
+    .await?
+    .map_or(0, |row| row.count);
+    let rows = EventRow::find_by_statement(stmt(
+        &format!(
+            "SELECT id, source_id, action, actor_id, details, created_at FROM package_index_events \
+             WHERE {filter} ORDER BY created_at DESC, id LIMIT $3 OFFSET $4"
+        ),
+        vec![
+            workspace_id.into(),
+            configured.to_vec().into(),
+            limit.into(),
+            offset.into(),
+        ],
+    ))
+    .all(db)
+    .await?;
+    Ok((rows, total))
+}
+
+/// Hides or shows a configured source for the workspace.
+pub(super) async fn set_hidden(
+    db: &impl ConnectionTrait,
+    workspace_id: Uuid,
+    source_id: &str,
+    hidden: bool,
+) -> Result<(), ApiError> {
+    db.execute(stmt(
+        "INSERT INTO workspace_index_sources (workspace_id, source_id, hidden) VALUES ($1, $2, $3) \
+         ON CONFLICT (workspace_id, source_id) DO UPDATE SET hidden = EXCLUDED.hidden",
+        vec![workspace_id.into(), source_id.into(), hidden.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// A publisher key row of the workspace.
+#[derive(Debug, FromQueryResult)]
+pub(super) struct WorkspaceKey {
+    pub(super) publisher: String,
+    pub(super) status: String,
+}
+
+/// The workspace's key row with this `key_id`, whatever its status.
+pub(super) async fn workspace_key(
+    db: &impl ConnectionTrait,
+    workspace_id: Uuid,
+    key_id: &str,
+) -> Result<Option<WorkspaceKey>, ApiError> {
+    Ok(WorkspaceKey::find_by_statement(stmt(
+        "SELECT publisher, status FROM publisher_keys WHERE workspace_id = $1 AND key_id = $2",
+        vec![workspace_id.into(), key_id.into()],
+    ))
+    .one(db)
+    .await?)
+}
+
+/// The `key_id`s of the active keys the workspace holds for `publisher`.
+pub(super) async fn active_key_ids(
+    db: &impl ConnectionTrait,
+    workspace_id: Uuid,
+    publisher: &str,
+) -> Result<Vec<String>, ApiError> {
+    #[derive(FromQueryResult)]
+    struct Row {
+        key_id: String,
+    }
+    Ok(Row::find_by_statement(stmt(
+        "SELECT key_id FROM publisher_keys WHERE workspace_id = $1 AND publisher = $2 AND status = 'active' \
+         ORDER BY created_at, id",
+        vec![workspace_id.into(), publisher.into()],
+    ))
+    .all(db)
+    .await?
+    .into_iter()
+    .map(|row| row.key_id)
+    .collect())
+}
+
+/// Pins an index key into the workspace with its origin; `false` when the workspace already has
+/// a key with this `key_id` (nothing is changed then).
+pub(super) async fn pin_key(
+    db: &impl ConnectionTrait,
+    workspace_id: Uuid,
+    publisher: &str,
+    key_id: &str,
+    public_key: &[u8],
+    created_by: Uuid,
+    origin: &str,
+) -> Result<bool, ApiError> {
+    Ok(db
+        .query_one(stmt(
+            "INSERT INTO publisher_keys (workspace_id, publisher, key_id, public_key, created_by, origin) \
+         VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (workspace_id, key_id) DO NOTHING RETURNING id",
+            vec![
+                workspace_id.into(),
+                publisher.into(),
+                key_id.into(),
+                public_key.to_vec().into(),
+                created_by.into(),
+                origin.into(),
+            ],
+        ))
+        .await?
+        .is_some())
+}
+
+/// Records where a package came from. An origin already set stays (a package imported before keeps
+/// its first origin); the stored origin is returned.
+pub(super) async fn set_package_origin(
+    db: &impl ConnectionTrait,
+    package_id: Uuid,
+    origin: &Value,
+) -> Result<Value, ApiError> {
+    #[derive(FromQueryResult)]
+    struct Row {
+        origin: Value,
+    }
+    Row::find_by_statement(stmt(
+        "UPDATE packages SET origin = COALESCE(origin, $2) WHERE id = $1 RETURNING origin",
+        vec![package_id.into(), origin.clone().into()],
+    ))
+    .one(db)
+    .await?
+    .map(|row| row.origin)
+    .ok_or_else(ApiError::internal)
 }
 
 /// Sources the workspace owner hid.

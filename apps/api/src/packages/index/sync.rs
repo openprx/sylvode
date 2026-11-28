@@ -140,6 +140,7 @@ async fn sync_versions(
     if digests.is_empty() {
         return Ok(());
     }
+    lock_affected(db, source_id, &digests).await?;
     // Installations first, then packages: the order of the package delete (installations, package),
     // so the two cannot wait for each other.
     let stopped = disable_for_index_revoked(db, source_id, &digests).await?;
@@ -178,6 +179,38 @@ async fn sync_versions(
         .await?;
     }
     report.installations_disabled += stopped.len();
+    Ok(())
+}
+
+/// Locks what a version revocation changes, in the global lock order publisher key, installation,
+/// package row (the order of the package delete and of approve and enable):
+///
+/// 1. the publisher keys of the affected packages, `FOR SHARE`, so a key revocation waits or is
+///    waited for instead of crossing this sync;
+/// 2. the installations that have a generation of an affected package, `ORDER BY id FOR UPDATE`, in
+///    the same id order as the package delete, so two writers cannot lock them in opposite orders;
+///
+/// the package rows are then locked by the `UPDATE` that clears `installable`. An approve or enable
+/// holds the installation lock when it reads `installable` under a share lock on the package row,
+/// so it either sees the flag cleared or commits before this sync takes the installation lock.
+async fn lock_affected(db: &impl ConnectionTrait, source_id: &str, digests: &[String]) -> Result<(), ApiError> {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT k.id FROM publisher_keys k WHERE k.id IN (SELECT p.publisher_key_id FROM packages p \
+         WHERE p.origin ->> 'source' = $1 AND p.digest = ANY($2) AND p.workspace_id IS NOT NULL) \
+         ORDER BY k.id FOR SHARE OF k",
+        vec![source_id.into(), digests.to_vec().into()],
+    ))
+    .await?;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT i.id FROM installations i WHERE EXISTS (SELECT 1 FROM installation_generations g \
+         JOIN packages p ON p.id = g.package_row_id WHERE g.installation_id = i.id \
+         AND p.origin ->> 'source' = $1 AND p.digest = ANY($2) AND p.workspace_id IS NOT NULL) \
+         ORDER BY i.id FOR UPDATE OF i",
+        vec![source_id.into(), digests.to_vec().into()],
+    ))
+    .await?;
     Ok(())
 }
 
