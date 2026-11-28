@@ -131,6 +131,7 @@ fn task_pushed_has_the_designed_fields() {
             "11111111-1111-4111-8111-111111111111",
             1,
             "bot-x-claude",
+            2,
             Duration::from_millis(1500),
             Duration::from_micros(2_600),
             "pushed",
@@ -139,8 +140,17 @@ fn task_pushed_has_the_designed_fields() {
     assert_eq!(message, "task pushed");
     assert_eq!(
         names(&fields),
-        ["attempt", "outcome", "push_ms", "queued_ms", "slot", "task_id"]
+        [
+            "attempt",
+            "member",
+            "outcome",
+            "push_ms",
+            "queued_ms",
+            "slot",
+            "task_id"
+        ]
     );
+    assert_eq!(fields["member"], "2");
     assert_eq!(fields["queued_ms"], "1500");
     assert_eq!(fields["push_ms"], "2");
     assert_clean(&fields);
@@ -149,19 +159,22 @@ fn task_pushed_has_the_designed_fields() {
 #[test]
 fn task_left_session_has_the_designed_fields() {
     let (message, fields) = capture(|| {
-        timing::task_left_session("t1", 3, "bot-x-claude", Duration::from_secs(61), "superseded");
+        timing::task_left_session("t1", 3, "bot-x-claude", 0, Duration::from_secs(61), "superseded");
     });
     assert_eq!(message, "task left session");
-    assert_eq!(names(&fields), ["attempt", "busy_ms", "end", "slot", "task_id"]);
+    assert_eq!(
+        names(&fields),
+        ["attempt", "busy_ms", "end", "member", "slot", "task_id"]
+    );
     assert_eq!(fields["busy_ms"], "61000");
     assert_eq!(fields["end"], "superseded");
 }
 
 #[test]
 fn queue_depth_has_the_designed_fields() {
-    let (message, fields) = capture(|| timing::queue_depth("bot-x-claude", 4, "busy"));
+    let (message, fields) = capture(|| timing::queue_depth("bot-x-claude", 3, 4, "busy"));
     assert_eq!(message, "queue depth");
-    assert_eq!(names(&fields), ["depth", "slot", "state"]);
+    assert_eq!(names(&fields), ["depth", "member", "slot", "state"]);
     assert_eq!(fields["depth"], "4");
 }
 
@@ -185,7 +198,7 @@ fn ids_are_logged_only_as_canonical_uuids_else_invalid() {
     assert_eq!(fields["task_id"], "11111111-1111-4111-8111-111111111111");
     assert_eq!(fields["bot"], "00000000-0000-4000-8000-00000000000a");
 
-    let (_, fields) = capture(|| timing::task_left_session(&"x".repeat(500), 1, "s", Duration::ZERO, "terminal"));
+    let (_, fields) = capture(|| timing::task_left_session(&"x".repeat(500), 1, "s", 0, Duration::ZERO, "terminal"));
     assert_eq!(fields["task_id"], "invalid");
 }
 
@@ -202,14 +215,24 @@ fn the_current_task_clearing_logs_one_event_with_its_end() {
     let t1 = t0 + Duration::from_secs(5);
     let events = capture_all(|| {
         let mut watch = CurrentWatch::default();
-        watch.observe(Some(("11111111-1111-4111-8111-111111111111".into(), 1, t0)), t0, "slot");
-        watch.observe(Some(("11111111-1111-4111-8111-111111111111".into(), 1, t0)), t1, "slot");
+        watch.observe(
+            Some(("11111111-1111-4111-8111-111111111111".into(), 1, t0)),
+            t0,
+            "slot",
+            0,
+        );
+        watch.observe(
+            Some(("11111111-1111-4111-8111-111111111111".into(), 1, t0)),
+            t1,
+            "slot",
+            0,
+        );
         watch.hint("gone");
-        watch.observe(None, t1, "slot");
-        watch.observe(None, t1, "slot");
+        watch.observe(None, t1, "slot", 0);
+        watch.observe(None, t1, "slot", 0);
         // The hint does not outlive the change it described.
-        watch.observe(Some(("t2".into(), 1, t1)), t1, "slot");
-        watch.observe(None, t1 + Duration::from_secs(1), "slot");
+        watch.observe(Some(("t2".into(), 1, t1)), t1, "slot", 0);
+        watch.observe(None, t1 + Duration::from_secs(1), "slot", 0);
     });
     assert_eq!(events.len(), 2);
     assert_eq!(events[0].1["end"], "gone");
@@ -225,11 +248,11 @@ fn queue_depth_is_logged_once_per_beat_and_only_when_not_empty() {
     let beat = Duration::from_secs(10);
     let events = capture_all(|| {
         let mut depth = DepthBeat::new(t0);
-        depth.tick(t0 + Duration::from_secs(11), beat, "slot", 0, "idle");
-        depth.tick(t0 + Duration::from_secs(5), beat, "slot", 2, "busy");
-        depth.tick(t0 + Duration::from_secs(11), beat, "slot", 2, "busy");
-        depth.tick(t0 + Duration::from_secs(12), beat, "slot", 2, "busy");
-        depth.tick(t0 + Duration::from_secs(22), beat, "slot", 1, "idle");
+        depth.tick(t0 + Duration::from_secs(11), beat, "slot", 0, 0, "idle");
+        depth.tick(t0 + Duration::from_secs(5), beat, "slot", 0, 2, "busy");
+        depth.tick(t0 + Duration::from_secs(11), beat, "slot", 0, 2, "busy");
+        depth.tick(t0 + Duration::from_secs(12), beat, "slot", 0, 2, "busy");
+        depth.tick(t0 + Duration::from_secs(22), beat, "slot", 0, 1, "idle");
     });
     assert_eq!(events.len(), 2);
     assert_eq!(events[0].1["depth"], "2");
@@ -244,4 +267,21 @@ fn only_typed_pushes_get_a_pushed_word() {
     assert_eq!(pushed_word(&PushTry::NotReady), None);
     assert_eq!(pushed_word(&PushTry::Held), None);
     assert_eq!(state_word(&State::Idle), "idle");
+}
+
+#[test]
+fn member_selected_has_the_designed_fields() {
+    let (message, fields) = capture(|| {
+        timing::member_selected(
+            "11111111-1111-4111-8111-111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            2,
+            "idle",
+        );
+    });
+    assert_eq!(message, "member selected");
+    assert_eq!(names(&fields), ["bot", "member", "reason", "task_id"]);
+    assert_eq!(fields["member"], "2");
+    assert_eq!(fields["reason"], "idle");
+    assert_clean(&fields);
 }

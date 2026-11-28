@@ -1,9 +1,12 @@
 use super::files::{CreatedBy, SessionRecord};
+use super::machine::State;
 use super::session::{
-    EnsureDecision, EnsureFacts, admit_hook, decide_ensure, decline_for, dir_unchanged, recovered_blocked,
-    report_needed, stable_exe, view_facts,
+    AFFINITY_CAP, AffinityStore, EnsureDecision, EnsureFacts, MemberStatus, SelectInput, SelectReason,
+    TASK_AFFINITY_KEEP_SECS, admit_hook, decide_ensure, decline_for, dir_unchanged, recovered_blocked, report_needed,
+    select_member, stable_exe, view_facts,
 };
 use super::tmux::{ListedPane, NameSource, PaneId};
+use std::time::Instant;
 
 const BOT: &str = "00000000-0000-4000-8000-000000000001";
 const OTHER_BOT: &str = "00000000-0000-4000-8000-000000000002";
@@ -348,4 +351,241 @@ fn only_a_derived_session_is_offered_to_the_runner_to_start() {
             && !text.contains("end the session"),
         "{text}"
     );
+}
+
+// ----- select_member -------------------------------------------------------------------------
+
+const NOW: u64 = 1_000_000;
+const TTL: u64 = 3600;
+
+fn status(state: State, queue_len: usize) -> MemberStatus {
+    MemberStatus {
+        state,
+        queue_len,
+        healthy: true,
+        unhealthy_since: None,
+    }
+}
+
+fn idle() -> MemberStatus {
+    status(State::Idle, 0)
+}
+
+fn busy(queued: usize) -> MemberStatus {
+    status(State::Busy, queued)
+}
+
+fn dead() -> MemberStatus {
+    MemberStatus {
+        state: State::Dead,
+        queue_len: 0,
+        healthy: false,
+        unhealthy_since: Some(Instant::now()),
+    }
+}
+
+fn pick(
+    task: Option<&str>,
+    item: Option<&str>,
+    affinity: &AffinityStore,
+    statuses: &[MemberStatus],
+) -> (usize, SelectReason) {
+    select_member(&SelectInput { task_id: task, item }, affinity, statuses, NOW, TTL)
+}
+
+#[test]
+fn a_pool_of_one_always_picks_member_zero() {
+    let affinity = AffinityStore::default();
+    for member in [idle(), busy(0), busy(5), dead(), status(State::NoSession, 0)] {
+        let (index, _) = pick(Some("t"), Some("i"), &affinity, &[member]);
+        assert_eq!(index, 0, "{member:?}");
+    }
+    assert_eq!(pick(Some("t"), None, &affinity, &[idle()]).1, SelectReason::Idle);
+    assert_eq!(pick(Some("t"), None, &affinity, &[busy(3)]).1, SelectReason::Shortest);
+    assert_eq!(pick(Some("t"), None, &affinity, &[dead()]).1, SelectReason::Fallback);
+}
+
+#[test]
+fn no_members_fall_back_to_the_primary() {
+    assert_eq!(
+        pick(Some("t"), None, &AffinityStore::default(), &[]),
+        (0, SelectReason::Fallback)
+    );
+}
+
+#[test]
+fn every_pool_size_follows_the_rules_in_order() {
+    for n in 1..=8usize {
+        let affinity = AffinityStore::default();
+        // Everyone idle: the lowest index.
+        let all_idle = vec![idle(); n];
+        assert_eq!(
+            pick(Some("t"), None, &affinity, &all_idle),
+            (0, SelectReason::Idle),
+            "n={n}"
+        );
+        // Everyone busy with equal load: the lowest index by the shortest-queue tie.
+        let all_busy = vec![busy(2); n];
+        assert_eq!(
+            pick(Some("t"), None, &affinity, &all_busy),
+            (0, SelectReason::Shortest),
+            "n={n}"
+        );
+        // The last member is the only idle one.
+        let mut last_idle = vec![busy(0); n];
+        last_idle[n - 1] = idle();
+        let expect = if n == 1 {
+            (0, SelectReason::Idle)
+        } else {
+            (n - 1, SelectReason::Idle)
+        };
+        assert_eq!(pick(Some("t"), None, &affinity, &last_idle), expect, "n={n}");
+        // The last member has the shortest queue; the others are longer.
+        let mut shortest_last: Vec<MemberStatus> = (0..n).map(|i| busy(5 + i)).collect();
+        shortest_last[n - 1] = busy(1);
+        assert_eq!(
+            pick(Some("t"), None, &affinity, &shortest_last),
+            (n - 1, SelectReason::Shortest),
+            "n={n}"
+        );
+        // Nobody is healthy: the primary.
+        let all_dead = vec![dead(); n];
+        assert_eq!(
+            pick(Some("t"), None, &affinity, &all_dead),
+            (0, SelectReason::Fallback),
+            "n={n}"
+        );
+        // Only the last member is healthy: it takes the task even when busy.
+        let mut only_last = vec![dead(); n];
+        only_last[n - 1] = busy(4);
+        assert_eq!(
+            pick(Some("t"), None, &affinity, &only_last),
+            (n - 1, SelectReason::Shortest),
+            "n={n}"
+        );
+    }
+}
+
+#[test]
+fn the_load_counts_the_current_task_and_the_queue() {
+    // Member 0 holds one queued task and none running: load 1. Member 1 runs one task: load 1.
+    // Member 2 runs one task and has one queued: load 2. The tie goes to member 0.
+    let statuses = [status(State::Idle, 1), busy(0), busy(1)];
+    assert_eq!(
+        pick(Some("t"), None, &AffinityStore::default(), &statuses),
+        (0, SelectReason::Shortest)
+    );
+    // A member with a queue is not idle even when its state says so.
+    assert_eq!(
+        pick(None, None, &AffinityStore::default(), &[status(State::Idle, 2), idle()]),
+        (1, SelectReason::Idle)
+    );
+}
+
+#[test]
+fn task_affinity_wins_while_the_member_is_healthy() {
+    let mut affinity = AffinityStore::default();
+    affinity.record_task("t1", 2, NOW - 10);
+    let statuses = [idle(), idle(), busy(9)];
+    assert_eq!(
+        pick(Some("t1"), None, &affinity, &statuses),
+        (2, SelectReason::AffinityTask)
+    );
+    // Another task does not use it.
+    assert_eq!(pick(Some("t2"), None, &affinity, &statuses), (0, SelectReason::Idle));
+    // Moving a task (no task id) skips task affinity.
+    assert_eq!(pick(None, None, &affinity, &statuses), (0, SelectReason::Idle));
+    // An unhealthy affinity member is skipped: the rules go on with idle.
+    let statuses = [busy(1), idle(), dead()];
+    assert_eq!(pick(Some("t1"), None, &affinity, &statuses), (1, SelectReason::Idle));
+    // An affinity member that is no longer in the pool is skipped as well.
+    assert_eq!(
+        pick(Some("t1"), None, &affinity, &[busy(1), busy(0)]),
+        (1, SelectReason::Shortest)
+    );
+}
+
+#[test]
+fn task_affinity_beats_item_affinity_and_expires_a_day_after_the_task_left() {
+    let mut affinity = AffinityStore::default();
+    affinity.record_task("t1", 1, NOW - 100);
+    affinity.record_item("W-1", 2, NOW - 50);
+    let statuses = [idle(), busy(3), busy(3)];
+    assert_eq!(
+        pick(Some("t1"), Some("W-1"), &affinity, &statuses),
+        (1, SelectReason::AffinityTask)
+    );
+    affinity.task_left("t1", NOW - 100);
+    assert_eq!(
+        pick(Some("t1"), Some("W-1"), &affinity, &statuses),
+        (1, SelectReason::AffinityTask),
+        "still remembered"
+    );
+    let later = NOW + TASK_AFFINITY_KEEP_SECS;
+    assert_eq!(affinity.task_member("t1", later), None);
+    assert_eq!(affinity.task_member("t1", later - 100), Some(1));
+}
+
+#[test]
+fn item_affinity_holds_within_the_ttl_only() {
+    let mut affinity = AffinityStore::default();
+    affinity.record_item("W-1", 1, NOW - TTL);
+    let statuses = [idle(), busy(3)];
+    assert_eq!(
+        pick(Some("t"), Some("W-1"), &affinity, &statuses),
+        (1, SelectReason::AffinityItem)
+    );
+    // One second past the ttl.
+    let expired = select_member(
+        &SelectInput {
+            task_id: Some("t"),
+            item: Some("W-1"),
+        },
+        &affinity,
+        &statuses,
+        NOW + 1,
+        TTL,
+    );
+    assert_eq!(expired, (0, SelectReason::Idle));
+    // Another item has no affinity; an unhealthy member is skipped.
+    assert_eq!(
+        pick(Some("t"), Some("W-2"), &affinity, &statuses),
+        (0, SelectReason::Idle)
+    );
+    assert_eq!(
+        pick(Some("t"), Some("W-1"), &affinity, &[idle(), dead()]),
+        (0, SelectReason::Idle)
+    );
+}
+
+#[test]
+fn the_affinity_store_is_capped_and_round_trips_through_json() {
+    let mut affinity = AffinityStore::default();
+    for i in 0..(AFFINITY_CAP + 10) {
+        affinity.record_task(&format!("t{i}"), 1, NOW + i as u64);
+        affinity.record_item(&format!("W-{i}"), 1, NOW + i as u64);
+    }
+    assert_eq!(affinity.task_count(), AFFINITY_CAP);
+    assert_eq!(affinity.task_member("t0", NOW), None, "the oldest went first");
+    let newest = format!("t{}", AFFINITY_CAP + 9);
+    assert_eq!(affinity.task_member(&newest, NOW), Some(1));
+    assert_eq!(affinity.item_member("W-0", NOW, u64::MAX), None);
+    let text = serde_json::to_string(&affinity).expect("serialise");
+    let back: AffinityStore = serde_json::from_str(&text).expect("deserialise");
+    assert_eq!(back, affinity);
+}
+
+#[test]
+fn the_status_keeps_its_unhealthy_time_until_the_member_recovers() {
+    let t0 = Instant::now();
+    let later = t0 + std::time::Duration::from_secs(30);
+    let down = MemberStatus::fresh().next(State::Dead, 0, t0);
+    assert!(!down.healthy);
+    assert_eq!(down.unhealthy_since, Some(t0));
+    let still = down.next(State::Dead, 1, later);
+    assert_eq!(still.unhealthy_since, Some(t0));
+    let up = still.next(State::Idle, 0, later);
+    assert!(up.healthy);
+    assert_eq!(up.unhealthy_since, None);
+    assert!(MemberStatus::fresh().healthy);
 }

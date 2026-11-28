@@ -66,11 +66,20 @@ pub fn delivery_answered(payload: &Value, answer: Option<&Value>, times: &Delive
 }
 
 /// `task pushed`: a task was typed into its session.
-pub fn task_pushed(task_id: &str, attempt: i64, slot: &str, queued: Duration, push: Duration, outcome: &str) {
+pub fn task_pushed(
+    task_id: &str,
+    attempt: i64,
+    slot: &str,
+    member: u8,
+    queued: Duration,
+    push: Duration,
+    outcome: &str,
+) {
     tracing::info!(
         task_id = %id_word(task_id),
         attempt,
         slot = %slot,
+        member,
         queued_ms = millis(queued),
         push_ms = millis(push),
         outcome = %outcome,
@@ -78,12 +87,24 @@ pub fn task_pushed(task_id: &str, attempt: i64, slot: &str, queued: Duration, pu
     );
 }
 
+/// `member selected`: the pool member that takes a task. `bot` is the slot's bot id.
+pub fn member_selected(task_id: &str, bot: &str, member: u8, reason: &str) {
+    tracing::info!(
+        task_id = %id_word(task_id),
+        bot = %id_word(bot),
+        member,
+        reason = %reason,
+        "member selected"
+    );
+}
+
 /// `task left session`: the current task cleared; `end` is `terminal`, `superseded` or `gone`.
-pub fn task_left_session(task_id: &str, attempt: i64, slot: &str, busy: Duration, end: &str) {
+pub fn task_left_session(task_id: &str, attempt: i64, slot: &str, member: u8, busy: Duration, end: &str) {
     tracing::info!(
         task_id = %id_word(task_id),
         attempt,
         slot = %slot,
+        member,
         busy_ms = millis(busy),
         end = %end,
         "task left session"
@@ -91,8 +112,8 @@ pub fn task_left_session(task_id: &str, attempt: i64, slot: &str, busy: Duration
 }
 
 /// `queue depth`: a session still holds queued tasks.
-pub fn queue_depth(slot: &str, depth: usize, state: &str) {
-    tracing::info!(slot = %slot, depth = depth as u64, state = %state, "queue depth");
+pub fn queue_depth(slot: &str, member: u8, depth: usize, state: &str) {
+    tracing::info!(slot = %slot, member, depth = depth as u64, state = %state, "queue depth");
 }
 
 /// Follows a session's current task and logs `task left session` when it clears or changes.
@@ -110,13 +131,13 @@ impl CurrentWatch {
     }
 
     /// `current` is the task now current (id, attempt, since when), if any.
-    pub fn observe(&mut self, current: Option<(String, i64, Instant)>, now: Instant, slot: &str) {
+    pub fn observe(&mut self, current: Option<(String, i64, Instant)>, now: Instant, slot: &str, member: u8) {
         if self.tracked == current {
             return;
         }
         if let Some((id, attempt, since)) = self.tracked.take() {
             let end = self.hint.take().unwrap_or("terminal");
-            task_left_session(&id, attempt, slot, now.saturating_duration_since(since), end);
+            task_left_session(&id, attempt, slot, member, now.saturating_duration_since(since), end);
         }
         self.hint = None;
         self.tracked = current;
@@ -135,10 +156,10 @@ impl DepthBeat {
         Self { last: now }
     }
 
-    pub fn tick(&mut self, now: Instant, beat: Duration, slot: &str, depth: usize, state: &str) {
+    pub fn tick(&mut self, now: Instant, beat: Duration, slot: &str, member: u8, depth: usize, state: &str) {
         if depth > 0 && now.saturating_duration_since(self.last) >= beat {
             self.last = now;
-            queue_depth(slot, depth, state);
+            queue_depth(slot, member, depth, state);
         }
     }
 }
