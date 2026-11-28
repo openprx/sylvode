@@ -113,7 +113,8 @@ pub async fn create_layouts(
 /// the public by itself.
 ///
 /// # Errors
-/// `pages_need_project` for a workspace scope, `page_route_taken` when the site already has a page
+/// `pages_need_project` for a workspace scope, `site_route_taken` (409, names the route) when a page of
+/// the site's own has a route of the package, `page_route_taken` when the site already has a page
 /// with a route of the package at this generation, or a database failure.
 pub async fn create_pages(
     tx: &impl ConnectionTrait,
@@ -124,20 +125,40 @@ pub async fn create_pages(
     generation: i32,
     created_by: Uuid,
 ) -> Result<(), ApiError> {
-    // The site serves the active generation only: an upgrade replaces the earlier generations' pages.
-    tx.execute(Statement::from_sql_and_values(
+    let delete_old = Statement::from_sql_and_values(
         DbBackend::Postgres,
         "DELETE FROM site_pages WHERE installation_id = $1 AND generation IS DISTINCT FROM $2",
         vec![installation_id.into(), generation.into()],
-    ))
-    .await?;
+    );
     if manifest.pages.is_empty() {
+        // The latest generation has no pages: the earlier ones go and the site stays, empty.
+        tx.execute(delete_old).await?;
         return Ok(());
     }
     let project_id = scope
         .project_id
         .ok_or_else(|| ApiError::bad_request_coded("pages_need_project", "site pages are installed into a project"))?;
+    // The site is found by the earlier generation's pages, so it is looked up before they are deleted.
     let site_id = site_of_installation(tx, scope.workspace_id, project_id, installation_id, created_by).await?;
+    // The site serves the active generation only: an upgrade replaces the earlier generations' pages.
+    tx.execute(delete_old).await?;
+    for page in &manifest.pages {
+        let taken = tx
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT 1 AS one FROM site_pages WHERE site_id = $1 AND route = $2 AND installation_id IS NULL",
+                vec![site_id.into(), page.route.clone().into()],
+            ))
+            .await?
+            .is_some();
+        if taken {
+            return Err(ApiError::conflict_coded(
+                "site_route_taken",
+                format!("the site already has a page of its own at {}", page.route),
+                Some(serde_json::json!({ "route": page.route })),
+            ));
+        }
+    }
     for (position, page) in manifest.pages.iter().enumerate() {
         let layout_id = layouts.get(&page.layout).ok_or_else(ApiError::internal)?;
         let nav = page.nav.as_ref().and_then(|nav| serde_json::to_value(nav).ok());
