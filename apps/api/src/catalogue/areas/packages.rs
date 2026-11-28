@@ -1,10 +1,14 @@
 //! Catalogue entries of the `packages` router area (`router/packages.rs`).
 //!
-//! Only the two read routes are behind the bot authentication. The class `Refused` still admits a
+//! The two read routes and the upload submission are behind the bot authentication. The class `Refused` still admits a
 //! project-scoped bot with a default level of `read` or more, so the handlers refuse every bot that
 //! is not a bot of the whole workspace (`packages::access`, packages are workspace-level); a bot of
-//! the whole workspace passes and the handler checks its workspace and `read` permission. Upload,
-//! delete and the publisher-key routes are behind the JWT middleware, which no bot token passes.
+//! the whole workspace passes and the handler checks its workspace and `read` permission. The
+//! submission route (`package-uploads`) is for bots only and stores nothing as a package: it keeps
+//! a verified upload as a `package_upload` draft that a person approves (contract C3 section 4.4,
+//! LEAD-DECISIONS M11-UPLOAD); the handler also demands `write` and a bot of the whole workspace.
+//! Upload, delete and the publisher-key routes are behind the JWT middleware, which no bot token
+//! passes.
 
 use crate::catalogue::types::dsl::{
     Delete, Destructive, Entry, Get, Post, Read, Workspace, WorkspaceAdmin, Write, bot, console,
@@ -14,6 +18,7 @@ use crate::catalogue::types::dsl::{
 pub static ENTRIES: &[Entry] = &[
     bot("packages.packages.read", Get, "/api/v1/workspaces/{workspace_id}/packages/{digest}", Workspace, Read),
     bot("packages.packages.read/list", Get, "/api/v1/workspaces/{workspace_id}/packages", Workspace, Read),
+    bot("packages.package_uploads.create", Post, "/api/v1/workspaces/{workspace_id}/package-uploads", Workspace, Write),
     console("packages.packages.create", Post, "/api/v1/workspaces/{workspace_id}/packages", WorkspaceAdmin, Write),
     console("packages.packages.delete", Delete, "/api/v1/workspaces/{workspace_id}/packages/{digest}", WorkspaceAdmin, Destructive),
     console("packages.publisher_keys.create", Post, "/api/v1/workspaces/{workspace_id}/publisher-keys", WorkspaceAdmin, Write),
@@ -32,7 +37,7 @@ mod tests {
     fn the_classes_of_the_area() {
         assert_eq!(
             bot_class_counts(ENTRIES),
-            BTreeMap::from([("refused", 2)]),
+            BTreeMap::from([("refused", 3)]),
             "the classes of the packages routes changed"
         );
     }

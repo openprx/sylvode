@@ -45,6 +45,7 @@ export function targetLine(draft: Pick<DraftSummary, 'kind' | 'target'>, words?:
 		return text('form_id') ? `form ${text('form_id')}` : `new form ${text('key')}`;
 	}
 	if (draft.kind === 'layout') return `${text('slot_id')} / ${text('scope_kind')}`;
+	if (draft.kind === 'package_upload') return `${text('package_key')}@${text('version')}`;
 	if (draft.kind === 'site_page' && words) {
 		const op = text('op');
 		const base = draft.target.base_page;
@@ -59,6 +60,43 @@ export function targetLine(draft: Pick<DraftSummary, 'kind' | 'target'>, words?:
 		return words(`drafts.target.page_${op}`, { route });
 	}
 	return draft.kind;
+}
+
+/** What a reviewer checks first in a package upload draft: the package and who signed it. */
+export interface UploadFacts {
+	packageKey: string;
+	version: string;
+	kind: string;
+	sizeBytes: number;
+	fileCount: number;
+	publisher: string;
+	signerKeyId: string;
+	customCode: boolean;
+}
+
+/** Reads the `spec` of a package upload draft; null when it is not shaped like one. */
+export function uploadFacts(spec: unknown): UploadFacts | null {
+	if (typeof spec !== 'object' || spec === null) return null;
+	const value = spec as Record<string, unknown>;
+	const publisher = value.publisher as { id?: unknown; key_id?: unknown } | null | undefined;
+	if (typeof value.package_key !== 'string' || typeof value.version !== 'string') return null;
+	return {
+		packageKey: value.package_key,
+		version: value.version,
+		kind: typeof value.kind === 'string' ? value.kind : '',
+		sizeBytes: typeof value.size_bytes === 'number' ? value.size_bytes : 0,
+		fileCount: typeof value.file_count === 'number' ? value.file_count : 0,
+		publisher: typeof publisher?.id === 'string' ? publisher.id : '',
+		signerKeyId: typeof publisher?.key_id === 'string' ? publisher.key_id : '',
+		customCode: value.custom_code === true
+	};
+}
+
+/** A byte count as KiB or MiB for the review line. */
+export function formatBytes(bytes: number): string {
+	if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+	if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+	return `${bytes} B`;
 }
 
 /** Whether the viewer can approve: a person who administers the workspace, on a valid pending draft. */

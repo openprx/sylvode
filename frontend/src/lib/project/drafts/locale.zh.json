@@ -16,7 +16,8 @@
 			"form_schema": "表单结构",
 			"layout": "布局",
 			"package_install": "安装包",
-			"site_page": "站点页面"
+			"site_page": "站点页面",
+			"package_upload": "包上传"
 		},
 		"col": {
 			"kind": "类型",
@@ -58,13 +59,25 @@
 			"noPublic": "已发布的站点上没有页面展示它。",
 			"publicWarning": "这会展示给已发布站点的访客",
 			"spec": "内容",
-			"comment": "审阅意见"
+			"comment": "审阅意见",
+			"package": "安装包",
+			"packageKey": "安装包",
+			"size": "大小",
+			"files": "{count} 个文件",
+			"signer": "签名者（发布者、密钥）",
+			"customCode": "此安装包包含自定义代码",
+			"customCodeBody": "它带有自定义框架或组件。批准前请确认构建者。",
+			"uploadNote": "签名已用此工作区登记的发布者密钥验证。批准只会存储安装包，不会安装。"
 		},
 		"target": {
 			"siteTitle": "站点标题",
 			"pageCreate": "新页面",
 			"page_update": "页面 {route}（修改）",
 			"page_delete": "页面 {route}（删除）"
+		},
+		"uploads": {
+			"title": "包上传",
+			"lead": "智能体提交的已签名安装包。批准后才会存为安装包；安装需要另行审核。"
 		}
 	}
 }

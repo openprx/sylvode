@@ -63,7 +63,7 @@ pub(super) async fn save(
                 NativeFormCreateRequest {
                     form_id: None,
                     workspace_id: row.workspace_id,
-                    project_id: row.project_id,
+                    project_id: row.project()?,
                     key,
                     name,
                     description: String::new(),
@@ -86,7 +86,24 @@ pub(super) async fn save(
         }
         // The review admits only human workspace owners and admins, who write every site page.
         Plan::SitePage { target } => {
-            crate::site::drafts::apply(tx, row.workspace_id, row.project_id, &target, &prepared.spec, approver).await
+            crate::site::drafts::apply(tx, row.workspace_id, row.project()?, &target, &prepared.spec, approver).await
+        }
+        // The approver is a person who owns or administers the workspace (checked by the review,
+        // and again here); the package goes through the ordinary store path: key lock, identical
+        // upload, version and quota rules.
+        Plan::PackageUpload { upload } => {
+            if !matches!(role, "owner" | "admin") {
+                return Err(ApiError::forbidden(
+                    "only workspace owners and admins can manage packages",
+                ));
+            }
+            let package = upload.store(tx, row.workspace_id, approver).await?;
+            Ok(json!({
+                "package_id": package.id,
+                "digest": package.digest,
+                "package_key": package.package_key,
+                "version": package.version,
+            }))
         }
     }
 }

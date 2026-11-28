@@ -6,7 +6,7 @@
 
 use std::collections::BTreeSet;
 
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, FromQueryResult, Statement};
+use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use serde_json::{Value, json};
 use sv_layout::{Context, Options};
 use sv_package::{ErrorCode, KeyLookup, Limits, VerifiedPackage};
@@ -201,7 +201,7 @@ fn check_layouts(package: &VerifiedPackage) -> Result<bool, Refusal> {
 /// Unpacks `bytes`, verifies the signature with the registry's key for `scope`, validates the
 /// layouts and computes `custom_code`. Nothing is written to disk.
 pub(super) async fn verify_blob(
-    db: &DatabaseConnection,
+    db: &impl ConnectionTrait,
     bytes: Vec<u8>,
     scope: KeyScope,
 ) -> Result<Verified, ApiError> {
@@ -243,7 +243,7 @@ pub(super) async fn verify_blob(
 }
 
 /// The project type a package's `project` block names must exist (checked at upload and at boot).
-async fn check_project_type(db: &DatabaseConnection, package: &VerifiedPackage) -> Result<(), ApiError> {
+async fn check_project_type(db: &impl ConnectionTrait, package: &VerifiedPackage) -> Result<(), ApiError> {
     let Some(type_key) = package
         .manifest
         .project

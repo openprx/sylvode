@@ -10,6 +10,7 @@
 	import { confirmAction } from '#lib/ui/dialog/confirm.js';
 	import Button from '#lib/ui/button/Button.svelte';
 	import Checkbox from '#lib/ui/checkbox/Checkbox.svelte';
+	import DraftsSection from '#lib/project/drafts/DraftsSection.svelte';
 	import StatusChip from '#lib/ui/status-chip/StatusChip.svelte';
 	import Input from '#lib/components/Input.svelte';
 	import Modal from '#lib/components/Modal.svelte';
@@ -426,6 +427,10 @@
 				</tbody>
 			</table>
 		</div>
+	{/if}
+
+	{#if admin && !loading}
+		<DraftsSection {workspaceId} kind="package_upload" />
 	{/if}
 </div>
 

@@ -116,6 +116,7 @@
   "objects.search",
   "objects.unlink",
   "objects.unreference",
+  "packages.upload",
   "plugin_invocations.list",
   "plugins.get",
   "plugins.install",

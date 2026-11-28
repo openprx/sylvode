@@ -16,7 +16,8 @@
 			"form_schema": "Form schema",
 			"layout": "Layout",
 			"package_install": "Package install",
-			"site_page": "Site page"
+			"site_page": "Site page",
+			"package_upload": "Package upload"
 		},
 		"col": {
 			"kind": "Kind",
@@ -58,13 +59,25 @@
 			"noPublic": "Nothing on a published site shows it.",
 			"publicWarning": "This would be shown to visitors of a published site",
 			"spec": "Spec",
-			"comment": "Review comment"
+			"comment": "Review comment",
+			"package": "Package",
+			"packageKey": "Package",
+			"size": "Size",
+			"files": "{count} files",
+			"signer": "Signed by (publisher, key)",
+			"customCode": "This package carries custom code",
+			"customCodeBody": "It brings custom frames or components. Check who built it before you approve.",
+			"uploadNote": "The signature was verified against a publisher key registered for this workspace. Approving stores the package; it installs nothing."
 		},
 		"target": {
 			"siteTitle": "Site title",
 			"pageCreate": "New page",
 			"page_update": "Page {route} (change)",
 			"page_delete": "Page {route} (delete)"
+		},
+		"uploads": {
+			"title": "Package uploads",
+			"lead": "Signed packages that agents submit. Approving one stores it as a package; installing it is a separate review."
 		}
 	}
 }

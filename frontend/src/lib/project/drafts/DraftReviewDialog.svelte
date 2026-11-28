@@ -12,7 +12,16 @@
 	import StatusChip from '#lib/ui/status-chip/StatusChip.svelte';
 	import Textarea from '#lib/ui/textarea/Textarea.svelte';
 	import { draftsApi } from './api';
-	import { canApprove, issueLine, riskTone, staleDigest, statusTone, targetLine } from './view';
+	import {
+		canApprove,
+		formatBytes,
+		issueLine,
+		riskTone,
+		staleDigest,
+		statusTone,
+		targetLine,
+		uploadFacts
+	} from './view';
 	import type { Draft } from './wire';
 
 	/**
@@ -84,6 +93,7 @@
 	}
 
 	const pending = $derived(draft?.status === 'pending');
+	const upload = $derived(draft?.kind === 'package_upload' ? uploadFacts(draft.spec) : null);
 	const specText = $derived(draft ? JSON.stringify(draft.spec, null, 2) : '');
 </script>
 
@@ -134,6 +144,30 @@
 				<SecurityWarning tone="danger" title={$t('drafts.review.problem')}
 					>{problem}</SecurityWarning
 				>
+			{/if}
+
+			{#if upload}
+				<section aria-labelledby="draft-package">
+					<h2 id="draft-package">{$t('drafts.review.package')}</h2>
+					<dl class="facts" data-testid="draft-package">
+						<dt>{$t('drafts.review.packageKey')}</dt>
+						<dd><code>{upload.packageKey}</code> {upload.version} ({upload.kind})</dd>
+						<dt>{$t('drafts.review.size')}</dt>
+						<dd>
+							{formatBytes(upload.sizeBytes)}, {$t('drafts.review.files', {
+								values: { count: String(upload.fileCount) }
+							})}
+						</dd>
+						<dt>{$t('drafts.review.signer')}</dt>
+						<dd>{upload.publisher} <code>{upload.signerKeyId}</code></dd>
+					</dl>
+					{#if upload.customCode}
+						<SecurityWarning tone="danger" title={$t('drafts.review.customCode')}>
+							{$t('drafts.review.customCodeBody')}
+						</SecurityWarning>
+					{/if}
+					<p class="sub">{$t('drafts.review.uploadNote')}</p>
+				</section>
 			{/if}
 
 			<section aria-labelledby="draft-validation">
@@ -283,6 +317,19 @@
 		margin: 0 0 var(--rf-space-3);
 		font-size: var(--rf-size-secondary);
 		font-weight: var(--rf-weight-semibold);
+	}
+	.facts {
+		display: grid;
+		grid-template-columns: max-content 1fr;
+		gap: var(--rf-space-2) var(--rf-space-5);
+		margin: 0;
+		font-size: var(--rf-size-secondary);
+	}
+	.facts dt {
+		color: var(--rf-text-secondary);
+	}
+	.facts dd {
+		margin: 0;
 	}
 	.sub {
 		margin: var(--rf-space-3) 0 0;

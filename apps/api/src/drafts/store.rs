@@ -18,7 +18,8 @@ const COLUMNS: &str = "d.id, d.workspace_id, d.project_id, d.kind, d.target, d.s
 pub(super) struct DraftRow {
     pub(super) id: Uuid,
     pub(super) workspace_id: Uuid,
-    pub(super) project_id: Uuid,
+    /// Empty for a `package_upload` draft, which belongs to the workspace.
+    pub(super) project_id: Option<Uuid>,
     pub(super) kind: String,
     pub(super) target: Value,
     pub(super) spec: Value,
@@ -36,10 +37,17 @@ pub(super) struct DraftRow {
     pub(super) created_at: Timestamp,
 }
 
+impl DraftRow {
+    /// The project of a draft kind that has one; a stored draft that lacks it is a server error.
+    pub(super) fn project(&self) -> Result<Uuid, ApiError> {
+        self.project_id.ok_or_else(ApiError::internal)
+    }
+}
+
 /// The values of a new draft.
 pub(super) struct NewDraft<'a> {
     pub(super) workspace_id: Uuid,
-    pub(super) project_id: Uuid,
+    pub(super) project_id: Option<Uuid>,
     pub(super) kind: &'a str,
     pub(super) target: &'a Value,
     pub(super) spec: &'a Value,
@@ -111,7 +119,7 @@ pub(super) async fn count_last_minute(
 /// `site_page` draft: `site::drafts::PageTarget::identity`).
 pub(super) async fn supersede(
     db: &impl ConnectionTrait,
-    project_id: Uuid,
+    project_id: Option<Uuid>,
     kind: &str,
     author_kind: &str,
     author_id: Uuid,
@@ -120,7 +128,7 @@ pub(super) async fn supersede(
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "UPDATE artefact_drafts SET status = 'superseded' \
-         WHERE project_id = $1 AND kind = $2 AND author_kind = $3 AND author_id = $4 \
+         WHERE project_id IS NOT DISTINCT FROM $1::uuid AND kind = $2 AND author_kind = $3 AND author_id = $4 \
            AND status = 'pending' AND CASE kind \
               WHEN 'form_schema' THEN COALESCE(target->>'form_id', 'new:' || (target->>'key')) \
               WHEN 'layout' THEN (target->>'slot_id') || '/' || (target->>'scope_kind') || '/' || (target->>'scope_id') \
@@ -128,6 +136,7 @@ pub(super) async fn supersede(
                 (target->>'page_id') || CASE WHEN spec->'layout_id' IS NOT NULL AND spec->'layout_spec' IS NOT NULL \
                                           THEN '/layout' ELSE '' END, \
                 CASE WHEN target->>'op' = 'create' THEN 'create:' || COALESCE(spec->>'route', '') ELSE 'title' END) \
+              WHEN 'package_upload' THEN (target->>'package_key') || '@' || (target->>'version') \
               ELSE target::text END = $5",
         vec![
             project_id.into(),
@@ -138,7 +147,74 @@ pub(super) async fn supersede(
         ],
     ))
     .await?;
+    if kind == "package_upload" {
+        delete_closed_blobs(db).await?;
+    }
     Ok(())
+}
+
+/// Removes the kept bytes of every upload draft that is no longer pending.
+async fn delete_closed_blobs(db: &impl ConnectionTrait) -> Result<(), ApiError> {
+    db.execute(Statement::from_string(
+        DbBackend::Postgres,
+        "DELETE FROM package_upload_blobs b USING artefact_drafts d WHERE b.draft_id = d.id AND d.status <> 'pending'",
+    ))
+    .await?;
+    Ok(())
+}
+
+/// Pending package upload drafts of a workspace, whoever submitted them.
+pub(super) async fn count_pending_uploads(db: &impl ConnectionTrait, workspace_id: Uuid) -> Result<i64, ApiError> {
+    Ok(Count::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT COUNT(*)::bigint AS total FROM artefact_drafts \
+         WHERE workspace_id = $1 AND kind = 'package_upload' AND status = 'pending'",
+        vec![workspace_id.into()],
+    ))
+    .one(db)
+    .await?
+    .map_or(0, |row| row.total))
+}
+
+/// Keeps the uploaded bytes of a pending `package_upload` draft.
+pub(super) async fn put_upload_blob(
+    db: &impl ConnectionTrait,
+    draft_id: Uuid,
+    workspace_id: Uuid,
+    blob_digest: &str,
+    bytes: &[u8],
+) -> Result<(), ApiError> {
+    let size = i64::try_from(bytes.len()).map_err(|_| ApiError::internal())?;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO package_upload_blobs (draft_id, workspace_id, blob_digest, size, bytes) \
+         VALUES ($1, $2, $3, $4, $5)",
+        vec![
+            draft_id.into(),
+            workspace_id.into(),
+            blob_digest.to_owned().into(),
+            size.into(),
+            bytes.to_vec().into(),
+        ],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// The kept bytes of a pending `package_upload` draft.
+pub(super) async fn upload_blob(db: &impl ConnectionTrait, draft_id: Uuid) -> Result<Option<Vec<u8>>, ApiError> {
+    #[derive(FromQueryResult)]
+    struct Bytes {
+        bytes: Vec<u8>,
+    }
+    Ok(Bytes::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "SELECT bytes FROM package_upload_blobs WHERE draft_id = $1",
+        vec![draft_id.into()],
+    ))
+    .one(db)
+    .await?
+    .map(|row| row.bytes))
 }
 
 pub(super) async fn insert(db: &impl ConnectionTrait, draft: &NewDraft<'_>) -> Result<DraftRow, ApiError> {
@@ -192,6 +268,9 @@ pub(super) struct ListFilter<'a> {
     pub(super) can_bypass_form_view: bool,
     /// The caller's role as a permission subject id.
     pub(super) role_subject: String,
+    /// The bot asking, who sees its own package upload drafts; other callers need an owner or
+    /// admin role (`can_bypass_form_view`) to see any.
+    pub(super) viewer_bot: Option<Uuid>,
 }
 
 pub(super) async fn list(
@@ -212,7 +291,9 @@ pub(super) async fn list(
          AND ($6::boolean OR {FORM_OF} IS NULL OR COALESCE(( \
                SELECT (fp.policy -> 'actions' ->> 'form.view')::boolean FROM form_permissions fp \
                WHERE fp.form_id = {FORM_OF}::uuid AND fp.subject_type = 'role' \
-                 AND fp.subject_id = $7 LIMIT 1), true))"
+                 AND fp.subject_id = $7 LIMIT 1), true)) \
+         AND (d.kind <> 'package_upload' OR $6::boolean \
+              OR ($8::uuid IS NOT NULL AND d.author_kind = 'bot' AND d.author_id = $8))"
     );
     let values = || -> Vec<sea_orm::Value> {
         vec![
@@ -223,6 +304,7 @@ pub(super) async fn list(
             filter.kind.map(str::to_owned).into(),
             filter.can_bypass_form_view.into(),
             filter.role_subject.clone().into(),
+            filter.viewer_bot.into(),
         ]
     };
     let total = Count::find_by_statement(Statement::from_sql_and_values(
@@ -240,7 +322,7 @@ pub(super) async fn list(
         DbBackend::Postgres,
         format!(
             "SELECT {COLUMNS} FROM artefact_drafts d WHERE {where_clause} \
-             ORDER BY d.created_at DESC, d.id LIMIT $8 OFFSET $9"
+             ORDER BY d.created_at DESC, d.id LIMIT $9 OFFSET $10"
         ),
         page_values,
     ))
@@ -292,6 +374,12 @@ pub(super) async fn close(
             comment.map(str::to_owned).into(),
             result.cloned().into(),
         ],
+    ))
+    .await?;
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "DELETE FROM package_upload_blobs WHERE draft_id = $1",
+        vec![id.into()],
     ))
     .await?;
     Ok(())

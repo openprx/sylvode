@@ -11,14 +11,20 @@
 	import { draftsApi } from './api';
 	import DraftReviewDialog from './DraftReviewDialog.svelte';
 	import { STATUS_FILTERS, statusTone, targetLine, type Words } from './view';
-	import type { DraftStatus, DraftSummary } from './wire';
+	import type { DraftKind, DraftStatus, DraftSummary } from './wire';
 
 	/**
 	 * Drafts written by agents for one project. A person who administers the workspace opens a
 	 * pending draft to review it; everyone else can read the list. With `siteId` the list is that
-	 * site's page and title drafts, and the page heading is left to the caller.
+	 * site's page and title drafts, and the page heading is left to the caller. With `workspaceId`
+	 * and `kind` the list is the workspace's drafts of that kind (package uploads), under a smaller heading.
 	 */
-	let { projectId, siteId }: { projectId: string; siteId?: string } = $props();
+	let {
+		projectId,
+		siteId,
+		workspaceId,
+		kind
+	}: { projectId?: string; siteId?: string; workspaceId?: string; kind?: DraftKind } = $props();
 
 	const words: Words = (key, values) => $t(key, { values });
 
@@ -34,10 +40,12 @@
 
 	async function load(): Promise<void> {
 		phase = 'loading';
-		const result = await draftsApi.list(
-			projectId,
-			siteId ? { status, kind: 'site_page', perPage: 200 } : { status }
-		);
+		const result = workspaceId
+			? await draftsApi.listWorkspace(workspaceId, { status, kind })
+			: await draftsApi.list(
+					projectId ?? '',
+					siteId ? { status, kind: 'site_page', perPage: 200 } : { status }
+				);
 		if (result.code === 0 && result.data) {
 			items = siteId
 				? result.data.items.filter((draft) => draft.target.site_id === siteId)
@@ -73,7 +81,12 @@
 </script>
 
 <div class="drafts" data-testid="drafts-section">
-	{#if !siteId}
+	{#if workspaceId && kind === 'package_upload'}
+		<header class="head">
+			<h2>{$t('drafts.uploads.title')}</h2>
+			<p class="lead">{$t('drafts.uploads.lead')}</p>
+		</header>
+	{:else if !siteId}
 		<header class="head">
 			<h1>{$t('drafts.title')}</h1>
 			<p class="lead">{$t('drafts.lead')}</p>
@@ -147,7 +160,8 @@
 		gap: var(--rf-space-6);
 		max-width: 960px;
 	}
-	h1 {
+	h1,
+	h2 {
 		margin: 0;
 		font-size: var(--rf-size-title);
 		font-weight: var(--rf-weight-semibold);

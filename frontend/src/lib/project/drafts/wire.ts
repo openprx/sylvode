@@ -1,6 +1,11 @@
 /** The draft API of `apps/api/src/drafts` (contract C3, section 7). */
 
-export type DraftKind = 'form_schema' | 'layout' | 'package_install' | 'site_page';
+export type DraftKind =
+	| 'form_schema'
+	| 'layout'
+	| 'package_install'
+	| 'site_page'
+	| 'package_upload';
 export type DraftStatus = 'pending' | 'approved' | 'rejected' | 'superseded' | 'failed';
 
 export interface DraftAuthor {
@@ -12,7 +17,8 @@ export interface DraftAuthor {
 export interface DraftSummary {
 	id: string;
 	kind: DraftKind;
-	project_id: string;
+	/** Null for a package upload, which belongs to the workspace. */
+	project_id: string | null;
 	target: Record<string, unknown>;
 	author: DraftAuthor;
 	status: DraftStatus;

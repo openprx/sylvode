@@ -17,11 +17,11 @@ use super::{
     access::Caller,
     keys::{self, PublisherKey},
     store::{self, NewPackage, PackageSummary},
-    verify::{KeyScope, Refusal, verify_blob},
+    verify::{KeyScope, Refusal, Verified, verify_blob},
 };
 use crate::{
     error::ApiError,
-    middleware::bot_auth::BotAuthContext,
+    middleware::bot_auth::{BotAuthContext, BotPermission, ensure_bot_permission},
     response::{ApiResponse, PageQuery, PaginatedData},
 };
 
@@ -117,6 +117,126 @@ async fn enforce_quota(
     Ok(())
 }
 
+/// A package whose bytes verified against the workspace's registered publisher keys, ready to be
+/// stored. Built by `verify` only, so nothing unverified reaches `store`.
+pub(crate) struct PreparedUpload {
+    bytes: Vec<u8>,
+    verified: Verified,
+}
+
+/// What a reviewer is shown about a verified upload.
+#[derive(Debug, Clone)]
+pub(crate) struct UploadInfo {
+    pub(crate) digest: String,
+    pub(crate) blob_digest: String,
+    pub(crate) package_key: String,
+    pub(crate) version: String,
+    pub(crate) kind: &'static str,
+    /// `{id, key_id}` of the publisher block of the manifest; the key verified against the registry.
+    pub(crate) publisher: Value,
+    pub(crate) custom_code: bool,
+    pub(crate) size_bytes: usize,
+    pub(crate) file_count: usize,
+    pub(crate) summary: Value,
+}
+
+impl PreparedUpload {
+    /// Unpacks `bytes` and verifies them with the workspace's registered publisher keys (the same
+    /// checks and refusals as the console upload).
+    pub(crate) async fn verify(
+        db: &impl sea_orm::ConnectionTrait,
+        workspace_id: Uuid,
+        bytes: Vec<u8>,
+    ) -> Result<Self, ApiError> {
+        let verified = verify_blob(db, bytes.clone(), KeyScope::Workspace(workspace_id)).await?;
+        Ok(Self { bytes, verified })
+    }
+
+    pub(crate) fn info(&self) -> UploadInfo {
+        let package = &self.verified.package;
+        UploadInfo {
+            digest: package.digest.clone(),
+            blob_digest: package.blob_digest.clone(),
+            package_key: package.manifest.id.clone(),
+            version: package.manifest.version.clone(),
+            kind: kind_name(package.manifest.kind),
+            publisher: package.manifest_value.get("publisher").cloned().unwrap_or(Value::Null),
+            custom_code: self.verified.custom_code,
+            size_bytes: self.bytes.len(),
+            file_count: package.files.len(),
+            summary: package.manifest_value.get("summary").cloned().unwrap_or(Value::Null),
+        }
+    }
+
+    /// The bytes as they were uploaded.
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Stores the package as a private package of the workspace, in `tx`: the signing key is locked
+    /// first (a key revoked meanwhile refuses), an identical earlier upload answers with its
+    /// existing row, and the version and quota rules apply.
+    pub(crate) async fn store(
+        self,
+        tx: &sea_orm::DatabaseTransaction,
+        workspace_id: Uuid,
+        created_by: Uuid,
+    ) -> Result<PackageSummary, ApiError> {
+        let Self { bytes, verified } = self;
+        let package = &verified.package;
+        if !keys::lock_active(tx, verified.key_row).await? {
+            return Err(Refusal::key_revoked().into());
+        }
+        let row = if let Some(existing) = store::find_owned(tx, Some(workspace_id), &package.digest).await? {
+            // The same package was uploaded before: the answer is the existing row.
+            existing
+        } else {
+            if store::version_taken(tx, Some(workspace_id), &package.manifest.id, &package.manifest.version).await? {
+                return Err(ApiError::conflict_coded(
+                    "package_version_exists",
+                    "this workspace already has a different package with this id and version",
+                    None,
+                ));
+            }
+            enforce_quota(tx, workspace_id, &package.blob_digest, bytes.len()).await?;
+            store::put_blob(tx, &package.blob_digest, bytes).await?;
+            let files = verified.files_json();
+            let new = NewPackage {
+                workspace_id: Some(workspace_id),
+                digest: &package.digest,
+                blob_digest: &package.blob_digest,
+                package_key: &package.manifest.id,
+                version: &package.manifest.version,
+                kind: kind_name(package.manifest.kind),
+                publisher_key_id: verified.key_row,
+                manifest: &package.manifest_value,
+                files: &files,
+                custom_code: verified.custom_code,
+                tier: "private",
+                created_by: Some(created_by),
+            };
+            let inserted = store::insert_package(tx, &new).await.map_err(|e| {
+                if e.database_sqlstate().as_deref() == Some("23505") {
+                    ApiError::conflict_coded(
+                        "package_version_exists",
+                        "this workspace already has a different package with this id and version",
+                        None,
+                    )
+                } else {
+                    e
+                }
+            })?;
+            match inserted {
+                Some(row) => row,
+                None => store::find_owned(tx, Some(workspace_id), &package.digest)
+                    .await?
+                    .ok_or_else(ApiError::internal)?,
+            }
+        };
+        Ok(PackageSummary::from(&row))
+    }
+}
+
 /// `POST /api/v1/workspaces/{w}/packages` (multipart `file`): verifies with the workspace's
 /// registered publisher keys and stores the blob by digest.
 pub async fn upload_package(
@@ -128,62 +248,38 @@ pub async fn upload_package(
     let caller = Caller::resolve(&state, &claims, None, workspace_id).await?;
     caller.require_admin()?;
     let bytes = read_file_part(multipart).await?;
-    let verified = verify_blob(&state.db, bytes.clone(), KeyScope::Workspace(workspace_id)).await?;
-    let package = &verified.package;
-
+    let prepared = PreparedUpload::verify(&state.db, workspace_id, bytes).await?;
     let tx = state.db.begin().await?;
-    if !keys::lock_active(&tx, verified.key_row).await? {
-        return Err(Refusal::key_revoked().into());
-    }
-    let row = if let Some(existing) = store::find_owned(&tx, Some(workspace_id), &package.digest).await? {
-        // The same package was uploaded before: the answer is the existing row.
-        existing
-    } else {
-        if store::version_taken(&tx, Some(workspace_id), &package.manifest.id, &package.manifest.version).await? {
-            return Err(ApiError::conflict_coded(
-                "package_version_exists",
-                "this workspace already has a different package with this id and version",
-                None,
-            ));
-        }
-        enforce_quota(&tx, workspace_id, &package.blob_digest, bytes.len()).await?;
-        store::put_blob(&tx, &package.blob_digest, bytes).await?;
-        let files = verified.files_json();
-        let new = NewPackage {
-            workspace_id: Some(workspace_id),
-            digest: &package.digest,
-            blob_digest: &package.blob_digest,
-            package_key: &package.manifest.id,
-            version: &package.manifest.version,
-            kind: kind_name(package.manifest.kind),
-            publisher_key_id: verified.key_row,
-            manifest: &package.manifest_value,
-            files: &files,
-            custom_code: verified.custom_code,
-            tier: "private",
-            created_by: Some(caller.user_id),
-        };
-        let inserted = store::insert_package(&tx, &new).await.map_err(|e| {
-            if e.database_sqlstate().as_deref() == Some("23505") {
-                ApiError::conflict_coded(
-                    "package_version_exists",
-                    "this workspace already has a different package with this id and version",
-                    None,
-                )
-            } else {
-                e
-            }
-        })?;
-        match inserted {
-            Some(row) => row,
-            None => store::find_owned(&tx, Some(workspace_id), &package.digest)
-                .await?
-                .ok_or_else(ApiError::internal)?,
-        }
-    };
+    let summary = prepared.store(&tx, workspace_id, caller.user_id).await?;
     tx.commit().await?;
-    tracing::info!(%workspace_id, package_id = %row.id, "package stored");
-    Ok(ApiResponse::success(PackageSummary::from(&row)))
+    tracing::info!(%workspace_id, package_id = %summary.id, "package stored");
+    Ok(ApiResponse::success(summary))
+}
+
+/// `POST /api/v1/workspaces/{w}/package-uploads` (multipart `file`): a bot submits a signed package.
+///
+/// Nothing is stored as a package: the bytes are verified, kept with a `package_upload` draft, and
+/// a workspace owner or administrator decides in the drafts review.
+pub async fn submit_package_upload(
+    State(state): State<AppState>,
+    Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
+    Path(workspace_id): Path<Uuid>,
+    multipart: Multipart,
+) -> Result<impl IntoResponse, ApiError> {
+    let Some(Extension(bot)) = bot else {
+        return Err(ApiError::forbidden(
+            "package uploads are submitted by bots; people upload packages in the console",
+        ));
+    };
+    // Bot of the whole workspace only (a project-scoped bot is refused), with write permission.
+    let caller = Caller::resolve(&state, &claims, Some(Extension(bot.clone())), workspace_id).await?;
+    ensure_bot_permission(&bot, BotPermission::Write)?;
+    let bytes = read_file_part(multipart).await?;
+    let prepared = PreparedUpload::verify(&state.db, workspace_id, bytes).await?;
+    let draft =
+        crate::drafts::handlers::create_package_upload_draft(&state, workspace_id, caller.user_id, prepared).await?;
+    Ok(ApiResponse::success(draft))
 }
 
 fn package_in_use() -> ApiError {
