@@ -1039,11 +1039,11 @@ pub async fn get_flow_v2_search(
         .transpose()
         .map_err(|_| ApiError::invalid_update("invalid search cursor"))?;
     let limit = query.limit.unwrap_or(50).clamp(1, 100) as usize;
-    let rows=ObjectId::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT o.id FROM flow_objects o JOIN flow_object_projections p ON p.object_id=o.id WHERE o.scope_id=$1 AND o.lifecycle_status='active' AND NOT flow_is_system_navigator_root(o.object_type,o.parent_id,o.governance_metadata) AND ($2::uuid IS NULL OR o.id>$2) AND ($3::uuid IS NULL OR o.project_id=$3) AND ($4::text IS NULL OR o.object_type=$4) AND (NOT $6::boolean OR o.project_id IS NULL) AND (p.title ILIKE '%'||$5||'%' OR p.plain_text ILIKE '%'||$5||'%') ORDER BY o.id LIMIT 10001",vec![scope_id.into(),cursor.into(),query.project_id.into(),query.object_type.into(),query.q.clone().into(),query.unprojected.into()])).all(&state.db).await?;
+    let rows=ObjectId::find_by_statement(Statement::from_sql_and_values(DbBackend::Postgres,"SELECT o.id FROM flow_objects o JOIN flow_object_projections p ON p.object_id=o.id WHERE o.scope_id=$1 AND o.lifecycle_status='active' AND NOT flow_is_system_navigator_root(o.object_type,o.parent_id,o.governance_metadata) AND ($2::uuid IS NULL OR o.id>$2) AND ($3::uuid IS NULL OR o.project_id=$3) AND ($4::text IS NULL OR o.object_type=$4) AND (NOT $6::boolean OR o.project_id IS NULL) AND (p.title ILIKE '%'||$5||'%' OR p.plain_text ILIKE '%'||$5||'%') ORDER BY o.id LIMIT 1001",vec![scope_id.into(),cursor.into(),query.project_id.into(),query.object_type.into(),query.q.clone().into(),query.unprojected.into()])).all(&state.db).await?;
     let mut items = Vec::new();
     let mut next = None;
-    let scanned = rows.len();
     let mut last = None;
+    let mut examined = 0_u64;
     let mut head = 0;
     let mut indexed = 0;
     for row in rows {
@@ -1052,6 +1052,18 @@ pub async fn get_flow_v2_search(
             break;
         }
         last = Some(row.id);
+        // `limits-v1.md`: candidates are counted before policy filtering; a page still short after
+        // `authorized_scan_rows_max` candidates is `limit_exceeded`/`scan_budget`.
+        examined += 1;
+        if examined > crate::flow::collab::limits::AUTHORIZED_SCAN_ROWS_MAX {
+            return Err(ApiError::limit_exceeded(
+                "authorized scan budget exceeded before enough policy-visible rows were found",
+                "scan_budget",
+                Some(json!(crate::flow::collab::limits::AUTHORIZED_SCAN_ROWS_MAX)),
+                Some(json!(crate::flow::collab::limits::AUTHORIZED_SCAN_ROWS_MAX)),
+                None,
+            ));
+        }
         let view = match scope::object_view(&state.db, row.id, actor).await {
             Ok(v) => v,
             Err(err) if err.kind() == crate::error::ApiErrorKind::NotFound => continue,
@@ -1086,9 +1098,6 @@ pub async fn get_flow_v2_search(
         head = head.max(view.field("document_seq").as_i64().unwrap_or(0));
         indexed = indexed.max(view.field("projection_seq").as_i64().unwrap_or(0));
         items.push(json!({"object":{"id":row.id,"object_type":view.field("object_type"),"title":title,"lifecycle_status":view.field("lifecycle_status"),"project_id":view.field("project_id")},"matched_fields":fields,"snippets":{"title":escape_html(title),"plain_text":escape_html(&text.chars().take(300).collect::<String>())},"indexed_seq":view.field("projection_seq"),"head_seq":view.field("document_seq"),"projection_lag":view.field("projection_lag"),"stale":lag>0}));
-    }
-    if next.is_none() && scanned >= 10001 {
-        next = last.map(|id| id.to_string());
     }
     Ok(ApiResponse::success(
         json!({"items":items,"next_cursor":next,"index_frontier":{"indexed_seq":indexed,"head_seq":head,"lag":head-indexed,"stale":false}}),
