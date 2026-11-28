@@ -86,6 +86,8 @@ const MAX_PACKAGE_BYTES_PER_WORKSPACE: i64 = 256 * 1024 * 1024;
 
 /// Refuses an upload that would take the workspace over its package count (`409`) or its stored
 /// bytes (`413`). The workspace's uploads are serialised first, so two uploads cannot both pass.
+// The message names a URL template; its braces are literal text, not format arguments.
+#[allow(clippy::literal_string_with_formatting_args)]
 async fn enforce_quota(
     db: &impl sea_orm::ConnectionTrait,
     workspace_id: Uuid,

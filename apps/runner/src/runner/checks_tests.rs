@@ -1069,9 +1069,9 @@ fn a_remembered_pass_expires_after_sixty_seconds() {
     let start = std::time::Instant::now();
     assert!(cache.fresh(&key, start).is_none(), "nothing stored yet");
     cache.store(key.clone(), start, tmux);
-    assert_eq!(TMUX_PROBE_TTL, Duration::from_secs(60));
+    assert_eq!(TMUX_PROBE_TTL, Duration::from_mins(1));
     assert!(cache.fresh(&key, start + Duration::from_secs(59)).is_some());
-    assert!(cache.fresh(&key, start + Duration::from_secs(60)).is_none());
+    assert!(cache.fresh(&key, start + Duration::from_mins(1)).is_none());
     let other = (PathBuf::from("/y/tmux"), "sock".to_string(), "3.2".to_string());
     assert!(cache.fresh(&other, start).is_none(), "keyed by the executable");
 }

@@ -6113,6 +6113,7 @@ dependencies = [
  "axum",
  "clap",
  "lettre",
+ "parking_lot",
  "platform",
  "reqwest",
  "sea-orm",

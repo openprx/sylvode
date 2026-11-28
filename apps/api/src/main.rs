@@ -85,7 +85,7 @@ async fn main() -> anyhow::Result<()> {
     match config.site.served_assets_dir() {
         Some(dir) => tracing::info!(assets_dir = %dir.display(), "site assets are served at /site"),
         None => {
-            tracing::info!("site assets are not served (site.same_origin_trial and site.assets_dir are both required)")
+            tracing::info!("site assets are not served (site.same_origin_trial and site.assets_dir are both required)");
         }
     }
     let db = connect_db(&config.database_runtime()?).await?;

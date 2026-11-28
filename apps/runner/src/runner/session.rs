@@ -475,10 +475,7 @@ pub fn select_member(
         .filter(|(_, status)| status.healthy)
         .min_by_key(|(_, status)| status.load())
         .map(|(index, _)| index);
-    match shortest {
-        Some(index) => (index, SelectReason::Shortest),
-        None => (0, SelectReason::Fallback),
-    }
+    shortest.map_or((0, SelectReason::Fallback), |index| (index, SelectReason::Shortest))
 }
 
 /// One member of a bot's pool as the manager sees it.

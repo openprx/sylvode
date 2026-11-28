@@ -409,7 +409,7 @@ fn refuse(code: &'static str, reason: impl Into<String>) -> Verdict {
 }
 
 /// How long a passing tmux prerequisite check is trusted before tmux is asked its version again.
-pub(super) const TMUX_PROBE_TTL: Duration = Duration::from_secs(60);
+pub(super) const TMUX_PROBE_TTL: Duration = Duration::from_mins(1);
 
 /// What a passing check was made for: the tmux executable, the socket and the minimum version.
 pub(super) type ProbeKey = (PathBuf, String, String);
@@ -424,9 +424,8 @@ pub(super) struct TmuxProbeCache {
 impl TmuxProbeCache {
     /// The driver stored for `key`, when it passed less than [`TMUX_PROBE_TTL`] before `now`.
     pub(super) fn fresh(&self, key: &ProbeKey, now: Instant) -> Option<super::tmux::Tmux> {
-        let passed = self.passed.lock();
-        let (at, tmux) = passed.get(key)?;
-        (now.saturating_duration_since(*at) < TMUX_PROBE_TTL).then(|| tmux.clone())
+        let (at, tmux) = self.passed.lock().get(key).cloned()?;
+        (now.saturating_duration_since(at) < TMUX_PROBE_TTL).then_some(tmux)
     }
 
     pub(super) fn store(&self, key: ProbeKey, now: Instant, tmux: super::tmux::Tmux) {

@@ -266,8 +266,9 @@ pub async fn approve_in(
     write(tx, admin, installation_id, request, &prepared).await
 }
 
-/// Takes the share lock on the package's publisher key and refuses `installation_package_revoked`
-/// when the key is no longer active. This is the first lock of every writer that also locks the
+/// Takes the share lock on the package's publisher key.
+///
+/// Refuses `installation_package_revoked` when the key is no longer active. This is the first lock of every writer that also locks the
 /// installation (see [`store::lock_installation`] for the global order).
 ///
 /// # Errors
@@ -281,7 +282,9 @@ pub async fn lock_key(tx: &impl ConnectionTrait, stored: &open::StoredPackage) -
 }
 
 /// Refuses `installation_package_revoked` unless the package's key is active and the package still
-/// installable, holding a share lock on the key until the transaction ends. A writer that locks the
+/// installable.
+///
+/// Holds a share lock on the key until the transaction ends. A writer that locks the
 /// installation calls [`lock_key`] before locking it; the lock taken here is then already held.
 ///
 /// # Errors

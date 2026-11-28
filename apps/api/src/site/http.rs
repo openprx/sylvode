@@ -362,7 +362,10 @@ impl Windows {
     pub(crate) fn hit(&self, bucket: Bucket, key: String, limit: u32) -> Result<(), u64> {
         let length = bucket.window();
         let now = Instant::now();
-        let mut table = self.tables[bucket.index()].lock();
+        let Some(slot) = self.tables.get(bucket.index()) else {
+            return Ok(());
+        };
+        let mut table = slot.lock();
         table.expire(now, length);
         if let Some(entry) = table.windows.get_mut(&key) {
             if entry.hits >= limit {

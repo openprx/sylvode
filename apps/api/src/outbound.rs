@@ -753,13 +753,9 @@ impl DeliveryPool {
         };
         let permit = self.acquire(&url).await?;
         self.counters.requests.fetch_add(1, Ordering::Relaxed);
-        let response = build(client, url)
-            .send()
-            .await
-            .map_err(|error| match refusal_in(&error) {
-                Some(refusal) => PoolError::Refused(refusal),
-                None => PoolError::Transport(error.without_url()),
-            })?;
+        let response = build(client, url).send().await.map_err(|error| {
+            refusal_in(&error).map_or_else(|| PoolError::Transport(error.without_url()), PoolError::Refused)
+        })?;
         Ok(PooledResponse { response, permit })
     }
 

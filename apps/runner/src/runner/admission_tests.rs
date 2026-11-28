@@ -87,7 +87,7 @@ fn answering(mut rx: mpsc::Receiver<Cmd>) -> tokio::task::JoinHandle<()> {
     })
 }
 
-async fn manager(max_queued: u32) -> (SessionManager, tempfile_dir::Dir) {
+fn manager(max_queued: u32) -> (SessionManager, tempfile_dir::Dir) {
     let dir = tempfile_dir::Dir::new();
     let config = Config::from_toml(&format!(
         "[server]\nlisten = \"127.0.0.1:0\"\n[security]\nallow_unsigned = true\n\
@@ -234,7 +234,7 @@ async fn an_ended_worker_is_closed_not_back_pressure() {
 
 #[tokio::test]
 async fn the_manager_applies_the_configured_cap_and_answer_time() {
-    let (manager, _dir) = manager(1).await;
+    let (manager, _dir) = manager(1);
     let s = slot("AAA");
     let (handle, _rx, _status) = stalled(8);
     manager.install(&s, handle);
@@ -248,7 +248,7 @@ async fn the_manager_applies_the_configured_cap_and_answer_time() {
 
 #[tokio::test]
 async fn a_full_channel_drops_a_hook_and_other_sessions_still_get_theirs() {
-    let (manager, _dir) = manager(0).await;
+    let (manager, _dir) = manager(0);
     let (a, b) = (slot("AAA"), slot("BBB"));
     let (handle_a, mut rx_a, _status_a) = stalled(1);
     let (handle_b, mut rx_b, _status_b) = stalled(8);

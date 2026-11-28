@@ -264,7 +264,10 @@ pub async fn process_pending_tasks(state: &AppState, concurrency: usize, config:
             deliverer.concurrency,
             move |task| {
                 let state = state.clone();
-                async move { Ok(settle_task(&state, &task, deliverer, picked_at).await) }
+                async move {
+                    settle_task(&state, &task, deliverer, picked_at).await;
+                    Ok(())
+                }
             },
         )
         .await
@@ -1043,33 +1046,34 @@ mod tests {
         }
     }
 
+    /// Settles every task but the second, whose settlement fails and is only logged.
+    fn settle_all_but_the_second(done: &parking_lot::Mutex<Vec<u128>>, task: &AiTaskDispatchRow) {
+        let sequence = task.id.as_u128();
+        let settled = if sequence == 2 {
+            Err(anyhow::anyhow!("the settlement failed"))
+        } else {
+            done.lock().push(sequence);
+            Ok(())
+        };
+        super::log_unsettled(task, settled);
+    }
+
     /// One task that cannot be settled never stops the others, at one lane and at several.
     #[tokio::test]
     async fn one_failing_delivery_does_not_stop_the_rest() {
         for concurrency in [1_usize, 4] {
-            let done = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let done = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
             let tasks: Vec<AiTaskDispatchRow> = (1..=6).map(dispatch_row).collect();
             let outcome = crate::lanes::run_lanes(tasks, |task| task.ai_participant_id, concurrency, {
                 let done = done.clone();
                 move |task| {
-                    let done = done.clone();
-                    async move {
-                        let sequence = task.id.as_u128();
-                        let settled = if sequence == 2 {
-                            Err(anyhow::anyhow!("the settlement failed"))
-                        } else {
-                            done.lock()
-                                .map(|mut done| done.push(sequence))
-                                .map_err(|_| anyhow::anyhow!("poisoned"))
-                        };
-                        super::log_unsettled(&task, settled);
-                        Ok(())
-                    }
+                    settle_all_but_the_second(&done, &task);
+                    std::future::ready(Ok(()))
                 }
             })
             .await;
             assert!(outcome.is_ok(), "concurrency {concurrency}");
-            let mut done = done.lock().expect("done").clone();
+            let mut done = done.lock().clone();
             done.sort_unstable();
             assert_eq!(
                 done,
@@ -2049,38 +2053,39 @@ mod delivery_transport_tests {
         }
     }
 
+    /// Answers each request read from one connection and records its head.
+    async fn answer_connection(mut socket: tokio::net::TcpStream, heads: Arc<parking_lot::Mutex<Vec<String>>>) {
+        let mut buffer = vec![0_u8; 8192];
+        while let Ok(read) = socket.read(&mut buffer).await {
+            if read == 0 {
+                return;
+            }
+            let request = String::from_utf8_lossy(buffer.get(..read).unwrap_or_default()).to_lowercase();
+            heads.lock().push(request);
+            let reply = b"HTTP/1.1 200 OK\r\nContent-Length: 15\r\n\r\n{\"status\":\"ok\"}";
+            if socket.write_all(reply).await.is_err() {
+                return;
+            }
+        }
+    }
+
     /// Answers every request on every connection with `{"status":"ok"}`; returns the port, the
     /// count of accepted connections and the request heads seen.
     async fn serve() -> (
         u16,
         Arc<std::sync::atomic::AtomicUsize>,
-        Arc<std::sync::Mutex<Vec<String>>>,
+        Arc<parking_lot::Mutex<Vec<String>>>,
     ) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let port = listener.local_addr().expect("addr").port();
         let accepted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let heads = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let heads = Arc::new(parking_lot::Mutex::new(Vec::new()));
         let (accepted_in, heads_in) = (accepted.clone(), heads.clone());
         tokio::spawn(async move {
-            while let Ok((mut socket, _)) = listener.accept().await {
+            while let Ok((socket, _)) = listener.accept().await {
                 accepted_in.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 let heads = heads_in.clone();
-                tokio::spawn(async move {
-                    let mut buffer = vec![0_u8; 8192];
-                    while let Ok(read) = socket.read(&mut buffer).await {
-                        if read == 0 {
-                            return;
-                        }
-                        let request = String::from_utf8_lossy(buffer.get(..read).unwrap_or_default()).to_lowercase();
-                        if let Ok(mut heads) = heads.lock() {
-                            heads.push(request);
-                        }
-                        let reply = b"HTTP/1.1 200 OK\r\nContent-Length: 15\r\n\r\n{\"status\":\"ok\"}";
-                        if socket.write_all(reply).await.is_err() {
-                            return;
-                        }
-                    }
-                });
+                tokio::spawn(answer_connection(socket, heads));
             }
         });
         (port, accepted, heads)
@@ -2098,7 +2103,7 @@ mod delivery_transport_tests {
             .await
             .expect("delivered");
         assert_eq!(response.status().as_u16(), 200);
-        let request = heads.lock().expect("heads").first().cloned().expect("one request");
+        let request = heads.lock().first().cloned().expect("one request");
         assert!(request.starts_with("post /hook http/1.1"), "{request}");
         assert!(request.contains("sha256="), "the body is signed");
         let unlisted = DeliveryPool::new(AddressPolicy::new("", false), settings()).expect("pool");
