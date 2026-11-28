@@ -58,6 +58,13 @@ export const sitesApi = {
 	bindings(id: string): Promise<ApiResult<{ items: SiteBinding[] }>> {
 		return apiClient.get<{ items: SiteBinding[] }>(`/api/v1/sites/${enc(id)}/bindings`);
 	},
+	createBinding(
+		id: string,
+		key: string,
+		body: { form_id: string; projection: BindingProjection }
+	): Promise<ApiResult<SiteBinding>> {
+		return apiClient.post<SiteBinding>(`/api/v1/sites/${enc(id)}/bindings/${enc(key)}`, body);
+	},
 	putBinding(
 		id: string,
 		key: string,

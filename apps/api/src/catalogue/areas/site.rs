@@ -30,6 +30,7 @@ pub static ENTRIES: &[Entry] = &[
     site("site.sessions.delete", Post, "/api/site/v1/{slug}/auth/logout", Write),
     // Console administration.
     bot("sites.bindings.read", Get, "/api/v1/sites/{id}/bindings", SITE_BY_ID, Read),
+    console("sites.bindings.create", Post, "/api/v1/sites/{id}/bindings/{key}", SITE_BY_ID, Admin),
     console("sites.bindings.delete", Delete, "/api/v1/sites/{id}/bindings/{key}", SITE_BY_ID, Destructive),
     console("sites.bindings.update", Put, "/api/v1/sites/{id}/bindings/{key}", SITE_BY_ID, Admin),
     bot("sites.pages.create", Post, "/api/v1/sites/{id}/pages", SITE_BY_ID, Write),

@@ -236,14 +236,15 @@ pub async fn installations_of_sites(
         .collect())
 }
 
-/// The site that holds the pages of an installation (`installations.site_id`).
+/// The site that holds the pages of an installation (`installations.site_id`). A revoked installation
+/// has none, like in the site list ([`installations_of_sites`]).
 pub async fn site_of_installation(db: &impl ConnectionTrait, installation_id: Uuid) -> Result<Option<Uuid>, ApiError> {
     #[derive(FromQueryResult)]
     struct Row {
         site_id: Uuid,
     }
     Ok(Row::find_by_statement(statement(
-        "SELECT site_id FROM installations WHERE id = $1 AND site_id IS NOT NULL",
+        "SELECT site_id FROM installations WHERE id = $1 AND site_id IS NOT NULL AND status <> 'revoked'",
         vec![installation_id.into()],
     ))
     .one(db)
@@ -290,6 +291,15 @@ pub async fn update_settings(
 /// stored at its scope, which nothing else can reference. `false` (nothing deleted) when the site is
 /// published, so a publish that races the request is never deleted.
 pub async fn delete_site(db: &impl ConnectionTrait, id: Uuid) -> Result<bool, ApiError> {
+    // Lock order: an upgrade approval takes publisher key -> installation -> site (its page writes lock
+    // the site row). Deleting the site first would take site -> installation (`ON DELETE SET NULL` updates
+    // the linked installation) and could deadlock against it, so lock the linked installation rows first.
+    // The key lock is not needed here: the delete writes no installation state besides the link.
+    db.execute(statement(
+        "SELECT id FROM installations WHERE site_id = $1 ORDER BY id FOR UPDATE",
+        vec![id.into()],
+    ))
+    .await?;
     let deleted = db
         .execute(statement(
             "DELETE FROM sites WHERE id = $1 AND status <> 'published'",
@@ -782,7 +792,8 @@ pub async fn load_binding(db: &impl ConnectionTrait, site_id: Uuid, key: &str) -
     .await?)
 }
 
-pub async fn upsert_binding(
+/// Creates a binding; `None` when the site already has one under this key.
+pub async fn insert_binding(
     db: &impl ConnectionTrait,
     site_id: Uuid,
     key: &str,
@@ -791,7 +802,24 @@ pub async fn upsert_binding(
 ) -> Result<Option<BindingRow>, ApiError> {
     Ok(BindingRow::find_by_statement(statement(
         "INSERT INTO site_bindings (site_id, binding_key, form_id, projection) VALUES ($1, $2, $3, $4) \
-         ON CONFLICT (site_id, binding_key) DO UPDATE SET form_id = EXCLUDED.form_id, projection = EXCLUDED.projection \
+         ON CONFLICT (site_id, binding_key) DO NOTHING \
+         RETURNING site_id, binding_key, form_id, projection",
+        vec![site_id.into(), key.into(), form_id.into(), projection.clone().into()],
+    ))
+    .one(db)
+    .await?)
+}
+
+/// Replaces an existing binding; `None` when the site has none under this key.
+pub async fn replace_binding(
+    db: &impl ConnectionTrait,
+    site_id: Uuid,
+    key: &str,
+    form_id: Uuid,
+    projection: &Value,
+) -> Result<Option<BindingRow>, ApiError> {
+    Ok(BindingRow::find_by_statement(statement(
+        "UPDATE site_bindings SET form_id = $3, projection = $4 WHERE site_id = $1 AND binding_key = $2 \
          RETURNING site_id, binding_key, form_id, projection",
         vec![site_id.into(), key.into(), form_id.into(), projection.clone().into()],
     ))
