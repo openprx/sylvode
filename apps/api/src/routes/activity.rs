@@ -90,9 +90,9 @@ pub async fn get_workspace_activities(
 
     // Base condition: activities for workspace, projects in workspace, or issues in projects
     where_clauses.push(
-        "(a.resource_type = 'workspace' AND a.resource_id = $1) OR \
+        "((a.resource_type = 'workspace' AND a.resource_id = $1) OR \
          (a.resource_type = 'project' AND a.resource_id IN (SELECT id FROM projects WHERE workspace_id = $1)) OR \
-         (a.resource_type = 'issue' AND a.resource_id IN (SELECT wi.id FROM work_items wi INNER JOIN projects p ON wi.project_id = p.id WHERE p.workspace_id = $1))".to_string()
+         (a.resource_type = 'issue' AND a.resource_id IN (SELECT wi.id FROM work_items wi INNER JOIN projects p ON wi.project_id = p.id WHERE p.workspace_id = $1)))".to_string()
     );
 
     if let Some(resource_type) = query.resource_type {
@@ -197,8 +197,8 @@ pub async fn get_project_activities(
 
     // Build query
     let mut where_clauses = vec![
-        "(a.resource_type = 'project' AND a.resource_id = $1) OR \
-         (a.resource_type = 'issue' AND a.resource_id IN (SELECT id FROM work_items WHERE project_id = $1))"
+        "((a.resource_type = 'project' AND a.resource_id = $1) OR \
+         (a.resource_type = 'issue' AND a.resource_id IN (SELECT id FROM work_items WHERE project_id = $1)))"
             .to_string(),
     ];
     let mut values: Vec<sea_orm::Value> = vec![project_id.into()];
