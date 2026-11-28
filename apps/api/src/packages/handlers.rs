@@ -97,7 +97,7 @@ async fn enforce_quota(
     if usage.packages >= MAX_PACKAGES_PER_WORKSPACE {
         return Err(ApiError::conflict_coded(
             "package_quota_exceeded",
-            "this workspace stores the most packages it may; delete an unused package with DELETE /api/v1/workspaces/{workspace_id}/packages/{digest}",
+            "this workspace stores the most packages it may; delete an unused package with the package delete route of the workspace",
             Some(json!({ "limit": MAX_PACKAGES_PER_WORKSPACE })),
         ));
     }
