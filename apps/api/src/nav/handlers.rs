@@ -170,7 +170,7 @@ async fn menu(
 ) -> Result<resolve::Resolved, ApiError> {
     let role = member(state, who, at.workspace_id).await?;
     let (doc, version, customised) = effective_doc(state, &at, project_type.as_deref()).await?;
-    let refs = refs::load(&state.db, &doc).await?;
+    let refs = refs::load(&state.db, at.workspace_id, &doc).await?;
     let visible = visible_ids(state, who, &role, &at, &doc, &refs).await?;
     let user = who.user_id()?;
     let stored_prefs = match user {
@@ -244,7 +244,7 @@ async fn config_body(state: &AppState, at: &Where, project_type: Option<&str>) -
     match store::load_config(&state.db, at.workspace_id, at.project_id).await? {
         Some(row) => {
             let doc: NavDoc = serde_json::from_value(row.doc).map_err(|_| ApiError::internal())?;
-            let refs = refs::load(&state.db, &doc).await?;
+            let refs = refs::load(&state.db, at.workspace_id, &doc).await?;
             let broken = resolve::broken(&doc, at, &refs);
             Ok(ConfigBody {
                 doc,
@@ -354,7 +354,7 @@ async fn put_config(
 ) -> Result<ConfigBody, ApiError> {
     let writer = require_config_write(state, who, scope, at.scope).await?;
     let doc = doc::parse(&req.doc, at.scope)?;
-    let refs = refs::load(&state.db, &doc).await?;
+    let refs = refs::load(&state.db, at.workspace_id, &doc).await?;
     refs::validate_targets(&doc, &at, &refs)?;
     if writer.bot.is_some() {
         let (stored, _, _) = effective_doc(state, &at, project_type.as_deref()).await?;

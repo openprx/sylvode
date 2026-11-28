@@ -473,7 +473,7 @@ const ACCOUNTED: &[(&str, &str, Account)] = &[
         "UpdateFormRequest",
         "detail_layout",
         Exempt(
-            "in-project: relation targets are found by form key within the form's own workspace and project (forms/reader_context.rs node)",
+            "stored as-is and never resolved as an object: its only read is a string match in forms/schema_insights.rs:233",
         ),
     ),
     (
@@ -505,9 +505,7 @@ const ACCOUNTED: &[(&str, &str, Account)] = &[
     (
         "PageRequest",
         "nav",
-        Exempt(
-            "in-project: nav targets are located within the page's own workspace and project, and filtered by the viewer's visible set (nav/resolve.rs, nav/handlers.rs visible_ids)",
-        ),
+        Exempt("a localised label checked by check_text (site/admin.rs), not a nav target"),
     ),
     (
         "UpdateSiteRequest",
@@ -572,7 +570,7 @@ const ACCOUNTED: &[(&str, &str, Account)] = &[
         "CreateFormRequest",
         "detail_layout",
         Exempt(
-            "in-project: relation targets are found by form key within the form's own workspace and project (forms/reader_context.rs node)",
+            "stored as-is and never resolved as an object: its only read is a string match in forms/schema_insights.rs:233",
         ),
     ),
     (
