@@ -320,6 +320,7 @@ async fn ensure_plugin_cover(
     target: Secondary,
 ) -> Result<(), ApiError> {
     #[derive(FromQueryResult)]
+    #[allow(clippy::struct_field_names)] // column names of the query
     struct FormRow {
         workspace_id: Uuid,
         project_id: Option<Uuid>,

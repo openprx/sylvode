@@ -278,9 +278,10 @@ pub async fn handle_internal(
     let claims = internal_claims(state, &call).await?;
     let mut request = Request::from_parts(parts, body);
     request.extensions_mut().insert(claims);
-    let installation = match call.principal.as_ref() {
-        Principal::Plugin { installation, .. } | Principal::Installation { installation, .. } => installation,
-        _ => return Err(not_exposed()),
+    let (Principal::Plugin { installation, .. } | Principal::Installation { installation, .. }) =
+        call.principal.as_ref()
+    else {
+        return Err(not_exposed());
     };
     let cover = PluginCover::new(installation, entry.capability());
     Ok(COVER.scope(cover, scope(call.marker(), next.run(request))).await)
