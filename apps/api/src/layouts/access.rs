@@ -182,21 +182,39 @@ fn reads_as_not_found(error: ApiError) -> ApiError {
 }
 
 /// Read access to a scope: a member of its workspace; a bot limited to projects only in the
-/// scope's project, and never at workspace scope.
+/// scope's project, and never at workspace scope. A form scope is as private as the form: the
+/// caller's role must hold `form.view` on it, else the scope reads as `not_found`.
 pub async fn require_read(state: &AppState, who: &Principal, scope: &Scope) -> Result<(), ApiError> {
-    member(state, who, scope.workspace_id).await?;
-    let Some(bot_id) = who.bot_id() else {
-        return Ok(());
-    };
-    match scope.project_id {
-        Some(project_id) => ensure_bot_level(&state.db, Some(bot_id), Secondary::Project(project_id), Level::Read)
-            .await
-            .map_err(reads_as_not_found),
-        None => match readable_projects(&state.db, bot_id).await? {
-            ProjectFilter::All => Ok(()),
-            ProjectFilter::Only(_) => Err(scope_not_found()),
-        },
+    let role = member(state, who, scope.workspace_id).await?;
+    if let Some(bot_id) = who.bot_id() {
+        match scope.project_id {
+            Some(project_id) => ensure_bot_level(&state.db, Some(bot_id), Secondary::Project(project_id), Level::Read)
+                .await
+                .map_err(reads_as_not_found)?,
+            None => match readable_projects(&state.db, bot_id).await? {
+                ProjectFilter::All => {}
+                ProjectFilter::Only(_) => return Err(scope_not_found()),
+            },
+        }
     }
+    if scope.kind == ScopeKind::Form {
+        require_form_view(state, &role, scope.id).await?;
+    }
+    Ok(())
+}
+
+/// Fails closed with `not_found` unless `role` holds `form.view` on the form.
+pub async fn require_form_view(state: &AppState, role: &str, form_id: Uuid) -> Result<(), ApiError> {
+    if form_action_allowed(state, form_id, role, "form.view").await? {
+        Ok(())
+    } else {
+        Err(scope_not_found())
+    }
+}
+
+/// The caller's workspace role, for the checks that need it beyond `require_read`.
+pub async fn caller_role(state: &AppState, who: &Principal, workspace_id: Uuid) -> Result<String, ApiError> {
+    member(state, who, workspace_id).await
 }
 
 /// Write access to a scope (contract C3 section 3): workspace scope for owners and admins;

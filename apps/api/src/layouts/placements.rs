@@ -17,8 +17,8 @@ use uuid::Uuid;
 
 use super::{
     access::{
-        Principal, Scope, ScopeKind, require_person, require_read, require_write, resolve_project, resolve_scope,
-        resolve_stored_scope,
+        Principal, Scope, ScopeKind, caller_role, require_form_view, require_person, require_read, require_write,
+        resolve_project, resolve_scope, resolve_stored_scope,
     },
     handlers::{invalid, validate_value},
     store::{self, PlacementChange, PrefsChange},
@@ -319,6 +319,11 @@ pub async fn resolve_slot(
     let project = resolve_project(&state.db, query.project_id).await?;
     require_read(&state, &who, &project).await?;
     bind_context(&state.db, query.project_id, query.form_id, query.record_id).await?;
+    // Form-scope placements of a form the caller may not view are not resolved for them.
+    if let Some(form_id) = query.form_id {
+        let role = caller_role(&state, &who, project.workspace_id).await?;
+        require_form_view(&state, &role, form_id).await?;
+    }
     for (member, given) in [
         ("form_id", query.form_id.is_some()),
         ("record_id", query.record_id.is_some()),
