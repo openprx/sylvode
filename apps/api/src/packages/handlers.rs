@@ -138,6 +138,8 @@ pub(crate) struct UploadInfo {
     pub(crate) size_bytes: usize,
     pub(crate) file_count: usize,
     pub(crate) summary: Value,
+    /// `sv.min` of the manifest: the lowest Sylvode version the package runs on.
+    pub(crate) sv_min: String,
 }
 
 impl PreparedUpload {
@@ -165,6 +167,7 @@ impl PreparedUpload {
             size_bytes: self.bytes.len(),
             file_count: package.files.len(),
             summary: package.manifest_value.get("summary").cloned().unwrap_or(Value::Null),
+            sv_min: package.manifest.sv.min.clone(),
         }
     }
 

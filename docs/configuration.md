@@ -237,14 +237,14 @@ The package store and the public plugin index. Every key is optional.
 | `builtin_dir` | string | none | Directory of `*.svpkg` built-in packages, verified and stored at start. A package that does not verify stops the start. |
 | `index_sources` | array of tables | the official source (`id = "official"`, the raw `index.json` of the `openprx/sylvode-plugins` repository) | Public plugin index sources, each `{ id, url }`: `id` matches `^[a-z][a-z0-9-]{0,31}$` and is unique, `url` is an `https` URL of at most 512 characters without credentials or fragment. At most 8 entries. `[]` turns the public index off. Only the operator sets sources: a workspace owner can hide one for the workspace and cannot add one. |
 | `index_refresh_secs` | integer | `3600` | Seconds between two refreshes of a source, 300 to 86400. A source whose last refresh failed is retried after at most 600 s. |
-| `index_download_hosts` | array of strings | `[]` | Exact DNS host names a package file may be downloaded from. Empty allows any public `https` host. At most 32 entries. |
+| `index_download_hosts` | array of strings | `[]` | Exact DNS host names a package file may be downloaded from; every redirect hop is checked against the list too (a release host that redirects to a CDN needs the CDN's host listed). Empty allows any public `https` host. At most 32 entries. |
 
 How a source is fetched: one `api` process at a time (a PostgreSQL advisory lock per source), through
 the address policy of [`[outbound]`](#outbound) (a private or loopback source needs `[outbound]` to
 allow it), over `https` only, with 5 s to connect and 15 s in total, no redirect, and at most 8 MiB of
 body counted on the bytes read. The document is validated before it replaces the cached copy; a failed
 fetch or an invalid document keeps the last good copy and records the error on the source's status.
-A key or version the index lists as revoked revokes the keys, packages and installations that were
+Members and bots see a source's URL without its query string and fragment; the fetch uses the full URL. A package download follows at most 3 redirects, each hop `https` on port 443 with a host name that passes the host list and the address policy, stops at the size the index declares and takes at most 60 s. A key or version the index lists as revoked revokes the keys, packages and installations that were
 taken from that source; a key or package that the index no longer lists causes no action and only a
 warning on the source.
 

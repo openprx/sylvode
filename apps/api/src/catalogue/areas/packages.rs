@@ -8,11 +8,12 @@
 //! a verified upload as a `package_upload` draft that a person approves (contract C3 section 4.4,
 //! LEAD-DECISIONS M11-UPLOAD); the handler also demands `write` and a bot of the whole workspace.
 //! The index read routes (`market/index`, contract M15) follow the same rule as the package reads; their
-//! image route is for a console session. Upload, delete and the publisher-key routes are behind the JWT middleware, which no bot token
+//! image route is for a console session, as are import, source refresh, hide and the event log (owner or admin,
+//! decided in the handlers). Upload, delete and the publisher-key routes are behind the JWT middleware, which no bot token
 //! passes.
 
 use crate::catalogue::types::dsl::{
-    Delete, Destructive, Entry, Get, Post, Read, Workspace, WorkspaceAdmin, Write, bot, console,
+    Delete, Destructive, Entry, Get, Post, Put, Read, Workspace, WorkspaceAdmin, Write, bot, console,
 };
 
 #[rustfmt::skip]
@@ -26,6 +27,10 @@ pub static ENTRIES: &[Entry] = &[
     bot("packages.index_plugins.read/list", Get, "/api/v1/workspaces/{workspace_id}/market/index/plugins", Workspace, Read),
     bot("packages.index_plugins.read", Get, "/api/v1/workspaces/{workspace_id}/market/index/plugins/{source}/{publisher}/{name}", Workspace, Read),
     console("packages.index_assets.read", Get, "/api/v1/workspaces/{workspace_id}/market/index/assets/{source}/{publisher}/{name}/{*asset_path}", Workspace, Read).no_plugin(),
+    console("packages.index_import.create", Post, "/api/v1/workspaces/{workspace_id}/market/index/import", WorkspaceAdmin, Write),
+    console("packages.index_sources.refresh", Post, "/api/v1/workspaces/{workspace_id}/market/index/sources/{source}/refresh", WorkspaceAdmin, Write),
+    console("packages.index_sources.update", Put, "/api/v1/workspaces/{workspace_id}/market/index/sources/{source}/hidden", WorkspaceAdmin, Write),
+    console("packages.index_events.read/list", Get, "/api/v1/workspaces/{workspace_id}/market/index/events", WorkspaceAdmin, Read),
     console("packages.publisher_keys.create", Post, "/api/v1/workspaces/{workspace_id}/publisher-keys", WorkspaceAdmin, Write),
     console("packages.publisher_keys.read", Get, "/api/v1/workspaces/{workspace_id}/publisher-keys", WorkspaceAdmin, Read),
     console("packages.publisher_keys.revoke", Post, "/api/v1/workspaces/{workspace_id}/publisher-keys/{key_id}/revoke", WorkspaceAdmin, Write),

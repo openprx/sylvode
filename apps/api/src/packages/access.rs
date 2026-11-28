@@ -57,6 +57,11 @@ impl Caller {
         }
     }
 
+    /// Whether the caller is the workspace owner, a person.
+    pub(super) fn is_owner(&self) -> bool {
+        !self.is_bot && self.role == "owner"
+    }
+
     /// The workspace owner, a person.
     pub(super) fn require_owner(&self) -> Result<(), ApiError> {
         if !self.is_bot && self.role == "owner" {

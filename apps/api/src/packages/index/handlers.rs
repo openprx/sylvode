@@ -41,7 +41,7 @@ const KINDS: [&str; 4] = ["form-template", "page-template", "app", "plugin"];
 /// Concurrent image fetches of the whole process.
 const IMAGE_FETCHES: usize = 4;
 
-const fn kind_name(kind: sv_index::Kind) -> &'static str {
+pub(super) const fn kind_name(kind: sv_index::Kind) -> &'static str {
     match kind {
         sv_index::Kind::FormTemplate => "form-template",
         sv_index::Kind::PageTemplate => "page-template",
@@ -50,7 +50,7 @@ const fn kind_name(kind: sv_index::Kind) -> &'static str {
     }
 }
 
-fn coded(status: i32, code: &'static str, message: &str) -> ApiError {
+pub(super) fn coded(status: i32, code: &'static str, message: &str) -> ApiError {
     ApiError::Coded {
         status,
         code,
@@ -59,7 +59,7 @@ fn coded(status: i32, code: &'static str, message: &str) -> ApiError {
     }
 }
 
-fn source_not_found() -> ApiError {
+pub(super) fn source_not_found() -> ApiError {
     coded(
         404,
         "index_source_not_found",
@@ -67,7 +67,7 @@ fn source_not_found() -> ApiError {
     )
 }
 
-fn plugin_not_found() -> ApiError {
+pub(super) fn plugin_not_found() -> ApiError {
     coded(404, "index_plugin_not_found", "the plugin is not in the cached index")
 }
 
@@ -84,7 +84,7 @@ async fn visible_sources(state: &AppState, workspace_id: Uuid) -> Result<Vec<Ind
 }
 
 /// The visible source `id`, or the refusal of an unknown or hidden one.
-async fn visible_source(state: &AppState, workspace_id: Uuid, id: &str) -> Result<IndexSource, ApiError> {
+pub(super) async fn visible_source(state: &AppState, workspace_id: Uuid, id: &str) -> Result<IndexSource, ApiError> {
     visible_sources(state, workspace_id)
         .await?
         .into_iter()
@@ -94,7 +94,7 @@ async fn visible_source(state: &AppState, workspace_id: Uuid, id: &str) -> Resul
 
 /// The Sylvode version a plugin's `sylvode` range is compared with: this build, without a
 /// pre-release tag (a range cannot name one).
-fn running_version() -> Option<Version> {
+pub(super) fn running_version() -> Option<Version> {
     static RUNNING: OnceLock<Option<Version>> = OnceLock::new();
     RUNNING
         .get_or_init(|| {
@@ -104,7 +104,7 @@ fn running_version() -> Option<Version> {
         .clone()
 }
 
-fn is_compatible(version: &VersionEntry) -> bool {
+pub(super) fn is_compatible(version: &VersionEntry) -> bool {
     let (Some(running), Ok(range)) = (running_version(), sv_index::parse_compat(&version.sylvode)) else {
         return false;
     };
@@ -145,6 +145,54 @@ fn status_of(meta: Option<&store::CacheMeta>, refresh_secs: u64) -> (bool, Optio
     )
 }
 
+/// A source URL as members and bots see it: without a query or fragment, which may carry a token
+/// the operator put there (the fetch uses the full URL).
+fn display_url(url: &str) -> String {
+    reqwest::Url::parse(url).map_or_else(
+        |_| String::new(),
+        |mut url| {
+            url.set_query(None);
+            url.set_fragment(None);
+            url.into()
+        },
+    )
+}
+
+/// The status object of one configured source.
+fn source_json(source: &IndexSource, hidden: bool, meta: Option<store::CacheMeta>, refresh_secs: u64) -> Value {
+    // A copy of another URL (the operator changed the source) is not this source's copy.
+    let meta = meta.filter(|meta| meta.url == source.url);
+    let (is_stale, fetched_at) = status_of(meta.as_ref(), refresh_secs);
+    json!({
+        "id": source.id,
+        "url": display_url(&source.url),
+        "hidden": hidden,
+        "fetched_at": fetched_at,
+        "checked_at": meta.as_ref().map(|meta| meta.checked_at),
+        "generated_at": meta.as_ref().and_then(|meta| meta.generated_at),
+        "stale": is_stale,
+        "error": meta.as_ref().and_then(|meta| meta.error.clone()),
+        "warnings": meta.as_ref().map_or(Value::Array(Vec::new()), |meta| meta.warnings.clone()),
+        "plugins": meta.as_ref().filter(|meta| meta.fetched_at.is_some()).map_or(0, |meta| meta.plugin_count),
+    })
+}
+
+/// The status of `source` for the workspace, read from the database now.
+pub(super) async fn source_status(
+    state: &AppState,
+    workspace_id: Uuid,
+    source: &IndexSource,
+) -> Result<Value, ApiError> {
+    let hidden = store::hidden_sources(&state.db, workspace_id).await?;
+    let meta = store::cache_meta(&state.db, &source.id).await?;
+    Ok(source_json(
+        source,
+        hidden.contains(&source.id),
+        meta,
+        crate::config::runtime().packages.index_refresh_secs,
+    ))
+}
+
 /// `GET /sources`: every configured source with its status, hidden ones included.
 pub async fn list_sources(
     State(state): State<AppState>,
@@ -158,21 +206,12 @@ pub async fn list_sources(
     let mut sources = Vec::with_capacity(config.index_sources.len());
     for source in &config.index_sources {
         let meta = store::cache_meta(&state.db, &source.id).await?;
-        // A copy of another URL (the operator changed the source) is not this source's copy.
-        let meta = meta.filter(|meta| meta.url == source.url);
-        let (is_stale, fetched_at) = status_of(meta.as_ref(), config.index_refresh_secs);
-        sources.push(json!({
-            "id": source.id,
-            "url": source.url,
-            "hidden": hidden.contains(&source.id),
-            "fetched_at": fetched_at,
-            "checked_at": meta.as_ref().map(|meta| meta.checked_at),
-            "generated_at": meta.as_ref().and_then(|meta| meta.generated_at),
-            "stale": is_stale,
-            "error": meta.as_ref().and_then(|meta| meta.error.clone()),
-            "warnings": meta.as_ref().map_or(Value::Array(Vec::new()), |meta| meta.warnings.clone()),
-            "plugins": meta.as_ref().filter(|meta| meta.fetched_at.is_some()).map_or(0, |meta| meta.plugin_count),
-        }));
+        sources.push(source_json(
+            source,
+            hidden.contains(&source.id),
+            meta,
+            config.index_refresh_secs,
+        ));
     }
     Ok(ApiResponse::success(sources))
 }
@@ -202,7 +241,7 @@ impl Listed<'_> {
     }
 }
 
-fn plugin_publisher(plugin_id: &str) -> &str {
+pub(super) fn plugin_publisher(plugin_id: &str) -> &str {
     plugin_id.split_once('/').map_or(plugin_id, |(publisher, _)| publisher)
 }
 
@@ -416,7 +455,7 @@ pub async fn get_plugin(
     if let Some(object) = body.as_object_mut() {
         object.insert("kind".into(), json!(kind_name(plugin.kind)));
         object.insert("source".into(), json!(source.id));
-        object.insert("source_url".into(), json!(source.url));
+        object.insert("source_url".into(), json!(display_url(&source.url)));
         object.insert(
             "publisher".into(),
             json!({

@@ -377,7 +377,7 @@ pub async fn disable_for_index_revoked(
         "UPDATE installations i SET status = 'disabled', disabled_reason = 'index_revoked', updated_at = now() \
          FROM installation_generations g JOIN packages p ON p.id = g.package_row_id \
          WHERE g.installation_id = i.id AND g.generation = i.active_generation AND i.status = 'active' \
-           AND p.origin ->> 'source' = $1 AND p.digest = ANY($2) \
+           AND p.origin ->> 'source' = $1 AND p.digest = ANY($2) AND p.workspace_id IS NOT NULL \
          RETURNING i.id, i.workspace_id, p.digest, p.package_key, p.version",
         vec![source_id.to_owned().into(), digests.to_vec().into()],
     ))

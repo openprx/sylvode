@@ -12,7 +12,7 @@ use uuid::Uuid;
 use crate::error::ApiError;
 
 const PACKAGE_COLUMNS: &str =
-    "id, digest, blob_digest, package_key, version, kind, manifest, files, custom_code, tier, created_at";
+    "id, digest, blob_digest, package_key, version, kind, manifest, files, custom_code, tier, origin, created_at";
 
 #[derive(Debug, Clone, FromQueryResult)]
 pub(super) struct PackageRow {
@@ -26,6 +26,8 @@ pub(super) struct PackageRow {
     pub(super) files: Value,
     pub(super) custom_code: bool,
     pub(super) tier: String,
+    /// Where the package came from, for a package imported from a public plugin index.
+    pub(super) origin: Option<Value>,
     pub(super) created_at: Timestamp,
 }
 
@@ -41,6 +43,9 @@ pub struct PackageSummary {
     pub publisher: Value,
     pub custom_code: bool,
     pub summary: Value,
+    /// `{source, plugin_id, publisher, name, version, digest, url, sha256, imported_by, imported_at}` of a
+    /// package imported from a public plugin index, else `null`.
+    pub origin: Option<Value>,
     pub created_at: Timestamp,
 }
 
@@ -56,6 +61,7 @@ impl From<&PackageRow> for PackageSummary {
             publisher: row.manifest.get("publisher").cloned().unwrap_or(Value::Null),
             custom_code: row.custom_code,
             summary: row.manifest.get("summary").cloned().unwrap_or(Value::Null),
+            origin: row.origin.clone(),
             created_at: row.created_at,
         }
     }
