@@ -250,7 +250,10 @@ pub async fn ensure_bot_level(
         default_project_level: String,
     }
     let Some(bot_id) = bot_id else {
-        return Ok(());
+        return match crate::extensions::current_cover() {
+            Some(cover) => ensure_plugin_cover(db, &cover, target).await,
+            None => Ok(()),
+        };
     };
     let row: Option<AccessRow> = one(
         db,
@@ -305,6 +308,68 @@ pub async fn ensure_bot_level(
             Ok(())
         }
         _ => Err(refuse()),
+    }
+}
+
+/// The plugin call's counterpart of the bot check in [`ensure_bot_level`]: the object must lie in the
+/// workspace and project the call's grants cover (a form selector: in that form). A personal-space
+/// Flow object, an object that does not exist and an object outside any project are refused.
+async fn ensure_plugin_cover(
+    db: &impl ConnectionTrait,
+    cover: &crate::extensions::PluginCover,
+    target: Secondary,
+) -> Result<(), ApiError> {
+    #[derive(FromQueryResult)]
+    struct FormRow {
+        workspace_id: Uuid,
+        project_id: Option<Uuid>,
+        form_id: Uuid,
+    }
+    let form = |row: Option<FormRow>| row.and_then(|row| Some((row.workspace_id, row.project_id?, Some(row.form_id))));
+    let resolved = match target {
+        Secondary::Project(id) => match project_target(
+            one(
+                db,
+                "SELECT workspace_id, id AS project_id FROM projects WHERE id = $1",
+                vec![id.into()],
+            )
+            .await?,
+        ) {
+            Target::Project {
+                workspace_id,
+                project_id,
+            } => Some((workspace_id, project_id, None)),
+            _ => None,
+        },
+        Secondary::Form(id) => form(
+            one(
+                db,
+                "SELECT workspace_id, project_id, id AS form_id FROM project_forms WHERE id = $1",
+                vec![id.into()],
+            )
+            .await?,
+        ),
+        Secondary::FormRecord(id) => form(
+            one(
+                db,
+                "SELECT f.workspace_id, f.project_id, f.id AS form_id FROM form_records r \
+                 JOIN project_forms f ON f.id = r.form_id WHERE r.id = $1",
+                vec![id.into()],
+            )
+            .await?,
+        ),
+        // The nil id owns no personal space: only project objects resolve.
+        Secondary::FlowObject(id) => match flow_object(db, &id.to_string(), Uuid::nil()).await? {
+            Target::Project {
+                workspace_id,
+                project_id,
+            } => Some((workspace_id, project_id, None)),
+            _ => None,
+        },
+    };
+    match resolved {
+        Some((workspace_id, project_id, form_id)) if cover.allows(workspace_id, project_id, form_id) => Ok(()),
+        _ => Err(ApiError::Forbidden(REFUSAL.to_string())),
     }
 }
 
@@ -384,6 +449,18 @@ pub async fn readable_projects(db: &DatabaseConnection, bot_id: Uuid) -> Result<
     .await
     .map_err(ApiError::internal_database_failure)?;
     Ok(ProjectFilter::Only(ids.into_iter().map(|row| row.id).collect()))
+}
+
+/// The projects a handler may show the caller of the request: a bot's readable projects, a plugin
+/// call's covered projects, and everything for a person. `bot_id` is `Some` for a bot caller.
+///
+/// # Errors
+/// A database failure.
+pub async fn caller_projects(db: &DatabaseConnection, bot_id: Option<Uuid>) -> Result<ProjectFilter, ApiError> {
+    match bot_id {
+        Some(bot_id) => readable_projects(db, bot_id).await,
+        None => Ok(crate::extensions::current_cover().map_or(ProjectFilter::All, |cover| cover.projects())),
+    }
 }
 
 /// The largest body read to find the project of a request that names it there.

@@ -10,7 +10,10 @@ use uuid::Uuid;
 
 use crate::{
     error::ApiError,
-    middleware::{bot_auth::BotAuthContext, scoped_bot::readable_projects},
+    middleware::{
+        bot_auth::BotAuthContext,
+        scoped_bot::{caller_projects, readable_projects},
+    },
     response::ApiResponse,
     services::issue_view::identifier,
 };
@@ -165,9 +168,11 @@ pub async fn search(
     let base_scope = match bot {
         Some(Extension(bot_ctx)) => SearchScope::for_bot(bot_ctx.workspace_id)
             .with_projects(readable_projects(&state.db, bot_ctx.bot_id).await?.ids()),
+        // A plugin call is limited to the projects its grants cover; a person is not.
         None => SearchScope::for_user(
             Uuid::parse_str(&claims.sub).map_err(|_| ApiError::Unauthorized("invalid user id".to_string()))?,
-        ),
+        )
+        .with_projects(caller_projects(&state.db, None).await?.ids()),
     };
     let scope = base_scope.with_project(query.project_id);
 

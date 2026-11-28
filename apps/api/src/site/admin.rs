@@ -648,7 +648,7 @@ async fn page_and_site(state: &AppState, who: &Who, page_id: Uuid) -> Result<(Pa
 /// decision and a bot's direct write.
 async fn drafted(tx: &sea_orm::DatabaseTransaction, who: &Who, site: &SiteRow) -> Result<bool, ApiError> {
     let status = store::site_status_for_share(tx, site.id).await?;
-    Ok(who.is_bot() && status == "published")
+    Ok(who.is_automated() && status == "published")
 }
 
 /// `PATCH /api/v1/site-pages/{page_id}`: absent members stay; `layout_spec` replaces the page's own

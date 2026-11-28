@@ -37,6 +37,12 @@ impl Who {
         self.bot.is_some()
     }
 
+    /// A bot, or a plugin call: the callers the published-site draft rules and the human-only
+    /// routes treat alike.
+    pub(crate) fn is_automated(&self) -> bool {
+        crate::extensions::automated(self.is_bot())
+    }
+
     /// The bot behind the request; `None` for a person.
     pub(crate) fn bot_id(&self) -> Option<Uuid> {
         self.bot.as_ref().map(|bot| bot.bot_id)
@@ -81,7 +87,16 @@ fn is_admin(role: &str) -> bool {
 
 async fn bot_level(state: &AppState, who: &Who, project_id: Uuid, level: Level) -> Result<(), ApiError> {
     let Some(bot) = who.bot.as_ref() else {
-        return Ok(());
+        // A plugin call is held to the project its grants cover; a person passes.
+        return ensure_bot_level(&state.db, None, Secondary::Project(project_id), level)
+            .await
+            .map_err(|error| {
+                if level == Level::Read {
+                    as_not_found(error)
+                } else {
+                    error
+                }
+            });
     };
     if level == Level::Write {
         ensure_bot_permission(bot, BotPermission::Write)?;
@@ -146,6 +161,8 @@ pub async fn page_writable_site(state: &AppState, who: &Who, site_id: Uuid) -> R
         bot_level(state, who, site.project_id, Level::Write).await?;
         return Ok(site);
     }
+    // A plugin call needs `write` in the project its grants cover, then the person's own role.
+    bot_level(state, who, site.project_id, Level::Write).await?;
     let role = member(state, who, site.workspace_id).await?;
     if is_admin(&role) {
         return Ok(site);
@@ -167,7 +184,7 @@ pub async fn page_writable_site(state: &AppState, who: &Who, site_id: Uuid) -> R
 
 /// Loads a site for a human-only administration route: workspace owners and admins.
 pub async fn admin_site(state: &AppState, who: &Who, site_id: Uuid) -> Result<SiteRow, ApiError> {
-    if who.is_bot() {
+    if who.is_automated() {
         return Err(ApiError::forbidden("this route is for people only"));
     }
     let site = store::load_site(&state.db, site_id).await?.ok_or_else(site_not_found)?;

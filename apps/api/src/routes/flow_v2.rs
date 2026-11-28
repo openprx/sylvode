@@ -117,11 +117,9 @@ pub async fn get_flow_v2_workspace_scope(
     let scope = scope::workspace_scope(&state.db, workspace).await?;
     let mut roots = scope::roots(&state.db, scope.id).await?;
     // A bot limited to some projects learns the roots of those projects only.
-    if let Some(bot_id) = bot_id {
-        let readable = crate::middleware::scoped_bot::readable_projects(&state.db, bot_id).await?;
-        if readable.ids().is_some() {
-            roots.retain(|root| root.project_id.is_some_and(|project| readable.allows(project)));
-        }
+    let readable = crate::middleware::scoped_bot::caller_projects(&state.db, bot_id).await?;
+    if readable.ids().is_some() {
+        roots.retain(|root| root.project_id.is_some_and(|project| readable.allows(project)));
     }
     Ok(ApiResponse::success(json!({"scope":scope,"roots":roots})))
 }

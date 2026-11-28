@@ -31,7 +31,7 @@ use crate::{
         access::{Principal, Scope, ScopeKind, member, require_read, resolve_project, resolve_scope},
         apply::draft_slot,
     },
-    middleware::{bot_auth::BotAuthContext, scoped_bot::readable_projects},
+    middleware::{bot_auth::BotAuthContext, scoped_bot::caller_projects},
     response::{ApiResponse, PageQuery, PaginatedData},
     routes::form::{find_form, require_form_action},
     site::drafts::PageTarget,
@@ -517,10 +517,7 @@ pub async fn list_drafts(
         }
     };
     let role = member(&state, &who, workspace_id).await?;
-    let readable = match who.bot_id() {
-        Some(bot_id) => readable_projects(&state.db, bot_id).await?.ids(),
-        None => None,
-    };
+    let readable = caller_projects(&state.db, who.bot_id()).await?.ids();
     let paging = PageQuery {
         page: query.page,
         per_page: query.per_page,

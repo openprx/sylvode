@@ -13,7 +13,7 @@ use crate::{
     forms::permissions::form_action_allowed,
     middleware::{
         bot_auth::{BotAuthContext, BotPermission, ensure_bot_permission, require_workspace_access_from_auth},
-        scoped_bot::{Level, ProjectFilter, Secondary, ensure_bot_level, readable_projects},
+        scoped_bot::{Level, ProjectFilter, Secondary, caller_projects, ensure_bot_level},
     },
 };
 
@@ -186,16 +186,15 @@ fn reads_as_not_found(error: ApiError) -> ApiError {
 /// caller's role must hold `form.view` on it, else the scope reads as `not_found`.
 pub async fn require_read(state: &AppState, who: &Principal, scope: &Scope) -> Result<(), ApiError> {
     let role = member(state, who, scope.workspace_id).await?;
-    if let Some(bot_id) = who.bot_id() {
-        match scope.project_id {
-            Some(project_id) => ensure_bot_level(&state.db, Some(bot_id), Secondary::Project(project_id), Level::Read)
-                .await
-                .map_err(reads_as_not_found)?,
-            None => match readable_projects(&state.db, bot_id).await? {
-                ProjectFilter::All => {}
-                ProjectFilter::Only(_) => return Err(scope_not_found()),
-            },
-        }
+    // A bot, or a plugin call (`who.bot_id()` is `None` for it): limited to its project.
+    match scope.project_id {
+        Some(project_id) => ensure_bot_level(&state.db, who.bot_id(), Secondary::Project(project_id), Level::Read)
+            .await
+            .map_err(reads_as_not_found)?,
+        None => match caller_projects(&state.db, who.bot_id()).await? {
+            ProjectFilter::All => {}
+            ProjectFilter::Only(_) => return Err(scope_not_found()),
+        },
     }
     if scope.kind == ScopeKind::Form {
         require_form_view(state, &role, scope.id).await?;
@@ -232,6 +231,16 @@ pub async fn require_write(state: &AppState, who: &Principal, scope: &Scope) -> 
         return ensure_bot_level(&state.db, Some(bot_id), Secondary::Project(project_id), Level::Write)
             .await
             .map_err(reads_as_not_found);
+    }
+    // A plugin call writes only inside the project its grants cover, and then as the user's role
+    // allows.
+    if crate::extensions::current().is_some() {
+        let Some(project_id) = scope.project_id else {
+            return Err(ApiError::forbidden("a plugin cannot change workspace layouts"));
+        };
+        ensure_bot_level(&state.db, None, Secondary::Project(project_id), Level::Write)
+            .await
+            .map_err(reads_as_not_found)?;
     }
     match scope.kind {
         ScopeKind::Workspace => {
