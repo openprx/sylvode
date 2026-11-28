@@ -6,6 +6,7 @@ pub mod endpoints;
 pub mod event_redaction;
 pub mod job_context;
 pub mod native_create;
+pub mod native_update;
 pub mod permissions;
 pub mod projections;
 pub mod read_policy;
