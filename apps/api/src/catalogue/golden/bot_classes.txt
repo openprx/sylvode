@@ -98,7 +98,7 @@ GET /api/v1/forms/{form_id}/schema-summary Project Table("project_forms","form_i
 GET /api/v1/forms/{form_id}/schema-versions Project Table("project_forms","form_id") false
 GET /api/v1/forms/{form_id}/schema-versions/{version} Project Table("project_forms","form_id") false
 GET /api/v1/forms/{form_id}/views Project Table("project_forms","form_id") false
-GET /api/v1/governance/config NoProject - false
+GET /api/v1/governance/config Project Query("project_id") false
 GET /api/v1/impact-reviews Refused - false
 GET /api/v1/impact-reviews/{id}/participants Project Table("impact_reviews","id") false
 GET /api/v1/inbound-sources/{id} Admin - false

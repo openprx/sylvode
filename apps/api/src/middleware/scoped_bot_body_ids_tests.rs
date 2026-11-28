@@ -23,8 +23,10 @@ use crate::catalogue::{Find, bot_routes};
 enum Account {
     /// Not an object of another project: the reason says why.
     Exempt(&'static str),
-    /// Checked through `ensure_bot_level`; the file (relative to `src/`) must call it.
-    Checked(&'static str),
+    /// Checked through `ensure_bot_level`: `(file relative to src/, function, proof)`. The function's
+    /// body must call the helper (or a thin wrapper listed in `CHECK_CALLS`) and `proof` names the
+    /// test that replays the attack through the real handler and expects the refusal.
+    Checked(&'static str, &'static str, &'static str),
     /// A scope-native handler (the named function calls `user()`, which refuses bot credentials).
     ScopeNative(&'static str),
     /// Not closed by this change: the field names something the handler may not confine to the
@@ -32,6 +34,21 @@ enum Account {
     Open(&'static str),
 }
 use Account::{Checked, Exempt, Open, ScopeNative};
+
+/// Calls that hold a scoped bot to its project level: the helper and the thin wrappers around it.
+const CHECK_CALLS: &[&str] = &[
+    "ensure_bot_level(",
+    "ensure_actor_level(",
+    "ensure_relation_end(",
+    "require_read(",
+    "require_write(",
+];
+
+/// Why a `Value` field is listed as open: its content is stored or interpreted by code that has not
+/// been read for object ids it might resolve (a form schema's relation targets, a layout's bindings).
+/// Follow-up of audit item 2; each entry closes by reading that code, then becomes `Exempt` or `Checked`.
+const UNREAD_VALUE: &str =
+    "an untyped JSON value: the code that interprets it has not been read for ids it resolves (audit re-check item 2)";
 
 /// `(struct name, field)`: the id fields of request bodies and command payloads that name something
 /// beyond the route's resolved target.
@@ -47,15 +64,39 @@ const ACCOUNTED: &[(&str, &str, Account)] = &[
         "preview_id",
         Exempt("the route's resolved target (Find::Conversion): the preview's source object"),
     ),
-    ("CreateReferenceInput", "target_id", Checked("flow/bridge.rs")),
+    (
+        "CreateReferenceInput",
+        "target_id",
+        Checked(
+            "flow/bridge.rs",
+            "create_reference",
+            "a_reference_target_in_another_project_is_refused",
+        ),
+    ),
     // Flow commands (flow/command.rs, move_object.rs, relations.rs).
-    ("MoveObjectPayload", "target_object_id", Checked("flow/move_object.rs")),
+    (
+        "MoveObjectPayload",
+        "target_object_id",
+        Checked(
+            "flow/move_object.rs",
+            "execute_on",
+            "a_move_destination_needs_write_in_its_project",
+        ),
+    ),
     (
         "MoveObjectPayload",
         "after_id",
         Exempt("a sibling entry of the destination navigator, which is checked"),
     ),
-    ("LinkPayload", "target_object_id", Checked("flow/relations.rs")),
+    (
+        "LinkPayload",
+        "target_object_id",
+        Checked(
+            "flow/relations.rs",
+            "ensure_relation_end",
+            "a_relation_to_a_page_of_another_project_is_refused",
+        ),
+    ),
     (
         "UnlinkPayload",
         "relation_id",
@@ -73,7 +114,15 @@ const ACCOUNTED: &[(&str, &str, Account)] = &[
             "a pointer stored in the page; reading the child goes through the object routes, which the middleware judges",
         ),
     ),
-    ("BodyAssetCopy", "source_object_id", Checked("routes/flow_v2.rs")),
+    (
+        "BodyAssetCopy",
+        "source_object_id",
+        Checked(
+            "routes/flow_v2.rs",
+            "post_flow_v2_body_asset_copy",
+            "an_asset_copy_source_in_another_project_is_refused",
+        ),
+    ),
     (
         "BodyAssetCopy",
         "asset_id",
@@ -222,33 +271,306 @@ const ACCOUNTED: &[(&str, &str, Account)] = &[
     (
         "CreateProposalRequest",
         "template_id",
-        Open(
-            "a template belongs to a project and its text is copied into the proposal; the handler checks project membership of the account (is_project_member), not the bot's project level; the route is class Own",
+        Checked(
+            "routes/proposal.rs",
+            "create_proposal",
+            "a_proposal_template_of_an_unreadable_project_is_refused",
         ),
     ),
     (
         "CreateProposalRequest",
         "workspace_id",
-        Open(
-            "the workspace of the proposal; proposals are not project objects, handled by the proposal actor context, not verified here",
+        Exempt(
+            "resolve_new_proposal_workspace accepts only a workspace the caller is a member of; a bot is a member of its own workspace only (audit re-check)",
         ),
     ),
     (
         "LinkIssueRequest",
         "issue_id",
-        Open("audit F7: a bot that authored an approved proposal can link an issue of any project of the workspace"),
+        Checked(
+            "routes/proposal.rs",
+            "link_issue_to_proposal",
+            "a_proposal_links_only_an_issue_of_a_readable_project",
+        ),
     ),
+    // Query parameters of GET routes (re-audit: the scan covers `Query<T>` too).
+    (
+        "ListDraftsQuery",
+        "project_id",
+        Exempt("list_drafts: resolve_project then require_read (which applies the bot's level to that project)"),
+    ),
+    (
+        "ListDraftsQuery",
+        "workspace_id",
+        Exempt("list_drafts: member() refuses a bot outside its own workspace; rows are limited to readable_projects"),
+    ),
+    (
+        "ListLayoutsQuery",
+        "scope_id",
+        Checked(
+            "layouts/handlers.rs",
+            "list_layouts",
+            "layout_scopes_of_another_project_are_refused",
+        ),
+    ),
+    (
+        "ExportAttachmentPackageQuery",
+        "view_id",
+        Exempt("find_readable_view refuses a view of another form (routes/form.rs)"),
+    ),
+    (
+        "ListAttachmentsQuery",
+        "record_id",
+        Exempt("a filter ANDed with form_id = the route's form: a record of another form matches nothing"),
+    ),
+    (
+        "ExportRecordsQuery",
+        "view_id",
+        Exempt("find_readable_view refuses a view of another form (routes/form.rs)"),
+    ),
+    (
+        "ListRecordsQuery",
+        "view_id",
+        Exempt("record_query_config_from_view refuses a view of another form (routes/form.rs)"),
+    ),
+    (
+        "ByIdentifierQuery",
+        "workspace_id",
+        Exempt("a bot looks in its own workspace only; a different workspace_id answers not found"),
+    ),
+    (
+        "ListIssuesQuery",
+        "assignee_id",
+        Exempt("a filter ANDed with project_id = the route's project"),
+    ),
+    (
+        "ListIssuesQuery",
+        "label_ids",
+        Exempt("a filter ANDed with project_id = the route's project"),
+    ),
+    (
+        "ListIssuesQuery",
+        "milestone_id",
+        Exempt("a filter ANDed with project_id = the route's project"),
+    ),
+    (
+        "ListIssuesQuery",
+        "sprint_id",
+        Exempt("a filter ANDed with project_id = the route's project"),
+    ),
+    (
+        "ListActivitiesQuery",
+        "resource_id",
+        Exempt("a filter on top of the route's project clause (activities of the project and its issues)"),
+    ),
+    (
+        "ResolveQuery",
+        "form_id",
+        Exempt("bind_context refuses a form that is not in the route's project (layouts/placements.rs)"),
+    ),
+    (
+        "ResolveQuery",
+        "record_id",
+        Exempt("bind_context refuses a record that is not in that form (layouts/placements.rs)"),
+    ),
+    (
+        "BlockShareContextQuery",
+        "project_id",
+        ScopeNative("get_flow_v2_block_share"),
+    ),
+    (
+        "BlockShareContextQuery",
+        "workspace_id",
+        ScopeNative("get_flow_v2_block_share"),
+    ),
+    (
+        "GetCollectionRecordsQuery",
+        "field_ids",
+        Exempt("field ids of the collection of the route's own object"),
+    ),
+    (
+        "GetCollectionRecordsQuery",
+        "group",
+        Exempt("a field id of the collection of the route's own object"),
+    ),
+    (
+        "GetCollectionRecordsQuery",
+        "view_id",
+        Exempt("apply_saved_view reads the view by (collection_id, view_id) of the route's own object"),
+    ),
+    (
+        "ScopeListQuery",
+        "parent_id",
+        Exempt(
+            "the middleware requires and judges project_id; the listing ANDs it with parent_id, so only rows of the judged project return",
+        ),
+    ),
+    (
+        "SearchQuery",
+        "project_id",
+        Exempt(
+            "a filter ANDed in SCOPE_FILTER_SQL with p.id = ANY(readable_projects) for a bot: a project it cannot read matches nothing (scoped_bot_filtered_tests)",
+        ),
+    ),
+    (
+        "CreateCommentRequest",
+        "mentions",
+        Exempt("user ids, not project objects (audit F5)"),
+    ),
+    (
+        "UpdateCommentRequest",
+        "mentions",
+        Exempt("user ids, not project objects (audit F5)"),
+    ),
+    // Fields typed `Value` that the ids scan cannot see into.
+    (
+        "ConversionPreviewInput",
+        "mapping",
+        Checked(
+            "flow/bridge.rs",
+            "ensure_conversion_target",
+            "a_conversion_target_in_another_project_is_refused",
+        ),
+    ),
+    (
+        "RecordQueryPayload",
+        "group",
+        Exempt("a field id of the collection of the route's own object"),
+    ),
+    (
+        "LinkPayload",
+        "properties",
+        Exempt("properties stored with the relation; the far end is the checked target_object_id"),
+    ),
+    (
+        "NewComment",
+        "mentions",
+        Exempt("user ids, not project objects (audit F5)"),
+    ),
+    (
+        "ScopeCommentPatch",
+        "mentions",
+        Exempt("user ids, not project objects (audit F5)"),
+    ),
+    (
+        "CreateProposalCommentRequest",
+        "mentions",
+        Exempt("user ids, not project objects (audit F5)"),
+    ),
+    // Values the scan cannot see into (re-audit item 2); not yet read for embedded ids.
+    ("UpdateChildRecordRequest", "source", Open(UNREAD_VALUE)),
+    ("UpdateChildRecordRequest", "values", Open(UNREAD_VALUE)),
+    ("UpdateRecordRequest", "source", Open(UNREAD_VALUE)),
+    ("UpdateRecordRequest", "values", Open(UNREAD_VALUE)),
+    ("UpdateViewRequest", "config", Open(UNREAD_VALUE)),
+    ("UpdateFormRequest", "detail_layout", Open(UNREAD_VALUE)),
+    ("UpdateFormRequest", "schema", Open(UNREAD_VALUE)),
+    ("UpdateLayoutRequest", "spec", Open(UNREAD_VALUE)),
+    ("UpdateProjectResourceRequest", "locator", Open(UNREAD_VALUE)),
+    ("UpdateProjectResourceRequest", "permission_policy", Open(UNREAD_VALUE)),
+    ("UpdateImpactReviewRequest", "data_sources", Open(UNREAD_VALUE)),
+    ("UpdateImpactReviewRequest", "goal_achievements", Open(UNREAD_VALUE)),
+    ("UpdateImpactReviewRequest", "metrics", Open(UNREAD_VALUE)),
+    ("PageRequest", "layout_spec", Open(UNREAD_VALUE)),
+    ("PageRequest", "nav", Open(UNREAD_VALUE)),
+    (
+        "UpdateSiteRequest",
+        "title",
+        Exempt("the site title text, never resolved as an object"),
+    ),
+    ("CreateDraftRequest", "spec", Open(UNREAD_VALUE)),
+    (
+        "CreateDraftRequest",
+        "target",
+        Exempt(
+            "form_candidate and layout_candidate require the form or scope to lie in the request's own project (resolved by the middleware from project_id)",
+        ),
+    ),
+    ("CreateChildRecordRequest", "metadata", Open(UNREAD_VALUE)),
+    ("CreateChildRecordRequest", "source", Open(UNREAD_VALUE)),
+    ("CreateChildRecordRequest", "values", Open(UNREAD_VALUE)),
+    ("CreateRecordCommentRequest", "metadata", Open(UNREAD_VALUE)),
+    ("CreateLinkRequest", "metadata", Open(UNREAD_VALUE)),
+    ("ValidateRulesRequest", "default", Open(UNREAD_VALUE)),
+    ("ValidateRulesRequest", "options", Open(UNREAD_VALUE)),
+    ("ValidateRulesRequest", "rules", Open(UNREAD_VALUE)),
+    ("ValidateRulesRequest", "samples", Open(UNREAD_VALUE)),
+    ("ValidateSchemaRequest", "schema", Open(UNREAD_VALUE)),
+    (
+        "SaveImportMappingTemplateRequest",
+        "id",
+        Exempt("refused unless the template belongs to the route's form (routes/form.rs)"),
+    ),
+    ("RecalculatePreviewRequest", "values", Open(UNREAD_VALUE)),
+    ("CreateRecordRequest", "source", Open(UNREAD_VALUE)),
+    ("CreateRecordRequest", "values", Open(UNREAD_VALUE)),
+    ("ValidateRecordRequest", "schema", Open(UNREAD_VALUE)),
+    ("ValidateRecordRequest", "values", Open(UNREAD_VALUE)),
+    ("CreateViewRequest", "config", Open(UNREAD_VALUE)),
+    ("ValidateRequest", "spec", Open(UNREAD_VALUE)),
+    ("CreateLayoutRequest", "spec", Open(UNREAD_VALUE)),
+    ("InvokePluginRequest", "input", Open(UNREAD_VALUE)),
+    ("CreateAiTaskRequest", "payload", Open(UNREAD_VALUE)),
+    ("CreateCheckResultRequest", "result", Open(UNREAD_VALUE)),
+    ("CreateFormRequest", "detail_layout", Open(UNREAD_VALUE)),
+    ("CreateFormRequest", "schema", Open(UNREAD_VALUE)),
+    ("InstallPluginRequest", "manifest", Open(UNREAD_VALUE)),
+    ("CreateProjectResourceRequest", "locator", Open(UNREAD_VALUE)),
+    ("CreateProjectResourceRequest", "permission_policy", Open(UNREAD_VALUE)),
+    (
+        "CreateSiteRequest",
+        "title",
+        Exempt("the site title text, never resolved as an object"),
+    ),
+    (
+        "CreateReferenceInput",
+        "display",
+        Exempt("display text stored with the reference; the target is the checked target_id"),
+    ),
+    ("scope::CreateInput", "initial_fields", Open(UNREAD_VALUE)),
+    ("scope::CreateInput", "initial_view", Open(UNREAD_VALUE)),
+    ("UpdateProjectRequest", "type_settings", Open(UNREAD_VALUE)),
+    ("PutConfig", "doc", Open(UNREAD_VALUE)),
+    ("UpdateProposalTemplateRequest", "content", Open(UNREAD_VALUE)),
     // Layout and placement creation: the handler resolves the scope and requires write in its project.
-    ("CreateLayoutRequest", "scope_id", Checked("layouts/access.rs")),
-    ("CreatePlacementRequest", "scope_id", Checked("layouts/access.rs")),
-    ("CreatePlacementRequest", "layout_id", Checked("layouts/access.rs")),
+    (
+        "CreateLayoutRequest",
+        "scope_id",
+        Checked(
+            "layouts/handlers.rs",
+            "create_layout",
+            "layout_scopes_of_another_project_are_refused",
+        ),
+    ),
+    (
+        "CreatePlacementRequest",
+        "scope_id",
+        Checked(
+            "layouts/placements.rs",
+            "create_placement",
+            "layout_scopes_of_another_project_are_refused",
+        ),
+    ),
+    (
+        "CreatePlacementRequest",
+        "layout_id",
+        Exempt("create_placement accepts only a layout that lies inside the placement's scope, which is bot-checked"),
+    ),
     (
         "CreatePlacementRequest",
         "slot_id",
         Exempt("a slot name of the fixed catalogue, not an object of any project"),
     ),
     // Layout validator (layouts/handlers.rs): the scope is resolved and read-checked by the handler.
-    ("ValidateRequest", "scope_id", Checked("layouts/access.rs")),
+    (
+        "ValidateRequest",
+        "scope_id",
+        Checked(
+            "layouts/handlers.rs",
+            "validate_layout",
+            "layout_scopes_of_another_project_are_refused",
+        ),
+    ),
     (
         "ValidateRecordRequest",
         "record_id",
@@ -302,6 +624,10 @@ const UNTYPED_BODIES: &[(&str, &str)] = &[(
 
 /// Handlers registered under an alias (`use ... as`), whose function the scan cannot find by name.
 const ALIASED_HANDLERS: &[(&str, &str)] = &[
+    (
+        "export_portable_page",
+        "routes/flow_portable_page.rs: user() refuses bot credentials",
+    ),
     (
         "prepare_page_transfer",
         "routes/flow_transfer.rs: actor() calls flow_v2::user(), which refuses bot credentials",
@@ -359,7 +685,7 @@ fn sources() -> BTreeMap<PathBuf, String> {
     out
 }
 
-/// The `(method, pattern)` -> handler name map of the router files.
+/// The `(method, pattern)` -> handler path map of the router files (`routes::proposal::create_proposal`).
 fn handlers() -> BTreeMap<(String, String), String> {
     let source = crate::router_source::text();
     let bytes = source.as_bytes();
@@ -404,7 +730,6 @@ fn handlers() -> BTreeMap<(String, String), String> {
                     .chars()
                     .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == ':')
                     .collect();
-                let name = name.rsplit("::").next().unwrap_or_default().to_string();
                 found.insert((method.to_ascii_uppercase(), pattern.to_string()), name);
             }
         }
@@ -412,21 +737,93 @@ fn handlers() -> BTreeMap<(String, String), String> {
     found
 }
 
-/// The text of `fn name(` up to the end of its parameter list.
-fn signature<'a>(sources: &'a BTreeMap<PathBuf, String>, name: &str) -> Option<&'a str> {
-    let needle = format!("fn {name}(");
-    sources.values().find_map(|text| {
-        let at = text.find(&needle)?;
-        let rest = &text[at..];
-        let end = rest.find(") ->").or_else(|| rest.find("){"))?;
-        Some(&rest[..end])
-    })
+/// A file that holds tests or fixtures: never a handler, never a request type of the product.
+fn is_test_file(path: &Path) -> bool {
+    let text = path.to_string_lossy();
+    text.ends_with("tests.rs")
+        || text.contains("_tests/")
+        || text.contains("/tests/")
+        || text.contains("fixture")
+        || text.contains("/examples/")
+        || text.contains("/bin/")
 }
 
-/// The last path segment of the type inside `Json<...>` in a parameter list.
-fn json_type(signature: &str) -> Option<String> {
-    let at = signature.find("Json<")?;
-    let rest = &signature[at + "Json<".len()..];
+/// The bare name of a handler path (`routes::proposal::create_proposal` is `create_proposal`).
+fn handler_name(path: &str) -> &str {
+    path.rsplit("::").next().unwrap_or(path)
+}
+
+/// The text of the handler's `fn name(` up to the end of its parameter list, and its file. The
+/// handler is found through the module its router registration names (`routes::proposal::name` is
+/// in `proposal.rs` or `proposal/mod.rs`); a name the module path does not settle (a re-export, a
+/// bare import) must be defined once outside test files. Panics when it is still ambiguous: reading
+/// the wrong function would account for the wrong request type.
+fn signature_in<'a>(sources: &'a BTreeMap<PathBuf, String>, path: &str) -> Option<(&'a Path, &'a str)> {
+    let name = handler_name(path);
+    let module = path.rsplit("::").nth(1);
+    let needle = format!("fn {name}(");
+    let mut candidates: Vec<(&Path, &str)> = sources
+        .iter()
+        .filter(|(file, text)| !is_test_file(file) && text.contains(&needle))
+        .map(|(file, text)| (file.as_path(), text.as_str()))
+        .collect();
+    // The module a file stands for, with the directory above it: `routes/search.rs` is
+    // `("routes", "search")` and so is `routes/search/mod.rs`.
+    let place = |file: &Path| {
+        let mut parts: Vec<String> = file
+            .with_extension("")
+            .components()
+            .map(|part| part.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        if parts.last().is_some_and(|last| last == "mod") {
+            parts.pop();
+        }
+        let module = parts.pop().unwrap_or_default();
+        (parts.pop().unwrap_or_default(), module)
+    };
+    let segments: Vec<&str> = path.rsplit("::").collect();
+    if candidates.len() > 1
+        && let Some(module) = module
+    {
+        let above = segments.get(2).copied();
+        for exact in [true, false] {
+            let named: Vec<_> = candidates
+                .iter()
+                .copied()
+                .filter(|(file, _)| {
+                    let (dir, stem) = place(file);
+                    stem == module && (!exact || above.is_none_or(|above| above == dir))
+                })
+                .collect();
+            if !named.is_empty() {
+                candidates = named;
+                break;
+            }
+        }
+    }
+    assert!(
+        candidates.len() <= 1,
+        "handler {path} is defined in several files ({}): the router path does not settle which",
+        candidates
+            .iter()
+            .map(|(file, _)| file.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let (file, text) = candidates.first()?;
+    let rest = &text[text.find(&needle)?..];
+    let end = rest.find(") ->").or_else(|| rest.find("){"))?;
+    Some((file, &rest[..end]))
+}
+
+fn signature<'a>(sources: &'a BTreeMap<PathBuf, String>, name: &str) -> Option<&'a str> {
+    signature_in(sources, name).map(|(_, signature)| signature)
+}
+
+/// The last path segment of the type inside `wrapper` (`Json<`, `Query<`) in a parameter list.
+fn wrapped_type(signature: &str, wrapper: &str) -> Option<String> {
+    let at = signature.find(wrapper)?;
+    let rest = &signature[at + wrapper.len()..];
     let mut depth = 1;
     let mut end = 0;
     for (index, ch) in rest.char_indices() {
@@ -442,66 +839,265 @@ fn json_type(signature: &str) -> Option<String> {
             _ => {}
         }
     }
-    let inner = rest[..end].trim();
-    Some(inner.rsplit("::").next().unwrap_or(inner).to_string())
+    Some(rest[..end].trim().to_string())
 }
 
-/// The id fields (`*_id`, `*_ids`) of `struct name { ... }`.
-fn id_fields(sources: &BTreeMap<PathBuf, String>, name: &str) -> Option<Vec<String>> {
+/// `(module, name)` of a type path: `crate::flow::scope::CreateInput` is `(Some("scope"), "CreateInput")`.
+fn split_path(path: &str) -> (Option<&str>, &str) {
+    let mut parts = path.rsplit("::");
+    let name = parts.next().unwrap_or(path);
+    (parts.next(), name)
+}
+
+/// A field of a request struct as it is written in the source.
+struct Field {
+    /// The Rust name.
+    name: String,
+    /// Every name the wire knows it by: the Rust name, a `rename` and the `alias`es.
+    wire: Vec<String>,
+    /// The type as written.
+    ty: String,
+    flatten: bool,
+}
+
+impl Field {
+    /// A field that can name an object: an id by name (Rust or wire), any `Uuid`, or an untyped
+    /// `Value`, which can carry ids the scan cannot see (the conversion `mapping`).
+    fn names_an_object(&self) -> bool {
+        self.wire
+            .iter()
+            .any(|name| name.ends_with("_id") || name.ends_with("_ids"))
+            || self.ty.contains("Uuid")
+            || self.ty.contains("Value")
+    }
+}
+
+/// The text between the braces of every `struct name {` in the sources, with its file.
+fn struct_bodies<'a>(sources: &'a BTreeMap<PathBuf, String>, name: &str) -> Vec<(&'a Path, &'a str)> {
     let needle = format!("struct {name} {{");
-    let text = sources.values().find_map(|text| {
-        let at = text.find(&needle)?;
-        let rest = &text[at + needle.len()..];
-        Some(&rest[..rest.find("\n}")?])
-    })?;
-    Some(
-        text.lines()
-            .filter_map(|line| {
-                let line = line
-                    .trim()
-                    .trim_start_matches("pub(crate) ")
-                    .trim_start_matches("pub(super) ")
-                    .trim_start_matches("pub ");
-                let (field, _) = line.split_once(':')?;
-                (field.ends_with("_id") || field.ends_with("_ids")).then(|| field.to_string())
+    sources
+        .iter()
+        .filter(|(path, _)| !is_test_file(path))
+        .filter_map(|(path, text)| {
+            let at = text.find(&needle)?;
+            let rest = &text[at + needle.len()..];
+            Some((path.as_path(), &rest[..rest.find("\n}")?]))
+        })
+        .collect()
+}
+
+/// The quoted values after `key = ` in a serde attribute line.
+fn serde_names(attribute: &str, key: &str) -> Vec<String> {
+    attribute
+        .match_indices(&format!("{key} = \""))
+        .filter_map(|(at, matched)| {
+            let rest = &attribute[at + matched.len()..];
+            Some(rest[..rest.find('"')?].to_string())
+        })
+        .collect()
+}
+
+/// The fields written in the body of a struct.
+fn parse_fields(body: &str) -> Vec<Field> {
+    let mut fields = Vec::new();
+    let mut attributes = String::new();
+    for line in body.lines() {
+        let line = line.trim();
+        if line.starts_with("#[") {
+            attributes.push_str(line);
+            continue;
+        }
+        let line = line
+            .trim_start_matches("pub(crate) ")
+            .trim_start_matches("pub(super) ")
+            .trim_start_matches("pub ");
+        let Some((field, ty)) = line.split_once(':') else {
+            continue;
+        };
+        if field.contains(' ') || field.starts_with("//") {
+            attributes.clear();
+            continue;
+        }
+        let mut wire = vec![field.to_string()];
+        wire.extend(serde_names(&attributes, "rename"));
+        wire.extend(serde_names(&attributes, "alias"));
+        fields.push(Field {
+            name: field.to_string(),
+            wire,
+            ty: ty.trim().trim_end_matches(',').to_string(),
+            flatten: attributes.contains("flatten"),
+        });
+        attributes.clear();
+    }
+    fields
+}
+
+/// The fields of `struct name { ... }`, with `#[serde(flatten)]` fields replaced by the fields of
+/// their own type. Panics when two files define a struct of that name: the scan would read the
+/// wrong one (audit re-check, collisions); rename one of them.
+fn fields_of(sources: &BTreeMap<PathBuf, String>, name: &str) -> Option<Vec<Field>> {
+    fields_near(sources, name, None, None)
+}
+
+/// Like [`fields_of`], but when several files define the name, the definition in `home` (the file of
+/// the handler that takes the type) is the one meant.
+fn fields_near(
+    sources: &BTreeMap<PathBuf, String>,
+    name: &str,
+    home: Option<&Path>,
+    module: Option<&str>,
+) -> Option<Vec<Field>> {
+    let mut bodies = struct_bodies(sources, name);
+    if bodies.len() > 1
+        && let Some(module) = module
+    {
+        // The type is written with its module (`scope::CreateInput`): the file of that module.
+        let in_module = |path: &Path| {
+            let stem = path.file_stem().and_then(|stem| stem.to_str());
+            let parent = path.parent().and_then(Path::file_name).and_then(|name| name.to_str());
+            stem == Some(module) || (stem == Some("mod") && parent == Some(module))
+        };
+        let named: Vec<_> = bodies.iter().copied().filter(|(path, _)| in_module(path)).collect();
+        if !named.is_empty() {
+            bodies = named;
+        }
+    }
+    if bodies.len() > 1
+        && let Some(home) = home
+    {
+        let own: Vec<_> = bodies.iter().copied().filter(|(path, _)| *path == home).collect();
+        if !own.is_empty() {
+            bodies = own;
+        }
+    }
+    if bodies.len() > 1
+        && let Some(text) = home.and_then(|home| sources.get(home))
+    {
+        // An unqualified name the handler's file imports from a module (`use crate::response::PageQuery`).
+        let imported: Vec<_> = bodies
+            .iter()
+            .copied()
+            .filter(|(path, _)| {
+                path.file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .is_some_and(|stem| text.contains(&format!("{stem}::")))
             })
+            .collect();
+        if !imported.is_empty() {
+            bodies = imported;
+        }
+    }
+    let mut parsed: Vec<Vec<Field>> = bodies.iter().map(|(_, body)| parse_fields(body)).collect();
+    // Several definitions left: harmless only when they read the same.
+    let same = parsed.windows(2).all(|pair| {
+        pair[0].len() == pair[1].len()
+            && pair[0]
+                .iter()
+                .zip(&pair[1])
+                .all(|(a, b)| a.name == b.name && a.ty == b.ty && a.wire == b.wire)
+    });
+    assert!(
+        same,
+        "struct {name} is defined in several files ({}) with different fields: the scan cannot tell them apart; rename one",
+        bodies
+            .iter()
+            .map(|(path, _)| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    if parsed.is_empty() {
+        return None;
+    }
+    let fields = parsed.swap_remove(0);
+    // A flattened type is resolved from the file of the struct that flattens it.
+    let home = home.or_else(|| bodies.first().map(|(path, _)| *path));
+    let mut out = Vec::new();
+    for field in fields {
+        if field.flatten {
+            let inner = field.ty.trim_start_matches("Option<").trim_end_matches('>');
+            out.extend(fields_near(sources, inner, home, None).unwrap_or_default());
+        } else {
+            out.push(field);
+        }
+    }
+    Some(out)
+}
+
+/// The names of the fields of `name` that can name an object.
+fn id_fields(
+    sources: &BTreeMap<PathBuf, String>,
+    name: &str,
+    home: Option<&Path>,
+    module: Option<&str>,
+) -> Option<Vec<String>> {
+    Some(
+        fields_near(sources, name, home, module)?
+            .into_iter()
+            .filter(Field::names_an_object)
+            .map(|field| field.name)
             .collect(),
     )
 }
 
-fn accounted(struct_name: &str, field: &str) -> Option<&'static Account> {
+/// The account of `struct_name.field`; `module` (`scope` for `scope::CreateInput`) picks the entry
+/// when two modules define a struct of the same name and the table keys it as `module::Name`.
+fn accounted(struct_name: &str, module: Option<&str>, field: &str) -> Option<&'static Account> {
+    let qualified = module.map(|module| format!("{module}::{struct_name}"));
     ACCOUNTED
         .iter()
-        .find(|(name, f, _)| *name == struct_name && *f == field)
+        .find(|(name, f, _)| *f == field && (*name == struct_name || qualified.as_deref() == Some(*name)))
         .map(|(_, _, account)| account)
 }
 
-/// The id field the middleware resolves for a route (`Find::Body`, `Find::Conversion`).
-fn resolved_by_middleware(find: Find, field: &str) -> bool {
-    match find {
-        Find::Body => matches!(field, "project_id" | "parent_object_id" | "scope_id"),
-        Find::Conversion => matches!(field, "source_object_id" | "preview_id"),
+/// The struct and module of a table key (`scope::CreateInput` is `scope`, `CreateInput`).
+fn key_parts(key: &str) -> (Option<&str>, &str) {
+    split_path(key)
+}
+
+/// Where a field is read from.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum From {
+    Body,
+    Query,
+}
+
+/// Whether the middleware resolves this field as the route's target (`Find::Body`, `Find::Conversion`
+/// read the body, `Find::Query` reads one query parameter).
+fn resolved_by_middleware(find: Find, from: From, field: &str) -> bool {
+    match (find, from) {
+        (Find::Body, From::Body) => matches!(field, "project_id" | "parent_object_id" | "scope_id"),
+        (Find::Conversion, From::Body) => matches!(field, "source_object_id" | "preview_id"),
+        (Find::Query(name), From::Query) => field == name,
         _ => false,
     }
 }
 
+/// The body of `fn name(` (to the closing brace in column 0, or the end of the file).
+fn function_body<'a>(text: &'a str, name: &str) -> Option<&'a str> {
+    let at = text.find(&format!("fn {name}("))?;
+    let rest = &text[at..];
+    Some(&rest[..rest.find("\n}\n").unwrap_or(rest.len())])
+}
+
 #[test]
-fn every_id_of_a_bot_reachable_body_is_accounted_for() {
+fn every_id_of_a_bot_reachable_request_is_accounted_for() {
     let sources = sources();
     let handlers = handlers();
     let mut unaccounted = BTreeSet::new();
     for entry in bot_routes() {
-        if matches!(entry.method, "GET" | "DELETE")
-            || !matches!(entry.class, Class::Project(_) | Class::Own | Class::NoProject)
-        {
+        if !matches!(
+            entry.class,
+            Class::Project(_) | Class::Own | Class::NoProject | Class::Filtered
+        ) {
             continue;
         }
         let key = (entry.method.to_string(), entry.pattern.to_string());
-        let Some(handler) = handlers.get(&key) else {
+        let Some(handler_path) = handlers.get(&key) else {
             panic!("no handler found for {} {}", entry.method, entry.pattern);
         };
-        let Some(signature) = signature(&sources, handler) else {
-            if !ALIASED_HANDLERS.iter().any(|(name, _)| name == handler) {
+        let handler = handler_name(handler_path);
+        let Some((home, signature)) = signature_in(&sources, handler_path) else {
+            if !ALIASED_HANDLERS.iter().any(|(name, _)| *name == handler) {
                 unaccounted.insert(format!(
                     "{} {}: no fn {handler} found (a re-exported alias?): list it in ALIASED_HANDLERS",
                     entry.method, entry.pattern
@@ -509,33 +1105,41 @@ fn every_id_of_a_bot_reachable_body_is_accounted_for() {
             }
             continue;
         };
-        let Some(type_name) = json_type(signature) else {
-            continue;
-        };
-        if matches!(type_name.as_str(), "Value") {
-            assert!(
-                UNTYPED_BODIES.iter().any(|(name, _)| name == handler),
-                "{} {}: handler {handler} takes an untyped JSON body; list it in UNTYPED_BODIES with its reason",
-                entry.method,
-                entry.pattern
-            );
-            continue;
-        }
-        let fields = id_fields(&sources, &type_name)
-            .unwrap_or_else(|| panic!("{} {}: no struct {type_name} found", entry.method, entry.pattern));
-        for field in fields {
-            let by_middleware = match entry.class {
-                Class::Project(find) => resolved_by_middleware(find, &field),
-                _ => false,
+        for (wrapper, from) in [("Json<", From::Body), ("Query<", From::Query)] {
+            let Some(type_path) = wrapped_type(signature, wrapper) else {
+                continue;
             };
-            if !by_middleware && accounted(&type_name, &field).is_none() {
-                unaccounted.insert(format!("{} {}: {type_name}.{field}", entry.method, entry.pattern));
+            let (module, type_name) = split_path(&type_path);
+            let untyped = |unaccounted: &mut BTreeSet<String>, what: &str| {
+                if !UNTYPED_BODIES.iter().any(|(name, _)| *name == handler) {
+                    unaccounted.insert(format!(
+                        "{} {}: {what} {wrapper}{type_name}>; list handler {handler} in UNTYPED_BODIES with its reason",
+                        entry.method, entry.pattern
+                    ));
+                }
+            };
+            if !type_name.chars().next().is_some_and(char::is_uppercase) || type_name == "Value" {
+                untyped(&mut unaccounted, "untyped");
+                continue;
+            }
+            let Some(fields) = id_fields(&sources, type_name, Some(home), module) else {
+                untyped(&mut unaccounted, "no struct found for");
+                continue;
+            };
+            for field in fields {
+                let by_middleware = match entry.class {
+                    Class::Project(find) => resolved_by_middleware(find, from, &field),
+                    _ => false,
+                };
+                if !by_middleware && accounted(type_name, module, &field).is_none() {
+                    unaccounted.insert(format!("{} {}: {type_name}.{field}", entry.method, entry.pattern));
+                }
             }
         }
     }
     assert!(
         unaccounted.is_empty(),
-        "request body ids neither resolved by the middleware nor checked or exempted:\n{}",
+        "request ids neither resolved by the middleware nor checked or exempted:\n{}",
         unaccounted.into_iter().collect::<Vec<_>>().join("\n")
     );
 }
@@ -560,11 +1164,11 @@ fn every_id_of_a_flow_command_payload_is_accounted_for() {
             if name.contains(' ') || name.contains('\n') || name.contains('<') {
                 continue;
             }
-            for field in id_fields(&sources, &name).unwrap_or_default() {
+            for field in id_fields(&sources, &name, Some(path), None).unwrap_or_default() {
                 if field.contains("block_id") {
                     continue;
                 }
-                if accounted(&name, &field).is_none() {
+                if accounted(&name, None, &field).is_none() {
                     unaccounted.insert(format!("{relative}: {name}.{field}"));
                 }
             }
@@ -577,60 +1181,147 @@ fn every_id_of_a_flow_command_payload_is_accounted_for() {
     );
 }
 
-/// The entries this change leaves open are exactly the known ones: closing one removes it here,
-/// opening a new one needs a conscious edit.
+/// How many `Value` fields are still open for reading; closing one lowers it, opening a new one
+/// needs a conscious edit.
+const KNOWN_OPEN: usize = 47;
+
+/// Nothing stays open without a written reason: an open entry is an untyped `Value` field with
+/// `UNREAD_VALUE`, and no other kind of field is open.
 #[test]
-fn the_open_entries_are_the_known_ones() {
-    let open: Vec<String> = ACCOUNTED
-        .iter()
-        .filter(|(_, _, account)| matches!(account, Open(_)))
-        .map(|(name, field, _)| format!("{name}.{field}"))
-        .collect();
-    assert_eq!(
-        open,
-        [
-            "CreateProposalRequest.template_id",
-            "CreateProposalRequest.workspace_id",
-            "LinkIssueRequest.issue_id"
-        ]
-    );
+fn the_open_entries_are_untyped_values_and_counted() {
+    let sources = sources();
+    let mut open = 0;
+    for (name, field, account) in ACCOUNTED {
+        if let Open(reason) = account {
+            open += 1;
+            assert_eq!(
+                *reason, UNREAD_VALUE,
+                "{name}.{field}: an open entry names the unread value"
+            );
+            let (module, bare) = key_parts(name);
+            let fields = fields_near(&sources, bare, None, module).unwrap_or_else(|| panic!("no struct {name}"));
+            assert!(
+                fields.iter().any(|f| f.name == *field && f.ty.contains("Value")),
+                "{name}.{field} is open but is not a Value field"
+            );
+        }
+    }
+    assert_eq!(open, KNOWN_OPEN);
 }
 
-/// A `Checked` entry is true: the file it names calls the helper; every entry names a real field.
+/// Whether `name` is a test function in the sources.
+fn is_test(sources: &BTreeMap<PathBuf, String>, name: &str) -> bool {
+    sources.values().any(|text| {
+        text.find(&format!("fn {name}(")).is_some_and(|at| {
+            let before = &text[..at];
+            let line_start = before.rfind("\n\n").unwrap_or(0);
+            before[line_start..].contains("#[tokio::test]") || before[line_start..].contains("#[test]")
+        })
+    })
+}
+
+/// A `Checked` entry is true, field by field: the named function calls the helper (or a wrapper of
+/// it), and the named test replays the attack through the real handler and names the field. Every
+/// entry names a real field.
 #[test]
 fn the_accounting_is_true() {
     let sources = sources();
     let src = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src"));
     for (name, field, account) in ACCOUNTED {
-        let fields = id_fields(&sources, name).unwrap_or_else(|| panic!("no struct {name}"));
-        assert!(fields.iter().any(|f| f == field), "{name} has no field {field}");
+        let (module, bare) = key_parts(name);
+        let fields = fields_near(&sources, bare, None, module).unwrap_or_else(|| panic!("no struct {name}"));
+        assert!(fields.iter().any(|f| f.name == *field), "{name} has no field {field}");
         match account {
-            Checked(file) => {
+            Checked(file, function, proof) => {
                 let text = sources.get(&src.join(file)).unwrap_or_else(|| panic!("no file {file}"));
+                let body = function_body(text, function).unwrap_or_else(|| panic!("no fn {function} in {file}"));
                 assert!(
-                    text.contains("ensure_bot_level"),
-                    "{name}.{field} is marked checked, but {file} never calls ensure_bot_level"
+                    CHECK_CALLS.iter().any(|call| body.contains(call)),
+                    "{name}.{field} is marked checked, but {file}::{function} calls none of {CHECK_CALLS:?}"
+                );
+                assert!(is_test(&sources, proof), "{name}.{field}: no test {proof}");
+                let proof_body = sources
+                    .values()
+                    .find_map(|text| function_body(text, proof))
+                    .unwrap_or_else(|| panic!("no test {proof}"));
+                assert!(
+                    proof_body.contains(field),
+                    "{name}.{field}: the proof test {proof} never names the field"
                 );
             }
             Exempt(reason) | Open(reason) => assert!(!reason.is_empty(), "{name}.{field} needs a reason"),
             ScopeNative(handler) => {
-                let text = sources
-                    .values()
-                    .find_map(|text| {
-                        let at = text.find(&format!("fn {handler}("))?;
-                        let rest = &text[at..];
-                        Some(&rest[..rest.find("\n}\n").unwrap_or(rest.len())])
-                    })
-                    .unwrap_or_else(|| panic!("no fn {handler}"));
-                assert!(
-                    text.contains("user(&claims") || text.contains("user_or_absent(&claims"),
-                    "{name}.{field} is marked scope-native, but {handler} does not call user()"
-                );
+                // Every non-test definition of the name must refuse bot credentials.
+                let bodies: Vec<_> = sources
+                    .iter()
+                    .filter(|(path, _)| !is_test_file(path))
+                    .filter_map(|(_, text)| function_body(text, handler))
+                    .collect();
+                assert!(!bodies.is_empty(), "no fn {handler}");
+                for text in bodies {
+                    assert!(
+                        text.contains("user(&claims") || text.contains("user_or_absent(&claims"),
+                        "{name}.{field} is marked scope-native, but {handler} does not call user()"
+                    );
+                }
             }
         }
+    }
+    // The layout helpers the handlers lean on hold the bot to its project level themselves.
+    let access = sources.get(&src.join("layouts/access.rs")).expect("layouts/access.rs");
+    for function in ["require_read", "require_write"] {
+        assert!(
+            function_body(access, function).is_some_and(|body| body.contains("ensure_bot_level(")),
+            "{function} does not call ensure_bot_level"
+        );
     }
     for (handler, reason) in UNTYPED_BODIES {
         assert!(signature(&sources, handler).is_some(), "no fn {handler}");
         assert!(!reason.is_empty());
     }
+}
+
+/// Two request types of one name would be read as one (the scan finds a struct by name): a type a
+/// bot-reachable handler takes may share its name with another struct only when the handler's own
+/// file defines it, and every struct of `ACCOUNTED` (keyed by name) must be defined once.
+#[test]
+fn request_type_names_are_unique() {
+    let sources = sources();
+    let handlers = handlers();
+    for entry in bot_routes() {
+        let Some((home, signature)) = handlers
+            .get(&(entry.method.to_string(), entry.pattern.to_string()))
+            .and_then(|handler_path| signature_in(&sources, handler_path))
+        else {
+            continue;
+        };
+        for wrapper in ["Json<", "Query<"] {
+            if let Some(type_path) = wrapped_type(signature, wrapper) {
+                let (module, type_name) = split_path(&type_path);
+                // Panics when the name is defined twice and neither the module nor the handler's
+                // file picks one.
+                let _ = fields_near(&sources, type_name, Some(home), module);
+            }
+        }
+    }
+    for (name, _, _) in ACCOUNTED {
+        let (module, bare) = key_parts(name);
+        let _ = fields_near(&sources, bare, None, module);
+    }
+}
+
+/// The scan itself: an id in a query string, a renamed id, a flattened struct and an id in a `Value`
+/// are all seen.
+#[test]
+fn the_scan_sees_query_ids_renames_flattened_fields_and_values() {
+    let mut sources = BTreeMap::new();
+    sources.insert(
+        PathBuf::from("a.rs"),
+        "struct Inner {\n    owner_id: Uuid,\n}\nstruct Probe {\n    #[serde(rename = \"projectId\", alias = \"scope_id\")]\n    project: String,\n    #[serde(flatten)]\n    inner: Inner,\n    mapping: serde_json::Value,\n    after: Option<Uuid>,\n    title: String,\n}\n"
+            .to_string(),
+    );
+    let seen = id_fields(&sources, "Probe", None, None).expect("probe");
+    assert_eq!(seen, ["project", "owner_id", "mapping", "after"]);
+    sources.insert(PathBuf::from("b.rs"), "struct Probe {\n    x: u8,\n}\n".to_string());
+    assert!(std::panic::catch_unwind(|| fields_of(&sources, "Probe")).is_err());
 }

@@ -19,6 +19,10 @@ use uuid::Uuid;
 use crate::{
     entities::trust_score::ParticipantType,
     error::ApiError,
+    middleware::{
+        bot_auth::BotAuthContext,
+        scoped_bot::{Level as BotLevel, Secondary, ensure_bot_level},
+    },
     response::{ApiResponse, PaginatedData},
     routes::{check_result::sync_check_result_after_proposal_decision, proposal_mentions},
     services::ai_task_service::{DispatchOrigin, queue_vote_requested_tasks_for_project},
@@ -1372,6 +1376,7 @@ pub(crate) async fn write_proposal_audit_log_with_conn<C: ConnectionTrait>(
 pub async fn create_proposal(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
     Json(req): Json<CreateProposalRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = build_actor_context(&state, &claims).await?;
@@ -1412,11 +1417,21 @@ pub async fn create_proposal(
         .await?
         .ok_or_else(|| ApiError::NotFound("proposal template not found".to_string()))?;
 
-        if !template.is_active {
-            return Err(ApiError::BadRequest("proposal template is inactive".to_string()));
-        }
+        // The template's text is copied into the proposal: a scoped bot needs read in its project.
+        ensure_bot_level(
+            &state.db,
+            bot.as_ref().map(|bot| bot.0.bot_id),
+            Secondary::Project(template.project_id),
+            BotLevel::Read,
+        )
+        .await?;
         if !actor.is_admin && !is_project_member(&state.db, template.project_id, actor.user_id).await? {
             return Err(ApiError::Forbidden("project access denied".to_string()));
+        }
+        // After the access checks, so a template of a project the caller cannot reach answers the
+        // same whether it is active or not.
+        if !template.is_active {
+            return Err(ApiError::BadRequest("proposal template is inactive".to_string()));
         }
 
         template_project_id = Some(template.project_id);
@@ -2627,22 +2642,23 @@ pub async fn delete_proposal_comment_under_proposal(
 /// The check runs before the insert, so a refusal writes nothing. A work item in another tenant and
 /// a work item that does not exist both answer `NotFound`, which also closes the instance-wide
 /// existence oracle the old check exposed.
-async fn link_issue_to_proposal(
+pub(crate) async fn link_issue_to_proposal(
     db: &impl ConnectionTrait,
     proposal_id: &str,
     proposal_workspace_id: Option<Uuid>,
     issue_id: Uuid,
+    bot_id: Option<Uuid>,
 ) -> Result<(), ApiError> {
     // An unattributed proposal belongs to no tenant, so nothing may be linked into it.
     let Some(workspace_id) = proposal_workspace_id else {
         return Err(ApiError::NotFound("issue not found".to_string()));
     };
 
-    let issue_exists = db
+    let issue_project = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
             r"
-                SELECT 1
+                SELECT wi.project_id
                 FROM work_items wi
                 INNER JOIN projects p ON p.id = wi.project_id
                 WHERE wi.id = $1 AND p.workspace_id = $2
@@ -2650,11 +2666,14 @@ async fn link_issue_to_proposal(
             vec![issue_id.into(), workspace_id.into()],
         ))
         .await?
-        .is_some();
+        .map(|row| row.try_get::<Uuid>("", "project_id"))
+        .transpose()?;
 
-    if !issue_exists {
+    let Some(issue_project) = issue_project else {
         return Err(ApiError::NotFound("issue not found".to_string()));
-    }
+    };
+    // A scoped bot links only an issue of a project it can read (audit F7).
+    ensure_bot_level(db, bot_id, Secondary::Project(issue_project), BotLevel::Read).await?;
 
     let res = db
         .execute(Statement::from_sql_and_values(
@@ -2680,6 +2699,7 @@ async fn link_issue_to_proposal(
 pub async fn link_issue(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
+    bot: Option<Extension<BotAuthContext>>,
     Path(id): Path<String>,
     Json(req): Json<LinkIssueRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -2693,7 +2713,14 @@ pub async fn link_issue(
         ));
     }
 
-    link_issue_to_proposal(&state.db, &id, proposal.workspace_id, req.issue_id).await?;
+    link_issue_to_proposal(
+        &state.db,
+        &id,
+        proposal.workspace_id,
+        req.issue_id,
+        bot.as_ref().map(|bot| bot.0.bot_id),
+    )
+    .await?;
 
     write_proposal_audit_log(
         &state,
@@ -2921,7 +2948,7 @@ mod tests {
             let mine = seed_proposal(&scratch.db, Some(a.workspace_id), a.member_id).await;
             let their_issue = seed_work_item(&scratch.db, &b, "their secret issue title").await;
 
-            let result = link_issue_to_proposal(&scratch.db, &mine, Some(a.workspace_id), their_issue).await;
+            let result = link_issue_to_proposal(&scratch.db, &mine, Some(a.workspace_id), their_issue, None).await;
             match &result {
                 Err(ApiError::NotFound(_)) => {}
                 other => panic!("linking another tenant's work item should answer NotFound, got {other:?}"),
@@ -2950,7 +2977,7 @@ mod tests {
             let orphan = seed_proposal(&scratch.db, None, a.member_id).await;
             let my_issue = seed_work_item(&scratch.db, &a, "my issue").await;
 
-            let result = link_issue_to_proposal(&scratch.db, &orphan, None, my_issue).await;
+            let result = link_issue_to_proposal(&scratch.db, &orphan, None, my_issue, None).await;
             match &result {
                 Err(ApiError::NotFound(_)) => {}
                 other => panic!("an unattributed proposal should answer NotFound, got {other:?}"),
@@ -2979,7 +3006,7 @@ mod tests {
             let mine = seed_proposal(&scratch.db, Some(a.workspace_id), a.member_id).await;
             let my_issue = seed_work_item(&scratch.db, &a, "my issue").await;
 
-            link_issue_to_proposal(&scratch.db, &mine, Some(a.workspace_id), my_issue)
+            link_issue_to_proposal(&scratch.db, &mine, Some(a.workspace_id), my_issue, None)
                 .await
                 .expect("a work item in the proposal's own workspace links");
 
