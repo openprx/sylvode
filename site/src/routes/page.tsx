@@ -1,9 +1,10 @@
-import { useLocation, useNavigate, useParams } from "@solidjs/router";
+import { useLocation, useParams } from "@solidjs/router";
 import type { JSX } from "@solidjs/web";
 import { createSignal, Match, onSettled, Show, Switch } from "solid-js";
 import { LayoutView } from "../components/layout/layout-view";
+import { ListFailed } from "../components/list-state";
 import { ApiError } from "../lib/api";
-import { stripBase, withBase } from "../lib/base";
+import { stripBase, useAppNavigate, withBase } from "../lib/base";
 import { createRuntimeEnv, matchPage } from "../lib/site/env";
 import { ManifestGate, useSite } from "../lib/site/store";
 import type { Manifest, PageResponse } from "../lib/site/types";
@@ -16,12 +17,12 @@ type PageState =
 
 function PageLoader(props: { route: string; manifest: Manifest }): JSX.Element {
   const site = useSite();
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const match = matchPage(props.manifest, props.route);
   const [state, setState] = createSignal<PageState>({ kind: "loading" });
 
-  onSettled(() => {
-    if (!match) return;
+  const fetchPage = () => {
+    setState(() => ({ kind: "loading" }));
     site.client
       .page(props.route)
       .then((page) => setState(() => ({ kind: "ready", page })))
@@ -32,6 +33,10 @@ function PageLoader(props: { route: string; manifest: Manifest }): JSX.Element {
             : { kind: "error", status: 0, code: undefined },
         ),
       );
+  };
+
+  onSettled(() => {
+    if (match) fetchPage();
   });
 
   const ready = () => {
@@ -47,7 +52,9 @@ function PageLoader(props: { route: string; manifest: Manifest }): JSX.Element {
     <Show when={match} fallback={<NotFound />}>
       <Switch>
         <Match when={state().kind === "loading"}>
-          <p class="text-secondary">{site.t("app.loading")}</p>
+          <p class="text-secondary" role="status">
+            {site.t("app.loading")}
+          </p>
         </Match>
         <Match when={errored()?.code === "operator_required" || errored()?.status === 401}>
           <section class="flex flex-col gap-3">
@@ -63,9 +70,7 @@ function PageLoader(props: { route: string; manifest: Manifest }): JSX.Element {
           <NotFound />
         </Match>
         <Match when={errored()}>
-          <p class="m-0" role="alert">
-            {site.t("app.error")}
-          </p>
+          <ListFailed message={site.t("app.error")} onRetry={fetchPage} />
         </Match>
         <Match when={ready()}>
           {(page) => (

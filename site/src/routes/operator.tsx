@@ -4,6 +4,8 @@ import type { JSX } from "@solidjs/web";
 import { createSignal, For, onSettled, Show } from "solid-js";
 import { FieldInput } from "../components/field-input";
 import { FieldValue } from "../components/field-value";
+import type { ListStatus } from "../components/list-state";
+import { PageTitle } from "../components/page-title";
 import { RecordTable } from "../components/record-table";
 import { Button } from "../components/ui";
 import { ApiError } from "../lib/api";
@@ -26,6 +28,7 @@ function Operator(props: { binding: string; manifest: Manifest }): JSX.Element {
   const [page, setPage] = createSignal(1);
   const [sort, setSort] = createSignal<string | undefined>(undefined);
   const [filter, setFilter] = createSignal<{ field: string; value: string } | null>(null);
+  const [status, setStatus] = createSignal<ListStatus>("loading");
   const [message, setMessage] = createSignal("");
   const [editing, setEditing] = createSignal<SiteRecord | null>(null);
   const [edits, setEdits] = createSignal<Record<string, unknown>>({});
@@ -35,9 +38,18 @@ function Operator(props: { binding: string; manifest: Manifest }): JSX.Element {
 
   const filterField = () => fields().find((field) => field.type === "single_select");
 
+  const loadFields = async () => {
+    if (fields().length > 0) return;
+    const response = await site.client.fields(props.binding);
+    setFields(() => response.fields.filter((f) => readKeys.has(f.key)));
+  };
+
+  /** Fields and one page of records; the list is `ready` only when both arrived. */
   const load = async (next = page()) => {
     const current = filter();
+    if (!result()) setStatus("loading");
     try {
+      await loadFields();
       const data = await site.client.listRecords(props.binding, {
         page: next,
         per_page: PER_PAGE,
@@ -47,23 +59,26 @@ function Operator(props: { binding: string; manifest: Manifest }): JSX.Element {
       setResult(() => data);
       setPage(next);
       setMessage("");
+      setStatus("ready");
     } catch (error) {
       setMessage(
         error instanceof ApiError && error.errorCode === "field_not_filterable"
           ? error.message
-          : site.t("app.error"),
+          : "",
       );
+      setStatus("failed");
     }
   };
 
   onSettled(() => {
     if (!info?.operator) return;
-    void site.client
-      .fields(props.binding)
-      .then((response) => setFields(() => response.fields.filter((f) => readKeys.has(f.key))))
-      .catch(() => setMessage(site.t("app.error")));
     void load(1);
   });
+
+  const retry = () => {
+    setResult(() => null);
+    void load(page());
+  };
 
   const toggleSort = (field: string) => {
     setSort((current) => (current === field ? `-${field}` : field));
@@ -129,6 +144,7 @@ function Operator(props: { binding: string; manifest: Manifest }): JSX.Element {
 
   return (
     <section class="flex flex-col gap-4" data-view="operator">
+      <PageTitle title={site.t("op.title")} />
       <h1 class="text-page font-semibold m-0">{site.t("op.title")}</h1>
       <Show
         when={info?.operator}
@@ -157,16 +173,14 @@ function Operator(props: { binding: string; manifest: Manifest }): JSX.Element {
             </label>
           )}
         </Show>
-        <Show when={message()}>
-          <p class="text-danger m-0" role="alert">
-            {message()}
-          </p>
-        </Show>
         <RecordTable
           fields={fields()}
           rows={result()?.items ?? []}
           locale={site.locale}
           empty={site.t("op.empty")}
+          status={status()}
+          failedMessage={message()}
+          onRetry={retry}
           sort={sort()}
           onSort={toggleSort}
           {...(updateKeys.length > 0 ? { onRowClick: open } : {})}

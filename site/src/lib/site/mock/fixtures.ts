@@ -102,7 +102,7 @@ export function seedRecords(): SiteRecord[] {
 const HOME: LayoutSpec = {
   schema: "sv.layout.v1",
   key: "demo.home",
-  title: { en: "Help desk" },
+  title: { en: "Help desk", zh: "服务台" },
   data: {
     mine: {
       source: "query",

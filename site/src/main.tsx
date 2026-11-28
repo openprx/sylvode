@@ -1,5 +1,6 @@
 import { render } from "@solidjs/web";
 import { App } from "./app";
+import { detectLocale } from "./lib/i18n";
 import "./styles/app.css";
 
 async function start(): Promise<void> {
@@ -9,6 +10,8 @@ async function start(): Promise<void> {
     const mock = await import("./lib/site/mock");
     mock.installMock();
   }
+  // WCAG 3.1.1: the document language follows the active locale, not the static index.html.
+  document.documentElement.lang = detectLocale() === "zh" ? "zh-CN" : "en";
   const root = document.getElementById("app");
   if (!root) {
     throw new Error("missing #app mount element");
