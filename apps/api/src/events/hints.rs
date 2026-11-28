@@ -190,6 +190,9 @@ pub enum Hint {
     Issue { id: Uuid, project: Uuid, workspace: Uuid },
     /// An artefact draft was created or changed state.
     Draft { id: Uuid, project: Uuid, workspace: Uuid },
+    /// A package upload draft (it belongs to the workspace, not to a project) was created or
+    /// changed state: only the bot that submitted it is told.
+    UploadDraft { id: Uuid, workspace: Uuid, bot: Uuid },
     /// The tool set changed, for one project or (no project) for everyone.
     Tools {
         project: Option<Uuid>,
@@ -226,11 +229,18 @@ pub fn parse_hint(payload: &str) -> Option<Hint> {
             project: raw.p?,
             workspace: raw.w?,
         }),
-        "draft" => Some(Hint::Draft {
-            id: raw.id?,
-            project: raw.p?,
-            workspace: raw.w?,
-        }),
+        "draft" => match raw.p {
+            Some(project) => Some(Hint::Draft {
+                id: raw.id?,
+                project,
+                workspace: raw.w?,
+            }),
+            None => Some(Hint::UploadDraft {
+                id: raw.id?,
+                workspace: raw.w?,
+                bot: raw.b?,
+            }),
+        },
         "tools" => Some(Hint::Tools {
             project: raw.p,
             workspace: raw.w,
@@ -297,6 +307,9 @@ fn frames_for(hint: Hint, bot_id: Uuid, workspace_id: Uuid, project_readable: im
             vec![frame("issue", &serde_json::json!({"id": id.to_string()}))]
         }
         Hint::Draft { id, project, workspace } if workspace == workspace_id && project_readable(project) => {
+            vec![frame("draft", &serde_json::json!({"id": id.to_string()}))]
+        }
+        Hint::UploadDraft { id, workspace, bot } if workspace == workspace_id && bot == bot_id => {
             vec![frame("draft", &serde_json::json!({"id": id.to_string()}))]
         }
         Hint::Tools { project, workspace }
@@ -716,7 +729,9 @@ impl HintHub {
             Hint::Issue { workspace, project, .. } | Hint::Draft { workspace, project, .. } => {
                 (workspace, Scope::Project { workspace, project })
             }
-            Hint::Task { workspace, bot, .. } => (workspace, Scope::Bot { workspace, bot }),
+            Hint::Task { workspace, bot, .. } | Hint::UploadDraft { workspace, bot, .. } => {
+                (workspace, Scope::Bot { workspace, bot })
+            }
             Hint::Tools { .. } => return self.signal(Signal::Hint(hint)),
         };
         let window = self.tuning.tick;
@@ -1141,12 +1156,18 @@ impl HintStream {
     }
 
     async fn deliver(&mut self, hint: Hint) -> Result<(), End> {
-        if project_to_check(hint, self.workspace_id).is_some()
+        // An upload draft goes to its submitting bot while that bot still reads the whole workspace.
+        let upload_workspace_wide =
+            matches!(hint, Hint::UploadDraft { workspace, .. } if workspace == self.workspace_id);
+        if (project_to_check(hint, self.workspace_id).is_some() || upload_workspace_wide)
             && self.readable.fetched.elapsed() > self.tuning.readable_ttl
         {
             // Never deliver on a set older than the cache bound. A failed lookup ends the stream
             // rather than delivering on stale access.
             self.refresh_readable_within(self.tuning.readable_ttl).await?;
+        }
+        if upload_workspace_wide && !matches!(self.readable.filter, ProjectFilter::All) {
+            return Ok(());
         }
         let frames = frames_for(hint, self.bot_id, self.workspace_id, |project| {
             self.readable.filter.allows(project)

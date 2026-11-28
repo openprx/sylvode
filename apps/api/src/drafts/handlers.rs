@@ -44,6 +44,8 @@ const CREATIONS_PER_MINUTE: i64 = 30;
 const PENDING_PER_AUTHOR: i64 = 50;
 /// Pending package upload drafts of one workspace, all bots together: each keeps up to 32 MiB.
 const PENDING_UPLOADS_PER_WORKSPACE: i64 = 10;
+/// Pending package upload drafts of one bot, so one bot cannot take every place of the workspace.
+const PENDING_UPLOADS_PER_BOT: i64 = 3;
 const MAX_COMMENT_CHARS: usize = 2000;
 
 fn rate_limited(message: &'static str) -> ApiError {
@@ -493,6 +495,32 @@ pub(crate) async fn create_site_page_draft(
     Ok(row.id)
 }
 
+/// The refusals of a package submission that need no body: expired uploads are cleared first, then
+/// the bot's drafts per minute and the workspace's pending uploads are checked, so a refused
+/// submission costs no buffering and no verification.
+pub(crate) async fn precheck_package_upload(
+    state: &AppState,
+    workspace_id: Uuid,
+    bot_id: Uuid,
+) -> Result<(), ApiError> {
+    store::expire_uploads(&state.db, workspace_id).await?;
+    if store::count_last_minute(&state.db, "bot", bot_id).await? >= CREATIONS_PER_MINUTE {
+        return Err(rate_limited("too many drafts in the last minute"));
+    }
+    if store::count_pending_uploads(&state.db, workspace_id).await? >= PENDING_UPLOADS_PER_WORKSPACE {
+        return Err(upload_quota());
+    }
+    Ok(())
+}
+
+fn upload_quota() -> ApiError {
+    ApiError::conflict_coded(
+        "package_upload_quota_exceeded",
+        "this workspace or this bot has the most pending package uploads it may; a person must approve or reject some first",
+        Some(json!({ "limit": PENDING_UPLOADS_PER_WORKSPACE, "limit_per_bot": PENDING_UPLOADS_PER_BOT })),
+    )
+}
+
 /// Keeps a verified package upload of a bot as a `package_upload` draft (LEAD-DECISIONS
 /// M11-UPLOAD): the bytes are stored with the draft, never as a package. A newer upload of the
 /// same bot for the same package version replaces its older pending one; the workspace holds a
@@ -519,12 +547,10 @@ pub(crate) async fn create_package_upload_draft(
     if store::count_last_minute(&tx, "bot", bot_id).await? >= CREATIONS_PER_MINUTE {
         return Err(rate_limited("too many drafts in the last minute"));
     }
-    if store::count_pending_uploads(&tx, workspace_id).await? >= PENDING_UPLOADS_PER_WORKSPACE {
-        return Err(ApiError::conflict_coded(
-            "package_upload_quota_exceeded",
-            "this workspace has the most pending package uploads it may; a person must approve or reject some first",
-            Some(json!({ "limit": PENDING_UPLOADS_PER_WORKSPACE })),
-        ));
+    if store::count_pending_uploads(&tx, workspace_id).await? >= PENDING_UPLOADS_PER_WORKSPACE
+        || store::count_pending_uploads_of_bot(&tx, workspace_id, bot_id).await? >= PENDING_UPLOADS_PER_BOT
+    {
+        return Err(upload_quota());
     }
     let row = store::insert(
         &tx,
@@ -582,6 +608,7 @@ pub async fn list_drafts(
         }
     };
     let role = member(&state, &who, workspace_id).await?;
+    store::expire_uploads(&state.db, workspace_id).await?;
     let readable = caller_projects(&state.db, who.bot_id()).await?.ids();
     let paging = PageQuery {
         page: query.page,

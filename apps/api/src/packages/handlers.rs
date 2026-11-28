@@ -275,6 +275,10 @@ pub async fn submit_package_upload(
     // Bot of the whole workspace only (a project-scoped bot is refused), with write permission.
     let caller = Caller::resolve(&state, &claims, Some(Extension(bot.clone())), workspace_id).await?;
     ensure_bot_permission(&bot, BotPermission::Write)?;
+    // Everything that can refuse without the body runs first: one submission per bot at a time,
+    // the attempt window (failed verifications count), the drafts per minute and the pending cap.
+    let _submission = super::submit_gate::begin(caller.user_id)?;
+    crate::drafts::handlers::precheck_package_upload(&state, workspace_id, caller.user_id).await?;
     let bytes = read_file_part(multipart).await?;
     let prepared = PreparedUpload::verify(&state.db, workspace_id, bytes).await?;
     let draft =
