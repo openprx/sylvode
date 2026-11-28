@@ -92,6 +92,16 @@ pub async fn delete_workspace_content(tx: &DatabaseTransaction, workspace_id: Uu
     .await?;
     run(tx, "DELETE FROM activities WHERE workspace_id = $1", ws()).await?;
     run(tx, "DELETE FROM notifications WHERE workspace_id = $1", ws()).await?;
+    // Installations and their generations go explicitly: a generation holds a RESTRICT reference to
+    // the workspace's package rows, which the workspace cascade deletes in the same statement.
+    run(
+        tx,
+        "DELETE FROM installation_generations WHERE installation_id IN \
+         (SELECT id FROM installations WHERE workspace_id = $1)",
+        ws(),
+    )
+    .await?;
+    run(tx, "DELETE FROM installations WHERE workspace_id = $1", ws()).await?;
     run(tx, "DELETE FROM workspaces WHERE id = $1", ws()).await?;
     // The legacy scope was bound to the workspace by a RESTRICT reference, so it can only go once
     // the binding has cascaded away. Left behind it would be an unreachable scope with its own

@@ -189,14 +189,15 @@ pub async fn upload_package(
 fn package_in_use() -> ApiError {
     ApiError::conflict_coded(
         "package_in_use",
-        "an installation still references this package; remove the installation first",
+        "an active or pending installation uses this package; revoke the installation first",
         None,
     )
 }
 
 /// `DELETE /api/v1/workspaces/{w}/packages/{digest}`: removes a stored private package of the
-/// workspace and the blob nothing else uses. Refused while any installation generation references
-/// it, and for a built-in package. Serialised with uploads by the workspace's upload lock.
+/// workspace and the blob nothing else uses. Refused while a live installation generation (pending or
+/// approved, of an installation that is not revoked) references it, and for a built-in package.
+/// The package's non-live generations go with it; the blob is cleaned after the commit. Serialised with uploads by the workspace's upload lock.
 pub async fn delete_package(
     State(state): State<AppState>,
     Extension(claims): Extension<JwtClaims>,
@@ -216,9 +217,10 @@ pub async fn delete_package(
             package_not_found()
         });
     };
-    if store::is_installed(&tx, row.id).await? {
+    if store::has_live_generation(&tx, row.id).await? {
         return Err(package_in_use());
     }
+    store::delete_history_generations(&tx, row.id).await?;
     store::delete_package(&tx, row.id).await.map_err(|e| {
         if e.database_sqlstate().as_deref() == Some("23503") {
             package_in_use()
@@ -226,10 +228,26 @@ pub async fn delete_package(
             e
         }
     })?;
-    store::delete_unreferenced_blobs(&tx, std::slice::from_ref(&row.blob_digest)).await?;
     tx.commit().await?;
     tracing::info!(%workspace_id, package_id = %row.id, "package deleted");
+    remove_orphan_blob(&state, workspace_id, &row.blob_digest).await;
     Ok(ApiResponse::ok())
+}
+
+/// Drops the blob of a deleted package when nothing else uses it, in a transaction of its own after
+/// the package delete committed. A failure (a foreign-key violation means a concurrent upload of
+/// the same blob) is logged and never fails the request.
+async fn remove_orphan_blob(state: &AppState, workspace_id: Uuid, blob_digest: &str) {
+    let result = async {
+        let tx = state.db.begin().await?;
+        store::delete_unreferenced_blobs(&tx, std::slice::from_ref(&blob_digest.to_owned())).await?;
+        tx.commit().await?;
+        Ok::<(), ApiError>(())
+    }
+    .await;
+    if let Err(err) = result {
+        tracing::warn!(%workspace_id, error = %err, "package blob of a deleted package was kept");
+    }
 }
 
 #[derive(Debug, Deserialize)]

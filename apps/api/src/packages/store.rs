@@ -246,19 +246,45 @@ pub async fn delete_unreferenced_blobs(db: &impl ConnectionTrait, digests: &[Str
     Ok(())
 }
 
-/// Whether any installation generation (of any status) references the package row.
-pub(super) async fn is_installed(db: &impl ConnectionTrait, package_row_id: Uuid) -> Result<bool, ApiError> {
+/// Whether a live generation references the package row. Live means the generation is `pending`
+/// or `approved` (the active one) and its installation is not `revoked`; `rejected` and
+/// `superseded` generations, and every generation of a revoked installation, are history.
+pub(super) async fn has_live_generation(db: &impl ConnectionTrait, package_row_id: Uuid) -> Result<bool, ApiError> {
     Ok(db
         .query_one(stmt(
-            "SELECT 1 FROM installation_generations WHERE package_row_id = $1 LIMIT 1",
+            "SELECT 1 FROM installation_generations g JOIN installations i ON i.id = g.installation_id \
+             WHERE g.package_row_id = $1 AND g.status IN ('pending','approved') AND i.status <> 'revoked' LIMIT 1",
             vec![package_row_id.into()],
         ))
         .await?
         .is_some())
 }
 
+/// Deletes the non-live generations that reference the package row, with the grants and layouts
+/// that hang on them (their foreign keys cascade). A revoked installation may still name such a
+/// generation as its last active one; that pointer is cleared first so the deferred foreign key
+/// holds. Call it only after [`has_live_generation`] returned false, in the delete transaction.
+pub(super) async fn delete_history_generations(
+    db: &impl ConnectionTrait,
+    package_row_id: Uuid,
+) -> Result<(), ApiError> {
+    db.execute(stmt(
+        "UPDATE installations i SET active_generation = NULL WHERE i.status = 'revoked' \
+         AND i.active_generation IS NOT NULL AND EXISTS (SELECT 1 FROM installation_generations g \
+         WHERE g.installation_id = i.id AND g.generation = i.active_generation AND g.package_row_id = $1)",
+        vec![package_row_id.into()],
+    ))
+    .await?;
+    db.execute(stmt(
+        "DELETE FROM installation_generations WHERE package_row_id = $1",
+        vec![package_row_id.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
 /// Deletes one package row. The foreign key from the installation generations is `RESTRICT`, so a
-/// generation created after the caller's check still refuses the delete (SQLSTATE `23503`).
+/// live generation created after the caller's check still refuses the delete (SQLSTATE `23503`).
 pub(super) async fn delete_package(db: &impl ConnectionTrait, package_row_id: Uuid) -> Result<(), ApiError> {
     db.execute(stmt("DELETE FROM packages WHERE id = $1", vec![package_row_id.into()]))
         .await?;
