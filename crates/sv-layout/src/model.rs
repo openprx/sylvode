@@ -98,6 +98,10 @@ pub struct Node {
     /// Action name for the `click` event (buttons).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_click: Option<String>,
+    /// Columns this node spans inside a `grid` parent, `1..=` the grid's columns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 1, max = 4))]
+    pub col_span: Option<u8>,
 }
 
 /// Filter operator of a `query` source.

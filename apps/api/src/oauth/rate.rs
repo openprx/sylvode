@@ -82,10 +82,23 @@ pub enum RateBucket {
     AuthRefreshIp,
     /// First-run status reads, per client address.
     AuthSetupStatusIp,
+    /// Site operator login attempts, per client address. Counted apart from the console login so
+    /// the two surfaces never share a counter; the figures are the console's.
+    SiteLoginIp,
+    /// Site operator login attempts, per account and client address together.
+    SiteLoginPair,
+    /// Failed site operator logins, per account. Successful logins are not counted.
+    SiteLoginAccountFail,
+    /// An (account, address) pair that has signed in to a site: one row per pair, kept for 30 days
+    /// from its last site sign-in. Same meaning as [`Self::AuthLoginKnown`], separate rows.
+    SiteLoginKnown,
+    /// Failed site operator logins of known pairs, per account per day; the ceiling of the known
+    /// pairs' exemption from the account cap, as [`Self::AuthLoginKnownFail`] is for the console.
+    SiteLoginKnownFail,
 }
 
 impl RateBucket {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 23] = [
         Self::Authorize,
         Self::Decision,
         Self::TokenIp,
@@ -104,6 +117,11 @@ impl RateBucket {
         Self::AuthRegisterIp,
         Self::AuthRefreshIp,
         Self::AuthSetupStatusIp,
+        Self::SiteLoginIp,
+        Self::SiteLoginPair,
+        Self::SiteLoginAccountFail,
+        Self::SiteLoginKnown,
+        Self::SiteLoginKnownFail,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -126,15 +144,20 @@ impl RateBucket {
             Self::AuthRegisterIp => "auth_register_ip",
             Self::AuthRefreshIp => "auth_refresh_ip",
             Self::AuthSetupStatusIp => "auth_setup_status_ip",
+            Self::SiteLoginIp => "site_login_ip",
+            Self::SiteLoginPair => "site_login_pair",
+            Self::SiteLoginAccountFail => "site_login_account_fail",
+            Self::SiteLoginKnown => "site_login_known",
+            Self::SiteLoginKnownFail => "site_login_known_fail",
         }
     }
 
     /// Length of this bucket's window, in seconds.
     pub const fn window_secs(self) -> u32 {
         match self {
-            Self::InboundSourceDay | Self::AuthLoginKnownFail => DAY_WINDOW_SECS,
-            Self::AuthLoginAccountFail => ACCOUNT_FAIL_WINDOW_SECS,
-            Self::AuthLoginKnown => KNOWN_PAIR_WINDOW_SECS,
+            Self::InboundSourceDay | Self::AuthLoginKnownFail | Self::SiteLoginKnownFail => DAY_WINDOW_SECS,
+            Self::AuthLoginAccountFail | Self::SiteLoginAccountFail => ACCOUNT_FAIL_WINDOW_SECS,
+            Self::AuthLoginKnown | Self::SiteLoginKnown => KNOWN_PAIR_WINDOW_SECS,
             _ => WINDOW_SECS,
         }
     }
@@ -146,12 +169,19 @@ impl RateBucket {
             // that face the internet in the same way. A shared address (an office behind one NAT)
             // needs headroom, one account has one owner so its bucket is tight, and register is
             // the tightest per address because each accepted call costs a full password hash.
-            Self::Authorize | Self::Revoke | Self::InboundAuthFail | Self::AuthLoginIp | Self::AuthSetupStatusIp => 30,
-            Self::Decision | Self::StreamConnect | Self::AuthLoginPair | Self::AuthRegisterIp => 10,
-            Self::AuthLoginAccountFail => 50,
+            Self::Authorize
+            | Self::Revoke
+            | Self::InboundAuthFail
+            | Self::AuthLoginIp
+            | Self::AuthSetupStatusIp
+            | Self::SiteLoginIp => 30,
+            Self::Decision | Self::StreamConnect | Self::AuthLoginPair | Self::AuthRegisterIp | Self::SiteLoginPair => {
+                10
+            }
+            Self::AuthLoginAccountFail | Self::SiteLoginAccountFail => 50,
             // One hit makes a pair known.
-            Self::AuthLoginKnown => 1,
-            Self::AuthLoginKnownFail => 200,
+            Self::AuthLoginKnown | Self::SiteLoginKnown => 1,
+            Self::AuthLoginKnownFail | Self::SiteLoginKnownFail => 200,
             Self::TokenIp | Self::AuthRefreshIp => 60,
             Self::TokenGrant => 20,
             Self::InboundSourceMinute => 120,
@@ -160,8 +190,8 @@ impl RateBucket {
         }
     }
 
-    /// Whether `[auth] rate_limit_scale` multiplies this bucket: the console authentication
-    /// buckets, except the known-pair marker (a hit there is a flag, not a limit).
+    /// Whether `[auth] rate_limit_scale` multiplies this bucket: the console and site operator
+    /// authentication buckets, except the known-pair marker (a hit there is a flag, not a limit).
     const fn scaled_by_auth_config(self) -> bool {
         matches!(
             self,
@@ -172,6 +202,10 @@ impl RateBucket {
                 | Self::AuthRegisterIp
                 | Self::AuthRefreshIp
                 | Self::AuthSetupStatusIp
+                | Self::SiteLoginIp
+                | Self::SiteLoginPair
+                | Self::SiteLoginAccountFail
+                | Self::SiteLoginKnownFail
         )
     }
 
@@ -406,6 +440,114 @@ pub(crate) async fn is_over_limit<C: ConnectionTrait>(
     }))
 }
 
+/// The five buckets of one password-login surface. The console and the site operator login use
+/// the same model with separate counters.
+#[derive(Clone, Copy, Debug)]
+pub struct LoginBuckets {
+    /// Attempts per client address.
+    pub ip: RateBucket,
+    /// Attempts per (account, address) pair.
+    pub pair: RateBucket,
+    /// Failures per account.
+    pub account_fail: RateBucket,
+    /// Marker of a pair that has signed in.
+    pub known: RateBucket,
+    /// Failures of known pairs per account per day.
+    pub known_fail: RateBucket,
+}
+
+impl LoginBuckets {
+    /// `POST /api/v1/auth/login`.
+    pub const CONSOLE: Self = Self {
+        ip: RateBucket::AuthLoginIp,
+        pair: RateBucket::AuthLoginPair,
+        account_fail: RateBucket::AuthLoginAccountFail,
+        known: RateBucket::AuthLoginKnown,
+        known_fail: RateBucket::AuthLoginKnownFail,
+    };
+    /// `POST /api/site/v1/{slug}/auth/operator/login`.
+    pub const SITE: Self = Self {
+        ip: RateBucket::SiteLoginIp,
+        pair: RateBucket::SiteLoginPair,
+        account_fail: RateBucket::SiteLoginAccountFail,
+        known: RateBucket::SiteLoginKnown,
+        known_fail: RateBucket::SiteLoginKnownFail,
+    };
+}
+
+/// The keys one login attempt is counted under.
+#[derive(Clone, Debug)]
+pub struct LoginKeys {
+    /// The client address.
+    pub ip: RateKey,
+    /// The account tried from the address.
+    pub pair: RateKey,
+    /// The account alone (the normalized e-mail).
+    pub account: RateKey,
+}
+
+/// Counts a login attempt and decides whether it may go on. Returns whether the (account,
+/// address) pair is known.
+///
+/// An attempt from one address at one account is limited tightly; the account as a whole is
+/// limited only by its failures, with a higher ceiling and never by successes, so a stranger who
+/// knows an e-mail cannot lock the owner out from the owner's own address. A known pair is not
+/// stopped by the account cap, until the account's daily ceiling of known-pair failures is used up.
+pub async fn login_admit(db: &DatabaseConnection, buckets: LoginBuckets, keys: &LoginKeys) -> Result<bool, RateError> {
+    enforce(db, buckets.ip, &keys.ip).await?;
+    enforce(db, buckets.pair, &keys.pair).await?;
+    let mut known = is_over_limit(db, buckets.known, &keys.pair, 1).await?.is_some();
+    if known {
+        known = is_over_limit(
+            db,
+            buckets.known_fail,
+            &keys.account,
+            buckets.known_fail.effective_limit(),
+        )
+        .await?
+        .is_none();
+    }
+    if let Some(limited) = is_over_limit(
+        db,
+        buckets.account_fail,
+        &keys.account,
+        buckets.account_fail.effective_limit(),
+    )
+    .await?
+        && !known
+    {
+        return Err(RateError::Limited(limited));
+    }
+    Ok(known)
+}
+
+/// Counts a failed credential check. A known pair is never refused by the account's cap, even
+/// while its failures count; they count against the known pairs' daily ceiling instead.
+pub async fn login_failed(
+    db: &DatabaseConnection,
+    buckets: LoginBuckets,
+    keys: &LoginKeys,
+    known: bool,
+) -> Result<(), RateError> {
+    match enforce(db, buckets.account_fail, &keys.account).await {
+        Err(RateError::Limited(limited)) if !known => return Err(RateError::Limited(limited)),
+        Err(RateError::Store(error)) => return Err(RateError::Store(error)),
+        Ok(()) | Err(RateError::Limited(_)) => {}
+    }
+    if known {
+        enforce(db, buckets.known_fail, &keys.account).await?;
+    }
+    Ok(())
+}
+
+/// Records that the pair signed in. Signing in does not depend on remembering the pair, so a
+/// store error is logged and dropped.
+pub async fn login_succeeded(db: &DatabaseConnection, buckets: LoginBuckets, keys: &LoginKeys) {
+    if let Err(error) = touch_window(db, buckets.known, &keys.pair).await {
+        tracing::warn!(bucket = buckets.known.as_str(), error = %error, "auth known-pair record failed");
+    }
+}
+
 /// Capacity of the per-grant bucket: the burst.
 pub const GRANT_BURST: u32 = 60;
 /// Sustained rate of the per-grant bucket, per minute.
@@ -513,6 +655,11 @@ mod tests {
             (RateBucket::AuthRegisterIp, "auth_register_ip", 10),
             (RateBucket::AuthRefreshIp, "auth_refresh_ip", 60),
             (RateBucket::AuthSetupStatusIp, "auth_setup_status_ip", 30),
+            (RateBucket::SiteLoginIp, "site_login_ip", 30),
+            (RateBucket::SiteLoginPair, "site_login_pair", 10),
+            (RateBucket::SiteLoginAccountFail, "site_login_account_fail", 50),
+            (RateBucket::SiteLoginKnown, "site_login_known", 1),
+            (RateBucket::SiteLoginKnownFail, "site_login_known_fail", 200),
         ];
         assert_eq!(table.len(), RateBucket::ALL.len());
         for (bucket, name, limit) in table {
@@ -530,6 +677,10 @@ mod tests {
             (RateBucket::AuthRegisterIp, 10),
             (RateBucket::AuthRefreshIp, 60),
             (RateBucket::AuthSetupStatusIp, 30),
+            (RateBucket::SiteLoginIp, 30),
+            (RateBucket::SiteLoginPair, 10),
+            (RateBucket::SiteLoginAccountFail, 50),
+            (RateBucket::SiteLoginKnownFail, 200),
         ];
         for (bucket, base) in scaled {
             assert_eq!(bucket.limit_scaled(1), base, "{bucket:?}");

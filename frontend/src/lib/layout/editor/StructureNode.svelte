@@ -3,6 +3,7 @@
 <script lang="ts">
 	import { t } from 'svelte-i18n';
 	import ArrowLeftRight from '@lucide/svelte/icons/arrow-left-right';
+	import MoveHorizontal from '@lucide/svelte/icons/move-horizontal';
 	import GripVertical from '@lucide/svelte/icons/grip-vertical';
 	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import StructureNode from './StructureNode.svelte';
@@ -10,8 +11,10 @@
 	import {
 		GRID_MAX_COLUMNS,
 		arrowTarget,
+		colSpanOf,
 		columnsOf,
 		snapColumns,
+		spanFromDrag,
 		takesChildren,
 		type StructureCtrl
 	} from './ops';
@@ -47,6 +50,12 @@
 		!!drag && drag.parent === parentPath && drag.to === index && drag.from !== index
 	);
 
+	const inGrid = $derived(parent?.type === 'grid' && parentColumns !== null);
+	const span = $derived(Math.min(colSpanOf(node), parentColumns ?? 1));
+	let previewSpan = $state<number | null>(null);
+	let spanDrag: { x: number; start: number; columnWidth: number } | null = null;
+	const shownSpan = $derived(previewSpan ?? span);
+
 	let rulerEl: HTMLElement | undefined = $state();
 	let previewColumns = $state<number | null>(null);
 	const shownColumns = $derived(previewColumns ?? columns);
@@ -72,6 +81,11 @@
 			return;
 		}
 		if (event.metaKey || event.ctrlKey || event.altKey) return;
+		if (event.shiftKey && inGrid && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+			event.preventDefault();
+			ctrl.setColSpan(path, span + (event.key === 'ArrowRight' ? 1 : -1));
+			return;
+		}
 		const target = arrowTarget(event.key, index, siblings, parentColumns);
 		if (event.key.startsWith('Arrow')) event.preventDefault();
 		if (target !== null) ctrl.move(parentPath, index, target);
@@ -81,6 +95,44 @@
 		if (!movable || event.button !== 0) return;
 		const list = (event.currentTarget as HTMLElement).closest('[data-snode-list]');
 		if (list instanceof HTMLElement) ctrl.beginDrag(parentPath, index, list, event);
+	}
+
+	function spanDown(event: PointerEvent) {
+		if (event.button !== 0 || !inGrid || !parentColumns) return;
+		const list = (event.currentTarget as HTMLElement).closest('[data-snode-list]');
+		if (!(list instanceof HTMLElement)) return;
+		(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+		spanDrag = { x: event.clientX, start: span, columnWidth: list.clientWidth / parentColumns };
+		previewSpan = span;
+	}
+
+	function spanAt(event: PointerEvent): number | null {
+		if (!spanDrag || !parentColumns) return null;
+		return spanFromDrag(
+			spanDrag.start,
+			event.clientX - spanDrag.x,
+			spanDrag.columnWidth,
+			parentColumns
+		);
+	}
+
+	function spanMove(event: PointerEvent) {
+		if (previewSpan === null) return;
+		previewSpan = spanAt(event) ?? previewSpan;
+	}
+
+	function spanUp(event: PointerEvent) {
+		if (previewSpan === null) return;
+		const next = spanAt(event) ?? previewSpan;
+		previewSpan = null;
+		spanDrag = null;
+		ctrl.setColSpan(path, next);
+	}
+
+	function spanKey(event: KeyboardEvent) {
+		if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+		event.preventDefault();
+		ctrl.setColSpan(path, span + (event.key === 'ArrowRight' ? 1 : -1));
 	}
 
 	function rulerAt(event: PointerEvent): number | null {
@@ -119,6 +171,7 @@
 	class="min-w-0 rounded-control border bg-surface-white p-2 {errors.length > 0
 		? 'border-danger'
 		: 'border-line'} {isDragged ? 'opacity-50' : ''} {isTarget ? 'outline-dashed outline-2' : ''}"
+	style={inGrid ? `grid-column: span ${shownSpan} / span ${shownSpan}` : undefined}
 	data-snode={path}
 	data-snode-type={node.type}
 >
@@ -140,10 +193,36 @@
 		{#if summary}
 			<span class="min-w-0 truncate text-xs text-fg-muted">{summary}</span>
 		{/if}
+		{#if inGrid && parentColumns && parentColumns > 1}
+			<div
+				class="ml-auto flex shrink-0 items-center gap-1 text-xs text-fg-muted"
+				data-span-control={path}
+			>
+				<span class="font-mono text-fg">{shownSpan}/{parentColumns}</span>
+				<div
+					class="cursor-ew-resize touch-none rounded-control border border-line px-1 hover:bg-selected"
+					role="slider"
+					tabindex="0"
+					aria-label={$t('layout.editor.structure.spanLabel', { values: { type: node.type } })}
+					aria-valuemin={1}
+					aria-valuemax={parentColumns}
+					aria-valuenow={shownSpan}
+					data-span-handle={path}
+					onpointerdown={spanDown}
+					onpointermove={spanMove}
+					onpointerup={spanUp}
+					onkeydown={spanKey}
+				>
+					<MoveHorizontal size={14} aria-hidden="true" />
+				</div>
+			</div>
+		{/if}
 		{#if movable}
 			<button
 				type="button"
-				class="ml-auto shrink-0 rounded-control p-1 text-fg-muted hover:text-danger"
+				class="{inGrid && parentColumns && parentColumns > 1
+					? ''
+					: 'ml-auto'} shrink-0 rounded-control p-1 text-fg-muted hover:text-danger"
 				aria-label={$t('layout.editor.structure.remove', { values: { type: node.type } })}
 				onclick={() => ctrl.remove(path)}
 			>

@@ -861,9 +861,12 @@ pub async fn cleanup_expired_replaced_signature_audit_entries_with_storage(
         else {
             continue;
         };
+        // The record's `source` is client-writable, so an entry here may not be one the server
+        // wrote: only a key of the shape the server itself stores is ever deleted.
         let Some(previous_object_key) = entry_object
             .get("previous_object_key")
             .and_then(Value::as_str)
+            .filter(|key| is_signature_object_key(key))
             .map(str::to_string)
         else {
             continue;
@@ -928,6 +931,11 @@ fn current_signature_object_key(values: &Value, field_key: &str) -> Option<Strin
 
 fn parse_signature_audit_timestamp(value: &str) -> Option<Timestamp> {
     Timestamp::parse_rfc3339(value).ok()
+}
+
+/// Whether `key` has the shape of a stored signature object: `signatures/<safe file name>`.
+fn is_signature_object_key(key: &str) -> bool {
+    key.strip_prefix("signatures/").is_some_and(is_safe_signature_file_name)
 }
 
 fn is_safe_signature_file_name(file_name: &str) -> bool {

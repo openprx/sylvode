@@ -28,11 +28,9 @@ use super::store::{self, SiteRow};
 use crate::catalogue::SiteRole;
 use crate::forms::native_create::{CreateActor, NativeRecordCreateRequest, create_record_as, finish_record_creation};
 use crate::forms::rules::external::RuleCaller;
+use crate::oauth::rate::{self, LoginBuckets, LoginKeys, RateError, RateKey};
 use crate::response::PaginatedData;
 use crate::routes::form::UpdateRecordRequest;
-
-/// Login attempts per minute, per address and per e-mail.
-const LOGINS_PER_MINUTE: u32 = 5;
 
 async fn caller(state: &AppState, site: SiteRow, headers: &HeaderMap, op: &str) -> Result<Caller, SiteError> {
     let caller = Caller::load(state, site, headers).await?;
@@ -507,6 +505,14 @@ pub struct LoginRequest {
     password: String,
 }
 
+/// A refused login rate hit: `429` with `Retry-After`, or the store error.
+fn rate_refusal(error: RateError) -> SiteError {
+    match error {
+        RateError::Limited(limited) => SiteError::rate_limited(limited.retry_after_secs),
+        RateError::Store(error) => error.into(),
+    }
+}
+
 fn login_failed() -> SiteError {
     SiteError::new(StatusCode::UNAUTHORIZED, "login_failed", "the sign-in failed")
 }
@@ -533,16 +539,29 @@ pub async fn login(
         ));
     }
     let email = body.email.trim().to_lowercase();
-    WINDOWS
-        .hit(Bucket::LoginAddress, address.0.clone(), LOGINS_PER_MINUTE)
-        .map_err(SiteError::rate_limited)?;
-    WINDOWS
-        .hit(Bucket::LoginEmail, email.clone(), LOGINS_PER_MINUTE)
-        .map_err(SiteError::rate_limited)?;
+    // The console login model on separate site buckets: attempts per address and per (account,
+    // address) pair, failures per account only, known pairs not stopped by the account cap; the
+    // limits follow `[auth] rate_limit_scale`. The address is the request's rate-limit key
+    // (IPv4 whole, IPv6 by /64).
+    let keys = LoginKeys {
+        ip: RateKey::from_text(&address.0),
+        pair: RateKey::from_text(&format!("{email}\n{}", address.0)),
+        account: RateKey::from_text(&email),
+    };
+    let known = rate::login_admit(&state.db, LoginBuckets::SITE, &keys)
+        .await
+        .map_err(rate_refusal)?;
     let row = match crate::routes::auth::check_login_credentials(&state, &email, body.password).await {
         Ok(row) => row,
         Err(crate::error::ApiError::Database(error)) => return Err(error.into()),
-        Err(_) => return Err(login_failed()),
+        Err(error) => {
+            if matches!(error, crate::error::ApiError::Unauthorized(_)) {
+                rate::login_failed(&state.db, LoginBuckets::SITE, &keys, known)
+                    .await
+                    .map_err(rate_refusal)?;
+            }
+            return Err(login_failed());
+        }
     };
     let user_id = row
         .try_get::<String>("", "id")
@@ -561,6 +580,7 @@ pub async fn login(
         .await?
         .and_then(|row| SiteRole::parse(&row.role))
         .ok_or_else(login_failed)?;
+    rate::login_succeeded(&state.db, LoginBuckets::SITE, &keys).await;
     let token = session::new_token();
     store::insert_session(
         &state.db,

@@ -261,7 +261,7 @@ impl Cx {
         self.actions(obj, slot);
         match obj.get("root") {
             Some(root) => {
-                self.node(root, "/root", 1);
+                self.node(root, "/root", 1, None);
                 if let Some(slot) = slot {
                     self.slot_root(root, slot);
                 }
@@ -686,7 +686,7 @@ impl Cx {
         }
     }
 
-    fn node(&mut self, v: &Value, path: &str, depth: usize) {
+    fn node(&mut self, v: &Value, path: &str, depth: usize, grid_columns: Option<u64>) {
         self.nodes += 1;
         if self.nodes > MAX_NODES {
             if !self.node_limit_reported {
@@ -706,7 +706,8 @@ impl Cx {
             self.push(path, ErrorCode::ShapeInvalid, "node must be an object");
             return;
         };
-        self.keys(path, m, &["type", "props", "when", "children", "on_click"]);
+        self.keys(path, m, &["type", "props", "when", "children", "on_click", "col_span"]);
+        self.col_span(m, grid_columns, path);
         if let Some(w) = m.get("when") {
             self.expr(w, &join(path, "when"));
         }
@@ -742,8 +743,9 @@ impl Cx {
         self.props(entry, m.get("props"), &props_path, kind);
         self.children_rule(entry.descriptor.children, kind, m.get("props"), children.len(), path);
         self.events(m, kind, path);
+        let columns = (kind == "grid").then(|| grid_columns_of(m.get("props")));
         for (i, c) in children.iter().enumerate() {
-            self.node(c, &format!("{}/{i}", join(path, "children")), depth + 1);
+            self.node(c, &format!("{}/{i}", join(path, "children")), depth + 1, columns);
         }
     }
 
@@ -774,6 +776,7 @@ impl Cx {
             when: None,
             children: Vec::new(),
             on_click: None,
+            col_span: None,
         };
         match typed_props(&node) {
             Ok(Some(typed)) => self.props_semantics(&typed, path),
@@ -933,6 +936,31 @@ impl Cx {
         }
     }
 
+    /// `col_span` is only valid on a direct child of a `grid` and at most the grid's columns.
+    fn col_span(&mut self, m: &Map<String, Value>, grid_columns: Option<u64>, path: &str) {
+        let Some(v) = m.get("col_span") else {
+            return;
+        };
+        let p = join(path, "col_span");
+        let Some(columns) = grid_columns else {
+            self.push(
+                &p,
+                ErrorCode::ShapeInvalid,
+                "col_span is only valid on a child of a grid",
+            );
+            return;
+        };
+        match v.as_u64() {
+            Some(span) if (1..=columns).contains(&span) => {}
+            Some(_) => self.push(
+                &p,
+                ErrorCode::ShapeInvalid,
+                &format!("col_span must be between 1 and the grid's {columns} columns"),
+            ),
+            None => self.push(&p, ErrorCode::ShapeInvalid, "col_span must be a positive integer"),
+        }
+    }
+
     fn events(&mut self, m: &Map<String, Value>, kind: &str, path: &str) {
         if let Some(v) = m.get("on_click") {
             let p = join(path, "on_click");
@@ -977,6 +1005,15 @@ impl Cx {
 }
 
 /// `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){0,4}$`
+/// Columns of a grid as the renderers lay it out: `columns` 1..=4, 2 when absent.
+fn grid_columns_of(props: Option<&Value>) -> u64 {
+    props
+        .and_then(|p| p.get("columns"))
+        .and_then(Value::as_u64)
+        .filter(|c| (1..=4).contains(c))
+        .unwrap_or(2)
+}
+
 fn key_ok(k: &str) -> bool {
     let segs: Vec<&str> = k.split('.').collect();
     segs.len() <= 5
