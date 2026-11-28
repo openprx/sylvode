@@ -12,8 +12,11 @@ pub(super) fn routes(auth_state: &AppState) -> Router<AppState> {
         // Alert chain: the inbound event endpoint. It carries its own layer, which accepts a source
         // credential only (never a session, a bot token or a delegated token) and applies the
         // rate limits and the body limit; it is deliberately not behind the layers below.
+        // The path is a literal because the catalogue's source scan reads literals only; the
+        // `alerts.inbound_events.create` entry names the same path and a test ties it to
+        // `INBOUND_EVENTS_PATH`.
         .route(
-            api::inbound::INBOUND_EVENTS_PATH,
+            "/api/v1/inbound/events",
             post(routes::inbound_events::post_event).route_layer(axum_middleware::from_fn_with_state(
                 api::inbound::auth_state(auth_state, api::config::runtime().inbound),
                 api::inbound::auth::inbound_source_auth,

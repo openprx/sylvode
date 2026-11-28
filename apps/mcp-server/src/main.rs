@@ -1010,7 +1010,10 @@ mod sse_delivery_tests {
                 .insert(id.to_string(), SseSession { sender: tx, mode });
             streams.insert(id, rx);
         }
-        for (id, expected) in [("search-session", 9_usize), ("full-session", 163)] {
+        for (id, expected) in [
+            ("search-session", 9_usize),
+            ("full-session", mcp_server::get_all_tool_definitions().len()),
+        ] {
             let accepted = handle_sse_message(
                 State(state.clone()),
                 Extension(Caller::Legacy(Secret::new(CALLER_TOKEN))),
